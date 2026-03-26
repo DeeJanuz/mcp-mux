@@ -9,17 +9,13 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
-    strategy:
-      matrix:
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
-
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -41,15 +37,15 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: cargo tauri build --target ${{ matrix.target }}
+        run: cargo tauri build --target aarch64-apple-darwin
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mcp-mux-${{ matrix.target }}
+          name: mcp-mux-macos-arm64
           path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
 
   build-windows:
     runs-on: windows-latest
@@ -97,8 +93,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            mcp-mux-aarch64-apple-darwin/**/*.dmg
-            mcp-mux-x86_64-apple-darwin/**/*.dmg
+            mcp-mux-macos-arm64/**/*.dmg
             mcp-mux-windows/**/*.msi
             mcp-mux-windows/**/*.exe
           generate_release_notes: true

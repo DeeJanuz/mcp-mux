@@ -9,6 +9,29 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RendererDef {
+    /// Renderer key used in content_type (e.g., "analysis_stats")
+    pub name: String,
+    /// Human-readable description for agents
+    pub description: String,
+    /// "universal" (any agent can use it) or "tool" (tied to specific MCP tools)
+    #[serde(default = "default_renderer_scope")]
+    pub scope: String,
+    /// For tool-scoped: which tool names trigger this renderer
+    #[serde(default)]
+    pub tools: Vec<String>,
+    /// Data schema hint for agents (e.g., "{ title: string, body: markdown }")
+    #[serde(default)]
+    pub data_hint: Option<String>,
+    #[serde(default)]
+    pub rule: Option<String>,
+}
+
+fn default_renderer_scope() -> String {
+    "tool".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PluginManifest {
     pub name: String,
@@ -16,6 +39,10 @@ pub struct PluginManifest {
     #[serde(default)]
     pub renderers: HashMap<String, String>,
     pub mcp: Option<PluginMcpConfig>,
+    #[serde(default)]
+    pub renderer_definitions: Vec<RendererDef>,
+    #[serde(default)]
+    pub tool_rules: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -36,6 +63,7 @@ pub enum PluginAuth {
         header_name: String,
         key_env: Option<String>,
     },
+    #[serde(alias = "oauth")]
     OAuth {
         #[serde(default)]
         client_id: Option<String>,
@@ -479,5 +507,67 @@ mod tests {
         } else {
             panic!("Expected OAuth variant");
         }
+    }
+
+    #[test]
+    fn test_renderer_def_serde_roundtrip() {
+        let renderer = RendererDef {
+            name: "analysis_stats".to_string(),
+            description: "Show analysis statistics".to_string(),
+            scope: "tool".to_string(),
+            tools: vec!["get_analysis_stats".to_string()],
+            data_hint: Some("{ counts: number[] }".to_string()),
+            rule: None,
+        };
+        let json = serde_json::to_string(&renderer).unwrap();
+        let parsed: RendererDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "analysis_stats");
+        assert_eq!(parsed.description, "Show analysis statistics");
+        assert_eq!(parsed.scope, "tool");
+        assert_eq!(parsed.tools, vec!["get_analysis_stats"]);
+        assert_eq!(parsed.data_hint, Some("{ counts: number[] }".to_string()));
+    }
+
+    #[test]
+    fn test_renderer_def_default_scope() {
+        assert_eq!(default_renderer_scope(), "tool");
+        // Deserialize without scope field should default to "tool"
+        let json = r#"{"name":"test","description":"Test renderer"}"#;
+        let parsed: RendererDef = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.scope, "tool");
+        assert!(parsed.tools.is_empty());
+        assert!(parsed.data_hint.is_none());
+        assert!(parsed.rule.is_none());
+    }
+
+    #[test]
+    fn test_plugin_manifest_with_renderer_definitions() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0",
+            "renderer_definitions": [
+                {
+                    "name": "custom_view",
+                    "description": "Custom view renderer",
+                    "scope": "universal"
+                }
+            ]
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.renderer_definitions.len(), 1);
+        assert_eq!(manifest.renderer_definitions[0].name, "custom_view");
+        assert_eq!(manifest.renderer_definitions[0].scope, "universal");
+    }
+
+    #[test]
+    fn test_plugin_manifest_without_renderer_definitions() {
+        let json = r#"{
+            "name": "legacy-plugin",
+            "version": "0.5.0"
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.renderer_definitions.is_empty());
+        assert!(manifest.renderers.is_empty());
+        assert!(manifest.mcp.is_none());
     }
 }

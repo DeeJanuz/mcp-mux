@@ -8,6 +8,13 @@ use tokio::sync::Mutex as TokioMutex;
 use crate::http_server::AsyncAppState;
 use crate::tool_cache::ToolCache;
 
+/// OAuth refresh info extracted while holding the lock, used after dropping it.
+pub(crate) struct OAuthRefreshInfo {
+    pub plugin_name: String,
+    pub token_url: String,
+    pub client_id: Option<String>,
+}
+
 pub struct PluginRegistry {
     pub manifests: Vec<PluginManifest>,
     pub tool_cache: ToolCache,
@@ -71,14 +78,19 @@ impl PluginRegistry {
     ) {
         // Collect info for plugins that need refresh
         let state_guard = state.lock().await;
-        let to_refresh: Vec<(usize, String, Option<String>)> = {
+        let mut to_refresh: Vec<(usize, String, Option<String>, Option<OAuthRefreshInfo>)> = {
             let registry = state_guard.inner.plugin_registry.lock().unwrap();
             let mut result = Vec::new();
             for i in 0..registry.manifests.len() {
                 if registry.tool_cache.entries[i].refresh_pending {
                     if let Some(mcp) = &registry.manifests[i].mcp {
                         let auth = resolve_auth_header(&registry.manifests[i].name, &mcp.auth);
-                        result.push((i, mcp.url.clone(), auth));
+                        let oauth_info = if auth.is_none() {
+                            extract_oauth_refresh_info(&registry.manifests[i].name, &mcp.auth)
+                        } else {
+                            None
+                        };
+                        result.push((i, mcp.url.clone(), auth, oauth_info));
                     }
                 }
             }
@@ -86,7 +98,37 @@ impl PluginRegistry {
         };
         drop(state_guard);
 
-        for (idx, url, auth) in to_refresh {
+        // Attempt OAuth token refresh for entries where auth is None but OAuth info is present
+        for entry in &mut to_refresh {
+            if entry.2.is_none() {
+                if let Some(oauth_info) = &entry.3 {
+                    match crate::auth::refresh_oauth_token(
+                        &oauth_info.plugin_name,
+                        &oauth_info.token_url,
+                        oauth_info.client_id.as_deref(),
+                        client,
+                    )
+                    .await
+                    {
+                        Ok(token) => {
+                            entry.2 = Some(format!("Bearer {}", token));
+                            eprintln!(
+                                "[mcp-mux] Auto-refreshed token for '{}'",
+                                oauth_info.plugin_name
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[mcp-mux] Token refresh failed for '{}': {}",
+                                oauth_info.plugin_name, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        for (idx, url, auth, _) in to_refresh {
             match fetch_plugin_tools(client, &url, auth.as_deref()).await {
                 Ok(tools) => {
                     apply_tool_cache(state, idx, tools).await;
@@ -105,22 +147,28 @@ impl PluginRegistry {
     }
 
     /// Find which plugin handles a prefixed tool name.
-    /// Returns (mcp_url, auth_header, unprefixed_name, renderer_map)
+    /// Returns (mcp_url, auth_header, unprefixed_name, renderer_map, oauth_refresh_info)
     pub fn find_plugin_for_tool(
         &self,
         prefixed_name: &str,
-    ) -> Option<(String, Option<String>, String, HashMap<String, String>)> {
+    ) -> Option<(String, Option<String>, String, HashMap<String, String>, Option<OAuthRefreshInfo>)> {
         let idx = self.tool_cache.tool_index.get(prefixed_name)?;
         let manifest = self.manifests.get(*idx)?;
         let mcp = manifest.mcp.as_ref()?;
         let unprefixed = prefixed_name.strip_prefix(&mcp.tool_prefix)?;
         let auth = resolve_auth_header(&manifest.name, &mcp.auth);
+        let oauth_info = if auth.is_none() {
+            extract_oauth_refresh_info(&manifest.name, &mcp.auth)
+        } else {
+            None
+        };
 
         Some((
             mcp.url.clone(),
             auth,
             unprefixed.to_string(),
             manifest.renderers.clone(),
+            oauth_info,
         ))
     }
 
@@ -229,7 +277,10 @@ async fn fetch_plugin_tools(
         }
     });
 
-    let mut req_builder = client.post(url).json(&init_req);
+    let mut req_builder = client
+        .post(url)
+        .header("Accept", "application/json, text/event-stream")
+        .json(&init_req);
     if let Some(auth_val) = auth {
         req_builder = req_builder.header("Authorization", auth_val);
     }
@@ -250,7 +301,10 @@ async fn fetch_plugin_tools(
         "jsonrpc": "2.0",
         "method": "notifications/initialized"
     });
-    let mut notif_builder = client.post(url).json(&notif);
+    let mut notif_builder = client
+        .post(url)
+        .header("Accept", "application/json, text/event-stream")
+        .json(&notif);
     if let Some(auth_val) = auth {
         notif_builder = notif_builder.header("Authorization", auth_val);
     }
@@ -262,7 +316,10 @@ async fn fetch_plugin_tools(
         "id": 2,
         "method": "tools/list"
     });
-    let mut list_builder = client.post(url).json(&list_req);
+    let mut list_builder = client
+        .post(url)
+        .header("Accept", "application/json, text/event-stream")
+        .json(&list_req);
     if let Some(auth_val) = auth {
         list_builder = list_builder.header("Authorization", auth_val);
     }
@@ -331,3 +388,20 @@ async fn clear_refresh_pending(state: &Arc<TokioMutex<AsyncAppState>>, idx: usiz
 fn resolve_auth_header(plugin_name: &str, auth: &Option<PluginAuth>) -> Option<String> {
     auth.as_ref()?.resolve_header(plugin_name)
 }
+
+/// Extract OAuth refresh info from a plugin's auth config, if it's an OAuth type.
+fn extract_oauth_refresh_info(plugin_name: &str, auth: &Option<PluginAuth>) -> Option<OAuthRefreshInfo> {
+    match auth.as_ref()? {
+        PluginAuth::OAuth {
+            client_id,
+            token_url,
+            ..
+        } => Some(OAuthRefreshInfo {
+            plugin_name: plugin_name.to_string(),
+            token_url: token_url.clone(),
+            client_id: client_id.clone(),
+        }),
+        _ => None,
+    }
+}
+

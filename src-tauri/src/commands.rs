@@ -103,13 +103,19 @@ pub fn install_plugin(
     let manifest: PluginManifest = serde_json::from_str(&manifest_json)
         .map_err(|e| format!("Invalid manifest: {}", e))?;
     let mut registry = state.plugin_registry.lock().unwrap();
-    registry.add_plugin(manifest)
+    registry.add_plugin(manifest)?;
+    drop(registry);
+    state.notify_tools_changed();
+    Ok(())
 }
 
 #[tauri::command]
 pub fn uninstall_plugin(name: String, state: State<'_, Arc<AppState>>) -> Result<(), String> {
     let mut registry = state.plugin_registry.lock().unwrap();
-    registry.remove_plugin(&name)
+    registry.remove_plugin(&name)?;
+    drop(registry);
+    state.notify_tools_changed();
+    Ok(())
 }
 
 #[tauri::command]
@@ -122,7 +128,10 @@ pub fn install_plugin_from_file(
     let manifest: PluginManifest = serde_json::from_str(&content)
         .map_err(|e| format!("Invalid manifest: {}", e))?;
     let mut registry = state.plugin_registry.lock().unwrap();
-    registry.add_plugin(manifest)
+    registry.add_plugin(manifest)?;
+    drop(registry);
+    state.notify_tools_changed();
+    Ok(())
 }
 
 #[tauri::command]
@@ -292,6 +301,7 @@ pub async fn install_plugin_from_registry(
 
     install_or_update_from_entry(&entry, &state).await?;
 
+    state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
 
     Ok(())
@@ -313,7 +323,9 @@ pub fn install_plugin_from_zip(
         let _ = registry.remove_plugin(&manifest.name);
     }
     registry.add_plugin(manifest)?;
+    drop(registry);
 
+    state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
 
     Ok(())
@@ -348,6 +360,7 @@ pub async fn update_plugin(
 
     install_or_update_from_entry(&entry, &state).await?;
 
+    state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
 
     Ok(())

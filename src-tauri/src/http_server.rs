@@ -78,9 +78,6 @@ struct HealthResponse {
     started_at: String,
 }
 
-/// Content type for all push operations
-const CONTENT_TYPE: &str = "rich_content";
-
 /// Result of executing a push operation
 pub enum ExecutePushResult {
     Stored { session_id: String },
@@ -99,7 +96,7 @@ pub async fn execute_push(
     session_id: Option<String>,
 ) -> ExecutePushResult {
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let content_type = CONTENT_TYPE.to_string();
+    let content_type = tool_name.clone();
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

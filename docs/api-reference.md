@@ -37,22 +37,12 @@ Push content to the viewer. Optionally block until user reviews.
 
 **Content Type Detection**
 
+Content type detection now defaults to `rich_content` for all tool names. The hardcoded tool-to-renderer mappings have been removed from the backend. Renderer selection is now driven by plugin manifests (the `renderers` field in `PluginManifest`) and custom renderer JS files bundled in plugin ZIP packages.
+
 | `toolName` | Content Type | Renderer |
 |------------|-------------|----------|
-| `search_codebase`, `vector_search` | `search_results` | Grouped results with type chips |
-| `get_code_units` | `code_units` | Source code with complexity badges |
-| `get_document` | `document_preview` | Rendered markdown document |
-| `write_document`, `propose_actions` | `document_diff` | Two-column diff with accept/reject |
-| `get_data_schema` | `data_schema` | Expandable table/column view |
-| `manage_data_draft` | `data_draft_diff` | Grid-based draft review |
-| `get_dependencies` | `dependencies` | Grouped imports by source file |
-| `get_file_content` | `file_content` | Source with line numbers |
-| `get_module_overview` | `module_overview` | File tree + exports + deps |
-| `get_analysis_stats` | `analysis_stats` | Metric cards + repo list |
-| `get_business_concepts`, `manage_knowledge_entries` | `knowledge_dex` | Table with bulk accept/reject |
-| `get_column_context` | `column_context` | Breadcrumb nav + related entities |
 | `rich_content`, `push_to_companion` | `rich_content` | Markdown + mermaid fallback |
-| _(anything else)_ | `rich_content` | Markdown + mermaid fallback |
+| _(anything else)_ | `rich_content` | Markdown + mermaid fallback (unless overridden by plugin manifest) |
 
 **Response (non-review)** `201 Created`
 ```json
@@ -104,12 +94,57 @@ Push content to the viewer. Optionally block until user reviews.
 }
 ```
 
+### `POST /api/reload-plugins`
+
+Reload all plugins from disk and broadcast `notifications/tools/list_changed` to all active MCP SSE sessions.
+
+**Response** `200 OK` (empty body)
+
+### `GET /mcp`
+
+Open an SSE stream for MCP Streamable HTTP server-to-client notifications.
+
+**Required Headers:**
+- `Accept: text/event-stream`
+
+**Response** `200 OK` (SSE stream)
+- Response header `mcp-session-id` contains the session ID
+- Stream sends JSON-RPC notifications as SSE `data:` events
+- Keepalive pings are sent automatically
+
+**Error** `406 Not Acceptable` if `Accept` header missing or incorrect.
+
+### `POST /mcp`
+
+Send a JSON-RPC request to the MCP handler.
+
+**Optional Headers:**
+- `mcp-session-id` — bind request to an existing SSE session
+
+**Request Body:** JSON-RPC 2.0 request
+
+**Response** JSON-RPC 2.0 response with appropriate status code.
+
+**Error** `404 Not Found` if `mcp-session-id` is provided but session does not exist.
+
+### `DELETE /mcp`
+
+Tear down an MCP SSE session.
+
+**Required Headers:**
+- `mcp-session-id` — the session to remove
+
+**Response** `200 OK` if session was removed.
+
+**Error** `400 Bad Request` if header missing, `404 Not Found` if session does not exist.
+
 ### `OPTIONS /api/push`
 
 CORS preflight. Returns `200` with:
 - `Access-Control-Allow-Origin: *`
-- `Access-Control-Allow-Methods: GET, POST, OPTIONS`
+- `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`
 - `Access-Control-Allow-Headers: *`
+- `Access-Control-Expose-Headers: mcp-session-id`
 
 ## Tauri IPC Commands
 
@@ -215,6 +250,75 @@ Store a Bearer token or API key for a plugin. Saves to `~/.mcp-mux/auth/<pluginN
 
 ```javascript
 await invoke('store_plugin_token', { pluginName: 'my-plugin', token: 'sk-abc123' });
+```
+
+### `install_plugin_from_registry`
+
+Install a plugin from a registry entry. If the entry has a `download_url`, downloads and extracts the ZIP package. Otherwise falls back to manifest-only install.
+
+```javascript
+await invoke('install_plugin_from_registry', { entryJson: '{"name":"...","version":"...","manifest":{...},"download_url":"..."}' });
+```
+
+### `install_plugin_from_zip`
+
+Install a plugin from a local ZIP file. The ZIP must contain a `manifest.json` at the root (or under a single top-level directory).
+
+```javascript
+await invoke('install_plugin_from_zip', { path: '/path/to/plugin.zip' });
+```
+
+### `update_plugin`
+
+Update an installed plugin to the latest version from the cached registry. Downloads the ZIP package if available.
+
+```javascript
+await invoke('update_plugin', { name: 'plugin-name' });
+```
+
+### `get_plugin_renderers`
+
+Scan installed plugin directories for custom renderer JS files.
+
+```javascript
+const renderers = await invoke('get_plugin_renderers');
+// Returns: RendererInfo[]
+// RendererInfo: { plugin_name, file_name, url }
+// url format: plugin://localhost/{plugin_name}/renderers/{file_name}
+```
+
+### `get_registry_sources`
+
+Get all configured registry sources.
+
+```javascript
+const sources = await invoke('get_registry_sources');
+// Returns: RegistrySource[]
+// RegistrySource: { name, url, enabled }
+```
+
+### `add_registry_source`
+
+Add a new registry source. Errors if a source with the same URL already exists.
+
+```javascript
+await invoke('add_registry_source', { name: 'My Registry', url: 'https://example.com/registry.json' });
+```
+
+### `remove_registry_source`
+
+Remove a registry source by URL.
+
+```javascript
+await invoke('remove_registry_source', { url: 'https://example.com/registry.json' });
+```
+
+### `toggle_registry_source`
+
+Toggle a registry source's enabled state.
+
+```javascript
+await invoke('toggle_registry_source', { url: 'https://example.com/registry.json' });
 ```
 
 ### `get_settings`

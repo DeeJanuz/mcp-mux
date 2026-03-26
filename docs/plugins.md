@@ -94,14 +94,38 @@ Authentication is configured via a tagged union on the `type` field. Three types
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `type` | `"oauth"` | Yes | Selects OAuth browser redirect flow. |
-| `client_id` | string | Yes | OAuth client ID. |
+| `client_id` | string | No | OAuth client ID. Optional if the provider does not require one. |
 | `auth_url` | string | Yes | Authorization endpoint URL. The user's browser is opened to this URL. |
 | `token_url` | string | Yes | Token exchange endpoint URL. |
 | `scopes` | string[] | No | OAuth scopes to request. Defaults to empty. |
 
+## ZIP Plugin Packages
+
+Plugins can be distributed as ZIP archives containing a `manifest.json` and optional assets (renderers, icons, etc.). The ZIP format supports:
+
+- **GitHub release pattern**: If all files share a single top-level directory, it is automatically stripped during extraction
+- **Zip-slip protection**: Paths containing `..` are rejected
+- **Manifest validation**: The ZIP must contain a valid `manifest.json`
+- **Max download size**: 50MB for remote downloads
+
+Plugins are extracted to `~/.mcp-mux/plugins/{plugin-name}/` as a directory (rather than a single JSON file). The `manifest.json` inside the directory is used for plugin configuration.
+
+### Custom Renderers
+
+Plugin ZIP packages can include custom renderer JS files in a `renderers/` subdirectory. These are served via the `plugin://` URI scheme and discovered by the renderer scanner.
+
+```
+my-plugin.zip
+  manifest.json
+  renderers/
+    my-custom-view.js
+```
+
+Renderer files are accessible at `plugin://localhost/{plugin-name}/renderers/{file-name}.js`.
+
 ## Registry Format
 
-The plugin registry is a JSON file hosted at a remote URL. MCP Mux ships with a default registry URL but this can be overridden (see Custom Registries below).
+The plugin registry is a JSON file hosted at a remote URL. MCP Mux ships with a default registry URL but this can be overridden (see Custom Registries and Multiple Registry Sources below).
 
 ### RemoteRegistry
 
@@ -133,6 +157,7 @@ The plugin registry is a JSON file hosted at a remote URL. MCP Mux ships with a 
 | `homepage` | string | No | URL to the plugin's homepage or documentation. |
 | `tags` | string[] | No | Tags for search filtering (e.g., `["code-analysis", "documentation"]`). |
 | `manifest` | PluginManifest | Yes | The full plugin manifest that gets installed to `~/.mcp-mux/plugins/`. |
+| `download_url` | string | No | URL to a ZIP package. If present, the plugin is downloaded and extracted instead of using the manifest alone. |
 
 ## Custom Registries
 
@@ -151,6 +176,25 @@ To use a different registry, create or edit `~/.mcp-mux/config.json`:
 ```
 
 Both the CLI and the desktop app read `registry_url` from this config file. If the key is absent or the file does not exist, the default URL is used.
+
+## Multiple Registry Sources
+
+MCP Mux supports multiple registry sources. Sources are stored in `~/.mcp-mux/config.json` under the `registry_sources` key:
+
+```json
+{
+  "registry_sources": [
+    { "name": "Default", "url": "https://raw.githubusercontent.com/.../registry.json", "enabled": true },
+    { "name": "Internal", "url": "https://corp.example.com/registry.json", "enabled": true }
+  ]
+}
+```
+
+When multiple sources are configured, MCP Mux fetches from all enabled sources and merges the results. If two sources provide a plugin with the same name, the last source wins. Each source has its own disk cache with a 1-hour TTL.
+
+The legacy single `registry_url` key is automatically migrated: if `registry_sources` is absent but `registry_url` is present, it is treated as a single default source. When sources are saved via the API, the `registry_url` key is removed.
+
+Sources can be managed via the IPC commands: `get_registry_sources`, `add_registry_source`, `remove_registry_source`, `toggle_registry_source`.
 
 ## Developing a Plugin
 
@@ -256,7 +300,7 @@ Two caches operate with different TTLs:
 
 Plugins can be added or removed at runtime via the CLI or GUI. When a plugin is added:
 
-1. The manifest is written to `~/.mcp-mux/plugins/<name>.json`
+1. The manifest is written to `~/.mcp-mux/plugins/<name>.json` (or extracted to `~/.mcp-mux/plugins/<name>/` for ZIP packages)
 2. The desktop app detects the change and loads the new plugin
 3. Tools from the plugin become available immediately
 
@@ -265,3 +309,11 @@ When a plugin is removed:
 1. The manifest file is deleted from `~/.mcp-mux/plugins/`
 2. The desktop app unloads the plugin
 3. Cached tool data for the plugin is cleared
+
+### Plugin Updates
+
+The `list_plugins` command now compares installed plugin versions against the cached registry and returns an `update_available` field with the new version string when an update exists. The `update_plugin` command downloads and installs the latest version from the registry, replacing the existing plugin.
+
+### Hot Reload
+
+`POST /api/reload-plugins` reloads all plugins from disk and broadcasts a `notifications/tools/list_changed` JSON-RPC notification to all active MCP SSE sessions. Connected MCP clients can listen for this notification to refresh their tool lists without reconnecting.

@@ -139,13 +139,12 @@ pub async fn start_plugin_auth(
 ) -> Result<String, String> {
     let auth = {
         let registry = state.plugin_registry.lock().unwrap();
-        let plugin = registry
-            .plugins
+        let manifest = registry
+            .manifests
             .iter()
-            .find(|p| p.manifest.name == plugin_name)
+            .find(|m| m.name == plugin_name)
             .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
-        plugin
-            .manifest
+        manifest
             .mcp
             .as_ref()
             .and_then(|m| m.auth.clone())
@@ -190,4 +189,31 @@ pub async fn start_plugin_auth(
             }
         }
     }
+}
+
+#[tauri::command]
+pub fn get_settings() -> Result<serde_json::Value, String> {
+    let path = mcp_mux_shared::config_path();
+    if !path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+    let config: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse config: {}", e))?;
+    Ok(config)
+}
+
+#[tauri::command]
+pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
+    let path = mcp_mux_shared::config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+    Ok(())
 }

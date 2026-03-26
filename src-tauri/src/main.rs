@@ -9,6 +9,7 @@ mod mcp;
 mod mcp_tools;
 mod plugin;
 mod registry;
+mod tool_cache;
 mod review;
 mod session;
 mod state;
@@ -45,6 +46,8 @@ fn main() {
             commands::install_plugin_from_file,
             commands::fetch_registry,
             commands::start_plugin_auth,
+            commands::get_settings,
+            commands::save_settings,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

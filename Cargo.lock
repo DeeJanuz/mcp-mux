@@ -2155,6 +2155,7 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-dialog",
  "tauri-plugin-shell",
+ "tempfile",
  "tokio",
  "tower-http",
  "uuid",
@@ -2178,8 +2179,11 @@ name = "mcp-mux-shared"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

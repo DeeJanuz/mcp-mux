@@ -189,12 +189,27 @@ pub fn store_token(plugin_name: &str, token: &StoredToken) -> Result<(), String>
     Ok(())
 }
 
-/// Load a stored OAuth token for a plugin
+/// Load a stored OAuth token for a plugin, returning None if expired
 pub fn load_token(plugin_name: &str) -> Option<String> {
     let path = auth_dir().join(format!("{}.json", plugin_name));
     let content = std::fs::read_to_string(&path).ok()?;
     let stored: StoredToken = serde_json::from_str(&content).ok()?;
-    // TODO: Check expiry and refresh token if expired
+
+    // Check if token has expired
+    if let Some(expires_at) = stored.expires_at {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        if now >= expires_at {
+            eprintln!(
+                "[mcp-mux] OAuth token for plugin '{}' has expired",
+                plugin_name
+            );
+            return None;
+        }
+    }
+
     Some(stored.access_token)
 }
 
@@ -215,4 +230,89 @@ pub fn store_api_key(plugin_name: &str, key: &str) -> Result<(), String> {
         expires_at: None,
     };
     store_token(plugin_name, &token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stored_token_serde_roundtrip() {
+        let token = StoredToken {
+            access_token: "test-token".to_string(),
+            refresh_token: Some("refresh-123".to_string()),
+            expires_at: Some(1700000000),
+        };
+        let json = serde_json::to_string(&token).unwrap();
+        let parsed: StoredToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.access_token, "test-token");
+        assert_eq!(parsed.refresh_token, Some("refresh-123".to_string()));
+        assert_eq!(parsed.expires_at, Some(1700000000));
+    }
+
+    #[test]
+    fn test_stored_token_without_optional_fields() {
+        let token = StoredToken {
+            access_token: "test-token".to_string(),
+            refresh_token: None,
+            expires_at: None,
+        };
+        let json = serde_json::to_string(&token).unwrap();
+        let parsed: StoredToken = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.access_token, "test-token");
+        assert!(parsed.refresh_token.is_none());
+        assert!(parsed.expires_at.is_none());
+    }
+
+    #[test]
+    fn test_expired_token_detected() {
+        let past = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            - 3600;
+
+        let token = StoredToken {
+            access_token: "expired-token".to_string(),
+            refresh_token: None,
+            expires_at: Some(past),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test-plugin.json");
+        let json = serde_json::to_string_pretty(&token).unwrap();
+        std::fs::write(&path, json).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let stored: StoredToken = serde_json::from_str(&content).unwrap();
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        assert!(stored.expires_at.unwrap() < now, "Token should be expired");
+    }
+
+    #[test]
+    fn test_valid_token_not_expired() {
+        let future = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 3600;
+
+        let token = StoredToken {
+            access_token: "valid-token".to_string(),
+            refresh_token: None,
+            expires_at: Some(future),
+        };
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        assert!(token.expires_at.unwrap() > now, "Token should not be expired");
+    }
 }

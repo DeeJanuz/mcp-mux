@@ -86,27 +86,28 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
         }
     }
 
-    instructions.push_str("\n## Complex Explanations → Companion Window\n\n");
+    instructions.push_str("\n## When to Push to the Companion Window\n\n");
     instructions.push_str(
-        "ALWAYS push complex explanations to the companion window instead of explaining \n\
-         them inline in chat. This includes: implementation plans, architectural decisions,\n\
-         data architecture, data flows, networking topology, system diagrams, API designs,\n\
-         database schemas, and any multi-step technical explanation.\n\n\
-         Your chat response should be a concise agent-oriented summary — context for what\n\
-         was pushed, next steps, and decisions needed. The human-readable explanation with\n\
-         mermaid diagrams, tables, code examples, and formatted markdown goes to `push_content`.\n\
-         Think of chat as the agent log and the companion window as the user-facing document.\n\n\
+        "Push content when it benefits from visual diagrams. If it doesn't need a mermaid\n\
+         diagram, it doesn't need a push — just explain it in chat.\n\n\
+         Every push MUST include at least one ```mermaid block (flowchart, sequenceDiagram,\n\
+         erDiagram, classDiagram, graph TD/LR). Content that warrants pushing: architecture,\n\
+         data flows, system diagrams, API designs, database schemas, networking topology,\n\
+         implementation plans with structural decisions.\n\n\
          ```\n\
          push_content({\n\
            tool_name: \"rich_content\",\n\
            data: {\n\
              title: \"Implementation Plan: <feature name>\",\n\
-             body: \"## Context\\n...\\n## Architecture\\n```mermaid\\n...\\n```\\n## Changes\\n| File | Change |\\n...\"\n\
+             body: \"## Architecture\\n```mermaid\\nflowchart TD\\n  A[Start] --> B[Process]\\n```\\n## Changes\\n| File | Change |\\n...\"\n\
            }\n\
          })\n\
          ```\n\n\
          For plans requiring explicit approval, use `push_review` instead — this blocks\n\
-         until the user accepts/rejects in the companion window.\n"
+         until the user accepts/rejects in the companion window.\n\n\
+         SUB-AGENT RESTRICTION: Only the main/coordinator agent may call `push_content`,\n\
+         `push_review`, and `push_check`. Sub-agents and background agents must NOT call\n\
+         these tools — they return results to the coordinator, which decides what to push.\n"
     );
 
     instructions.push_str("\n## Agent Rule Bootstrap\n\n");

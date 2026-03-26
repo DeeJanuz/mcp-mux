@@ -1,7 +1,7 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-26
-**Total Active Issues:** 1
+**Total Active Issues:** 5
 **Resolved This Month:** 15
 
 ---
@@ -21,13 +21,37 @@ _None_
 - **Suggested Fix:** Extract testable service layers from the Tauri command wrappers. The `install_or_update_from_entry` helper is a good candidate for unit testing once its AppState dependency is narrowed.
 - **Detected:** 2026-03-26 (commit 0fb86a3), partially addressed in 6c7538b
 
+#### H-007: No tests for setup_agent_rules or build_instructions
+- **File(s):** `src-tauri/src/mcp_tools.rs`, `src-tauri/src/mcp.rs`
+- **Principle:** Quality / Reliability
+- **Description:** The `call_setup_agent_rules` function (120 lines) and `build_instructions` function (80 lines) are the primary new features in commit ebb9643 but have zero test coverage. These functions assemble rules from plugins, report auth status, and generate MCP server instructions -- all critical behavioral contracts.
+- **Suggested Fix:** Extract rule collection, auth status collection, and persistence instruction generation into testable helpers. Create unit tests with mock state containing plugins with various auth configurations.
+- **Detected:** 2026-03-26 (commit ebb9643)
+
 ### Medium
 
-_None_
+#### M-008: call_setup_agent_rules has three responsibilities
+- **File(s):** `src-tauri/src/mcp_tools.rs` (call_setup_agent_rules)
+- **Principle:** SRP
+- **Description:** The 120-line function collects renderer/tool rules, collects plugin auth status, and dispatches agent-type-specific persistence instructions. It also acquires the async state lock twice in sequence (once for rules, once for auth status) which could be unified. As more rule categories or agent types are added, this function will grow further.
+- **Suggested Fix:** Extract `collect_rules(registry) -> Vec<Value>`, `collect_auth_status(registry) -> Vec<Value>`, and `persistence_instructions(agent_type) -> &str` as separate functions.
+- **Detected:** 2026-03-26 (commit ebb9643)
+
+#### M-009: Duplicated OAuth refresh-and-log pattern
+- **File(s):** `src-tauri/src/mcp_tools.rs` (lookup_plugin_tool), `src-tauri/src/plugin.rs` (refresh_stale_plugins)
+- **Principle:** DRY / SRP
+- **Description:** The pattern of calling `refresh_oauth_token`, logging success with `eprintln`, and logging failure with `eprintln` is duplicated across two call sites with near-identical structure. Both construct `"Bearer {}"` format strings from the result.
+- **Suggested Fix:** Extract a `try_refresh_oauth(oauth_info, client) -> Option<String>` helper that handles the refresh attempt, logging, and Bearer formatting in one place.
+- **Detected:** 2026-03-26 (commit ebb9643)
 
 ### Low
 
-_None_
+#### L-003: find_plugin_for_tool returns a 5-element tuple
+- **File(s):** `src-tauri/src/plugin.rs` (find_plugin_for_tool)
+- **Principle:** Readability / Maintainability
+- **Description:** The return type `Option<(String, Option<String>, String, HashMap<String, String>, Option<OAuthRefreshInfo>)>` is unwieldy. Callers must destructure positionally, which is fragile and hard to read. The tuple has grown from 4 to 5 elements in this commit.
+- **Suggested Fix:** Replace with a `PluginToolResult` struct with named fields: `mcp_url`, `auth_header`, `unprefixed_name`, `renderer_map`, `oauth_info`.
+- **Detected:** 2026-03-26 (commit ebb9643)
 
 ---
 
@@ -63,6 +87,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| ebb9643 | 2026-03-26 | 68/100 | Acceptable |
 | 6c7538b | 2026-03-26 | 85/100 | Good |
 | 0fb86a3 | 2026-03-26 | 52/100 | Acceptable |
 | 102813b | 2026-03-25 | 88/100 | Good |

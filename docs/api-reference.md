@@ -345,6 +345,74 @@ await invoke('save_settings', {
 });
 ```
 
+## MCP Tools
+
+These tools are exposed via the MCP Streamable HTTP transport (`POST /mcp` with `tools/call`).
+
+### `push_content`
+
+Display content in the MCP Mux window. Supports multiple content types.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `tool_name` | string | Yes | Content type identifier for renderer selection. Available renderers are listed dynamically based on installed plugins. Use `rich_content` for generic markdown display. |
+| `data` | object | Yes | Content data to display. |
+
+### `push_review`
+
+Display content and block until the user accepts or rejects. Returns the user's decision.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `tool_name` | string | Yes | Content type identifier for renderer selection. |
+| `data` | object | Yes | Content data to display. |
+| `timeout` | number | No | Timeout in seconds (default: 120). |
+
+### `push_check`
+
+Check the status or result of a previously pushed review session.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `session_id` | string | Yes | The session ID to check. |
+
+### `setup_agent_rules`
+
+Bootstrap behavioral rules for all mcp-mux renderers and plugin tools. Call once per project to receive rules that should be persisted in the agent's native memory/rule system. Returns renderer rules, plugin tool rules, plugin auth status, and agent-type-specific persistence instructions.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agent_type` | string | No | One of `claude_code`, `claude_desktop`, `codex`, or `custom`. Tailors the persistence instructions in the response. Defaults to generic instructions. |
+
+**Response:**
+```json
+{
+  "rules": [
+    {
+      "name": "rich_content_usage",
+      "category": "renderer",
+      "source": "built-in",
+      "renderer": "rich_content",
+      "rule": "When presenting implementation plans..."
+    }
+  ],
+  "plugin_status": [
+    {
+      "plugin": "my-plugin",
+      "auth_type": "OAuth",
+      "auth_configured": false,
+      "auth_url": "https://...",
+      "message": "Plugin 'my-plugin' requires re-authentication..."
+    }
+  ],
+  "persistence_instructions": "Persist each rule as a memory file..."
+}
+```
+
 ## Tauri Events
 
 ### `push_preview` (Rust → WebView)

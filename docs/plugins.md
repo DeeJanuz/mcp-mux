@@ -35,7 +35,33 @@ A plugin manifest is a JSON file with the following structure:
 | `name` | string | Yes | Unique identifier for the plugin. Used as the filename in `~/.mcp-mux/plugins/<name>.json`. |
 | `version` | string | Yes | Semantic version of the plugin. |
 | `renderers` | object | No | Map of MCP tool names to frontend renderer names. When a tool result arrives, MCP Mux uses this mapping to select the correct renderer. If a tool is not listed, the default `rich_content` renderer is used. |
+| `renderer_definitions` | RendererDef[] | No | Structured renderer definitions with metadata for agent rule bootstrapping. Each entry defines a renderer's name, description, scope, associated tools, data schema hint, and behavioral rule. |
+| `tool_rules` | object | No | Map of tool names to behavioral rule strings. These rules are returned by the `setup_agent_rules` MCP tool so agents can persist them for guided tool usage. Tool names are automatically prefixed with the plugin's `tool_prefix`. |
 | `mcp` | object | No | MCP server connection configuration. If omitted, the plugin provides renderers only (no remote tools). |
+
+### RendererDef
+
+Structured renderer definition used for agent rule bootstrapping via the `setup_agent_rules` MCP tool.
+
+```json
+{
+  "name": "custom_view",
+  "description": "Custom visualization for analysis results",
+  "scope": "universal",
+  "tools": [],
+  "data_hint": "{ \"title\": \"string\", \"body\": \"markdown\" }",
+  "rule": "When displaying analysis results, use push_content with tool_name 'custom_view'."
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Renderer key used in `tool_name` when calling `push_content`. |
+| `description` | string | Yes | Human-readable description for agents. |
+| `scope` | string | No | `"universal"` (any agent can use it) or `"tool"` (tied to specific MCP tools). Defaults to `"tool"`. |
+| `tools` | string[] | No | For tool-scoped renderers: which tool names trigger this renderer. |
+| `data_hint` | string | No | Data schema hint for agents (e.g., `"{ title: string, body: markdown }"`). |
+| `rule` | string | No | Behavioral rule text returned by `setup_agent_rules` for agent persistence. |
 
 ### PluginMcpConfig
 
@@ -93,7 +119,7 @@ Authentication is configured via a tagged union on the `type` field. Three types
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `type` | `"oauth"` | Yes | Selects OAuth browser redirect flow. |
+| `type` | `"OAuth"` or `"oauth"` | Yes | Selects OAuth browser redirect flow. Both casings are accepted. |
 | `client_id` | string | No | OAuth client ID. Optional if the provider does not require one. |
 | `auth_url` | string | Yes | Authorization endpoint URL. The user's browser is opened to this URL. |
 | `token_url` | string | Yes | Token exchange endpoint URL. |
@@ -232,7 +258,7 @@ Choose the auth type that matches your server:
 
 - **Bearer token** -- simplest option. After install, a modal prompts the user to enter their token. The token is stored in `~/.mcp-mux/auth/<plugin-name>.json`. Falls back to reading from the environment variable if no stored token exists.
 - **API key header** -- for services that use a custom header name. Same storage and fallback behavior as bearer tokens.
-- **OAuth** -- for services requiring browser-based login. MCP Mux handles the redirect flow. Tokens are stored in `~/.mcp-mux/auth/` and checked for expiry on each use; expired tokens are rejected rather than silently sent.
+- **OAuth** -- for services requiring browser-based login. MCP Mux handles the redirect flow. Tokens are stored in `~/.mcp-mux/auth/` and checked for expiry on each use. **Automatic token refresh**: when an OAuth token expires and a `refresh_token` is available, MCP Mux automatically attempts a `refresh_token` grant before making plugin API calls. If refresh succeeds, the new token is stored to disk and the call proceeds transparently. If refresh fails, auth status and re-authentication URLs are surfaced through both MCP `initialize` instructions and the `setup_agent_rules` tool response, so agents can direct users to re-authenticate.
 
 Auth resolution is centralized in the `PluginAuth::resolve_header()` method in the shared crate, which delegates all token file I/O to the `token_store` module (`shared/src/token_store.rs`). For Bearer and API Key auth, the resolution order is:
 

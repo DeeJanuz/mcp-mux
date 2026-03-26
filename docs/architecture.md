@@ -46,9 +46,10 @@ MCP Agent → POST localhost:4200/api/push
 | `http_server.rs` | axum HTTP server on `:4200`. Routes: `GET /health`, `POST /api/push`. Runs on a dedicated thread with its own tokio runtime to avoid blocking the GTK event loop |
 | `session.rs` | `SessionStore` — in-memory `HashMap<String, PreviewSession>` with 30-minute TTL and 60s GC interval |
 | `review.rs` | `ReviewState` — pending review management via `tokio::oneshot` channels. `add_pending()` returns a receiver; `resolve()` or `dismiss()` sends the decision |
-| `commands.rs` | Tauri IPC commands: `get_sessions`, `submit_decision`, `dismiss_session`, `get_health`, plus 6 plugin management commands (`list_plugins`, `install_plugin`, `uninstall_plugin`, `install_plugin_from_file`, `fetch_registry`, `start_plugin_auth`) |
+| `commands.rs` | Tauri IPC commands: `get_sessions`, `submit_decision`, `dismiss_session`, `get_health`, plus 6 plugin management commands (`list_plugins`, `install_plugin`, `uninstall_plugin`, `install_plugin_from_file`, `fetch_registry`, `start_plugin_auth`) and 2 settings commands (`get_settings`, `save_settings`) |
 | `state.rs` | `AppState` — shared state containing `Mutex<SessionStore>`, `Mutex<ReviewState>`, `Mutex<PluginRegistry>`, and `reqwest::Client` |
-| `registry.rs` | Remote plugin registry client — fetches GitHub-hosted JSON index with 1-hour cache |
+| `registry.rs` | Re-exports `get_configured_registry_url` and `fetch_registry` from the shared crate |
+| `tool_cache.rs` | `ToolCache` — per-plugin tool caching with 5-minute TTL, prefixed tool name indexing, and stale-detection logic (extracted from PluginRegistry) |
 | `auth.rs` | Plugin authentication — OAuth browser-redirect flow with ephemeral localhost callback server, plus Bearer and API key resolution |
 
 ### Frontend (`src/` + `public/`)
@@ -66,12 +67,14 @@ The WebView loads `index.html` which includes:
 
 ### Shared Types (`shared/`)
 
-`mcp-mux-shared` crate consumed by both the Tauri backend and CLI. Defines:
+`mcp-mux-shared` crate consumed by both the Tauri backend and CLI. Contains:
 - `PluginManifest`, `PluginMcpConfig` — plugin definition and MCP connection config
-- `PluginAuth` — tagged enum: `Bearer { token_env }`, `ApiKey { header_name, key_env }`, `OAuth { client_id, auth_url, token_url, scopes }`
+- `PluginAuth` — tagged enum: `Bearer { token_env }`, `ApiKey { header_name, key_env }`, `OAuth { client_id, auth_url, token_url, scopes }`. Implements `Display`, `display_name()`, and `resolve_header()` for centralized auth resolution
 - `RegistryEntry`, `RemoteRegistry` — remote registry schema
 - `PluginInfo` — lightweight plugin summary for IPC
 - Path helpers: `plugins_dir()`, `config_path()`, `auth_dir()`, `cache_dir()` — all under `~/.mcp-mux/`
+- `plugin_store::PluginStore` — filesystem-based plugin CRUD (list, load, save, remove, exists). Used by both CLI and Tauri app, eliminating duplicated disk I/O logic
+- `registry` module — `get_configured_registry_url()` and `fetch_registry()` with 1-hour disk cache. Shared by both CLI and Tauri app
 
 ### CLI (`cli/`)
 

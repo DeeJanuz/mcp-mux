@@ -188,7 +188,9 @@ Choose the auth type that matches your server:
 
 - **Bearer token** -- simplest option. User sets an environment variable with their API key.
 - **API key header** -- for services that use a custom header name.
-- **OAuth** -- for services requiring browser-based login. MCP Mux handles the redirect flow.
+- **OAuth** -- for services requiring browser-based login. MCP Mux handles the redirect flow. Tokens are stored in `~/.mcp-mux/auth/` and checked for expiry on each use; expired tokens are rejected rather than silently sent.
+
+Auth resolution is centralized in the `PluginAuth::resolve_header()` method in the shared crate. Each variant knows how to produce the appropriate HTTP authorization header value.
 
 ### 4. Create the manifest file
 
@@ -231,7 +233,7 @@ To list your plugin in the official registry, submit a pull request adding a `Re
 
 ### Discovery
 
-When MCP Mux starts, it scans `~/.mcp-mux/plugins/` for JSON manifest files. Each valid manifest is loaded and its MCP configuration is registered.
+When MCP Mux starts, the `PluginStore` (from the shared crate) scans `~/.mcp-mux/plugins/` for JSON manifest files. Each valid manifest is loaded and its MCP configuration is registered. The same `PluginStore` is used by both the Tauri app and the CLI for all plugin CRUD operations.
 
 ### Tool Caching
 
@@ -239,7 +241,9 @@ After connecting to a plugin's MCP server, MCP Mux calls `tools/list` to discove
 
 ### Cache TTL
 
-The registry cache has a 1-hour TTL (`3600` seconds). After the TTL expires, the next registry fetch will request fresh data from the remote URL. The cached version is used as a fallback if the remote is unreachable.
+Two caches operate with different TTLs:
+- **Registry cache**: 1-hour TTL (`3600` seconds). After expiry, the next registry fetch requests fresh data from the remote URL. The cached version is used as a fallback if the remote is unreachable. This cache is shared between CLI and Tauri via the `registry` module in the shared crate.
+- **Tool cache**: 5-minute TTL (`300` seconds). Per-plugin tool lists fetched via MCP `tools/list` are cached in memory by the `ToolCache` struct. Stale entries are refreshed automatically on the next poll cycle.
 
 ### Runtime Add/Remove
 

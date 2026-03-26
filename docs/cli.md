@@ -136,6 +136,6 @@ The CLI reads this file on every registry operation. If the file does not exist 
 
 ## Interaction with Desktop App
 
-The CLI and the desktop app share the same `~/.mcp-mux/plugins/` directory. Changes made by the CLI (adding or removing plugins) are picked up by the desktop app.
+The CLI and the desktop app share the same `~/.mcp-mux/plugins/` directory and use the same `PluginStore` and `registry` modules from the `mcp-mux-shared` crate. This means plugin CRUD operations and registry fetching (including the 1-hour disk cache) behave identically in both the CLI and desktop app.
 
-The desktop app caches the registry response for 1 hour. If you install a plugin via the CLI while the app is running, the plugin manifest is written directly to disk and takes effect on the next plugin scan -- no restart is required. However, if you are searching for newly published registry entries that the app has not yet fetched, you may need to wait for the cache TTL to expire or restart the app.
+Changes made by the CLI (adding or removing plugins) are picked up by the desktop app on the next plugin scan -- no restart is required. Both the CLI and desktop app now share the same registry cache on disk, so a fetch by either one benefits the other.

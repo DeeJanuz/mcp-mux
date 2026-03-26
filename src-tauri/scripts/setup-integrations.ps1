@@ -173,8 +173,17 @@ function Install-JsonConfig {
     }
 
     # Add mcp-mux entry
-    $mcpMuxEntry = [PSCustomObject]@{
-        url = $MCP_URL
+    # Claude Desktop requires stdio transport via mcp-remote bridge
+    if ($Platform.Name -eq "Claude Desktop") {
+        $mcpMuxEntry = [PSCustomObject]@{
+            command = "npx"
+            args    = @("-y", "mcp-remote", $MCP_URL)
+        }
+    }
+    else {
+        $mcpMuxEntry = [PSCustomObject]@{
+            url = $MCP_URL
+        }
     }
     $json.$jsonKey | Add-Member -NotePropertyName "mcp-mux" -NotePropertyValue $mcpMuxEntry -Force
 

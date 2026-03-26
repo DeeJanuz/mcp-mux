@@ -166,10 +166,9 @@ pub async fn fetch_all_registries(
         // All remote sources failed — fall back to bundled registry
         eprintln!("[mcp-mux] All remote registry sources failed, using bundled registry");
         let bundled = include_str!("bundled_registry.json");
-        if let Ok(registry) = serde_json::from_str::<RemoteRegistry>(bundled) {
-            return Ok(registry.plugins);
-        }
-        return Err("Failed to fetch from any registry source".to_string());
+        let registry: RemoteRegistry = serde_json::from_str(bundled)
+            .expect("bundled_registry.json is compiled-in and must always parse; this is a build-time bug");
+        return Ok(registry.plugins);
     }
 
     Ok(all_entries)

@@ -369,18 +369,7 @@ pub async fn update_plugin(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-
-    fn test_manifest(name: &str) -> PluginManifest {
-        PluginManifest {
-            name: name.to_string(),
-            version: "1.0.0".to_string(),
-            renderers: std::collections::HashMap::new(),
-            mcp: None,
-            renderer_definitions: vec![],
-            tool_rules: std::collections::HashMap::new(),
-        }
-    }
+    use crate::test_utils::{test_app_state, test_manifest};
 
     fn test_registry_entry(name: &str) -> RegistryEntry {
         RegistryEntry {
@@ -393,12 +382,6 @@ mod tests {
             tags: vec![],
             download_url: None,
         }
-    }
-
-    fn test_app_state() -> (Arc<AppState>, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
-        let store = mcp_mux_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
-        (Arc::new(AppState::new_with_store(store)), dir)
     }
 
     #[test]

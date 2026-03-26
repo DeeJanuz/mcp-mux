@@ -309,10 +309,10 @@ configure_codex() {
     if [[ -f "$cfg" ]] && [[ -s "$cfg" ]]; then
       echo ""
     fi
-    cat <<'ENDTOML'
+    cat <<ENDTOML
 [mcp_servers.mcp-mux]
 type = "sse"
-url = "http://localhost:4200/mcp"
+url = "$MCP_MUX_URL"
 ENDTOML
   } >> "$cfg"
 }

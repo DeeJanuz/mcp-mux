@@ -15,6 +15,8 @@ mod tool_cache;
 mod review;
 mod session;
 mod state;
+#[cfg(test)]
+mod test_utils;
 
 use std::sync::Arc;
 use state::AppState;

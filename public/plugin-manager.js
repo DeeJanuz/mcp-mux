@@ -52,20 +52,19 @@
       installed.forEach(function (p) { installedMap[p.name] = p; });
       renderRegistryCards(container, entries, installedMap);
     } catch (e) {
-      container.innerHTML = '<div class="empty-state" style="flex-direction:column;gap:12px;text-align:center">' +
-        '<div style="font-size:18px;margin-bottom:4px">Unable to load registry</div>' +
-        '<div style="font-size:12px;color:#737373;max-width:360px">' + escapeHtml(String(e)) + '</div>' +
-        '<div style="font-size:12px;color:#737373;margin-top:8px">Check your internet connection, or add a registry source in the <strong>Settings</strong> tab.</div>' +
-        '</div>';
+      container.innerHTML = renderEmptyState(
+        'Unable to load registry',
+        escapeHtml(String(e)) + '<br><br>Check your internet connection, or add a registry source in the <strong>Settings</strong> tab.'
+      );
     }
   }
 
   function renderRegistryCards(container, entries, installedMap) {
     if (!entries || entries.length === 0) {
-      container.innerHTML = '<div class="empty-state" style="flex-direction:column;gap:12px;text-align:center">' +
-        '<div style="font-size:18px;margin-bottom:4px">No plugins available</div>' +
-        '<div style="font-size:12px;color:#737373;max-width:360px">Add a registry source in the <strong>Settings</strong> tab, or use <strong>Add Custom Plugin</strong> in the Installed tab to add plugins manually.</div>' +
-        '</div>';
+      container.innerHTML = renderEmptyState(
+        'No plugins available',
+        'Add a registry source in the <strong>Settings</strong> tab, or use <strong>Add Custom Plugin</strong> in the Installed tab to add plugins manually.'
+      );
       return;
     }
 
@@ -133,10 +132,10 @@
     container.innerHTML = '';
 
     if (!plugins || plugins.length === 0) {
-      container.innerHTML = '<div class="empty-state" style="flex-direction:column;gap:12px;text-align:center">' +
-        '<div style="font-size:18px;margin-bottom:4px">No plugins installed</div>' +
-        '<div style="font-size:12px;color:#737373;max-width:360px">Browse the <strong>Registry</strong> tab to find plugins, or use the button below to add a custom plugin.</div>' +
-        '</div>';
+      container.innerHTML = renderEmptyState(
+        'No plugins installed',
+        'Browse the <strong>Registry</strong> tab to find plugins, or use the button below to add a custom plugin.'
+      );
     } else {
       var list = document.createElement('div');
       list.className = 'installed-list';
@@ -484,6 +483,13 @@
   }
 
   // --- Utility ---
+
+  function renderEmptyState(title, message) {
+    return '<div class="empty-state" style="flex-direction:column;gap:12px;text-align:center">' +
+      '<div style="font-size:18px;margin-bottom:4px">' + title + '</div>' +
+      '<div style="font-size:12px;color:#737373;max-width:360px">' + message + '</div>' +
+      '</div>';
+  }
 
   function escapeHtml(str) {
     var div = document.createElement('div');

@@ -1,0 +1,19 @@
+{
+  "name": "mcp-mux",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "dev:frontend": "vite",
+    "build:frontend": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "vite": "^6"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  }
+}

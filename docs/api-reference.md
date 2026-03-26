@@ -209,6 +209,23 @@ const token = await invoke('start_plugin_auth', { pluginName: 'my-plugin' });
 // Returns: token string on success
 ```
 
+### `get_settings`
+
+Read the application settings from `~/.mcp-mux/config.json`. Returns an empty object if no config file exists.
+
+```javascript
+const settings = await invoke('get_settings');
+// Returns: { registry_url?: string, ... }
+```
+
+### `save_settings`
+
+Write application settings to `~/.mcp-mux/config.json`. Creates the config directory and file if they do not exist.
+
+```javascript
+await invoke('save_settings', { settings: { registry_url: 'https://example.com/registry.json' } });
+```
+
 ## Tauri Events
 
 ### `push_preview` (Rust → WebView)

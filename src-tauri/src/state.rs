@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::time::Instant;
 
+use mcp_mux_shared::plugin_store::PluginStore;
 use mcp_mux_shared::RegistryEntry;
 
 use crate::mcp_session::McpSessionManager;
@@ -21,29 +21,20 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     pub latest_registry: Mutex<Vec<RegistryEntry>>,
     pub mcp_sessions: Mutex<McpSessionManager>,
-    /// Optional override for the plugins directory (used in tests).
-    plugins_dir_override: Option<PathBuf>,
+    plugin_store: PluginStore,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        let registry = PluginRegistry::load_plugins();
-        Self {
-            sessions: Mutex::new(SessionStore::new()),
-            reviews: Mutex::new(ReviewState::new()),
-            review_deadlines: Mutex::new(HashMap::new()),
-            plugin_registry: Mutex::new(registry),
-            http_client: reqwest::Client::new(),
-            latest_registry: Mutex::new(Vec::new()),
-            mcp_sessions: Mutex::new(McpSessionManager::new()),
-            plugins_dir_override: None,
-        }
+        let store = PluginStore::new();
+        Self::new_with_store(store)
     }
 
     /// Create an AppState with a custom PluginStore (useful for testing without touching the real filesystem).
-    pub fn new_with_store(store: mcp_mux_shared::plugin_store::PluginStore) -> Self {
-        let dir = store.dir().to_path_buf();
-        let registry = PluginRegistry::load_plugins_with_store(store);
+    pub fn new_with_store(store: PluginStore) -> Self {
+        let registry = PluginRegistry::load_plugins_with_store(
+            PluginStore::with_dir(store.dir().to_path_buf()),
+        );
         Self {
             sessions: Mutex::new(SessionStore::new()),
             reviews: Mutex::new(ReviewState::new()),
@@ -52,7 +43,7 @@ impl AppState {
             http_client: reqwest::Client::new(),
             latest_registry: Mutex::new(Vec::new()),
             mcp_sessions: Mutex::new(McpSessionManager::new()),
-            plugins_dir_override: Some(dir),
+            plugin_store: store,
         }
     }
 
@@ -70,12 +61,8 @@ impl AppState {
     /// Reload all plugins from disk and broadcast a tools/list_changed notification
     /// to all connected MCP SSE sessions.
     pub fn reload_plugins(&self) {
-        let new_registry = if let Some(dir) = &self.plugins_dir_override {
-            let store = mcp_mux_shared::plugin_store::PluginStore::with_dir(dir.clone());
-            PluginRegistry::load_plugins_with_store(store)
-        } else {
-            PluginRegistry::load_plugins()
-        };
+        let store = PluginStore::with_dir(self.plugin_store.dir().to_path_buf());
+        let new_registry = PluginRegistry::load_plugins_with_store(store);
         {
             let mut registry = self.plugin_registry.lock().unwrap();
             *registry = new_registry;
@@ -87,24 +74,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-
-    fn test_app_state() -> (Arc<AppState>, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
-        let store = mcp_mux_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
-        (Arc::new(AppState::new_with_store(store)), dir)
-    }
-
-    fn test_manifest(name: &str) -> mcp_mux_shared::PluginManifest {
-        mcp_mux_shared::PluginManifest {
-            name: name.to_string(),
-            version: "1.0.0".to_string(),
-            renderers: std::collections::HashMap::new(),
-            mcp: None,
-            renderer_definitions: vec![],
-            tool_rules: std::collections::HashMap::new(),
-        }
-    }
+    use crate::test_utils::{test_app_state, test_manifest};
 
     #[test]
     fn test_new_with_store() {

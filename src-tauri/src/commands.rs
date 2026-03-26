@@ -248,17 +248,14 @@ pub fn store_plugin_token(plugin_name: String, token: String) -> Result<(), Stri
     crate::auth::store_api_key(&plugin_name, &token)
 }
 
-#[tauri::command]
-pub async fn install_plugin_from_registry(
-    entry_json: String,
-    state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
+/// Shared helper for installing or updating a plugin from a registry entry.
+/// Downloads the zip package if a download URL is present, otherwise falls back to manifest-only.
+/// Removes any existing plugin with the same name before adding the new one.
+async fn install_or_update_from_entry(
+    entry: &RegistryEntry,
+    state: &AppState,
 ) -> Result<(), String> {
-    let entry: RegistryEntry = serde_json::from_str(&entry_json)
-        .map_err(|e| format!("Invalid registry entry: {}", e))?;
-
     if let Some(download_url) = &entry.download_url {
-        // Download and extract the zip package
         let client = state.http_client.clone();
         let plugins_dir = mcp_mux_shared::plugins_dir();
         let manifest = mcp_mux_shared::package::download_and_install_plugin(
@@ -268,18 +265,32 @@ pub async fn install_plugin_from_registry(
         )
         .await?;
 
-        // Register in memory
         let mut registry = state.plugin_registry.lock().unwrap();
-        // Remove if already exists (for updates)
         if registry.manifests.iter().any(|m| m.name == manifest.name) {
             let _ = registry.remove_plugin(&manifest.name);
         }
         registry.add_plugin(manifest)?;
     } else {
-        // Fall back to manifest-only install
         let mut registry = state.plugin_registry.lock().unwrap();
-        registry.add_plugin(entry.manifest)?;
+        if registry.manifests.iter().any(|m| m.name == entry.manifest.name) {
+            let _ = registry.remove_plugin(&entry.manifest.name);
+        }
+        registry.add_plugin(entry.manifest.clone())?;
     }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn install_plugin_from_registry(
+    entry_json: String,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let entry: RegistryEntry = serde_json::from_str(&entry_json)
+        .map_err(|e| format!("Invalid registry entry: {}", e))?;
+
+    install_or_update_from_entry(&entry, &state).await?;
 
     let _ = app_handle.emit("reload_renderers", ());
 
@@ -309,30 +320,13 @@ pub fn install_plugin_from_zip(
 }
 
 #[tauri::command]
-pub fn get_settings() -> Result<serde_json::Value, String> {
-    let path = mcp_mux_shared::config_path();
-    if !path.exists() {
-        return Ok(serde_json::json!({}));
-    }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read config: {}", e))?;
-    let config: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config: {}", e))?;
-    Ok(config)
+pub fn get_settings() -> Result<mcp_mux_shared::settings::Settings, String> {
+    Ok(mcp_mux_shared::settings::Settings::load())
 }
 
 #[tauri::command]
-pub fn save_settings(settings: serde_json::Value) -> Result<(), String> {
-    let path = mcp_mux_shared::config_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
-    }
-    let json = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-    std::fs::write(&path, json)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
-    Ok(())
+pub fn save_settings(settings: mcp_mux_shared::settings::Settings) -> Result<(), String> {
+    settings.save()
 }
 
 #[tauri::command]
@@ -346,34 +340,13 @@ pub async fn update_plugin(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    // Find the registry entry for this plugin
     let entry = {
         let cached = state.latest_registry.lock().unwrap();
         cached.iter().find(|e| e.name == name).cloned()
     }
     .ok_or_else(|| format!("Plugin '{}' not found in registry", name))?;
 
-    if let Some(download_url) = &entry.download_url {
-        // Download and extract new version
-        let client = state.http_client.clone();
-        let plugins_dir = mcp_mux_shared::plugins_dir();
-        let manifest = mcp_mux_shared::package::download_and_install_plugin(
-            &client,
-            download_url,
-            &plugins_dir,
-        )
-        .await?;
-
-        // Update in-memory registry
-        let mut registry = state.plugin_registry.lock().unwrap();
-        let _ = registry.remove_plugin(&name);
-        registry.add_plugin(manifest)?;
-    } else {
-        // Manifest-only update
-        let mut registry = state.plugin_registry.lock().unwrap();
-        let _ = registry.remove_plugin(&name);
-        registry.add_plugin(entry.manifest)?;
-    }
+    install_or_update_from_entry(&entry, &state).await?;
 
     let _ = app_handle.emit("reload_renderers", ());
 

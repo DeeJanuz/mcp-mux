@@ -1,6 +1,7 @@
 pub mod package;
 pub mod plugin_store;
 pub mod registry;
+pub mod settings;
 pub mod token_store;
 
 use serde::{Deserialize, Serialize};

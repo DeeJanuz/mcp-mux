@@ -78,13 +78,8 @@ struct HealthResponse {
     started_at: String,
 }
 
-/// Detect content type from tool name (mirrors companion ws-handler.ts logic)
-fn detect_content_type(tool_name: &str) -> String {
-    match tool_name {
-        "rich_content" | "push_to_companion" => "rich_content".to_string(),
-        _ => "rich_content".to_string(),
-    }
-}
+/// Content type for all push operations
+const CONTENT_TYPE: &str = "rich_content";
 
 /// Result of executing a push operation
 pub enum ExecutePushResult {
@@ -104,7 +99,7 @@ pub async fn execute_push(
     session_id: Option<String>,
 ) -> ExecutePushResult {
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let content_type = detect_content_type(&tool_name);
+    let content_type = CONTENT_TYPE.to_string();
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -394,21 +389,7 @@ async fn reload_plugins_handler(
     Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
 ) -> StatusCode {
     let state_guard = state.lock().await;
-    let new_registry = crate::plugin::PluginRegistry::load_plugins();
-    {
-        let mut registry = state_guard.inner.plugin_registry.lock().unwrap();
-        *registry = new_registry;
-    }
-    // Broadcast tools/list_changed notification to all SSE sessions
-    let notification = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/tools/list_changed"
-    })
-    .to_string();
-    {
-        let sessions = state_guard.inner.mcp_sessions.lock().unwrap();
-        sessions.broadcast(&notification);
-    }
+    state_guard.inner.reload_plugins();
     StatusCode::OK
 }
 

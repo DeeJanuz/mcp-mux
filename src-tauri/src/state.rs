@@ -35,4 +35,23 @@ impl AppState {
             mcp_sessions: Mutex::new(McpSessionManager::new()),
         }
     }
+
+    /// Reload all plugins from disk and broadcast a tools/list_changed notification
+    /// to all connected MCP SSE sessions.
+    pub fn reload_plugins(&self) {
+        let new_registry = PluginRegistry::load_plugins();
+        {
+            let mut registry = self.plugin_registry.lock().unwrap();
+            *registry = new_registry;
+        }
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/tools/list_changed"
+        })
+        .to_string();
+        {
+            let sessions = self.mcp_sessions.lock().unwrap();
+            sessions.broadcast(&notification);
+        }
+    }
 }

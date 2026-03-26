@@ -17,6 +17,17 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Cache Cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-tauri
+            src-tauri/target
+          key: macos-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: macos-cargo-
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -27,7 +38,7 @@ jobs:
         run: npm ci
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli
+        run: command -v cargo-tauri || cargo install tauri-cli
 
       - name: Build Tauri app
         env:
@@ -55,6 +66,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-tauri.exe
+            src-tauri/target
+          key: windows-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: windows-cargo-
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -65,7 +87,11 @@ jobs:
         run: npm ci
 
       - name: Install Tauri CLI
-        run: cargo install tauri-cli
+        run: |
+          if (!(Get-Command cargo-tauri -ErrorAction SilentlyContinue)) {
+            cargo install tauri-cli
+          }
+        shell: pwsh
 
       - name: Build Tauri app
         run: cargo tauri build

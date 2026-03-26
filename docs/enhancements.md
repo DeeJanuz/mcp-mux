@@ -1,8 +1,8 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-26
-**Total Active Issues:** 5
-**Resolved This Month:** 20
+**Total Active Issues:** 0
+**Resolved This Month:** 25
 
 ---
 
@@ -18,46 +18,23 @@ _None_
 
 ### Medium
 
-#### M-010: AppState carries test-only `plugins_dir_override` field in production struct
-- **File(s):** `src-tauri/src/state.rs`
-- **Principle:** SRP / Clean Architecture
-- **Description:** The `plugins_dir_override: Option<PathBuf>` field and the conditional branch in `reload_plugins()` exist solely to support test injection. This leaks test infrastructure into the production struct. A cleaner approach would store the `PluginStore` itself as a field on `AppState` and always use it for reloads, eliminating the conditional entirely.
-- **Suggested Fix:** Replace `plugins_dir_override: Option<PathBuf>` with `plugin_store: PluginStore` as a permanent field. `reload_plugins()` would always use `self.plugin_store` instead of branching. `new()` initializes with the default store; `new_with_store()` accepts a custom one.
-- **Detected:** 2026-03-26 (commit a0ed7b5)
+_None_
 
 ### Low
 
-#### L-007: Duplicated inline HTML empty-state markup in plugin-manager.js
-- **File(s):** `public/plugin-manager.js`
-- **Principle:** DRY
-- **Description:** The empty-state HTML pattern (outer div with `flex-direction:column;gap:12px;text-align:center`, inner heading and description divs with hardcoded font sizes and colors) is copy-pasted across three locations: the registry fetch error handler (~line 55), the empty registry cards renderer (~line 62), and the empty installed list renderer (~line 136). Style or structural changes require updating all three.
-- **Suggested Fix:** Extract a `renderEmptyState(title, message)` helper that returns the HTML string, and call it from all three locations.
-- **Detected:** 2026-03-26 (commit aa69a19)
-
-#### L-006: Bundled registry fallback parse failure is silently ignored
-- **File(s):** `shared/src/registry.rs`
-- **Principle:** Fail-fast / Observability
-- **Description:** In `fetch_all_registries` (line 169), if `serde_json::from_str` fails on the bundled JSON, the error is silently discarded and the generic "Failed to fetch from any registry source" error is returned. Since the bundled JSON is compiled in via `include_str!`, a parse failure would indicate a build-time data corruption that should be loudly reported.
-- **Suggested Fix:** Add an `eprintln!` or `tracing::error!` in the `Err` branch of the bundled parse, or use `unwrap`/`expect` since the data is compile-time constant and should always parse.
-- **Detected:** 2026-03-26 (commit aa69a19)
-
-#### L-005: Hardcoded URL in mcp_mux_entry_for Claude Desktop case diverges from $MCP_MUX_URL variable
-- **File(s):** `src-tauri/scripts/setup-integrations.sh`
-- **Principle:** DRY / Single Source of Truth
-- **Description:** The Claude Desktop case in `mcp_mux_entry_for()` (line 137) hardcodes `http://localhost:4200/mcp` inside a single-quoted heredoc, while all other cases reference `$MCP_MUX_URL`. If the variable is changed at the top of the script, the Claude Desktop entry will silently use the stale URL.
-- **Suggested Fix:** Use an unquoted heredoc or `echo` with variable interpolation so the Claude Desktop case also references `$MCP_MUX_URL`.
-- **Detected:** 2026-03-26 (commit 84e0e57)
-
-#### L-004: Duplicated test helpers across commands.rs and state.rs
-- **File(s):** `src-tauri/src/commands.rs`, `src-tauri/src/state.rs`
-- **Principle:** DRY
-- **Description:** `test_manifest()` and `test_app_state()` are defined identically in both test modules. As more test modules are added, this duplication will grow.
-- **Suggested Fix:** Create a `#[cfg(test)] pub mod test_helpers` in a shared location (e.g., `state.rs` or a dedicated `test_utils.rs`) and import from both test modules.
-- **Detected:** 2026-03-26 (commit a0ed7b5)
+_None_
 
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-03-26 (commit 2b0f6cb)
+
+- **M-010:** AppState carries test-only `plugins_dir_override` field in production struct -- replaced `plugins_dir_override: Option<PathBuf>` with permanent `plugin_store: PluginStore` field on `AppState`; `reload_plugins()` now always uses `self.plugin_store` instead of branching
+- **L-004:** Duplicated test helpers across commands.rs and state.rs -- extracted shared `test_utils.rs` module with `test_manifest()` and `test_app_state()` helpers, imported by both test modules
+- **L-005:** Hardcoded URL in setup-integrations.sh diverges from $MCP_MUX_URL variable -- switched codex heredoc from single-quoted to unquoted so `$MCP_MUX_URL` is interpolated; also added Claude Desktop mcp-remote entry to PowerShell script
+- **L-006:** Bundled registry fallback parse failure silently ignored -- replaced `if let Ok` with `expect()` since bundled JSON is compile-time data that must always parse
+- **L-007:** Duplicated inline HTML empty-state markup in plugin-manager.js -- extracted `renderEmptyState(title, message)` helper, called from all three locations
 
 ### Resolved 2026-03-26 (commit a0ed7b5)
 
@@ -100,6 +77,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 2b0f6cb | 2026-03-26 | -- | -- |
 | aa69a19 | 2026-03-26 | 75/100 | Good |
 | b5f3eb7 | 2026-03-26 | 80/100 | Good |
 | 84e0e57 | 2026-03-26 | 78/100 | Good |

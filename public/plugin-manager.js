@@ -48,7 +48,9 @@
     container.innerHTML = '<div class="loading">Loading registry...</div>';
 
     try {
-      var entries = await window.__TAURI__.core.invoke('fetch_registry', { registryUrl: null });
+      var settings = await window.__TAURI__.core.invoke('get_settings');
+      var registryUrl = (settings && settings.registry_url) || null;
+      var entries = await window.__TAURI__.core.invoke('fetch_registry', { registryUrl: registryUrl });
       var installed = await window.__TAURI__.core.invoke('list_plugins');
       var installedNames = new Set(installed.map(function (p) { return p.name; }));
       renderRegistryCards(container, entries, installedNames);
@@ -233,10 +235,14 @@
 
   // --- Settings Tab ---
 
-  function loadSettings() {
+  async function loadSettings() {
     var input = document.getElementById('registry-url');
-    var saved = localStorage.getItem('mcp-mux-registry-url');
-    input.value = saved || DEFAULT_REGISTRY_URL;
+    try {
+      var settings = await window.__TAURI__.core.invoke('get_settings');
+      input.value = (settings && settings.registry_url) || DEFAULT_REGISTRY_URL;
+    } catch (e) {
+      input.value = DEFAULT_REGISTRY_URL;
+    }
   }
 
   window.resetRegistryUrl = function resetRegistryUrl() {
@@ -245,15 +251,19 @@
     showSettingsMessage('Reset to default.', false);
   };
 
-  window.saveSettings = function saveSettings() {
+  window.saveSettings = async function saveSettings() {
     var input = document.getElementById('registry-url');
     var url = input.value.trim();
     if (!url) {
       showSettingsMessage('URL cannot be empty.', true);
       return;
     }
-    localStorage.setItem('mcp-mux-registry-url', url);
-    showSettingsMessage('Settings saved.', false);
+    try {
+      await window.__TAURI__.core.invoke('save_settings', { settings: { registry_url: url } });
+      showSettingsMessage('Settings saved.', false);
+    } catch (e) {
+      showSettingsMessage('Failed to save: ' + e, true);
+    }
   };
 
   function showSettingsMessage(msg, isError) {

@@ -23,6 +23,9 @@ reqwest = { version = "0.12", features = ["json"] }
 dirs = "5"
 mcp-mux-shared = { path = "../shared" }
 
+[dev-dependencies]
+tempfile = "3"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

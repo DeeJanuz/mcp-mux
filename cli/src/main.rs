@@ -1,9 +1,7 @@
 use clap::{Parser, Subcommand};
 use mcp_mux_shared::*;
-use std::fs;
-
-const DEFAULT_REGISTRY_URL: &str =
-    "https://raw.githubusercontent.com/anthropics/mcp-mux-registry/main/registry.json";
+use mcp_mux_shared::plugin_store::PluginStore;
+use mcp_mux_shared::registry;
 
 #[derive(Parser)]
 #[command(name = "mcp-mux-cli", about = "MCP Mux plugin manager CLI")]
@@ -47,75 +45,15 @@ enum PluginAction {
     },
 }
 
-fn get_registry_url() -> String {
-    if let Ok(content) = fs::read_to_string(config_path()) {
-        if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(url) = config.get("registry_url").and_then(|v| v.as_str()) {
-                return url.to_string();
-            }
-        }
-    }
-    DEFAULT_REGISTRY_URL.to_string()
-}
-
-async fn fetch_registry() -> Result<Vec<RegistryEntry>, String> {
-    let url = get_registry_url();
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch registry: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("Registry returned HTTP {}", resp.status()));
-    }
-
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read registry response: {}", e))?;
-
-    let registry: RemoteRegistry =
-        serde_json::from_str(&body).map_err(|e| format!("Failed to parse registry: {}", e))?;
-
-    Ok(registry.plugins)
-}
-
 fn plugin_list() {
-    let dir = plugins_dir();
-    if !dir.exists() {
-        println!("No plugins installed.");
-        return;
-    }
-
-    let entries: Vec<_> = fs::read_dir(&dir)
-        .unwrap_or_else(|_| {
-            println!("No plugins installed.");
-            std::process::exit(0);
-        })
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|ext| ext == "json")
-                .unwrap_or(false)
-        })
-        .collect();
-
-    if entries.is_empty() {
-        println!("No plugins installed.");
-        return;
-    }
-
-    let mut plugins: Vec<PluginManifest> = Vec::new();
-    for entry in entries {
-        if let Ok(content) = fs::read_to_string(entry.path()) {
-            if let Ok(manifest) = serde_json::from_str::<PluginManifest>(&content) {
-                plugins.push(manifest);
-            }
+    let store = PluginStore::new();
+    let plugins = match store.list() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
-    }
+    };
 
     if plugins.is_empty() {
         println!("No plugins installed.");
@@ -135,9 +73,7 @@ fn plugin_list() {
     for plugin in &plugins {
         let auth_type = match &plugin.mcp {
             Some(mcp) => match &mcp.auth {
-                Some(PluginAuth::Bearer { .. }) => "bearer auth".to_string(),
-                Some(PluginAuth::ApiKey { .. }) => "api key auth".to_string(),
-                Some(PluginAuth::OAuth { .. }) => "oauth".to_string(),
+                Some(a) => format!("{} auth", a.display_name()),
                 None => "no auth".to_string(),
             },
             None => "no mcp".to_string(),
@@ -161,7 +97,9 @@ fn plugin_list() {
 }
 
 async fn plugin_add(name: &str) {
-    let entries = match fetch_registry().await {
+    let url = registry::get_configured_registry_url();
+    let client = reqwest::Client::new();
+    let entries = match registry::fetch_registry(&client, &url).await {
         Ok(e) => e,
         Err(err) => {
             eprintln!("Error: {}", err);
@@ -172,19 +110,11 @@ async fn plugin_add(name: &str) {
     let entry = entries.iter().find(|e| e.name == name);
     match entry {
         Some(entry) => {
-            let dir = plugins_dir();
-            if let Err(e) = fs::create_dir_all(&dir) {
-                eprintln!("Error creating plugins directory: {}", e);
+            let store = PluginStore::new();
+            if let Err(e) = store.save(&entry.manifest) {
+                eprintln!("Error: {}", e);
                 std::process::exit(1);
             }
-
-            let path = dir.join(format!("{}.json", name));
-            let json = serde_json::to_string_pretty(&entry.manifest).unwrap();
-            if let Err(e) = fs::write(&path, json) {
-                eprintln!("Error writing plugin file: {}", e);
-                std::process::exit(1);
-            }
-
             println!("Installed plugin '{}' v{}", entry.name, entry.version);
         }
         None => {
@@ -200,22 +130,16 @@ async fn plugin_add(name: &str) {
 }
 
 fn plugin_remove(name: &str) {
-    let path = plugins_dir().join(format!("{}.json", name));
-    if !path.exists() {
-        eprintln!("Plugin '{}' is not installed.", name);
+    let store = PluginStore::new();
+    if let Err(e) = store.remove(name) {
+        eprintln!("Error: {}", e);
         std::process::exit(1);
     }
-
-    if let Err(e) = fs::remove_file(&path) {
-        eprintln!("Error removing plugin: {}", e);
-        std::process::exit(1);
-    }
-
     println!("Removed plugin '{}'.", name);
 }
 
 fn plugin_add_custom(path: &str) {
-    let content = match fs::read_to_string(path) {
+    let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error reading file '{}': {}", path, e);
@@ -236,16 +160,9 @@ fn plugin_add_custom(path: &str) {
         std::process::exit(1);
     }
 
-    let dir = plugins_dir();
-    if let Err(e) = fs::create_dir_all(&dir) {
-        eprintln!("Error creating plugins directory: {}", e);
-        std::process::exit(1);
-    }
-
-    let dest = dir.join(format!("{}.json", manifest.name));
-    let json = serde_json::to_string_pretty(&manifest).unwrap();
-    if let Err(e) = fs::write(&dest, json) {
-        eprintln!("Error writing plugin file: {}", e);
+    let store = PluginStore::new();
+    if let Err(e) = store.save(&manifest) {
+        eprintln!("Error: {}", e);
         std::process::exit(1);
     }
 
@@ -256,7 +173,9 @@ fn plugin_add_custom(path: &str) {
 }
 
 async fn plugin_search(query: Option<&str>) {
-    let entries = match fetch_registry().await {
+    let url = registry::get_configured_registry_url();
+    let client = reqwest::Client::new();
+    let entries = match registry::fetch_registry(&client, &url).await {
         Ok(e) => e,
         Err(err) => {
             eprintln!("Error: {}", err);

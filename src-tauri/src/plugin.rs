@@ -1,129 +1,56 @@
 use mcp_mux_shared::{PluginAuth, PluginInfo, PluginManifest};
+use mcp_mux_shared::plugin_store::PluginStore;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::http_server::AsyncAppState;
-
-const CACHE_TTL_SECS: u64 = 300; // 5 minutes
-
-pub struct LoadedPlugin {
-    pub manifest: PluginManifest,
-    pub cached_tools: Vec<Value>,
-    pub tools_fetched_at: Option<Instant>,
-    pub refresh_pending: bool,
-}
+use crate::tool_cache::ToolCache;
 
 pub struct PluginRegistry {
-    pub plugins: Vec<LoadedPlugin>,
-    pub tool_index: HashMap<String, usize>, // prefixed_tool_name -> plugin index
+    pub manifests: Vec<PluginManifest>,
+    pub tool_cache: ToolCache,
 }
 
 impl PluginRegistry {
     /// Load all plugin manifests from ~/.mcp-mux/plugins/
     pub fn load_plugins() -> Self {
-        let mut plugins = Vec::new();
-
-        let plugin_dir = match dirs::home_dir() {
-            Some(home) => home.join(".mcp-mux").join("plugins"),
-            None => {
-                eprintln!("[mcp-mux] Could not determine home directory for plugins");
-                return Self {
-                    plugins,
-                    tool_index: HashMap::new(),
-                };
-            }
-        };
-
-        // Create directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(&plugin_dir) {
-            eprintln!(
-                "[mcp-mux] Failed to create plugin directory {:?}: {}",
-                plugin_dir, e
-            );
-            return Self {
-                plugins,
-                tool_index: HashMap::new(),
-            };
-        }
-
-        let entries = match std::fs::read_dir(&plugin_dir) {
-            Ok(entries) => entries,
+        let store = PluginStore::new();
+        let manifests = match store.list() {
+            Ok(m) => m,
             Err(e) => {
-                eprintln!(
-                    "[mcp-mux] Failed to read plugin directory {:?}: {}",
-                    plugin_dir, e
-                );
+                eprintln!("[mcp-mux] Failed to load plugins: {}", e);
                 return Self {
-                    plugins,
-                    tool_index: HashMap::new(),
+                    manifests: Vec::new(),
+                    tool_cache: ToolCache::new(0),
                 };
             }
         };
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
-                match std::fs::read_to_string(&path) {
-                    Ok(content) => match serde_json::from_str::<PluginManifest>(&content) {
-                        Ok(manifest) => {
-                            eprintln!(
-                                "[mcp-mux] Loaded plugin: {} v{}",
-                                manifest.name, manifest.version
-                            );
-                            plugins.push(LoadedPlugin {
-                                manifest,
-                                cached_tools: Vec::new(),
-                                tools_fetched_at: None,
-                                refresh_pending: false,
-                            });
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "[mcp-mux] Failed to parse plugin {:?}: {}",
-                                path, e
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!(
-                            "[mcp-mux] Failed to read plugin {:?}: {}",
-                            path, e
-                        );
-                    }
-                }
-            }
+        for manifest in &manifests {
+            eprintln!(
+                "[mcp-mux] Loaded plugin: {} v{}",
+                manifest.name, manifest.version
+            );
         }
+
+        let tool_cache = ToolCache::new(manifests.len());
 
         Self {
-            plugins,
-            tool_index: HashMap::new(),
+            manifests,
+            tool_cache,
         }
     }
 
     /// Return indices of plugins whose tool cache is stale or empty
     pub fn stale_plugin_indices(&self) -> Vec<usize> {
-        self.plugins
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| {
-                p.manifest.mcp.is_some()
-                    && !p.refresh_pending
-                    && match p.tools_fetched_at {
-                        None => true,
-                        Some(t) => t.elapsed().as_secs() > CACHE_TTL_SECS,
-                    }
-            })
-            .map(|(i, _)| i)
-            .collect()
+        self.tool_cache
+            .stale_indices(|i| self.manifests[i].mcp.is_some())
     }
 
     pub fn mark_refresh_pending(&mut self, idx: usize) {
-        if let Some(plugin) = self.plugins.get_mut(idx) {
-            plugin.refresh_pending = true;
-        }
+        self.tool_cache.mark_pending(idx);
     }
 
     /// Refresh tool caches from plugin MCP backends
@@ -136,11 +63,10 @@ impl PluginRegistry {
         let to_refresh: Vec<(usize, String, Option<String>)> = {
             let registry = state_guard.inner.plugin_registry.lock().unwrap();
             let mut result = Vec::new();
-            for i in 0..registry.plugins.len() {
-                let plugin = &registry.plugins[i];
-                if plugin.refresh_pending {
-                    if let Some(mcp) = &plugin.manifest.mcp {
-                        let auth = resolve_auth_header(&plugin.manifest.name, &mcp.auth);
+            for i in 0..registry.manifests.len() {
+                if registry.tool_cache.entries[i].refresh_pending {
+                    if let Some(mcp) = &registry.manifests[i].mcp {
+                        let auth = resolve_auth_header(&registry.manifests[i].name, &mcp.auth);
                         result.push((i, mcp.url.clone(), auth));
                     }
                 }
@@ -164,10 +90,7 @@ impl PluginRegistry {
 
     /// Return all cached plugin tools
     pub fn all_tools(&self) -> Vec<Value> {
-        self.plugins
-            .iter()
-            .flat_map(|p| p.cached_tools.clone())
-            .collect()
+        self.tool_cache.all_tools()
     }
 
     /// Find which plugin handles a prefixed tool name.
@@ -176,49 +99,36 @@ impl PluginRegistry {
         &self,
         prefixed_name: &str,
     ) -> Option<(String, Option<String>, String, HashMap<String, String>)> {
-        let idx = self.tool_index.get(prefixed_name)?;
-        let plugin = self.plugins.get(*idx)?;
-        let mcp = plugin.manifest.mcp.as_ref()?;
+        let idx = self.tool_cache.tool_index.get(prefixed_name)?;
+        let manifest = self.manifests.get(*idx)?;
+        let mcp = manifest.mcp.as_ref()?;
         let unprefixed = prefixed_name.strip_prefix(&mcp.tool_prefix)?;
-        let auth = resolve_auth_header(&plugin.manifest.name, &mcp.auth);
+        let auth = resolve_auth_header(&manifest.name, &mcp.auth);
 
         Some((
             mcp.url.clone(),
             auth,
             unprefixed.to_string(),
-            plugin.manifest.renderers.clone(),
+            manifest.renderers.clone(),
         ))
     }
 
     /// Add a new plugin at runtime, persisting its manifest to disk.
     pub fn add_plugin(&mut self, manifest: PluginManifest) -> Result<(), String> {
-        // Check for duplicate name
-        if self.plugins.iter().any(|p| p.manifest.name == manifest.name) {
+        if self.manifests.iter().any(|m| m.name == manifest.name) {
             return Err(format!("Plugin '{}' is already installed", manifest.name));
         }
 
-        // Ensure plugins directory exists and write manifest
-        let plugin_dir = mcp_mux_shared::plugins_dir();
-        std::fs::create_dir_all(&plugin_dir)
-            .map_err(|e| format!("Failed to create plugins directory: {}", e))?;
-
-        let path = plugin_dir.join(format!("{}.json", manifest.name));
-        let json = serde_json::to_string_pretty(&manifest)
-            .map_err(|e| format!("Failed to serialize manifest: {}", e))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write manifest file: {}", e))?;
+        let store = PluginStore::new();
+        store.save(&manifest)?;
 
         eprintln!(
             "[mcp-mux] Installed plugin: {} v{}",
             manifest.name, manifest.version
         );
 
-        self.plugins.push(LoadedPlugin {
-            manifest,
-            cached_tools: Vec::new(),
-            tools_fetched_at: None,
-            refresh_pending: false,
-        });
+        self.manifests.push(manifest);
+        self.tool_cache.push();
 
         Ok(())
     }
@@ -226,21 +136,19 @@ impl PluginRegistry {
     /// Remove a plugin by name, deleting its manifest from disk.
     pub fn remove_plugin(&mut self, name: &str) -> Result<(), String> {
         let idx = self
-            .plugins
+            .manifests
             .iter()
-            .position(|p| p.manifest.name == name)
+            .position(|m| m.name == name)
             .ok_or_else(|| format!("Plugin '{}' not found", name))?;
 
-        self.plugins.remove(idx);
+        self.manifests.remove(idx);
+        self.tool_cache.remove(idx);
 
-        // Delete the JSON file
-        let path = mcp_mux_shared::plugins_dir().join(format!("{}.json", name));
-        if path.exists() {
-            std::fs::remove_file(&path)
-                .map_err(|e| format!("Failed to delete manifest file: {}", e))?;
-        }
+        let store = PluginStore::new();
+        // Ignore error if file already gone
+        let _ = store.remove(name);
 
-        self.rebuild_tool_index();
+        self.tool_cache.rebuild_index();
 
         eprintln!("[mcp-mux] Uninstalled plugin: {}", name);
         Ok(())
@@ -248,34 +156,24 @@ impl PluginRegistry {
 
     /// Rebuild the tool_index from scratch based on current plugins and their cached tools.
     pub fn rebuild_tool_index(&mut self) {
-        self.tool_index.clear();
-        for (idx, plugin) in self.plugins.iter().enumerate() {
-            for tool in &plugin.cached_tools {
-                if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
-                    self.tool_index.insert(name.to_string(), idx);
-                }
-            }
-        }
+        self.tool_cache.rebuild_index();
     }
 
     /// Return info about all loaded plugins.
     pub fn list_plugins(&self) -> Vec<PluginInfo> {
-        self.plugins
+        self.manifests
             .iter()
-            .map(|p| {
-                let auth_type = p.manifest.mcp.as_ref().and_then(|m| {
-                    m.auth.as_ref().map(|a| match a {
-                        PluginAuth::Bearer { .. } => "bearer".to_string(),
-                        PluginAuth::ApiKey { .. } => "api_key".to_string(),
-                        PluginAuth::OAuth { .. } => "oauth".to_string(),
-                    })
+            .enumerate()
+            .map(|(i, manifest)| {
+                let auth_type = manifest.mcp.as_ref().and_then(|m| {
+                    m.auth.as_ref().map(|a| a.display_name().to_string())
                 });
                 PluginInfo {
-                    name: p.manifest.name.clone(),
-                    version: p.manifest.version.clone(),
-                    has_mcp: p.manifest.mcp.is_some(),
+                    name: manifest.name.clone(),
+                    version: manifest.version.clone(),
+                    has_mcp: manifest.mcp.is_some(),
                     auth_type,
-                    tool_count: p.cached_tools.len(),
+                    tool_count: self.tool_cache.tool_count(i),
                 }
             })
             .collect()
@@ -374,84 +272,35 @@ async fn apply_tool_cache(
 ) {
     let state_guard = state.lock().await;
     let mut registry = state_guard.inner.plugin_registry.lock().unwrap();
-    if let Some(plugin) = registry.plugins.get(idx) {
-        let prefix = plugin
-            .manifest
-            .mcp
-            .as_ref()
-            .map(|m| m.tool_prefix.clone())
-            .unwrap_or_default();
 
-        // Apply prefix to tool names and collect index updates
-        let mut index_updates: Vec<(String, usize)> = Vec::new();
-        let prefixed_tools: Vec<Value> = tools
-            .into_iter()
-            .map(|mut tool| {
-                if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
-                    let prefixed = format!("{}{}", prefix, name);
-                    if let Some(obj) = tool.as_object_mut() {
-                        obj.insert("name".to_string(), Value::String(prefixed.clone()));
-                    }
-                    index_updates.push((prefixed, idx));
-                }
-                tool
-            })
-            .collect();
+    let prefix = registry
+        .manifests
+        .get(idx)
+        .and_then(|m| m.mcp.as_ref())
+        .map(|m| m.tool_prefix.clone())
+        .unwrap_or_default();
 
-        // Now mutate registry with collected data
-        for (name, plugin_idx) in index_updates {
-            registry.tool_index.insert(name, plugin_idx);
-        }
-        if let Some(plugin) = registry.plugins.get_mut(idx) {
-            plugin.cached_tools = prefixed_tools;
-            plugin.tools_fetched_at = Some(Instant::now());
-            plugin.refresh_pending = false;
+    registry.tool_cache.apply(idx, &prefix, tools);
 
-            eprintln!(
-                "[mcp-mux] Refreshed {} tools from plugin '{}'",
-                plugin.cached_tools.len(),
-                plugin.manifest.name
-            );
-        }
-    }
+    let tool_count = registry.tool_cache.tool_count(idx);
+    let plugin_name = registry
+        .manifests
+        .get(idx)
+        .map(|m| m.name.clone())
+        .unwrap_or_default();
+
+    eprintln!(
+        "[mcp-mux] Refreshed {} tools from plugin '{}'",
+        tool_count, plugin_name
+    );
 }
 
 async fn clear_refresh_pending(state: &Arc<TokioMutex<AsyncAppState>>, idx: usize) {
     let state_guard = state.lock().await;
     let mut registry = state_guard.inner.plugin_registry.lock().unwrap();
-    if let Some(plugin) = registry.plugins.get_mut(idx) {
-        plugin.refresh_pending = false;
-    }
+    registry.tool_cache.clear_pending(idx);
 }
 
 fn resolve_auth_header(plugin_name: &str, auth: &Option<PluginAuth>) -> Option<String> {
-    let auth = auth.as_ref()?;
-    match auth {
-        PluginAuth::Bearer { token_env } => match std::env::var(token_env) {
-            Ok(token) => Some(format!("Bearer {}", token)),
-            Err(_) => {
-                eprintln!("[mcp-mux] Auth env var '{}' not set", token_env);
-                None
-            }
-        },
-        PluginAuth::ApiKey {
-            header_name,
-            key_env,
-        } => {
-            if let Some(env_var) = key_env {
-                match std::env::var(env_var) {
-                    Ok(key) => Some(format!("{}:{}", header_name, key)),
-                    Err(_) => {
-                        eprintln!("[mcp-mux] Auth env var '{}' not set", env_var);
-                        None
-                    }
-                }
-            } else {
-                None
-            }
-        }
-        PluginAuth::OAuth { .. } => {
-            crate::auth::load_token(plugin_name).map(|t| format!("Bearer {}", t))
-        }
-    }
+    auth.as_ref()?.resolve_header(plugin_name)
 }

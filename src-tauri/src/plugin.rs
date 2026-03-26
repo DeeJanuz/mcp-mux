@@ -11,12 +11,17 @@ use crate::tool_cache::ToolCache;
 pub struct PluginRegistry {
     pub manifests: Vec<PluginManifest>,
     pub tool_cache: ToolCache,
+    store: PluginStore,
 }
 
 impl PluginRegistry {
     /// Load all plugin manifests from ~/.mcp-mux/plugins/
     pub fn load_plugins() -> Self {
-        let store = PluginStore::new();
+        Self::load_plugins_with_store(PluginStore::new())
+    }
+
+    /// Load all plugin manifests using a provided PluginStore (useful for testing).
+    pub fn load_plugins_with_store(store: PluginStore) -> Self {
         // Migrate legacy flat-file plugins to directory format
         if let Err(e) = store.migrate_legacy() {
             eprintln!("[mcp-mux] Legacy plugin migration warning: {}", e);
@@ -28,6 +33,7 @@ impl PluginRegistry {
                 return Self {
                     manifests: Vec::new(),
                     tool_cache: ToolCache::new(0),
+                    store,
                 };
             }
         };
@@ -44,6 +50,7 @@ impl PluginRegistry {
         Self {
             manifests,
             tool_cache,
+            store,
         }
     }
 
@@ -123,8 +130,7 @@ impl PluginRegistry {
             return Err(format!("Plugin '{}' is already installed", manifest.name));
         }
 
-        let store = PluginStore::new();
-        store.save(&manifest)?;
+        self.store.save(&manifest)?;
 
         eprintln!(
             "[mcp-mux] Installed plugin: {} v{}",
@@ -148,9 +154,8 @@ impl PluginRegistry {
         self.manifests.remove(idx);
         self.tool_cache.remove(idx);
 
-        let store = PluginStore::new();
         // Ignore error if file already gone
-        let _ = store.remove(name);
+        let _ = self.store.remove(name);
 
         self.tool_cache.rebuild_index();
 

@@ -132,6 +132,11 @@ function Backup-ConfigFile {
 function Install-JsonConfig {
     param([hashtable]$Platform)
 
+    # Skip if already configured
+    if (Test-AlreadyConfigured $Platform) {
+        return $false
+    }
+
     $configPath = $Platform.ConfigPath
     $jsonKey = $Platform.JsonKey
 

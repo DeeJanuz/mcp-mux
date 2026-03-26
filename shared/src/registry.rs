@@ -1,7 +1,7 @@
 use crate::{cache_dir, config_path, RegistrySource, RemoteRegistry, RegistryEntry};
 
 pub const DEFAULT_REGISTRY_URL: &str =
-    "https://raw.githubusercontent.com/anthropics/mcp-mux-registry/main/registry.json";
+    "https://raw.githubusercontent.com/DeeJanuz/mcp-mux/master/registry/registry.json";
 
 const CACHE_TTL_SECS: u64 = 3600; // 1 hour
 
@@ -163,6 +163,12 @@ pub async fn fetch_all_registries(
     }
 
     if !any_success && !sources.is_empty() {
+        // All remote sources failed — fall back to bundled registry
+        eprintln!("[mcp-mux] All remote registry sources failed, using bundled registry");
+        let bundled = include_str!("bundled_registry.json");
+        if let Ok(registry) = serde_json::from_str::<RemoteRegistry>(bundled) {
+            return Ok(registry.plugins);
+        }
         return Err("Failed to fetch from any registry source".to_string());
     }
 

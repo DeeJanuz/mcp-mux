@@ -15,6 +15,45 @@ pub(crate) struct OAuthRefreshInfo {
     pub client_id: Option<String>,
 }
 
+/// Result of looking up a plugin tool by prefixed name.
+pub(crate) struct PluginToolResult {
+    pub mcp_url: String,
+    pub auth_header: Option<String>,
+    pub unprefixed_name: String,
+    pub renderer_map: HashMap<String, String>,
+    pub oauth_info: Option<OAuthRefreshInfo>,
+}
+
+/// Attempt OAuth token refresh, returning "Bearer {token}" on success.
+pub async fn try_refresh_oauth(
+    oauth_info: &OAuthRefreshInfo,
+    client: &reqwest::Client,
+) -> Option<String> {
+    match crate::auth::refresh_oauth_token(
+        &oauth_info.plugin_name,
+        &oauth_info.token_url,
+        oauth_info.client_id.as_deref(),
+        client,
+    )
+    .await
+    {
+        Ok(token) => {
+            eprintln!(
+                "[mcp-mux] Auto-refreshed token for '{}'",
+                oauth_info.plugin_name
+            );
+            Some(format!("Bearer {}", token))
+        }
+        Err(e) => {
+            eprintln!(
+                "[mcp-mux] Token refresh failed for '{}': {}",
+                oauth_info.plugin_name, e
+            );
+            None
+        }
+    }
+}
+
 pub struct PluginRegistry {
     pub manifests: Vec<PluginManifest>,
     pub tool_cache: ToolCache,
@@ -102,27 +141,8 @@ impl PluginRegistry {
         for entry in &mut to_refresh {
             if entry.2.is_none() {
                 if let Some(oauth_info) = &entry.3 {
-                    match crate::auth::refresh_oauth_token(
-                        &oauth_info.plugin_name,
-                        &oauth_info.token_url,
-                        oauth_info.client_id.as_deref(),
-                        client,
-                    )
-                    .await
-                    {
-                        Ok(token) => {
-                            entry.2 = Some(format!("Bearer {}", token));
-                            eprintln!(
-                                "[mcp-mux] Auto-refreshed token for '{}'",
-                                oauth_info.plugin_name
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "[mcp-mux] Token refresh failed for '{}': {}",
-                                oauth_info.plugin_name, e
-                            );
-                        }
+                    if let Some(bearer) = try_refresh_oauth(oauth_info, client).await {
+                        entry.2 = Some(bearer);
                     }
                 }
             }
@@ -147,11 +167,10 @@ impl PluginRegistry {
     }
 
     /// Find which plugin handles a prefixed tool name.
-    /// Returns (mcp_url, auth_header, unprefixed_name, renderer_map, oauth_refresh_info)
     pub fn find_plugin_for_tool(
         &self,
         prefixed_name: &str,
-    ) -> Option<(String, Option<String>, String, HashMap<String, String>, Option<OAuthRefreshInfo>)> {
+    ) -> Option<PluginToolResult> {
         let idx = self.tool_cache.tool_index.get(prefixed_name)?;
         let manifest = self.manifests.get(*idx)?;
         let mcp = manifest.mcp.as_ref()?;
@@ -163,13 +182,13 @@ impl PluginRegistry {
             None
         };
 
-        Some((
-            mcp.url.clone(),
-            auth,
-            unprefixed.to_string(),
-            manifest.renderers.clone(),
+        Some(PluginToolResult {
+            mcp_url: mcp.url.clone(),
+            auth_header: auth,
+            unprefixed_name: unprefixed.to_string(),
+            renderer_map: manifest.renderers.clone(),
             oauth_info,
-        ))
+        })
     }
 
     /// Add a new plugin at runtime, persisting its manifest to disk.

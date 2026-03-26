@@ -36,6 +36,17 @@ impl AppState {
         }
     }
 
+    /// Broadcast a tools/list_changed notification to all connected MCP SSE sessions.
+    pub fn notify_tools_changed(&self) {
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/tools/list_changed"
+        })
+        .to_string();
+        let sessions = self.mcp_sessions.lock().unwrap();
+        sessions.broadcast(&notification);
+    }
+
     /// Reload all plugins from disk and broadcast a tools/list_changed notification
     /// to all connected MCP SSE sessions.
     pub fn reload_plugins(&self) {
@@ -44,14 +55,6 @@ impl AppState {
             let mut registry = self.plugin_registry.lock().unwrap();
             *registry = new_registry;
         }
-        let notification = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "notifications/tools/list_changed"
-        })
-        .to_string();
-        {
-            let sessions = self.mcp_sessions.lock().unwrap();
-            sessions.broadcast(&notification);
-        }
+        self.notify_tools_changed();
     }
 }

@@ -23,6 +23,14 @@ impl StoredToken {
     }
 }
 
+/// Load a stored token without checking expiry. Returns the token as-is,
+/// or None if the file is missing or unparseable.
+pub fn load_stored_token_unvalidated(dir: &Path, plugin_name: &str) -> Option<StoredToken> {
+    let path = dir.join(format!("{}.json", plugin_name));
+    let content = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
 /// Load a stored token from {dir}/{plugin_name}.json, returning None if missing, unparseable, or expired.
 pub fn load_stored_token(dir: &Path, plugin_name: &str) -> Option<StoredToken> {
     let path = dir.join(format!("{}.json", plugin_name));
@@ -170,6 +178,43 @@ mod tests {
         let loaded = load_stored_token(dir.path(), "rt-plugin").unwrap();
         assert_eq!(loaded.access_token, "roundtrip-tok");
         assert_eq!(loaded.refresh_token, Some("rt".to_string()));
+    }
+
+    #[test]
+    fn test_load_stored_token_unvalidated_returns_expired() {
+        let dir = tempfile::tempdir().unwrap();
+        let past = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            - 3600;
+        let path = dir.path().join("expired-unvalidated.json");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"access_token":"abc","refresh_token":"refresh-tok","expires_at":{}}}"#,
+                past
+            ),
+        )
+        .unwrap();
+
+        // load_stored_token should return None (expired)
+        let token = load_stored_token(dir.path(), "expired-unvalidated");
+        assert!(token.is_none());
+
+        // load_stored_token_unvalidated should return the token regardless
+        let token = load_stored_token_unvalidated(dir.path(), "expired-unvalidated");
+        assert!(token.is_some());
+        let token = token.unwrap();
+        assert_eq!(token.access_token, "abc");
+        assert_eq!(token.refresh_token, Some("refresh-tok".to_string()));
+    }
+
+    #[test]
+    fn test_load_stored_token_unvalidated_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = load_stored_token_unvalidated(dir.path(), "nonexistent");
+        assert!(token.is_none());
     }
 
     #[test]

@@ -204,6 +204,88 @@ pub fn store_token(plugin_name: &str, token: &StoredToken) -> Result<(), String>
 }
 
 
+/// Attempt to refresh an expired OAuth token using the refresh_token grant.
+/// Returns the new access token on success, storing the refreshed token to disk.
+pub async fn refresh_oauth_token(
+    plugin_name: &str,
+    token_url: &str,
+    client_id: Option<&str>,
+    http_client: &reqwest::Client,
+) -> Result<String, String> {
+    let auth_dir = mcp_mux_shared::auth_dir();
+    let stored = mcp_mux_shared::token_store::load_stored_token_unvalidated(&auth_dir, plugin_name)
+        .ok_or_else(|| format!("No stored token for plugin '{}'", plugin_name))?;
+
+    let refresh_token = stored
+        .refresh_token
+        .ok_or_else(|| format!("No refresh_token available for plugin '{}'", plugin_name))?;
+
+    let mut form_params: Vec<(&str, &str)> = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token.as_str()),
+    ];
+    if let Some(cid) = client_id {
+        form_params.push(("client_id", cid));
+    }
+
+    let response = http_client
+        .post(token_url)
+        .form(&form_params)
+        .send()
+        .await
+        .map_err(|e| format!("Token refresh request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Token refresh failed with HTTP {}: {}",
+            status, body
+        ));
+    }
+
+    let token_data: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse refresh response: {}", e))?;
+
+    let access_token = token_data
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Refresh response missing access_token".to_string())?
+        .to_string();
+
+    let new_refresh_token = token_data
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or(Some(refresh_token)); // Keep old refresh_token if server doesn't return new one
+
+    let expires_at = token_data
+        .get("expires_in")
+        .and_then(|v| v.as_i64())
+        .map(|expires_in| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+                + expires_in
+        });
+
+    let new_stored = StoredToken {
+        access_token: access_token.clone(),
+        refresh_token: new_refresh_token,
+        expires_at,
+    };
+    store_token(plugin_name, &new_stored)?;
+
+    eprintln!(
+        "[mcp-mux] Refreshed OAuth token for plugin '{}'",
+        plugin_name
+    );
+    Ok(access_token)
+}
+
 /// Store a simple API key or bearer token (not OAuth)
 pub fn store_api_key(plugin_name: &str, key: &str) -> Result<(), String> {
     let token = StoredToken {

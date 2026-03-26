@@ -62,6 +62,89 @@ impl JsonRpcResponse {
     }
 }
 
+async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
+    let state_guard = state.lock().await;
+    let renderers = mcp_tools::available_renderers(&state_guard.inner);
+
+    let universal: Vec<_> = renderers.iter()
+        .filter(|r| r.scope == "universal")
+        .collect();
+
+    let mut instructions = String::from(
+        "MCP Mux provides a rich display window for presenting content to the user.\n\n"
+    );
+
+    if !universal.is_empty() {
+        instructions.push_str("## Available Display Renderers\n\n");
+        instructions.push_str("Use the `push_content` tool with `tool_name` set to a renderer name:\n\n");
+        for r in &universal {
+            instructions.push_str(&format!("- **{}**: {}", r.name, r.description));
+            if let Some(hint) = &r.data_hint {
+                instructions.push_str(&format!(" Data: `{}`", hint));
+            }
+            instructions.push_str("\n");
+        }
+    }
+
+    instructions.push_str("\n## Plan & Architecture Review\n\n");
+    instructions.push_str(
+        "When presenting implementation plans or architectural decisions for user review,\n\
+         push a rich visual summary to the companion window using `push_content`:\n\n\
+         ```\n\
+         push_content({\n\
+           tool_name: \"rich_content\",\n\
+           data: {\n\
+             title: \"Implementation Plan: <feature name>\",\n\
+             body: \"## Context\\n...\\n## Architecture\\n```mermaid\\n...\\n```\\n## Changes\\n| File | Change |\\n...\"\n\
+           }\n\
+         })\n\
+         ```\n\n\
+         For plans requiring explicit approval, use `push_review` instead — this blocks\n\
+         until the user accepts/rejects in the companion window.\n"
+    );
+
+    instructions.push_str("\n## Agent Rule Bootstrap\n\n");
+    instructions.push_str(
+        "Call `setup_agent_rules` once per project to receive behavioral rules for all\n\
+         available renderers and tools. Persist these rules in your native memory/rule\n\
+         system so they guide your behavior across conversations.\n"
+    );
+
+    // Check for plugins needing authentication
+    let registry = state_guard.inner.plugin_registry.lock().unwrap();
+    let mut auth_warnings: Vec<String> = Vec::new();
+    for manifest in &registry.manifests {
+        if let Some(mcp) = &manifest.mcp {
+            if let Some(auth) = &mcp.auth {
+                if !auth.is_configured(&manifest.name) {
+                    auth_warnings.push(format!(
+                        "- Plugin '{}' requires authentication ({})",
+                        manifest.name,
+                        auth.display_name()
+                    ));
+                }
+            }
+        }
+    }
+    drop(registry);
+
+    if !auth_warnings.is_empty() {
+        instructions.push_str("\n## Authentication Required\n\n");
+        instructions.push_str(
+            "The following plugins need authentication before their tools are available:\n\n",
+        );
+        for warning in &auth_warnings {
+            instructions.push_str(warning);
+            instructions.push_str("\n");
+        }
+        instructions.push_str(
+            "\nCall `setup_agent_rules` to get auth URLs and status details.\n",
+        );
+    }
+
+    instructions
+}
+
 /// Handle a single JSON-RPC request
 async fn handle_single_request(
     req: JsonRpcRequest,
@@ -84,6 +167,8 @@ async fn handle_single_request(
                 SUPPORTED_VERSIONS[0]
             };
 
+            let instructions = build_instructions(state).await;
+
             Some(JsonRpcResponse::success(
                 id,
                 serde_json::json!({
@@ -94,7 +179,8 @@ async fn handle_single_request(
                     "serverInfo": {
                         "name": "mcp-mux",
                         "version": env!("CARGO_PKG_VERSION")
-                    }
+                    },
+                    "instructions": instructions
                 }),
             ))
         }

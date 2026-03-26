@@ -267,6 +267,11 @@ configure_json() {
   key="$(mcp_key_for "$idx")"
   entry_json="$(mcp_mux_entry_for "$idx")"
 
+  # Skip if already configured
+  if already_configured "$idx"; then
+    return 0
+  fi
+
   # Ensure parent directory exists
   mkdir -p "$(dirname "$cfg")"
 
@@ -426,6 +431,10 @@ main() {
 
   for idx in "${to_configure[@]}"; do
     local name="${PLATFORM_NAMES[$idx]}"
+    if already_configured "$idx"; then
+      printf "Configuring %s... already configured — skipped.\n" "$name"
+      continue
+    fi
     printf "Configuring %s... " "$name"
     if configure_platform "$idx"; then
       echo "done."

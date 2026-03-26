@@ -5,7 +5,7 @@ A standalone Tauri v2 desktop app that serves as a rich display for AI agents. R
 ## Architecture
 
 - **Rust backend** (axum): HTTP server on `:4200` for push API + review workflow
-- **WebView frontend**: Vanilla JS renderers (ported from companion) for 14+ content types
+- **WebView frontend**: Vanilla JS renderers for core content types (rich content, document preview, citations); domain-specific renderers delivered via plugins
 - **Node.js sidecar**: SSE bridge for remote server connections
 - **System tray**: Hide-to-tray, click to show, auto-start on login
 
@@ -76,7 +76,7 @@ mcp-mux/
 ├── public/                 # Static assets (copied to dist)
 │   ├── main.js             # App bootstrap (Tauri IPC)
 │   ├── styles.css          # All styles
-│   └── renderers/          # 14 content renderers
+│   └── renderers/          # Built-in content renderers
 ├── sidecar/                # Node.js SSE bridge
 │   ├── sse-bridge.ts
 │   └── build.sh
@@ -94,7 +94,7 @@ mcp-mux/
 
 MCP Mux supports plugins that extend the app with tools from third-party MCP servers. Each plugin is a JSON manifest that declares renderer mappings, MCP server configuration, and authentication. Plugins are stored as individual JSON files in `~/.mcp-mux/plugins/`.
 
-For full documentation, see [docs/plugins.md](docs/plugins.md).
+For full documentation, see [docs/plugins.md](docs/plugins.md). For a step-by-step guide to creating your own plugin, see [docs/plugin-development.md](docs/plugin-development.md).
 
 ## Installing Plugins
 

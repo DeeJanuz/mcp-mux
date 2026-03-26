@@ -232,23 +232,16 @@ Your server must implement the [Model Context Protocol](https://spec.modelcontex
 
 ### 2. Choose renderers for your tools
 
-MCP Mux includes built-in renderers for common content types:
+MCP Mux includes built-in renderers for general-purpose content:
 
 | Renderer | Description |
 |----------|-------------|
-| `search_results` | Grouped search results with type chips |
-| `code_units` | Source code with complexity badges |
+| `rich_content` | Markdown + mermaid fallback (default) |
 | `document_preview` | Rendered markdown document |
 | `document_diff` | Two-column diff with accept/reject |
-| `data_schema` | Expandable table/column view |
-| `data_draft_diff` | Grid-based draft review |
-| `dependencies` | Grouped imports by source file |
-| `file_content` | Source with line numbers |
-| `module_overview` | File tree + exports + dependencies |
-| `analysis_stats` | Metric cards + repository list |
-| `knowledge_dex` | Table with bulk accept/reject |
-| `column_context` | Breadcrumb navigation + related entities |
-| `rich_content` | Markdown + mermaid fallback (default) |
+| `citation_panel` | Citation list (used as sub-component) |
+
+Domain-specific renderers (code analysis, data governance, knowledge management) are delivered via plugins. For example, the [Ludflow plugin](https://github.com/DeeJanuz/ludflow-mcp-mux) provides renderers for `search_results`, `code_units`, `data_schema`, `column_context`, `module_overview`, `analysis_stats`, `knowledge_dex`, `data_draft_diff`, `dependencies`, and `file_content`.
 
 Map each of your tools to the renderer that best fits its output in the `renderers` field.
 

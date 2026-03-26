@@ -387,7 +387,7 @@ Bootstrap behavioral rules for all mcp-mux renderers and plugin tools. Call once
 **Parameters:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `agent_type` | string | No | One of `claude_code`, `claude_desktop`, `codex`, or `custom`. Tailors the persistence instructions in the response. Defaults to generic instructions. |
+| `agent_type` | string | No | The agent platform calling this tool. Supported: `claude_code`, `claude_desktop`, `codex`, `cursor`, `windsurf`, `opencode`, `antigravity`. Tailors the persistence instructions in the response. If omitted or unrecognized, returns instructions that ask the user how to persist rules. |
 
 **Response:**
 ```json

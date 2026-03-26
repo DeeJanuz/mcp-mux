@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::http_server::{execute_push, AsyncAppState, ExecutePushResult};
-use crate::plugin::PluginRegistry;
+use crate::plugin::{PluginRegistry, PluginToolResult, try_refresh_oauth};
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -76,18 +76,18 @@ pub async fn call_tool(
             };
 
             match plugin_info {
-                Some((mcp_url, auth_header, unprefixed_name, renderer_map)) => {
+                Some(info) => {
                     let result =
-                        proxy_plugin_tool_call(&client, &mcp_url, auth_header.as_deref(), &unprefixed_name, &arguments)
+                        proxy_plugin_tool_call(&client, &info.mcp_url, info.auth_header.as_deref(), &info.unprefixed_name, &arguments)
                             .await?;
 
                     // Auto-push to viewer as a side effect
                     auto_push_plugin_result(
                         state,
-                        &unprefixed_name,
+                        &info.unprefixed_name,
                         &arguments,
                         &result,
-                        &renderer_map,
+                        &info.renderer_map,
                     )
                     .await;
 
@@ -99,15 +99,12 @@ pub async fn call_tool(
     }
 }
 
-/// Plugin tool info returned from lookup: (mcp_url, auth_header, unprefixed_name, renderer_map)
-type PluginToolInfo = (String, Option<String>, String, std::collections::HashMap<String, String>);
-
 /// Look up a plugin tool by prefixed name, returning plugin info and HTTP client.
 /// If auth is None but OAuth refresh info is available, attempts token refresh.
 async fn lookup_plugin_tool(
     name: &str,
     state: &Arc<TokioMutex<AsyncAppState>>,
-) -> (Option<PluginToolInfo>, reqwest::Client) {
+) -> (Option<PluginToolResult>, reqwest::Client) {
     let (info, client) = {
         let state_guard = state.lock().await;
         let registry = state_guard.inner.plugin_registry.lock().unwrap();
@@ -118,42 +115,15 @@ async fn lookup_plugin_tool(
 
     // If auth is None but OAuth info is present, attempt token refresh
     match info {
-        Some((mcp_url, auth, unprefixed_name, renderer_map, oauth_info)) => {
-            if auth.is_none() {
-                if let Some(oauth) = &oauth_info {
-                    match crate::auth::refresh_oauth_token(
-                        &oauth.plugin_name,
-                        &oauth.token_url,
-                        oauth.client_id.as_deref(),
-                        &client,
-                    )
-                    .await
-                    {
-                        Ok(token) => {
-                            eprintln!(
-                                "[mcp-mux] Auto-refreshed token for '{}' during tool call",
-                                oauth.plugin_name
-                            );
-                            return (
-                                Some((
-                                    mcp_url,
-                                    Some(format!("Bearer {}", token)),
-                                    unprefixed_name,
-                                    renderer_map,
-                                )),
-                                client,
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "[mcp-mux] Token refresh failed for '{}': {}",
-                                oauth.plugin_name, e
-                            );
-                        }
+        Some(mut result) => {
+            if result.auth_header.is_none() {
+                if let Some(oauth) = &result.oauth_info {
+                    if let Some(bearer) = try_refresh_oauth(oauth, &client).await {
+                        result.auth_header = Some(bearer);
                     }
                 }
             }
-            (Some((mcp_url, auth, unprefixed_name, renderer_map)), client)
+            (Some(result), client)
         }
         None => (None, client),
     }
@@ -291,19 +261,15 @@ async fn call_push_check(
     }))
 }
 
-async fn call_setup_agent_rules(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let agent_type = arguments
-        .get("agent_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("generic");
-
+/// Collect renderer and tool rules from built-in renderers and plugin manifests.
+pub(crate) fn collect_rules(
+    builtin_renderers: &[RendererDef],
+    manifests: &[mcp_mux_shared::PluginManifest],
+) -> Vec<Value> {
     let mut rules: Vec<Value> = Vec::new();
 
-    // 1. Collect renderer rules from built-in renderers
-    for renderer in builtin_renderer_definitions() {
+    // Built-in renderer rules
+    for renderer in builtin_renderers {
         if let Some(rule) = &renderer.rule {
             rules.push(serde_json::json!({
                 "name": format!("{}_usage", renderer.name),
@@ -315,98 +281,121 @@ async fn call_setup_agent_rules(
         }
     }
 
-    // 2. Collect renderer rules and tool rules from plugins
-    {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        for manifest in &registry.manifests {
-            let plugin_name = &manifest.name;
-            let tool_prefix = manifest.mcp.as_ref()
-                .map(|m| m.tool_prefix.as_str())
-                .unwrap_or("");
+    // Plugin renderer rules and tool rules
+    for manifest in manifests {
+        let plugin_name = &manifest.name;
+        let tool_prefix = manifest
+            .mcp
+            .as_ref()
+            .map(|m| m.tool_prefix.as_str())
+            .unwrap_or("");
 
-            // Plugin renderer rules
-            for renderer in &manifest.renderer_definitions {
-                if let Some(rule) = &renderer.rule {
-                    rules.push(serde_json::json!({
-                        "name": format!("{}_usage", renderer.name),
-                        "category": "renderer",
-                        "source": plugin_name,
-                        "renderer": renderer.name,
-                        "rule": rule,
-                    }));
-                }
-            }
-
-            // Plugin tool rules
-            for (tool_name, rule) in &manifest.tool_rules {
-                let prefixed_name = if tool_prefix.is_empty() {
-                    tool_name.clone()
-                } else {
-                    format!("{}__{}", tool_prefix, tool_name)
-                };
+        for renderer in &manifest.renderer_definitions {
+            if let Some(rule) = &renderer.rule {
                 rules.push(serde_json::json!({
-                    "name": format!("{}_usage", prefixed_name),
-                    "category": "tool",
+                    "name": format!("{}_usage", renderer.name),
+                    "category": "renderer",
                     "source": plugin_name,
-                    "tool": prefixed_name,
+                    "renderer": renderer.name,
                     "rule": rule,
                 }));
             }
         }
+
+        for (tool_name, rule) in &manifest.tool_rules {
+            let prefixed_name = if tool_prefix.is_empty() {
+                tool_name.clone()
+            } else {
+                format!("{}__{}", tool_prefix, tool_name)
+            };
+            rules.push(serde_json::json!({
+                "name": format!("{}_usage", prefixed_name),
+                "category": "tool",
+                "source": plugin_name,
+                "tool": prefixed_name,
+                "rule": rule,
+            }));
+        }
     }
 
-    // 3. Collect plugin auth status
+    rules
+}
+
+/// Collect auth status for each plugin that has MCP + auth configured.
+pub(crate) fn collect_plugin_auth_status(
+    manifests: &[mcp_mux_shared::PluginManifest],
+) -> Vec<Value> {
     let mut plugin_status: Vec<Value> = Vec::new();
-    {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        for manifest in &registry.manifests {
-            if let Some(mcp) = &manifest.mcp {
-                if let Some(auth) = &mcp.auth {
-                    let is_configured = auth.is_configured(&manifest.name);
-                    let mut status_entry = serde_json::json!({
-                        "plugin": manifest.name,
-                        "auth_type": auth.display_name(),
-                        "auth_configured": is_configured,
-                    });
 
-                    if !is_configured {
-                        if let mcp_mux_shared::PluginAuth::OAuth {
-                            auth_url, ..
-                        } = auth
-                        {
-                            status_entry.as_object_mut().unwrap().insert(
-                                "auth_url".to_string(),
-                                serde_json::Value::String(auth_url.clone()),
-                            );
-                            status_entry.as_object_mut().unwrap().insert(
-                                "message".to_string(),
-                                serde_json::Value::String(format!(
-                                    "Plugin '{}' requires re-authentication. Direct the user to authenticate via the companion window or open the auth URL.",
-                                    manifest.name
-                                )),
-                            );
-                        }
+    for manifest in manifests {
+        if let Some(mcp) = &manifest.mcp {
+            if let Some(auth) = &mcp.auth {
+                let is_configured = auth.is_configured(&manifest.name);
+                let mut status_entry = serde_json::json!({
+                    "plugin": manifest.name,
+                    "auth_type": auth.display_name(),
+                    "auth_configured": is_configured,
+                });
+
+                if !is_configured {
+                    if let mcp_mux_shared::PluginAuth::OAuth {
+                        auth_url, ..
+                    } = auth
+                    {
+                        status_entry.as_object_mut().unwrap().insert(
+                            "auth_url".to_string(),
+                            serde_json::Value::String(auth_url.clone()),
+                        );
+                        status_entry.as_object_mut().unwrap().insert(
+                            "message".to_string(),
+                            serde_json::Value::String(format!(
+                                "Plugin '{}' requires re-authentication. Direct the user to authenticate via the companion window or open the auth URL.",
+                                manifest.name
+                            )),
+                        );
                     }
-
-                    plugin_status.push(status_entry);
                 }
+
+                plugin_status.push(status_entry);
             }
         }
     }
 
-    let persistence_instructions = match agent_type {
+    plugin_status
+}
+
+/// Return agent-type-specific persistence instructions.
+pub(crate) fn persistence_instructions(agent_type: &str) -> &'static str {
+    match agent_type {
         "claude_code" => "Persist each rule as a memory file in your memory system, or add them to CLAUDE.md in the project root. Each rule should be stored so it guides your behavior across conversations.",
         "claude_desktop" => "Add each rule to your project instructions so they persist across conversations and guide your behavior when using mcp-mux tools.",
         "codex" => "Add each rule to AGENTS.md in the project root so they persist and guide agent behavior across sessions.",
         _ => "Persist these rules in your agent's native memory/rule system. For Claude Code: create memory files or add to CLAUDE.md. For Claude Desktop: add to project instructions. For Codex: add to AGENTS.md. The goal is for these rules to guide your behavior across conversations.",
+    }
+}
+
+async fn call_setup_agent_rules(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let agent_type = arguments
+        .get("agent_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("generic");
+
+    let (rules, plugin_status) = {
+        let state_guard = state.lock().await;
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+        let builtin = builtin_renderer_definitions();
+        let rules = collect_rules(&builtin, &registry.manifests);
+        let plugin_status = collect_plugin_auth_status(&registry.manifests);
+        (rules, plugin_status)
     };
 
     let response = serde_json::json!({
         "rules": rules,
         "plugin_status": plugin_status,
-        "persistence_instructions": persistence_instructions,
+        "persistence_instructions": persistence_instructions(agent_type),
     });
 
     Ok(serde_json::json!({
@@ -634,4 +623,227 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
             }
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mcp_mux_shared::{PluginManifest, PluginMcpConfig, PluginAuth};
+
+    fn make_manifest(
+        name: &str,
+        renderer_defs: Vec<RendererDef>,
+        tool_rules: std::collections::HashMap<String, String>,
+        mcp: Option<PluginMcpConfig>,
+    ) -> PluginManifest {
+        PluginManifest {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            renderers: std::collections::HashMap::new(),
+            mcp,
+            renderer_definitions: renderer_defs,
+            tool_rules,
+        }
+    }
+
+    // ─── collect_rules tests ───
+
+    #[test]
+    fn test_collect_rules_empty() {
+        let rules = collect_rules(&[], &[]);
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_collect_rules_builtin_renderer_with_rule() {
+        let renderers = vec![RendererDef {
+            name: "rich_content".into(),
+            description: "test".into(),
+            scope: "universal".into(),
+            tools: vec![],
+            data_hint: None,
+            rule: Some("Always use rich_content for plans.".into()),
+        }];
+        let rules = collect_rules(&renderers, &[]);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["name"], "rich_content_usage");
+        assert_eq!(rules[0]["category"], "renderer");
+        assert_eq!(rules[0]["source"], "built-in");
+        assert_eq!(rules[0]["renderer"], "rich_content");
+        assert_eq!(rules[0]["rule"], "Always use rich_content for plans.");
+    }
+
+    #[test]
+    fn test_collect_rules_builtin_renderer_without_rule_skipped() {
+        let renderers = vec![RendererDef {
+            name: "no_rule".into(),
+            description: "test".into(),
+            scope: "universal".into(),
+            tools: vec![],
+            data_hint: None,
+            rule: None,
+        }];
+        let rules = collect_rules(&renderers, &[]);
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_collect_rules_plugin_renderer_rule_tagged_with_plugin_name() {
+        let manifest = make_manifest(
+            "my-plugin",
+            vec![RendererDef {
+                name: "custom_view".into(),
+                description: "Custom".into(),
+                scope: "tool".into(),
+                tools: vec![],
+                data_hint: None,
+                rule: Some("Use custom_view for X.".into()),
+            }],
+            std::collections::HashMap::new(),
+            None,
+        );
+        let rules = collect_rules(&[], &[manifest]);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["source"], "my-plugin");
+        assert_eq!(rules[0]["renderer"], "custom_view");
+    }
+
+    #[test]
+    fn test_collect_rules_plugin_tool_rules_prefixed() {
+        let mut tool_rules = std::collections::HashMap::new();
+        tool_rules.insert("search".to_string(), "Use search for queries.".to_string());
+        let manifest = make_manifest(
+            "search-plugin",
+            vec![],
+            tool_rules,
+            Some(PluginMcpConfig {
+                url: "http://localhost:8080".into(),
+                auth: None,
+                tool_prefix: "sp".into(),
+            }),
+        );
+        let rules = collect_rules(&[], &[manifest]);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["name"], "sp__search_usage");
+        assert_eq!(rules[0]["category"], "tool");
+        assert_eq!(rules[0]["tool"], "sp__search");
+        assert_eq!(rules[0]["source"], "search-plugin");
+    }
+
+    #[test]
+    fn test_collect_rules_plugin_tool_rules_no_prefix() {
+        let mut tool_rules = std::collections::HashMap::new();
+        tool_rules.insert("do_thing".to_string(), "Do the thing.".to_string());
+        let manifest = make_manifest(
+            "bare-plugin",
+            vec![],
+            tool_rules,
+            Some(PluginMcpConfig {
+                url: "http://localhost:8080".into(),
+                auth: None,
+                tool_prefix: "".into(),
+            }),
+        );
+        let rules = collect_rules(&[], &[manifest]);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["tool"], "do_thing");
+    }
+
+    // ─── collect_plugin_auth_status tests ───
+
+    #[test]
+    fn test_collect_plugin_auth_status_no_mcp() {
+        let manifest = make_manifest("no-mcp", vec![], std::collections::HashMap::new(), None);
+        let status = collect_plugin_auth_status(&[manifest]);
+        assert!(status.is_empty());
+    }
+
+    #[test]
+    fn test_collect_plugin_auth_status_oauth_not_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        // Point auth_dir to empty temp dir so no tokens are found
+        // We need to use a plugin name that won't have a stored token
+        let manifest = make_manifest(
+            "oauth-test-plugin-nocfg",
+            vec![],
+            std::collections::HashMap::new(),
+            Some(PluginMcpConfig {
+                url: "http://localhost:8080".into(),
+                auth: Some(PluginAuth::OAuth {
+                    client_id: Some("client123".into()),
+                    auth_url: "https://example.com/auth".into(),
+                    token_url: "https://example.com/token".into(),
+                    scopes: vec![],
+                }),
+                tool_prefix: "otp".into(),
+            }),
+        );
+        let status = collect_plugin_auth_status(&[manifest]);
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0]["plugin"], "oauth-test-plugin-nocfg");
+        assert_eq!(status[0]["auth_type"], "oauth");
+        // OAuth with no stored token => not configured
+        assert_eq!(status[0]["auth_configured"], false);
+        assert_eq!(status[0]["auth_url"], "https://example.com/auth");
+        assert!(status[0]["message"].as_str().unwrap().contains("requires re-authentication"));
+    }
+
+    #[test]
+    fn test_collect_plugin_auth_status_bearer_with_env_configured() {
+        // Set env var so bearer auth is considered configured
+        std::env::set_var("TEST_AUTH_STATUS_BEARER_TOKEN", "tok");
+        let manifest = make_manifest(
+            "bearer-test-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            Some(PluginMcpConfig {
+                url: "http://localhost:8080".into(),
+                auth: Some(PluginAuth::Bearer {
+                    token_env: "TEST_AUTH_STATUS_BEARER_TOKEN".into(),
+                }),
+                tool_prefix: "bt".into(),
+            }),
+        );
+        let status = collect_plugin_auth_status(&[manifest]);
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0]["auth_configured"], true);
+        assert!(status[0].get("auth_url").is_none());
+        std::env::remove_var("TEST_AUTH_STATUS_BEARER_TOKEN");
+    }
+
+    // ─── persistence_instructions tests ───
+
+    #[test]
+    fn test_persistence_instructions_claude_code() {
+        let instr = persistence_instructions("claude_code");
+        assert!(instr.contains("memory") || instr.contains("CLAUDE.md"));
+    }
+
+    #[test]
+    fn test_persistence_instructions_claude_desktop() {
+        let instr = persistence_instructions("claude_desktop");
+        assert!(instr.contains("project instructions"));
+    }
+
+    #[test]
+    fn test_persistence_instructions_codex() {
+        let instr = persistence_instructions("codex");
+        assert!(instr.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn test_persistence_instructions_generic() {
+        let instr = persistence_instructions("generic");
+        // Should mention multiple options
+        assert!(instr.contains("CLAUDE.md"));
+        assert!(instr.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn test_persistence_instructions_unknown() {
+        let instr = persistence_instructions("some_unknown_agent");
+        // Falls through to default, same as generic
+        assert!(instr.contains("CLAUDE.md"));
+        assert!(instr.contains("AGENTS.md"));
+    }
 }

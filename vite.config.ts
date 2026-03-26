@@ -11,7 +11,10 @@ export default defineConfig({
     outDir: "../dist",
     emptyOutDir: true,
     rollupOptions: {
-      input: resolve(__dirname, "src/index.html"),
+      input: {
+        main: resolve(__dirname, "src/index.html"),
+        "plugin-manager": resolve(__dirname, "src/plugin-manager.html"),
+      },
     },
   },
   server: {

@@ -1,0 +1,42 @@
+{
+  "version": "1",
+  "plugins": [
+    {
+      "name": "ludflow",
+      "version": "0.1.0",
+      "description": "Code analysis, documentation, and data governance powered by Ludflow",
+      "author": "Ludflow",
+      "homepage": "https://ludflow.com",
+      "tags": ["code-analysis", "documentation", "data-governance", "knowledge-management"],
+      "manifest": {
+        "name": "ludflow",
+        "version": "0.1.0",
+        "renderers": {
+          "search_codebase": "search_results",
+          "vector_search": "search_results",
+          "get_code_units": "code_units",
+          "get_document": "document_preview",
+          "write_document": "document_preview",
+          "list_documents": "document_preview",
+          "get_data_schema": "data_schema",
+          "get_data_lake_schema": "data_schema",
+          "get_dependencies": "dependencies",
+          "get_file_content": "file_content",
+          "get_module_overview": "module_overview",
+          "get_analysis_stats": "analysis_stats",
+          "get_business_concepts": "knowledge_dex",
+          "manage_knowledge_entries": "knowledge_dex",
+          "get_column_context": "column_context"
+        },
+        "mcp": {
+          "url": "http://localhost:4200/mcp",
+          "auth": {
+            "type": "bearer",
+            "token_env": "LUDFLOW_API_KEY"
+          },
+          "tool_prefix": "ludflow_"
+        }
+      }
+    }
+  ]
+}

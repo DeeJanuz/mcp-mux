@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use mcp_mux_shared::{PluginAuth, PluginInfo, PluginManifest};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,29 +8,6 @@ use tokio::sync::Mutex as TokioMutex;
 use crate::http_server::AsyncAppState;
 
 const CACHE_TTL_SECS: u64 = 300; // 5 minutes
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PluginManifest {
-    pub name: String,
-    pub version: String,
-    #[serde(default)]
-    pub renderers: HashMap<String, String>,
-    pub mcp: Option<PluginMcpConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PluginMcpConfig {
-    pub url: String,
-    pub auth: Option<PluginAuth>,
-    pub tool_prefix: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PluginAuth {
-    #[serde(rename = "type")]
-    pub auth_type: String,
-    pub token_env: Option<String>,
-}
 
 pub struct LoadedPlugin {
     pub manifest: PluginManifest,
@@ -163,7 +140,7 @@ impl PluginRegistry {
                 let plugin = &registry.plugins[i];
                 if plugin.refresh_pending {
                     if let Some(mcp) = &plugin.manifest.mcp {
-                        let auth = resolve_auth_header(&mcp.auth);
+                        let auth = resolve_auth_header(&plugin.manifest.name, &mcp.auth);
                         result.push((i, mcp.url.clone(), auth));
                     }
                 }
@@ -203,7 +180,7 @@ impl PluginRegistry {
         let plugin = self.plugins.get(*idx)?;
         let mcp = plugin.manifest.mcp.as_ref()?;
         let unprefixed = prefixed_name.strip_prefix(&mcp.tool_prefix)?;
-        let auth = resolve_auth_header(&mcp.auth);
+        let auth = resolve_auth_header(&plugin.manifest.name, &mcp.auth);
 
         Some((
             mcp.url.clone(),
@@ -211,6 +188,97 @@ impl PluginRegistry {
             unprefixed.to_string(),
             plugin.manifest.renderers.clone(),
         ))
+    }
+
+    /// Add a new plugin at runtime, persisting its manifest to disk.
+    pub fn add_plugin(&mut self, manifest: PluginManifest) -> Result<(), String> {
+        // Check for duplicate name
+        if self.plugins.iter().any(|p| p.manifest.name == manifest.name) {
+            return Err(format!("Plugin '{}' is already installed", manifest.name));
+        }
+
+        // Ensure plugins directory exists and write manifest
+        let plugin_dir = mcp_mux_shared::plugins_dir();
+        std::fs::create_dir_all(&plugin_dir)
+            .map_err(|e| format!("Failed to create plugins directory: {}", e))?;
+
+        let path = plugin_dir.join(format!("{}.json", manifest.name));
+        let json = serde_json::to_string_pretty(&manifest)
+            .map_err(|e| format!("Failed to serialize manifest: {}", e))?;
+        std::fs::write(&path, json)
+            .map_err(|e| format!("Failed to write manifest file: {}", e))?;
+
+        eprintln!(
+            "[mcp-mux] Installed plugin: {} v{}",
+            manifest.name, manifest.version
+        );
+
+        self.plugins.push(LoadedPlugin {
+            manifest,
+            cached_tools: Vec::new(),
+            tools_fetched_at: None,
+            refresh_pending: false,
+        });
+
+        Ok(())
+    }
+
+    /// Remove a plugin by name, deleting its manifest from disk.
+    pub fn remove_plugin(&mut self, name: &str) -> Result<(), String> {
+        let idx = self
+            .plugins
+            .iter()
+            .position(|p| p.manifest.name == name)
+            .ok_or_else(|| format!("Plugin '{}' not found", name))?;
+
+        self.plugins.remove(idx);
+
+        // Delete the JSON file
+        let path = mcp_mux_shared::plugins_dir().join(format!("{}.json", name));
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Failed to delete manifest file: {}", e))?;
+        }
+
+        self.rebuild_tool_index();
+
+        eprintln!("[mcp-mux] Uninstalled plugin: {}", name);
+        Ok(())
+    }
+
+    /// Rebuild the tool_index from scratch based on current plugins and their cached tools.
+    pub fn rebuild_tool_index(&mut self) {
+        self.tool_index.clear();
+        for (idx, plugin) in self.plugins.iter().enumerate() {
+            for tool in &plugin.cached_tools {
+                if let Some(name) = tool.get("name").and_then(|n| n.as_str()) {
+                    self.tool_index.insert(name.to_string(), idx);
+                }
+            }
+        }
+    }
+
+    /// Return info about all loaded plugins.
+    pub fn list_plugins(&self) -> Vec<PluginInfo> {
+        self.plugins
+            .iter()
+            .map(|p| {
+                let auth_type = p.manifest.mcp.as_ref().and_then(|m| {
+                    m.auth.as_ref().map(|a| match a {
+                        PluginAuth::Bearer { .. } => "bearer".to_string(),
+                        PluginAuth::ApiKey { .. } => "api_key".to_string(),
+                        PluginAuth::OAuth { .. } => "oauth".to_string(),
+                    })
+                });
+                PluginInfo {
+                    name: p.manifest.name.clone(),
+                    version: p.manifest.version.clone(),
+                    has_mcp: p.manifest.mcp.is_some(),
+                    auth_type,
+                    tool_count: p.cached_tools.len(),
+                }
+            })
+            .collect()
     }
 }
 
@@ -356,19 +424,34 @@ async fn clear_refresh_pending(state: &Arc<TokioMutex<AsyncAppState>>, idx: usiz
     }
 }
 
-fn resolve_auth_header(auth: &Option<PluginAuth>) -> Option<String> {
+fn resolve_auth_header(plugin_name: &str, auth: &Option<PluginAuth>) -> Option<String> {
     let auth = auth.as_ref()?;
-    if auth.auth_type == "bearer" {
-        if let Some(env_var) = &auth.token_env {
-            if let Ok(token) = std::env::var(env_var) {
-                return Some(format!("Bearer {}", token));
+    match auth {
+        PluginAuth::Bearer { token_env } => match std::env::var(token_env) {
+            Ok(token) => Some(format!("Bearer {}", token)),
+            Err(_) => {
+                eprintln!("[mcp-mux] Auth env var '{}' not set", token_env);
+                None
+            }
+        },
+        PluginAuth::ApiKey {
+            header_name,
+            key_env,
+        } => {
+            if let Some(env_var) = key_env {
+                match std::env::var(env_var) {
+                    Ok(key) => Some(format!("{}:{}", header_name, key)),
+                    Err(_) => {
+                        eprintln!("[mcp-mux] Auth env var '{}' not set", env_var);
+                        None
+                    }
+                }
             } else {
-                eprintln!(
-                    "[mcp-mux] Auth env var '{}' not set",
-                    env_var
-                );
+                None
             }
         }
+        PluginAuth::OAuth { .. } => {
+            crate::auth::load_token(plugin_name).map(|t| format!("Bearer {}", t))
+        }
     }
-    None
 }

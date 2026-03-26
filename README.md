@@ -80,6 +80,94 @@ mcp-mux/
 ├── sidecar/                # Node.js SSE bridge
 │   ├── sse-bridge.ts
 │   └── build.sh
+├── registry/               # Plugin registry
+│   └── registry.json       # Default registry with available plugins
+├── cli/                    # CLI plugin manager
+│   └── src/main.rs
+├── shared/                 # Shared types (manifest, auth, registry)
+│   └── src/lib.rs
 ├── package.json
 └── vite.config.ts
 ```
+
+## Plugin System
+
+MCP Mux supports plugins that extend the app with tools from third-party MCP servers. Each plugin is a JSON manifest that declares renderer mappings, MCP server configuration, and authentication. Plugins are stored as individual JSON files in `~/.mcp-mux/plugins/`.
+
+For full documentation, see [docs/plugins.md](docs/plugins.md).
+
+## Installing Plugins
+
+### Via GUI
+
+Open the system tray menu and select **Manage Plugins**. From there you can:
+
+- Browse the plugin registry to discover and install available plugins
+- Add a custom plugin from a local manifest file
+- View installed plugins and remove them
+
+### Via CLI
+
+```bash
+# Search the registry
+mcp-mux-cli plugin search
+
+# Install a plugin from the registry
+mcp-mux-cli plugin add ludflow
+
+# List installed plugins
+mcp-mux-cli plugin list
+
+# Install from a local manifest file
+mcp-mux-cli plugin add-custom ./my-plugin.json
+
+# Remove a plugin
+mcp-mux-cli plugin remove ludflow
+```
+
+For full CLI documentation, see [docs/cli.md](docs/cli.md).
+
+## Plugin Manifest Format
+
+A plugin manifest is a JSON file with renderer mappings and MCP configuration:
+
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "renderers": {
+    "tool_name": "renderer_name"
+  },
+  "mcp": {
+    "url": "http://localhost:8080/mcp",
+    "auth": {
+      "type": "bearer",
+      "token_env": "MY_API_KEY"
+    },
+    "tool_prefix": "myplugin_"
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `name` | Unique plugin identifier |
+| `version` | Semantic version |
+| `renderers` | Maps MCP tool names to frontend renderers |
+| `mcp.url` | MCP server endpoint |
+| `mcp.auth` | Authentication config (`bearer`, `api_key`, or `oauth`) |
+| `mcp.tool_prefix` | Prefix for tool names to avoid collisions |
+
+Three auth types are supported: **bearer token** (env var), **API key** (custom header + env var), and **OAuth** (browser redirect flow). See [docs/plugins.md](docs/plugins.md) for the full schema reference.
+
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `mcp-mux-cli plugin list` | List installed plugins |
+| `mcp-mux-cli plugin add <name>` | Install a plugin from the registry |
+| `mcp-mux-cli plugin remove <name>` | Remove an installed plugin |
+| `mcp-mux-cli plugin add-custom <path>` | Install from a local manifest file |
+| `mcp-mux-cli plugin search [query]` | Search the plugin registry |
+
+See [docs/cli.md](docs/cli.md) for full usage examples and configuration.

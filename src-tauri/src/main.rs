@@ -1,11 +1,14 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod auth;
 mod commands;
 mod http_server;
+mod installer;
 mod mcp;
 mod mcp_tools;
 mod plugin;
+mod registry;
 mod review;
 mod session;
 mod state;
@@ -25,6 +28,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -35,6 +39,12 @@ fn main() {
             commands::submit_decision,
             commands::dismiss_session,
             commands::get_health,
+            commands::list_plugins,
+            commands::install_plugin,
+            commands::uninstall_plugin,
+            commands::install_plugin_from_file,
+            commands::fetch_registry,
+            commands::start_plugin_auth,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -61,9 +71,13 @@ fn main() {
 
             // Build system tray menu
             let show_item = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
+            let manage_plugins_item = MenuItemBuilder::with_id("manage_plugins", "Manage Plugins").build(app)?;
+            let setup_item = MenuItemBuilder::with_id("setup_integrations", "Setup Agent Integrations").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let tray_menu = MenuBuilder::new(app)
                 .item(&show_item)
+                .item(&manage_plugins_item)
+                .item(&setup_item)
                 .separator()
                 .item(&quit_item)
                 .build()?;
@@ -84,6 +98,26 @@ fn main() {
                             let _ = window.set_focus();
                         }
                     }
+                    "manage_plugins" => {
+                        if let Some(window) = app.get_webview_window("plugin-manager") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        } else {
+                            let _ = tauri::WebviewWindowBuilder::new(
+                                app,
+                                "plugin-manager",
+                                tauri::WebviewUrl::App("plugin-manager.html".into()),
+                            )
+                            .title("MCP Mux - Plugin Manager")
+                            .inner_size(800.0, 600.0)
+                            .build();
+                        }
+                    }
+                    "setup_integrations" => {
+                        if let Some(script) = installer::get_script_path(app) {
+                            let _ = installer::open_installer_terminal(&script);
+                        }
+                    }
                     "quit" => {
                         app.exit(0);
                     }
@@ -99,6 +133,13 @@ fn main() {
                     }
                 })
                 .build(app)?;
+
+            // First-run agent integration setup
+            if !installer::check_first_run() {
+                if let Some(script) = installer::get_script_path(&app.handle().clone()) {
+                    let _ = installer::open_installer_terminal(&script);
+                }
+            }
 
             Ok(())
         })

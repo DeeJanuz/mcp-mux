@@ -43,14 +43,18 @@ MCP Agent → POST localhost:4200/api/push
 | File | Responsibility |
 |------|---------------|
 | `main.rs` | Tauri entry point, plugin setup (shell, autostart), system tray, window event handling (hide-to-tray on close) |
-| `http_server.rs` | axum HTTP server on `:4200`. Routes: `GET /health`, `POST /api/push`. Runs on a dedicated thread with its own tokio runtime to avoid blocking the GTK event loop |
+| `http_server.rs` | axum HTTP server on `:4200`. Routes: `GET /health`, `POST /api/push`, `POST /api/reload-plugins`, and MCP Streamable HTTP on `/mcp` (GET for SSE, POST for JSON-RPC, DELETE for session teardown). Runs on a dedicated thread with its own tokio runtime to avoid blocking the GTK event loop |
 | `session.rs` | `SessionStore` — in-memory `HashMap<String, PreviewSession>` with 30-minute TTL and 60s GC interval |
 | `review.rs` | `ReviewState` — pending review management via `tokio::oneshot` channels. `add_pending()` returns a receiver; `resolve()` or `dismiss()` sends the decision |
-| `commands.rs` | Tauri IPC commands: `get_sessions`, `submit_decision`, `dismiss_session`, `get_health`, plus 7 plugin management commands (`list_plugins`, `install_plugin`, `uninstall_plugin`, `install_plugin_from_file`, `fetch_registry`, `start_plugin_auth`, `store_plugin_token`) and 2 settings commands (`get_settings`, `save_settings`) |
-| `state.rs` | `AppState` — shared state containing `Mutex<SessionStore>`, `Mutex<ReviewState>`, `Mutex<PluginRegistry>`, and `reqwest::Client` |
+| `commands.rs` | Tauri IPC commands: `get_sessions`, `submit_decision`, `dismiss_session`, `get_health`, plus plugin management commands (`list_plugins`, `install_plugin`, `uninstall_plugin`, `install_plugin_from_file`, `install_plugin_from_registry`, `install_plugin_from_zip`, `fetch_registry`, `start_plugin_auth`, `store_plugin_token`, `update_plugin`, `get_plugin_renderers`) and settings/registry commands (`get_settings`, `save_settings`, `get_registry_sources`, `add_registry_source`, `remove_registry_source`, `toggle_registry_source`) |
+| `state.rs` | `AppState` — shared state containing `Mutex<SessionStore>`, `Mutex<ReviewState>`, `Mutex<PluginRegistry>`, `Mutex<McpSessionManager>`, `Mutex<Vec<RegistryEntry>>` (cached registry), and `reqwest::Client` |
+| `mcp_session.rs` | `McpSessionManager` — manages MCP Streamable HTTP SSE sessions with `tokio::broadcast` channels. Supports session creation, teardown, broadcast to all sessions, and GC of sessions with no active receivers |
+| `installer.rs` | Agent integration installer — first-run detection, bundled script resolution, and terminal spawning for setup scripts (Linux/macOS/Windows) |
+| `renderer_scanner.rs` | Scans installed plugin directories for custom renderer JS files in `{plugin_dir}/renderers/*.js`, returning `RendererInfo` structs with `plugin://` protocol URLs |
 | `registry.rs` | Re-exports `get_configured_registry_url` and `fetch_registry` from the shared crate |
 | `tool_cache.rs` | `ToolCache` — per-plugin tool caching with 5-minute TTL, prefixed tool name indexing, and stale-detection logic (extracted from PluginRegistry) |
 | `auth.rs` | Plugin authentication — OAuth browser-redirect flow with ephemeral localhost callback server. Token storage and loading delegate to `shared::token_store` |
+| `scripts/` | Bundled installer scripts for agent integration setup: `setup-integrations.sh` (Linux/macOS) and `setup-integrations.ps1` (Windows) |
 
 ### Frontend (`src/` + `public/`)
 
@@ -69,13 +73,15 @@ The WebView loads `index.html` which includes:
 
 `mcp-mux-shared` crate consumed by both the Tauri backend and CLI. Contains:
 - `PluginManifest`, `PluginMcpConfig` — plugin definition and MCP connection config
-- `PluginAuth` — tagged enum: `Bearer { token_env }`, `ApiKey { header_name, key_env }`, `OAuth { client_id, auth_url, token_url, scopes }`. Implements `Display`, `display_name()`, `is_configured()`, and `resolve_header()` for centralized auth resolution. All variants delegate token I/O to the `token_store` module, falling back to environment variables for Bearer and ApiKey
-- `RegistryEntry`, `RemoteRegistry` — remote registry schema
-- `PluginInfo` — lightweight plugin summary for IPC
+- `PluginAuth` — tagged enum: `Bearer { token_env }`, `ApiKey { header_name, key_env }`, `OAuth { client_id?, auth_url, token_url, scopes }`. Implements `Display`, `display_name()`, `is_configured()`, and `resolve_header()` for centralized auth resolution. All variants delegate token I/O to the `token_store` module, falling back to environment variables for Bearer and ApiKey. OAuth `client_id` is now optional
+- `RegistryEntry`, `RemoteRegistry` — remote registry schema. `RegistryEntry` now includes optional `download_url` for ZIP package distribution
+- `RegistrySource` — `{ name, url, enabled }` struct for multi-source registry configuration
+- `PluginInfo` — lightweight plugin summary for IPC, now includes `update_available: Option<String>` for version comparison
 - Path helpers: `plugins_dir()`, `config_path()`, `auth_dir()`, `cache_dir()` — all under `~/.mcp-mux/`
 - `plugin_store::PluginStore` — filesystem-based plugin CRUD (list, load, save, remove, exists). Used by both CLI and Tauri app, eliminating duplicated disk I/O logic
 - `token_store` module — `StoredToken` struct with `load_stored_token()`, `store_token()`, `has_stored_token()`, and expiry checking. Centralizes all token file I/O (read, write, existence check, expiry detection) previously duplicated across `PluginAuth` match arms and `auth.rs`
-- `registry` module — `get_configured_registry_url()` and `fetch_registry()` with 1-hour disk cache. Shared by both CLI and Tauri app
+- `registry` module — `get_configured_registry_url()`, `fetch_registry()`, `get_registry_sources()`, `save_registry_sources()`, and `fetch_all_registries()` with per-source 1-hour disk caching. Supports multi-source registry configuration with fallback to legacy single `registry_url`. Shared by both CLI and Tauri app
+- `package` module — ZIP plugin package handling: `extract_plugin_zip()` (with zip-slip protection, GitHub-style prefix stripping, manifest validation), `download_and_install_plugin()` (download + extract + install), and `install_from_local_zip()`. Max download size: 50MB
 
 ### CLI (`cli/`)
 
@@ -116,6 +122,18 @@ For `reviewRequired: true` pushes, the HTTP handler:
 - Push event → show + focus main window (automatic)
 - Tray menu → "Show Window" / "Manage Plugins" / "Setup Agent Integrations" / "Quit"
 - "Manage Plugins" opens a separate Plugin Manager window (`plugin-manager.html`, 800x600)
+- Custom `plugin://` URI scheme serves plugin renderer assets from `~/.mcp-mux/plugins/{name}/` with path traversal protection and MIME type detection
+
+## MCP Streamable HTTP Transport
+
+The `/mcp` endpoint implements the MCP Streamable HTTP transport specification:
+
+- **`GET /mcp`** — SSE stream for server-to-client notifications. Requires `Accept: text/event-stream` header. Returns a `mcp-session-id` response header for session tracking. Uses `tokio::broadcast` channels per session with keepalive.
+- **`POST /mcp`** — JSON-RPC request/response for client-to-server calls. Optional `mcp-session-id` header to bind to an existing session (returns 404 if session not found).
+- **`DELETE /mcp`** — Session teardown. Requires `mcp-session-id` header (returns 400 if missing, 404 if not found).
+- **`POST /api/reload-plugins`** — Triggers plugin hot-reload and broadcasts `notifications/tools/list_changed` to all active SSE sessions.
+
+Session management is handled by `McpSessionManager` which tracks sessions in a `HashMap`, supports broadcast to all sessions, and provides GC for sessions with no active receivers.
 
 ## API Compatibility
 
@@ -123,7 +141,7 @@ The HTTP push API on `:4200` is fully compatible with the existing MCP server pu
 - Same `POST /api/push` request shape (`PushRequest`)
 - Same response shape (`PushResponse`)
 - Same review timeout behavior (408 on timeout)
-- Same CORS headers
+- CORS headers now include `DELETE` method and expose `mcp-session-id` header
 - `GET /health` returns version and uptime
 
 No changes needed on the MCP server side — it just POSTs to localhost:4200.

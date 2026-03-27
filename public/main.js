@@ -308,9 +308,7 @@
 
   var queueBadge = document.createElement('div');
   queueBadge.id = 'queue-badge';
-  queueBadge.style.cssText = 'display:none;position:fixed;top:12px;right:12px;background:#6366f1;color:#fff;' +
-    'font-size:13px;font-weight:600;padding:4px 10px;border-radius:12px;z-index:9999;' +
-    'box-shadow:0 2px 8px rgba(99,102,241,0.3);pointer-events:none;font-family:inherit;';
+  queueBadge.className = 'queue-badge';
   document.body.appendChild(queueBadge);
 
   function updateQueueBadge() {
@@ -320,9 +318,9 @@
     }
     if (validCount > 0) {
       queueBadge.textContent = validCount + ' waiting';
-      queueBadge.style.display = 'block';
+      queueBadge.classList.add('visible');
     } else {
-      queueBadge.style.display = 'none';
+      queueBadge.classList.remove('visible');
     }
   }
 

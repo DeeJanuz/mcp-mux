@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <div id="bg-pattern" aria-hidden="true"></div>
   <div id="app">
     <div id="main">
       <div id="main-header">
@@ -18,6 +19,10 @@
           <span id="connection-dot" class="dot connected"></span>
           <span id="connection-text">Ready</span>
         </div>
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
+          <span class="theme-icon-light">☀</span>
+          <span class="theme-icon-dark">☾</span>
+        </button>
       </div>
       <div id="content-area">
         <div class="empty-state">Waiting for preview data...</div>
@@ -28,6 +33,45 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <script>if(typeof mermaid!=='undefined')mermaid.initialize({startOnLoad:false,theme:'default',securityLevel:'loose',suppressErrorRendering:true});</script>
+
+  <script>
+(function() {
+  var html = document.documentElement;
+  var saved = localStorage.getItem('mcp-mux-theme');
+  if (saved) {
+    html.setAttribute('data-theme', saved);
+  } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    html.setAttribute('data-theme', 'dark');
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var toggle = document.getElementById('theme-toggle');
+    if (toggle) {
+      toggle.addEventListener('click', function() {
+        var current = html.getAttribute('data-theme');
+        var next = current === 'dark' ? 'light' : 'dark';
+        html.setAttribute('data-theme', next);
+        localStorage.setItem('mcp-mux-theme', next);
+        if (typeof mermaid !== 'undefined') {
+          mermaid.initialize({ startOnLoad: false, theme: next === 'dark' ? 'dark' : 'default', securityLevel: 'loose', suppressErrorRendering: true });
+        }
+      });
+    }
+
+    if (window.matchMedia) {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+        if (!localStorage.getItem('mcp-mux-theme')) {
+          var theme = e.matches ? 'dark' : 'light';
+          html.setAttribute('data-theme', theme);
+          if (typeof mermaid !== 'undefined') {
+            mermaid.initialize({ startOnLoad: false, theme: theme === 'dark' ? 'dark' : 'default', securityLevel: 'loose', suppressErrorRendering: true });
+          }
+        }
+      });
+    }
+  });
+})();
+</script>
 
   <!-- Renderers (same as companion, loaded as vanilla JS) -->
   <script src="./renderers/shared.js"></script>

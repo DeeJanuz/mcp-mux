@@ -31,6 +31,10 @@
         }
 
         var id = 'mermaid-' + (++_mermaidCounter);
+        var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        if (typeof mermaid !== 'undefined' && mermaid.initialize) {
+          mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'default', securityLevel: 'loose', suppressErrorRendering: true });
+        }
         mermaid.render(id, source)
           .then(function (result) {
             el.innerHTML = '';
@@ -126,7 +130,7 @@
     var header = document.createElement('div');
     header.className = 'mermaid-modal-header';
     var title = document.createElement('span');
-    title.style.cssText = 'font-size:14px;font-weight:600;color:#171717;';
+    title.style.cssText = 'font-size:14px;font-weight:600;color:var(--text-primary,#171717);';
     title.textContent = 'Diagram';
     header.appendChild(title);
 

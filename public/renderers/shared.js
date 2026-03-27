@@ -80,9 +80,9 @@
 
   function createBadge(text, bgColor, textColor) {
     var badge = document.createElement('span');
-    badge.style.cssText = 'display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:0.5px;';
-    badge.style.backgroundColor = bgColor || '#f3f4f6';
-    badge.style.color = textColor || '#525252';
+    badge.className = 'glass-badge';
+    if (bgColor) badge.style.setProperty('--badge-bg', bgColor);
+    if (textColor) badge.style.setProperty('--badge-color', textColor);
     badge.textContent = text;
     return badge;
   }
@@ -91,20 +91,17 @@
     opts = opts || {};
     var btn = document.createElement('button');
     btn.textContent = text;
-    btn.style.cssText = 'padding:6px 16px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;border:1px solid transparent;transition:all 0.15s;';
-    btn.style.backgroundColor = opts.bg || '#f3f4f6';
-    btn.style.color = opts.color || '#171717';
-    btn.style.borderColor = opts.borderColor || 'transparent';
+    btn.className = 'glass-btn';
+    if (opts.bg) btn.style.setProperty('--btn-bg', opts.bg);
+    if (opts.color) btn.style.setProperty('--btn-color', opts.color);
+    if (opts.borderColor) btn.style.setProperty('--btn-border', opts.borderColor);
     if (opts.onclick) btn.addEventListener('click', opts.onclick);
-    btn.addEventListener('mouseenter', function() { btn.style.opacity = '0.85'; });
-    btn.addEventListener('mouseleave', function() { btn.style.opacity = '1'; });
     return btn;
   }
 
   function createSmallButton(text, opts) {
     var btn = createButton(text, opts);
-    btn.style.padding = '2px 8px';
-    btn.style.fontSize = '11px';
+    btn.classList.add('glass-btn-sm');
     return btn;
   }
 
@@ -210,7 +207,7 @@
    */
   function proxyFetchWithStatus(container, toolName, args, loadingText) {
     var loading = document.createElement('div');
-    loading.style.cssText = 'color:#737373;font-size:13px;padding:8px 0;';
+    loading.className = 'loading-text';
     loading.textContent = loadingText || 'Loading...';
     container.appendChild(loading);
 
@@ -225,7 +222,7 @@
       })
       .catch(function () {
         loading.textContent = 'Failed to load data';
-        loading.style.color = '#dc2626';
+        loading.className = 'loading-error';
         return null;
       });
   }
@@ -233,29 +230,28 @@
   function buildCollapsibleSection(title, renderContent, opts) {
     opts = opts || {};
     var section = document.createElement('div');
-    section.style.cssText = 'margin:8px 0;';
+    section.className = 'collapsible-section';
 
     var header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 12px;background:#ffffff;border:1px solid #e5e5e5;border-radius:8px;cursor:pointer;user-select:none;';
+    header.className = 'collapsible-header';
+    var startExpanded = opts.expanded === true;
+    if (startExpanded) header.classList.add('expanded');
 
     var toggle = document.createElement('span');
-    toggle.style.cssText = 'color:#737373;font-size:11px;';
-    var startExpanded = opts.expanded === true;
+    toggle.className = 'collapsible-toggle';
     toggle.textContent = startExpanded ? '\u25BC' : '\u25B6';
 
     var titleEl = document.createElement('span');
-    titleEl.style.cssText = 'font-size:13px;font-weight:600;color:#171717;';
+    titleEl.className = 'collapsible-title';
     titleEl.textContent = title;
 
     header.appendChild(toggle);
     header.appendChild(titleEl);
 
     var body = document.createElement('div');
-    body.style.cssText = 'border:1px solid #e5e5e5;border-top:none;border-radius:0 0 8px 8px;padding:8px;background:#ffffff;max-height:400px;overflow-y:auto;';
+    body.className = 'collapsible-body';
     if (!startExpanded) {
       body.style.display = 'none';
-    } else {
-      header.style.borderRadius = '8px 8px 0 0';
     }
 
     renderContent(body);
@@ -263,7 +259,7 @@
     header.onclick = function () {
       var hidden = body.style.display === 'none';
       body.style.display = hidden ? '' : 'none';
-      header.style.borderRadius = hidden ? '8px 8px 0 0' : '8px';
+      header.classList.toggle('expanded', hidden);
       toggle.textContent = hidden ? '\u25BC' : '\u25B6';
     };
 

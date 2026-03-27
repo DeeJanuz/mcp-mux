@@ -66,7 +66,9 @@
     // Fallback: if data has neither body nor title, render as JSON
     if (!data || (typeof data === 'object' && !data.body && !data.title)) {
       var pre = document.createElement('pre');
-      pre.style.cssText = 'background:#1e1e1e;color:#d4d4d4;padding:16px;border-radius:8px;font-size:13px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;';
+      pre.className = 'md-codeblock';
+      pre.style.whiteSpace = 'pre-wrap';
+      pre.style.wordBreak = 'break-word';
       pre.textContent = JSON.stringify(data, null, 2);
       container.appendChild(pre);
       return;
@@ -75,7 +77,7 @@
     // Title
     if (data.title) {
       var h1 = document.createElement('h1');
-      h1.style.cssText = 'font-size:20px;font-weight:700;color:#171717;margin:0 0 16px 0;line-height:1.3;';
+      h1.className = 'rc-title';
       h1.textContent = data.title;
       container.appendChild(h1);
     }
@@ -92,7 +94,6 @@
       }
 
       if (contentEl instanceof HTMLElement) {
-        contentEl.style.cssText += 'padding:8px 0;line-height:1.8;';
         container.appendChild(contentEl);
 
         // Render mermaid diagrams

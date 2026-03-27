@@ -81,15 +81,17 @@ pub async fn call_tool(
                         proxy_plugin_tool_call(&client, &info.mcp_url, info.auth_header.as_deref(), &info.unprefixed_name, &arguments)
                             .await?;
 
-                    // Auto-push to viewer as a side effect
-                    auto_push_plugin_result(
-                        state,
-                        &info.unprefixed_name,
-                        &arguments,
-                        &result,
-                        &info.renderer_map,
-                    )
-                    .await;
+                    // Auto-push to viewer as a side effect (skip for denylisted tools)
+                    if !info.no_auto_push.contains(&info.unprefixed_name) {
+                        auto_push_plugin_result(
+                            state,
+                            &info.unprefixed_name,
+                            &arguments,
+                            &result,
+                            &info.renderer_map,
+                        )
+                        .await;
+                    }
 
                     Ok(result)
                 }
@@ -654,6 +656,7 @@ mod tests {
             mcp,
             renderer_definitions: renderer_defs,
             tool_rules,
+            no_auto_push: vec![],
         }
     }
 

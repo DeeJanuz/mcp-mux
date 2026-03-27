@@ -12,6 +12,7 @@ pub fn test_manifest(name: &str) -> mcp_mux_shared::PluginManifest {
         mcp: None,
         renderer_definitions: vec![],
         tool_rules: std::collections::HashMap::new(),
+        no_auto_push: vec![],
     }
 }
 

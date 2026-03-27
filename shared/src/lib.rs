@@ -43,6 +43,10 @@ pub struct PluginManifest {
     pub renderer_definitions: Vec<RendererDef>,
     #[serde(default)]
     pub tool_rules: HashMap<String, String>,
+    /// Tool names that should NOT auto-push results to the companion window.
+    /// Mutation tools (writes, deletes, etc.) typically belong here.
+    #[serde(default)]
+    pub no_auto_push: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -569,5 +573,31 @@ mod tests {
         assert!(manifest.renderer_definitions.is_empty());
         assert!(manifest.renderers.is_empty());
         assert!(manifest.mcp.is_none());
+    }
+
+    #[test]
+    fn test_no_auto_push_defaults_to_empty_vec() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0"
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.no_auto_push.is_empty());
+    }
+
+    #[test]
+    fn test_no_auto_push_roundtrips_correctly() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0",
+            "no_auto_push": ["write_document", "manage_data_draft"]
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.no_auto_push, vec!["write_document", "manage_data_draft"]);
+
+        // Roundtrip through serialize/deserialize
+        let serialized = serde_json::to_string(&manifest).unwrap();
+        let deserialized: PluginManifest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.no_auto_push, vec!["write_document", "manage_data_draft"]);
     }
 }

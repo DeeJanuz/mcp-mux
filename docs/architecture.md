@@ -62,9 +62,9 @@ MCP Agent → POST localhost:4200/api/push
 
 The WebView loads `index.html` which includes:
 - CDN scripts: `marked.js` (markdown), `mermaid` (diagrams)
-- `styles.css` — all styling (ported from companion)
-- `main.js` — app bootstrap, Tauri IPC event listener, session/queue management
-- `renderers/*.js` — built-in content renderers: `rich-content`, `document-preview`, `citation-panel`, `mermaid-renderer`, plus `shared.js` utilities. Domain-specific renderers (code analysis, data governance, etc.) are delivered via the plugin system
+- `styles.css` — glassmorphism design system with 120+ CSS custom properties, light/dark theme support via `[data-theme]` attribute, frosted glass panels, geometric dot-grid background, and refined typography hierarchy. Theme toggle with `prefers-color-scheme` system preference detection. All renderer styling uses CSS classes (no inline JS styles)
+- `main.js` — app bootstrap, Tauri IPC event listener, session/queue management, theme toggle logic with system preference detection and `localStorage` persistence
+- `renderers/*.js` — built-in content renderers: `rich-content`, `document-preview`, `citation-panel`, `mermaid-renderer`, plus `shared.js` utilities. All renderers use CSS classes from `styles.css` instead of inline styles. Domain-specific renderers (code analysis, data governance, etc.) are delivered via the plugin system
 - `plugin-manager.js` — Plugin Manager window logic (registry browser, installed list, settings)
 
 **Key change from companion**: WebSocket replaced with Tauri IPC:

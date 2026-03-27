@@ -356,6 +356,27 @@ Per-tool behavioral rules (tool names are auto-prefixed):
 }
 ```
 
+## Suppressing Auto-Push for Mutation Tools
+
+By default, when a plugin tool is called, MCP Mux auto-pushes the result to the companion window. This works well for read/query tools whose results benefit from rich rendering. However, mutation tools (writes, deletes, management operations) typically return thin confirmation responses like `{"success": true}` that overwrite the current companion display with empty or broken previews.
+
+Use the `no_auto_push` field to declare which tools should skip auto-push:
+
+```json
+{
+  "name": "my-plugin",
+  "version": "1.0.0",
+  "no_auto_push": [
+    "write_document",
+    "delete_document",
+    "manage_settings"
+  ],
+  "mcp": { ... }
+}
+```
+
+Tools listed in `no_auto_push` still return their results to the calling agent normally -- only the automatic companion window push is suppressed. The coordinator agent can still explicitly push content via `push_content` when appropriate.
+
 ## ZIP Plugin Packages
 
 For distribution, plugins can be packaged as ZIP archives:
@@ -468,6 +489,10 @@ A full-featured plugin manifest with all optional fields:
     "analyze_code": "Always specify language parameter for best results.",
     "search_files": "Limit to 100 results per call."
   },
+  "no_auto_push": [
+    "write_report",
+    "delete_analysis"
+  ],
   "mcp": {
     "url": "https://api.acme.com/mcp",
     "auth": {

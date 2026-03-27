@@ -25,7 +25,7 @@ jobs:
       github.event.inputs.platform == 'all' ||
       github.event.inputs.platform == 'macos'
     runs-on: macos-latest
-    environment: release
+    environment: production
     env:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:

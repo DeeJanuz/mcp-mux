@@ -7,7 +7,7 @@
       "description": "Code analysis, documentation, and data governance powered by Ludflow",
       "author": "Ludflow",
       "homepage": "https://ludflow.com",
-      "download_url": "https://github.com/DeeJanuz/ludflow-mcp-mux/releases/download/v0.2.0/ludflow-plugin.zip",
+      "download_url": "https://github.com/DeeJanuz/ludflow-mcpviews/releases/download/v0.2.0/ludflow-plugin.zip",
       "tags": ["code-analysis", "documentation", "data-governance", "knowledge-management"],
       "manifest": {
         "name": "ludflow",

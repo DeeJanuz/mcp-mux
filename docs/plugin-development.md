@@ -141,7 +141,7 @@ server.tool("analyze_code", { path: z.string() }, async ({ path }) => {
 
 ### Step 2: Choose Renderers
 
-MCPViews ships with built-in renderers for general-purpose content. Domain-specific renderers are delivered via plugins (e.g., the [Ludflow plugin](https://github.com/DeeJanuz/ludflow-mcp-mux) provides renderers for code analysis, data governance, and knowledge management).
+MCPViews ships with built-in renderers for general-purpose content. Domain-specific renderers are delivered via plugins (e.g., the [Ludflow plugin](https://github.com/DeeJanuz/ludflow-mcpviews) provides renderers for code analysis, data governance, and knowledge management).
 
 #### Built-in Renderers
 

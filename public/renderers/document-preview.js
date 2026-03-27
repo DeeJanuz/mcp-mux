@@ -11,19 +11,19 @@
    * ──────────────────────────────────────────────── */
   function renderSingleDocument(container, doc, utils) {
     var titleRow = document.createElement('div');
-    titleRow.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:4px;';
+    titleRow.className = 'doc-title-row';
     var title = document.createElement('h1');
-    title.style.cssText = 'font-size:22px;font-weight:700;color:#171717;margin:0;';
+    title.className = 'doc-title';
     title.textContent = doc.title || 'Untitled';
     titleRow.appendChild(title);
     container.appendChild(titleRow);
 
     var metaRow = document.createElement('div');
-    metaRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:20px;';
+    metaRow.className = 'doc-meta-row';
     if (doc.status) metaRow.appendChild(utils.createStatusBadge(doc.status));
     if (doc.folder_name) {
       var folder = document.createElement('span');
-      folder.style.cssText = 'font-size:12px;color:#737373;';
+      folder.className = 'doc-folder';
       folder.textContent = '\uD83D\uDCC1 ' + doc.folder_name;
       metaRow.appendChild(folder);
     }
@@ -31,7 +31,7 @@
 
     if (doc.content) {
       var contentContainer = document.createElement('div');
-      contentContainer.style.cssText = 'background:#f9fafb;border:1px solid #e5e5e5;border-radius:8px;padding:24px;';
+      contentContainer.className = 'doc-content-container';
       var md = utils.renderMarkdown(doc.content);
       if (md instanceof HTMLElement) contentContainer.appendChild(md);
       container.appendChild(contentContainer);
@@ -41,19 +41,16 @@
     // Render links if present
     if (doc.links && doc.links.length > 0) {
       var linksSection = document.createElement('div');
-      linksSection.style.cssText = 'margin-top:20px;';
+      linksSection.className = 'doc-links-section';
       var linksTitle = document.createElement('h3');
-      linksTitle.style.cssText = 'font-size:14px;font-weight:600;color:#525252;margin:0 0 8px 0;';
+      linksTitle.className = 'doc-links-heading';
       linksTitle.textContent = 'Linked Documents';
       linksSection.appendChild(linksTitle);
 
       doc.links.forEach(function (link) {
         var linkEl = document.createElement('div');
-        linkEl.style.cssText = 'padding:8px 12px;background:#f9fafb;border:1px solid #e5e5e5;border-radius:6px;margin-bottom:6px;font-size:13px;color:#2563eb;';
+        linkEl.className = 'doc-link-card';
         linkEl.textContent = link.title || link.target_document_id || 'Linked Document';
-        linkEl.addEventListener('mouseenter', function () { linkEl.style.background = '#eff6ff'; });
-        linkEl.addEventListener('mouseleave', function () { linkEl.style.background = '#f9fafb'; });
-
         // Click to navigate to linked document
         var targetId = link.target_document_id || link.id;
         if (targetId && utils.isProxyConfigured()) {
@@ -107,20 +104,18 @@
     if (docs.length > 1) {
       // Card list for multiple documents
       var header = document.createElement('div');
-      header.style.cssText = 'margin-bottom:16px;';
+      header.className = 'doc-list-header';
       header.appendChild(utils.createBadge(docs.length + ' documents', '#f3f4f6', '#171717'));
       container.appendChild(header);
 
       docs.forEach(function (doc) {
         var card = document.createElement('div');
-        card.style.cssText = 'background:#ffffff;border:1px solid #e5e5e5;border-radius:8px;padding:16px;margin-bottom:12px;transition:border-color 0.15s;';
-        card.addEventListener('mouseenter', function () { card.style.borderColor = '#60a5fa'; });
-        card.addEventListener('mouseleave', function () { card.style.borderColor = '#e5e5e5'; });
+        card.className = 'doc-list-card';
 
         var titleRow = document.createElement('div');
-        titleRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
+        titleRow.className = 'doc-card-title-row';
         var title = document.createElement('span');
-        title.style.cssText = 'font-weight:600;font-size:15px;color:#171717;';
+        title.className = 'doc-card-title';
         title.textContent = doc.title || 'Untitled';
         titleRow.appendChild(title);
         if (doc.status) titleRow.appendChild(utils.createStatusBadge(doc.status));
@@ -128,14 +123,15 @@
 
         if (doc.folder_name) {
           var folder = document.createElement('div');
-          folder.style.cssText = 'font-size:12px;color:#737373;margin-bottom:8px;';
+          folder.className = 'doc-folder';
+          folder.style.marginBottom = '8px';
           folder.textContent = '\uD83D\uDCC1 ' + doc.folder_name;
           card.appendChild(folder);
         }
 
         if (doc.content) {
           var preview = document.createElement('div');
-          preview.style.cssText = 'color:#737373;font-size:13px;line-height:1.5;';
+          preview.className = 'doc-card-preview';
           preview.textContent = utils.truncate(doc.content, 200);
           card.appendChild(preview);
         }
@@ -158,7 +154,7 @@
             card.style.opacity = '0.6';
             card.style.pointerEvents = 'none';
             var loadingText = document.createElement('div');
-            loadingText.style.cssText = 'font-size:12px;color:#6366f1;margin-top:8px;';
+            loadingText.className = 'doc-loading-text';
             loadingText.textContent = 'Loading...';
             card.appendChild(loadingText);
 
@@ -195,7 +191,7 @@
                 card.style.pointerEvents = 'auto';
                 if (loadingText.parentNode) loadingText.parentNode.removeChild(loadingText);
                 var errEl = document.createElement('div');
-                errEl.style.cssText = 'font-size:12px;color:#dc2626;margin-top:8px;';
+                errEl.className = 'doc-error-text';
                 errEl.textContent = 'Failed to load document';
                 card.appendChild(errEl);
                 setTimeout(function () { if (errEl.parentNode) errEl.parentNode.removeChild(errEl); }, 3000);
@@ -668,13 +664,13 @@
 
     // Title
     var titleEl = document.createElement('h2');
-    titleEl.style.cssText = 'color:#171717;font-size:20px;font-weight:700;margin:0 0 12px 0;';
+    titleEl.className = 'doc-diff-title';
     titleEl.textContent = 'Edit: ' + (doc.title || (toolArgs && toolArgs.document_id) || 'Document');
     container.appendChild(titleEl);
 
     if (operations.length === 0) {
       var noOps = document.createElement('div');
-      noOps.style.cssText = 'color:#737373;text-align:center;padding:32px;';
+      noOps.className = 'doc-no-ops';
       noOps.textContent = 'No operations to review';
       container.appendChild(noOps);
       return;
@@ -701,7 +697,7 @@
     // Bulk action buttons
     if (reviewRequired) {
       var bulkRow = document.createElement('div');
-      bulkRow.style.cssText = 'display:flex;gap:8px;margin-bottom:16px;';
+      bulkRow.className = 'doc-bulk-row';
 
       var acceptAllBtn = utils.createButton('Accept All', {
         bg: '#dcfce7', color: '#166534',

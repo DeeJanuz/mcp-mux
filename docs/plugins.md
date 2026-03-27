@@ -250,7 +250,7 @@ MCPViews includes built-in renderers for general-purpose content:
 | `document_diff` | Two-column diff with accept/reject |
 | `citation_panel` | Citation list (used as sub-component) |
 
-Domain-specific renderers (code analysis, data governance, knowledge management) are delivered via plugins. For example, the [Ludflow plugin](https://github.com/DeeJanuz/ludflow-mcp-mux) provides renderers for `search_results`, `code_units`, `data_schema`, `column_context`, `module_overview`, `analysis_stats`, `knowledge_dex`, `data_draft_diff`, `dependencies`, and `file_content`.
+Domain-specific renderers (code analysis, data governance, knowledge management) are delivered via plugins. For example, the [Ludflow plugin](https://github.com/DeeJanuz/ludflow-mcpviews) provides renderers for `search_results`, `code_units`, `data_schema`, `column_context`, `module_overview`, `analysis_stats`, `knowledge_dex`, `data_draft_diff`, `dependencies`, and `file_content`.
 
 Map each of your tools to the renderer that best fits its output in the `renderers` field.
 

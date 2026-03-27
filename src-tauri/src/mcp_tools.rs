@@ -59,7 +59,8 @@ pub async fn call_tool(
         "push_content" => call_push_content(arguments, state).await,
         "push_review" => call_push_review(arguments, state).await,
         "push_check" => call_push_check(arguments, state).await,
-        "setup_agent_rules" => call_setup_agent_rules(arguments, state).await,
+        "init_session" => call_init_session(arguments, state).await,
+        "mcpviews_setup" => call_mcpviews_setup(arguments, state).await,
         _ => {
             // Check plugin tools — scope MutexGuard to block before any .await
             let (plugin_info, client) = lookup_plugin_tool(name, state).await;
@@ -387,7 +388,17 @@ pub(crate) fn persistence_instructions(agent_type: &str) -> String {
     }
 }
 
-async fn call_setup_agent_rules(
+/// Gather rules and plugin auth status from the current state.
+async fn gather_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>) {
+    let state_guard = state.lock().await;
+    let all_renderers = available_renderers(&state_guard.inner);
+    let registry = state_guard.inner.plugin_registry.lock().unwrap();
+    let rules = collect_rules(&all_renderers, &registry.manifests);
+    let plugin_status = collect_plugin_auth_status(&registry.manifests);
+    (rules, plugin_status)
+}
+
+async fn call_init_session(
     arguments: Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<Value, String> {
@@ -396,20 +407,55 @@ async fn call_setup_agent_rules(
         .and_then(|v| v.as_str())
         .unwrap_or("generic");
 
-    let (rules, plugin_status) = {
-        let state_guard = state.lock().await;
-        // Use full renderer list (built-in + explicit + synthesized)
-        let all_renderers = available_renderers(&state_guard.inner);
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let rules = collect_rules(&all_renderers, &registry.manifests);
-        let plugin_status = collect_plugin_auth_status(&registry.manifests);
-        (rules, plugin_status)
-    };
+    let (rules, plugin_status) = gather_session_data(state).await;
 
     let response = serde_json::json!({
         "rules": rules,
         "plugin_status": plugin_status,
         "persistence_instructions": persistence_instructions(agent_type),
+    });
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&response).unwrap()
+        }]
+    }))
+}
+
+/// Return platform-specific instructions for configuring automatic session initialization.
+pub(crate) fn setup_instructions(agent_type: &str) -> String {
+    match agent_type {
+        "claude_code" => "Add a rule in `.claude/rules/mcpviews-init.md` containing: 'At the start of every session, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, behavioral rules, and plugin auth status.'".to_string(),
+
+        "claude_desktop" => "Create a memory: 'At the start of every conversation, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions and rules.'".to_string(),
+
+        "cursor" => "Add to `.cursor/rules/mcpviews-init.mdc`: 'At the start of every session, call the `init_session` MCP tool to initialize MCPViews.'".to_string(),
+
+        "codex" | "opencode" | "antigravity" => "Add to `AGENTS.md`: 'At the start of every session, call the `init_session` MCP tool to initialize MCPViews.'".to_string(),
+
+        "windsurf" => "Add to `.windsurfrules`: 'At the start of every session, call the `init_session` MCP tool to initialize MCPViews.'".to_string(),
+
+        _ => "Ask the user how to persist a session-start rule that calls `init_session` at the start of every new session.".to_string(),
+    }
+}
+
+async fn call_mcpviews_setup(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let agent_type = arguments
+        .get("agent_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("generic");
+
+    let (rules, plugin_status) = gather_session_data(state).await;
+
+    let response = serde_json::json!({
+        "rules": rules,
+        "plugin_status": plugin_status,
+        "persistence_instructions": persistence_instructions(agent_type),
+        "setup_instructions": setup_instructions(agent_type),
     });
 
     Ok(serde_json::json!({
@@ -706,14 +752,27 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
             }
         }),
         serde_json::json!({
-            "name": "setup_agent_rules",
-            "description": "Bootstrap behavioral rules for all mcpviews renderers and plugin tools. Call once to get rules to persist in your agent's native memory/rule system.",
+            "name": "init_session",
+            "description": "Initialize MCPViews for this session. Returns current renderer definitions, behavioral rules, plugin auth status, and persistence instructions. Should be called at the start of every new agent session.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "agent_type": {
                         "type": "string",
                         "description": "The agent platform calling this tool. Supported: 'claude_code', 'claude_desktop', 'codex', 'cursor', 'windsurf', 'opencode', 'antigravity'. If omitted or unrecognized, returns instructions that ask the user how to persist rules."
+                    }
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "mcpviews_setup",
+            "description": "One-time setup for MCPViews. Returns instructions for persisting a session-start rule that ensures init_session is called automatically in every new session. Also returns current rules and plugin status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "agent_type": {
+                        "type": "string",
+                        "description": "The agent platform calling this tool. Supported: 'claude_code', 'claude_desktop', 'codex', 'cursor', 'windsurf', 'opencode', 'antigravity'. If omitted or unrecognized, returns generic instructions."
                     }
                 }
             }
@@ -1061,6 +1120,57 @@ mod tests {
         assert!(def.description.contains("Renderer for ludflow plugin"));
         assert_eq!(def.tools, vec!["search_codebase"]);
     }
+
+    // ─── setup_instructions tests ───
+
+    #[test]
+    fn test_setup_instructions_claude_code() {
+        let instr = setup_instructions("claude_code");
+        assert!(instr.contains("init_session"));
+        assert!(instr.contains(".claude/rules"));
+    }
+
+    #[test]
+    fn test_setup_instructions_claude_desktop() {
+        let instr = setup_instructions("claude_desktop");
+        assert!(instr.contains("init_session"));
+        assert!(instr.contains("memory"));
+    }
+
+    #[test]
+    fn test_setup_instructions_cursor() {
+        let instr = setup_instructions("cursor");
+        assert!(instr.contains("init_session"));
+        assert!(instr.contains(".cursor/rules"));
+    }
+
+    #[test]
+    fn test_setup_instructions_codex() {
+        let instr = setup_instructions("codex");
+        assert!(instr.contains("init_session"));
+        assert!(instr.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn test_setup_instructions_windsurf() {
+        let instr = setup_instructions("windsurf");
+        assert!(instr.contains("init_session"));
+        assert!(instr.contains(".windsurfrules"));
+    }
+
+    #[test]
+    fn test_setup_instructions_generic() {
+        let instr = setup_instructions("generic");
+        assert!(instr.contains("init_session"));
+    }
+
+    #[test]
+    fn test_setup_instructions_unknown() {
+        let instr = setup_instructions("some_unknown_agent");
+        assert!(instr.contains("init_session"));
+    }
+
+    // ─── synthesize_renderer_defs tests ───
 
     #[test]
     fn test_synthesize_groups_multiple_tools_under_one_renderer() {

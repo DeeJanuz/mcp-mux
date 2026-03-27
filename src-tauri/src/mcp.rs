@@ -97,18 +97,15 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
     instructions.push_str("\n## Complex Explanations → Companion Window\n\n");
     instructions.push_str(
         "Push complex explanations to the companion window instead of explaining \
-         them inline in chat. Call `setup_agent_rules` once per project to receive \
-         detailed usage rules for all renderers and tools.\n"
+         them inline in chat. Call `init_session` at the start of every session to get \
+         renderer rules and plugin status.\n"
     );
 
-    instructions.push_str("\n## Agent Rule Bootstrap\n\n");
+    instructions.push_str("\n## Session Initialization\n\n");
     instructions.push_str(
-        "Call `setup_agent_rules` once per project to receive behavioral rules for all\n\
-         available renderers and tools. Pass your `agent_type` (e.g. 'claude_code',\n\
-         'claude_desktop', 'cursor', 'codex') so the response includes platform-specific\n\
-         instructions for persisting the rules. Then follow those instructions to commit\n\
-         the rules into your memory/rule system so they guide your behavior across\n\
-         conversations.\n"
+        "Call `init_session` at the start of every session to receive renderer definitions,\n\
+         behavioral rules, and plugin auth status. If this is your first time using MCPViews,\n\
+         call `mcpviews_setup` to configure automatic session initialization for your platform.\n"
     );
 
     // Check for plugins needing authentication
@@ -139,7 +136,7 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
             instructions.push_str("\n");
         }
         instructions.push_str(
-            "\nCall `setup_agent_rules` to get auth URLs and status details.\n",
+            "\nCall `init_session` to get auth URLs and status details.\n",
         );
     }
 

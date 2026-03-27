@@ -2,6 +2,15 @@ name: Build Release
 
 on:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to build'
+        required: true
+        type: choice
+        options:
+          - all
+          - macos
+          - windows
   push:
     tags:
       - 'v*'
@@ -11,7 +20,14 @@ env:
 
 jobs:
   build-macos:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.inputs.platform == 'all' ||
+      github.event.inputs.platform == 'macos'
     runs-on: macos-latest
+    environment: release
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - uses: actions/checkout@v4
 
@@ -20,16 +36,15 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
-      - name: Cache Cargo registry + build
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ~/.cargo/bin/cargo-tauri
-            src-tauri/target
-          key: macos-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: macos-cargo-
+          key: macos-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: macos-cargo-registry-
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -43,20 +58,65 @@ jobs:
       - name: Install Tauri CLI
         run: command -v cargo-tauri || cargo install tauri-cli
 
-      - name: Build Tauri app
+      - name: Import Apple signing certificate
+        if: ${{ env.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
-          SIGN_ARGS=""
-          if [ -n "${{ secrets.APPLE_CERTIFICATE }}" ]; then
-            export APPLE_CERTIFICATE="${{ secrets.APPLE_CERTIFICATE }}"
-            export APPLE_CERTIFICATE_PASSWORD="${{ secrets.APPLE_CERTIFICATE_PASSWORD }}"
-            export APPLE_SIGNING_IDENTITY="${{ secrets.APPLE_SIGNING_IDENTITY }}"
-            export APPLE_ID="${{ secrets.APPLE_ID }}"
-            export APPLE_PASSWORD="${{ secrets.APPLE_PASSWORD }}"
-            export APPLE_TEAM_ID="${{ secrets.APPLE_TEAM_ID }}"
-          else
-            echo "No signing certificate configured — building unsigned"
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          # Save keychain path for cleanup step
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "CERTIFICATE_PATH=$CERTIFICATE_PATH" >> "$GITHUB_ENV"
+
+          # Decode certificate
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
+
+          # Create temporary keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          security import "$CERTIFICATE_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Add to keychain search list
+          security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          # Verify certificate is available
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Build Tauri app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo tauri build --target aarch64-apple-darwin
+
+      - name: Verify code signature
+        if: ${{ env.APPLE_CERTIFICATE != '' }}
+        run: |
+          APP_PATH="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/MCP Mux.app"
+          echo "=== Verifying code signature ==="
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          echo "=== Verifying Gatekeeper acceptance ==="
+          spctl --assess --type execute --verbose=2 "$APP_PATH"
+
+      - name: Cleanup signing artifacts
+        if: always()
+        run: |
+          if [ -n "$KEYCHAIN_PATH" ] && [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
           fi
-          cargo tauri build --target aarch64-apple-darwin
+          if [ -n "$CERTIFICATE_PATH" ] && [ -f "$CERTIFICATE_PATH" ]; then
+            rm -f "$CERTIFICATE_PATH"
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -67,6 +127,10 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
 
   build-windows:
+    if: >-
+      github.event_name == 'push' ||
+      github.event.inputs.platform == 'all' ||
+      github.event.inputs.platform == 'windows'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -74,16 +138,15 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo registry + build
+      - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ~/.cargo/bin/cargo-tauri.exe
-            src-tauri/target
-          key: windows-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: windows-cargo-
+          key: windows-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: windows-cargo-registry-
 
       - name: Install Node.js
         uses: actions/setup-node@v4

@@ -63,7 +63,7 @@ pub enum PluginAuth {
         header_name: String,
         key_env: Option<String>,
     },
-    #[serde(alias = "oauth")]
+    #[serde(rename = "oauth")]
     OAuth {
         #[serde(default)]
         client_id: Option<String>,

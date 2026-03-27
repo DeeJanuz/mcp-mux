@@ -30,6 +30,15 @@
           "manage_knowledge_entries": "knowledge_dex",
           "get_column_context": "column_context"
         },
+        "no_auto_push": [
+          "write_document",
+          "manage_data_draft",
+          "manage_document_links",
+          "manage_column_links",
+          "manage_folders",
+          "manage_knowledge_entries",
+          "manage_knowledge_metadata"
+        ],
         "mcp": {
           "url": "https://app.ludflow.com/api/mcp",
           "auth": {

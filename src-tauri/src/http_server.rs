@@ -493,6 +493,7 @@ mod tests {
             mcp: None,
             renderer_definitions: vec![],
             tool_rules: HashMap::new(),
+            no_auto_push: vec![],
         }
     }
 

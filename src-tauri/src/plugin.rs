@@ -22,6 +22,7 @@ pub(crate) struct PluginToolResult {
     pub unprefixed_name: String,
     pub renderer_map: HashMap<String, String>,
     pub oauth_info: Option<OAuthRefreshInfo>,
+    pub no_auto_push: Vec<String>,
 }
 
 /// Attempt OAuth token refresh, returning "Bearer {token}" on success.
@@ -183,6 +184,7 @@ impl PluginRegistry {
             unprefixed_name: unprefixed.to_string(),
             renderer_map: manifest.renderers.clone(),
             oauth_info,
+            no_auto_push: manifest.no_auto_push.clone(),
         })
     }
 

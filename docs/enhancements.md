@@ -1,8 +1,8 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-27
-**Total Active Issues:** 2
-**Resolved This Month:** 25
+**Total Active Issues:** 1
+**Resolved This Month:** 26
 
 ---
 
@@ -18,12 +18,7 @@ _None_
 
 ### Medium
 
-#### M-012: available_renderers() mixes aggregation with renderer synthesis logic
-- **File(s):** `src-tauri/src/mcp_tools.rs`
-- **Principle:** SRP
-- **Description:** `available_renderers()` (lines 544-624) collects built-in renderers, explicit plugin renderers, AND synthesizes new RendererDefs from manifest `renderers` map + tool cache lookups. The synthesis block (~50 lines) involves HashMap grouping, tool cache index lookups, description generation, and struct construction -- a distinct responsibility from simple aggregation. It also couples directly to `tool_cache.entries.get(idx)`, relying on index alignment between manifests and cache entries.
-- **Suggested Fix:** Extract `synthesize_renderers(manifest, prefix, cached_tools) -> Vec<RendererDef>` as a pure function. This enables unit testing of synthesis independently and keeps `available_renderers()` as a thin aggregation layer. Consider adding `ToolCache::tools_for(idx)` to hide index-based access.
-- **Detected:** 2026-03-27 (commit b5d1356)
+_None_
 
 ### Low
 
@@ -37,6 +32,10 @@ _None_
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-03-27 (commit 4da90fc)
+
+- **M-012:** available_renderers() mixes aggregation with renderer synthesis logic -- extracted `synthesize_renderer_defs()` as a pure function with `ToolCache::plugin_tools()` encapsulating index access; 7 unit tests added covering cache hit/miss, known-renderer filtering, and multi-tool grouping
 
 ### Resolved 2026-03-26 (commit 2b0f6cb)
 
@@ -87,6 +86,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 4da90fc | 2026-03-27 | 90/100 | Excellent |
 | b5d1356 | 2026-03-27 | 78/100 | Good |
 | cdde6ae | 2026-03-27 | 85/100 | Good |
 | d7a0bdc | 2026-03-26 | 82/100 | Good |

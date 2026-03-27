@@ -61,11 +61,6 @@ pub struct PluginRegistry {
 }
 
 impl PluginRegistry {
-    /// Load all plugin manifests from ~/.mcp-mux/plugins/
-    pub fn load_plugins() -> Self {
-        Self::load_plugins_with_store(PluginStore::new())
-    }
-
     /// Load all plugin manifests using a provided PluginStore (useful for testing).
     pub fn load_plugins_with_store(store: PluginStore) -> Self {
         // Migrate legacy flat-file plugins to directory format

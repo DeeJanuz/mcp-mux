@@ -42,6 +42,7 @@ Content type (renderer name) is resolved by searching all loaded plugin manifest
 | `toolName` | Content Type | Renderer |
 |------------|-------------|----------|
 | `rich_content`, `push_to_companion` | `rich_content` | Markdown + mermaid fallback |
+| `structured_data` | `structured_data` | Tabular data with hierarchical rows, change tracking, and review mode |
 | _(plugin-mapped tool)_ | Renderer name from plugin manifest `renderers` map | Plugin-provided renderer |
 | _(anything else)_ | Same as `toolName` | Falls back to `rich_content` if no matching renderer JS found |
 

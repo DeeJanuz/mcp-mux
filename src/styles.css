@@ -1417,3 +1417,87 @@ html[data-theme] .collapsible-body {
   .diff-sidebar-inner { position: static; }
   .diff-card { position: static !important; margin-bottom: 8px; }
 }
+
+/* === Drawer Stack (cross-renderer invocation) === */
+.drawer-stack-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.15);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+.drawer-stack-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.drawer-stack-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  background: var(--bg-surface, #ffffff);
+  border-left: 1px solid var(--glass-border);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.drawer-stack-panel.open {
+  transform: translateX(0);
+}
+.drawer-stack-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-default, #e5e7eb);
+  background: var(--bg-surface-subtle, #f9fafb);
+  flex-shrink: 0;
+}
+.drawer-stack-title {
+  font-size: var(--text-body, 14px);
+  font-weight: 600;
+  color: var(--text-primary, #111);
+  text-transform: capitalize;
+}
+.drawer-stack-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text-secondary, #6b7280);
+  padding: 0 4px;
+  line-height: 1;
+}
+.drawer-stack-close:hover {
+  color: var(--text-primary, #111);
+}
+.drawer-stack-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+/* mcpview:// invocation buttons in markdown */
+.mcpview-invoke-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: inherit;
+  font-family: inherit;
+  color: var(--text-link, #2563eb);
+  background: var(--bg-surface-subtle, #f0f4ff);
+  border: 1px solid var(--border-default, #e5e7eb);
+  border-radius: var(--border-radius-sm, 4px);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s;
+}
+.mcpview-invoke-btn:hover {
+  background: var(--bg-surface-hover, #e0e7ff);
+  border-color: var(--text-link, #2563eb);
+}

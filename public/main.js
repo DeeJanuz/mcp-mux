@@ -131,6 +131,10 @@
   }
 
   function removeSession(sessionId) {
+    // Close any open drawers when session is removed
+    if (window.__companionUtils && window.__companionUtils.closeAllDrawers) {
+      window.__companionUtils.closeAllDrawers();
+    }
     stopHeartbeat();
     stopCountdown(sessionId);
     sessions.delete(sessionId);
@@ -249,9 +253,18 @@
     // Load plugin renderers after initial sessions are loaded
     await loadPluginRenderers();
 
+    // Populate invocation registry
+    if (window.__companionUtils && window.__companionUtils.populateRendererRegistry) {
+      window.__companionUtils.populateRendererRegistry();
+    }
+
     // Reload renderers when a plugin is installed
     await listen('reload_renderers', function () {
       loadPluginRenderers();
+      // Populate invocation registry
+      if (window.__companionUtils && window.__companionUtils.populateRendererRegistry) {
+        window.__companionUtils.populateRendererRegistry();
+      }
     });
 
     connectionDot.classList.add('connected');
@@ -477,6 +490,37 @@
 
     if (citationData && window.__companionUtils && window.__companionUtils.openCitationPanel) {
       window.__companionUtils.openCitationPanel(type, citationData);
+    }
+  });
+
+  // --- Global mcpview:// invocation click handler ---
+
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-invoke-renderer]');
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    var rendererName = el.getAttribute('data-invoke-renderer');
+    var paramsStr = el.getAttribute('data-invoke-params');
+    var params = {};
+    try { params = JSON.parse(paramsStr || '{}'); } catch (err) {}
+
+    // Look up display mode from registry, fallback to 'drawer'
+    var registry = window.__rendererRegistry || {};
+    var meta = registry[rendererName];
+    var displayMode = (meta && meta.display_mode) || 'drawer';
+
+    if (window.__companionUtils && window.__companionUtils.invokeRenderer) {
+      window.__companionUtils.invokeRenderer(rendererName, params, displayMode);
+    }
+  });
+
+  // --- Escape key closes topmost drawer ---
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && window.__companionUtils && window.__companionUtils.closeDrawer) {
+      window.__companionUtils.closeDrawer();
     }
   });
 

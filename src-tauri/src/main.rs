@@ -128,6 +128,7 @@ fn main() {
             commands::toggle_registry_source,
             commands::update_plugin,
             commands::save_file,
+            commands::get_renderer_registry,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

@@ -401,6 +401,29 @@ pub async fn save_file(
     }
 }
 
+/// Return renderer definitions that have invoke_schema set (i.e., are invocable).
+/// Used by the frontend invocation registry to know which renderers can be invoked.
+#[tauri::command]
+pub fn get_renderer_registry(state: State<'_, Arc<AppState>>) -> Vec<serde_json::Value> {
+    let registry = state.plugin_registry.lock().unwrap();
+    let mut results = Vec::new();
+    for manifest in &registry.manifests {
+        for def in &manifest.renderer_definitions {
+            if def.invoke_schema.is_some() {
+                results.push(serde_json::json!({
+                    "name": def.name,
+                    "description": def.description,
+                    "display_mode": def.display_mode,
+                    "invoke_schema": def.invoke_schema,
+                    "url_patterns": def.url_patterns,
+                    "plugin": manifest.name,
+                }));
+            }
+        }
+    }
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,5 +522,64 @@ mod tests {
         let cached = state.latest_registry.lock().unwrap();
         let plugins = registry.list_plugins_with_updates(&cached);
         assert!(plugins.is_empty());
+    }
+
+    #[test]
+    fn test_get_renderer_registry_logic() {
+        let (state, _dir) = test_app_state();
+
+        // Add a plugin with an invocable renderer
+        let mut manifest = test_manifest("test-invocable");
+        manifest.renderer_definitions.push(mcpviews_shared::RendererDef {
+            name: "decision_detail".to_string(),
+            description: "Decision detail".to_string(),
+            scope: "universal".to_string(),
+            tools: vec![],
+            data_hint: None,
+            rule: None,
+            display_mode: Some("drawer".to_string()),
+            invoke_schema: Some("{ id: string }".to_string()),
+            url_patterns: vec!["/decisions/*".to_string()],
+        });
+
+        // Also add a non-invocable renderer (no invoke_schema)
+        manifest.renderer_definitions.push(mcpviews_shared::RendererDef {
+            name: "basic_view".to_string(),
+            description: "Basic view".to_string(),
+            scope: "tool".to_string(),
+            tools: vec!["some_tool".to_string()],
+            data_hint: None,
+            rule: None,
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
+        });
+
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        let registry = state.plugin_registry.lock().unwrap();
+        let mut results = Vec::new();
+        for manifest in &registry.manifests {
+            for def in &manifest.renderer_definitions {
+                if def.invoke_schema.is_some() {
+                    results.push(serde_json::json!({
+                        "name": def.name,
+                        "description": def.description,
+                        "display_mode": def.display_mode,
+                        "invoke_schema": def.invoke_schema,
+                        "url_patterns": def.url_patterns,
+                        "plugin": manifest.name,
+                    }));
+                }
+            }
+        }
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["name"], "decision_detail");
+        assert_eq!(results[0]["display_mode"], "drawer");
+        assert_eq!(results[0]["plugin"], "test-invocable");
     }
 }

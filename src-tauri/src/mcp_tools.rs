@@ -606,6 +606,9 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             tools: vec![],
             data_hint: Some("{ \"title\": \"Optional heading\", \"body\": \"Markdown content\" }".into()),
             rule: Some("CALLER RESTRICTION: ONLY the main/coordinator agent may call push_content, push_review, and push_check. Sub-agents and background agents must NEVER call these tools — they return results to the coordinator, which decides what to push.\n\nWhen to push (main agent only):\n- Detailed explanations that benefit from structured formatting, diagrams, or tables\n- Plan summaries for human review\n- Architecture, data flows, system diagrams, API designs, database schemas\n- Implementation plans with structural decisions\n\nKeep your chat response concise (context, next steps, decisions needed). The detailed explanation with mermaid diagrams, tables, and formatted markdown goes to push_content.".into()),
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
         },
         RendererDef {
             name: "structured_data".into(),
@@ -613,6 +616,9 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             scope: "universal".into(),
             tools: vec![],
             data_hint: Some(r#"{ "title": "Optional", "tables": [{ "id": "t1", "name": "Name", "columns": [{ "id": "c1", "name": "Col", "change": null|"add"|"delete" }], "rows": [{ "id": "r1", "cells": { "c1": { "value": "v", "change": null|"add"|"delete"|"update" } }, "children": [] }] }] }"#.into()),
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
             rule: Some(r#"Use structured_data when presenting tabular or schema data that benefits from sort, filter, expand/collapse, or review workflows. Prefer it over rich_content markdown tables when:
 - Data has hierarchical/nested rows (parent-child relationships)
 - Users need to sort or filter interactively
@@ -779,6 +785,9 @@ fn synthesize_renderer_defs(
             tools: tool_names.iter().map(|s| s.to_string()).collect(),
             data_hint: Some(data_hint),
             rule: None,
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
         });
     }
 
@@ -960,6 +969,9 @@ mod tests {
             tools: vec![],
             data_hint: Some(r#"{ "title": "heading", "body": "markdown" }"#.into()),
             rule: Some("Always use rich_content for plans.".into()),
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
         }];
         let rules = collect_rules(&renderers, &[]);
         assert_eq!(rules.len(), 2);
@@ -986,6 +998,9 @@ mod tests {
             tools: vec![],
             data_hint: None,
             rule: None,
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
         }];
         let rules = collect_rules(&renderers, &[]);
         // Only the renderer_selection rule, no renderer-specific rule
@@ -1002,6 +1017,9 @@ mod tests {
             tools: vec![],
             data_hint: None,
             rule: Some("Use custom_view for X.".into()),
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
         }];
         let rules = collect_rules(&renderers, &[]);
         assert_eq!(rules.len(), 2);
@@ -1021,6 +1039,9 @@ mod tests {
             tools: vec!["search_codebase".into()],
             data_hint: Some("Pass search results".into()),
             rule: None,
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
         }];
         let rules = collect_rules(&renderers, &[]);
         assert_eq!(rules.len(), 2);

@@ -26,6 +26,15 @@ pub struct RendererDef {
     pub data_hint: Option<String>,
     #[serde(default)]
     pub rule: Option<String>,
+    /// Preferred display mode when invoked: "drawer", "modal", or "replace"
+    #[serde(default)]
+    pub display_mode: Option<String>,
+    /// JSON schema hint for invocation params (e.g., "{ id: string }")
+    #[serde(default)]
+    pub invoke_schema: Option<String>,
+    /// Glob patterns for auto-detecting URLs to convert to invocation links
+    #[serde(default)]
+    pub url_patterns: Vec<String>,
 }
 
 fn default_renderer_scope() -> String {
@@ -522,6 +531,9 @@ mod tests {
             tools: vec!["get_analysis_stats".to_string()],
             data_hint: Some("{ counts: number[] }".to_string()),
             rule: None,
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
         };
         let json = serde_json::to_string(&renderer).unwrap();
         let parsed: RendererDef = serde_json::from_str(&json).unwrap();
@@ -542,6 +554,25 @@ mod tests {
         assert!(parsed.tools.is_empty());
         assert!(parsed.data_hint.is_none());
         assert!(parsed.rule.is_none());
+        assert!(parsed.display_mode.is_none());
+        assert!(parsed.invoke_schema.is_none());
+        assert!(parsed.url_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_renderer_def_invocation_fields() {
+        let json = r#"{
+            "name": "decision_detail",
+            "description": "Decision detail view",
+            "scope": "universal",
+            "display_mode": "drawer",
+            "invoke_schema": "{ id: string }",
+            "url_patterns": ["/decisions/*", "/api/decisions/*"]
+        }"#;
+        let parsed: RendererDef = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.display_mode, Some("drawer".to_string()));
+        assert_eq!(parsed.invoke_schema, Some("{ id: string }".to_string()));
+        assert_eq!(parsed.url_patterns, vec!["/decisions/*", "/api/decisions/*"]);
     }
 
     #[test]

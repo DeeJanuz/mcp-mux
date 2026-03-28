@@ -32,6 +32,24 @@
 
     // Custom link renderer for cite: URIs
     renderer.link = function({ href, title, text }) {
+      if (href && href.startsWith('mcpview://')) {
+        var parsed = href.slice('mcpview://'.length);
+        var qIdx = parsed.indexOf('?');
+        var rendererName = qIdx >= 0 ? parsed.slice(0, qIdx) : parsed;
+        var paramsStr = qIdx >= 0 ? parsed.slice(qIdx + 1) : '';
+        var params = {};
+        if (paramsStr) {
+          paramsStr.split('&').forEach(function(pair) {
+            var kv = pair.split('=');
+            if (kv[0]) params[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || '');
+          });
+        }
+        return '<button class="mcpview-invoke-btn" data-invoke-renderer="' +
+          escapeHtml(rendererName) + '" data-invoke-params="' +
+          escapeHtml(JSON.stringify(params)) + '" title="' +
+          escapeHtml(title || 'Open ' + rendererName.replace(/_/g, ' ')) + '">' +
+          text + '</button>';
+      }
       if (href && href.startsWith('cite:')) {
         var parts = href.split(':');
         var type = parts[1] || 'doc';

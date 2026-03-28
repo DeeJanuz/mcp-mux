@@ -1,8 +1,8 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-28
-**Total Active Issues:** 4
-**Resolved This Month:** 27
+**Total Active Issues:** 1
+**Resolved This Month:** 30
 
 ---
 
@@ -18,19 +18,7 @@ _None_
 
 ### Medium
 
-#### M-013: structured-data.js is a 743-line monolith with 7+ responsibilities
-- **File(s):** `public/renderers/structured-data.js`
-- **Principle:** SRP
-- **Description:** A single IIFE handles CSS injection, state management, data utilities (sort/filter/flatten), read-only table DOM construction, review-mode controls (decision toggles, cell editing), decision payload building, legend rendering, and orchestration. This makes isolated testing and modification difficult.
-- **Suggested Fix:** Extract pure data utilities (sort, filter, flatten, buildDecisionPayload) into a testable module. Separate review-mode builders from read-only builders. Consider extracting CSS injection into the shared style system.
-- **Detected:** 2026-03-28 (commit b17d52a)
-
-#### M-014: Duplicated decision toggle builders in structured-data.js
-- **File(s):** `public/renderers/structured-data.js`
-- **Principle:** DRY / OCP
-- **Description:** `buildRowDecisionToggle` and `buildColumnDecisionToggle` are nearly identical, differing only in the decision key format and button titles. The per-table and global Accept All / Reject All button handlers also duplicate the same iteration logic.
-- **Suggested Fix:** Extract a generic `buildDecisionToggle(key, state, rerenderFn, titles)` function. Extract the "set all decisions" iteration into a shared helper called by both per-table and global buttons.
-- **Detected:** 2026-03-28 (commit b17d52a)
+_None_
 
 ### Low
 
@@ -41,16 +29,15 @@ _None_
 - **Suggested Fix:** If `PluginStore` implements `Clone`, use `self.plugin_store.clone()`. Otherwise, add a `PluginStore::clone_fresh()` method that preserves all configuration.
 - **Detected:** 2026-03-26 (commit 2b0f6cb)
 
-#### L-013: No tests for structured-data renderer logic
-- **File(s):** `public/renderers/structured-data.js`
-- **Principle:** Testability
-- **Description:** Pure data functions (sortRows, filterRows, flattenRows, buildDecisionPayload, getCellValue) have no test coverage despite being highly testable. The interactive logic (cell editing commit/cancel, decision state management) is also untested.
-- **Suggested Fix:** Extract pure functions into a module importable by a test runner. Add unit tests for sort, filter, flatten, and payload building at minimum.
-- **Detected:** 2026-03-28 (commit b17d52a)
-
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-03-28 (commit 4191125)
+
+- **M-013:** structured-data.js is a 743-line monolith with 7+ responsibilities -- extracted 9 pure data functions into `structured-data-utils.js`, reducing the main renderer by ~240 lines and enabling isolated testing
+- **M-014:** Duplicated decision toggle builders in structured-data.js -- unified `buildRowDecisionToggle` and `buildColumnDecisionToggle` into a single `buildDecisionToggle(key, state, rerenderFn, opts)` function; extracted `applyBulkDecision` to replace 4 duplicated iteration blocks
+- **L-013:** No tests for structured-data renderer logic -- added 31 unit tests via vitest + happy-dom covering getCellValue, getCellChange, flattenRows, sortRows, filterRows, createTableState, setAllRowDecisions, buildDecisionPayload, and applyBulkDecision
 
 ### Resolved 2026-03-28 (commit 510f754)
 
@@ -109,6 +96,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 4191125 | 2026-03-28 | 88/100 | Good |
 | b17d52a | 2026-03-28 | 58/100 | Acceptable |
 | a24b465 | 2026-03-28 | 85/100 | Good |
 | 630efb9 | 2026-03-28 | 82/100 | Good |

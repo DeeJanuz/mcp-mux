@@ -1071,104 +1071,51 @@ body {
 .mermaid-rendered { border: 1px solid var(--glass-border); border-radius: var(--border-radius-md); padding: 16px; background: var(--glass-bg); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); cursor: pointer; transition: box-shadow var(--transition-fast); text-align: center; overflow-x: auto; }
 .mermaid-rendered:hover { box-shadow: var(--glass-shadow); }
 .mermaid-rendered svg { max-width: 100%; height: auto; }
-/* Dark mode: force mermaid SVG text to be readable */
-[data-theme="dark"] .mermaid-rendered svg text,
-[data-theme="dark"] .mermaid-rendered svg .nodeLabel,
-[data-theme="dark"] .mermaid-rendered svg .edgeLabel,
-[data-theme="dark"] .mermaid-rendered svg .label,
-[data-theme="dark"] .mermaid-rendered svg .actor,
-[data-theme="dark"] .mermaid-rendered svg .messageText,
-[data-theme="dark"] .mermaid-rendered svg .loopText,
-[data-theme="dark"] .mermaid-rendered svg .noteText,
-[data-theme="dark"] .mermaid-rendered svg .sectionTitle,
-[data-theme="dark"] .mermaid-rendered svg .taskText,
-[data-theme="dark"] .mermaid-rendered svg .titleText {
+/* Dark mode: force mermaid SVG text to be readable (inline + modal) */
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg text,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .nodeLabel,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .edgeLabel,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .label,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .actor,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .messageText,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .loopText,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .noteText,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .sectionTitle,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .taskText,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .titleText {
   fill: var(--text-primary) !important;
   color: var(--text-primary) !important;
 }
-[data-theme="dark"] .mermaid-rendered svg .node rect,
-[data-theme="dark"] .mermaid-rendered svg .node circle,
-[data-theme="dark"] .mermaid-rendered svg .node polygon {
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .node rect,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .node circle,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .node polygon,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg rect.actor,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .label-container,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .edgeLabel rect,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .cluster rect {
   fill: var(--glass-bg-heavy) !important;
   stroke: var(--border-default) !important;
 }
-/* Sequence diagram participant boxes and notes */
-[data-theme="dark"] .mermaid-rendered svg rect.actor {
-  fill: var(--glass-bg-heavy) !important;
-  stroke: var(--border-default) !important;
-}
-[data-theme="dark"] .mermaid-rendered svg .note rect,
-[data-theme="dark"] .mermaid-rendered svg rect.note {
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .note rect,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg rect.note,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .activation0,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .activation1,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .activation2,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg rect.loopBox {
   fill: var(--bg-surface-inset) !important;
   stroke: var(--border-default) !important;
 }
-[data-theme="dark"] .mermaid-rendered svg .activation0,
-[data-theme="dark"] .mermaid-rendered svg .activation1,
-[data-theme="dark"] .mermaid-rendered svg .activation2 {
-  fill: var(--bg-surface-inset) !important;
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .loopLine,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .actor-line {
   stroke: var(--border-default) !important;
-}
-/* Flowchart node fills — including label containers and edge labels */
-[data-theme="dark"] .mermaid-rendered svg .label-container,
-[data-theme="dark"] .mermaid-rendered svg .edgeLabel rect,
-[data-theme="dark"] .mermaid-rendered svg .cluster rect {
-  fill: var(--glass-bg-heavy) !important;
-  stroke: var(--border-default) !important;
-}
-/* Loop/alt boxes in sequence diagrams */
-[data-theme="dark"] .mermaid-rendered svg .loopLine {
-  stroke: var(--border-default) !important;
-}
-[data-theme="dark"] .mermaid-rendered svg rect.loopBox {
-  fill: var(--bg-surface-inset) !important;
 }
 /* Keep edge/arrow lines visible in dark mode */
-[data-theme="dark"] .mermaid-rendered svg .edgePath .path,
-[data-theme="dark"] .mermaid-rendered svg .flowchart-link,
-[data-theme="dark"] .mermaid-rendered svg line,
-[data-theme="dark"] .mermaid-rendered svg .messageLine0,
-[data-theme="dark"] .mermaid-rendered svg .messageLine1 {
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .edgePath .path,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .flowchart-link,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg line,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .messageLine0,
+[data-theme="dark"] :is(.mermaid-rendered, .mermaid-modal-body) svg .messageLine1 {
   stroke: var(--text-secondary) !important;
-}
-/* Sequence diagram actor boxes */
-[data-theme="dark"] .mermaid-rendered svg .actor-line {
-  stroke: var(--border-default) !important;
-}
-/* Modal gets same treatment */
-[data-theme="dark"] .mermaid-modal-body svg text,
-[data-theme="dark"] .mermaid-modal-body svg .nodeLabel,
-[data-theme="dark"] .mermaid-modal-body svg .edgeLabel,
-[data-theme="dark"] .mermaid-modal-body svg .label,
-[data-theme="dark"] .mermaid-modal-body svg .actor,
-[data-theme="dark"] .mermaid-modal-body svg .messageText,
-[data-theme="dark"] .mermaid-modal-body svg .loopText,
-[data-theme="dark"] .mermaid-modal-body svg .noteText,
-[data-theme="dark"] .mermaid-modal-body svg .sectionTitle,
-[data-theme="dark"] .mermaid-modal-body svg .taskText,
-[data-theme="dark"] .mermaid-modal-body svg .titleText {
-  fill: var(--text-primary) !important;
-  color: var(--text-primary) !important;
-}
-[data-theme="dark"] .mermaid-modal-body svg .node rect,
-[data-theme="dark"] .mermaid-modal-body svg .node circle,
-[data-theme="dark"] .mermaid-modal-body svg .node polygon {
-  fill: var(--glass-bg-heavy) !important;
-  stroke: var(--border-default) !important;
-}
-[data-theme="dark"] .mermaid-modal-body svg rect.actor {
-  fill: var(--glass-bg-heavy) !important;
-  stroke: var(--border-default) !important;
-}
-[data-theme="dark"] .mermaid-modal-body svg .note rect,
-[data-theme="dark"] .mermaid-modal-body svg rect.note {
-  fill: var(--bg-surface-inset) !important;
-  stroke: var(--border-default) !important;
-}
-[data-theme="dark"] .mermaid-modal-body svg .label-container,
-[data-theme="dark"] .mermaid-modal-body svg .edgeLabel rect,
-[data-theme="dark"] .mermaid-modal-body svg .cluster rect {
-  fill: var(--glass-bg-heavy) !important;
-  stroke: var(--border-default) !important;
 }
 .mermaid-error { padding: 12px; border: 1px solid var(--color-error-border); border-radius: 8px; background: #fef2f2; }
 .mermaid-error-label { font-size: 12px; font-weight: 600; color: var(--color-error-text); }

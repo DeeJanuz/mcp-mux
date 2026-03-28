@@ -1,7 +1,7 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-28
-**Total Active Issues:** 4
+**Total Active Issues:** 7
 **Resolved This Month:** 30
 
 ---
@@ -18,7 +18,26 @@ _None_
 
 ### Medium
 
-_None_
+#### M-015: Duplicated dark mode CSS for mermaid-rendered and mermaid-modal-body
+- **File(s):** `src/styles.css`
+- **Principle:** DRY / SRP
+- **Description:** The dark mode mermaid SVG overrides are duplicated nearly identically for `.mermaid-rendered` and `.mermaid-modal-body` selectors (~50 lines of near-duplicate CSS). Adding a new mermaid context would require triplicating these rules.
+- **Suggested Fix:** Apply a shared class (e.g., `.mermaid-container`) to both containers and write the dark mode rules once against that class, or use a comma-separated selector list.
+- **Detected:** 2026-03-28 (commit effec4a)
+
+#### M-016: blocking_save_file called in async Tauri command
+- **File(s):** `src-tauri/src/commands.rs`
+- **Principle:** Correctness / Robustness
+- **Description:** The `save_file` async command calls `blocking_save_file()` which blocks the Tokio thread. Additionally, `file_path.as_path().unwrap()` will panic if the dialog returns a non-local (e.g., URI-based) path.
+- **Suggested Fix:** Use the async dialog API or wrap in `tokio::task::spawn_blocking`. Replace `unwrap()` with proper error handling via `ok_or_else`.
+- **Detected:** 2026-03-28 (commit effec4a)
+
+#### M-017: No tests for CSV export, save_file command, or markdown toggle
+- **File(s):** `public/renderers/structured-data.js`, `src-tauri/src/commands.rs`, `public/renderers/rich-content.js`
+- **Principle:** Testability
+- **Description:** Three new features (CSV export with `exportTableCsv`, Tauri `save_file` command, and markdown/rendered toggle) were added with zero test coverage. The `exportTableCsv` function is pure and highly testable.
+- **Suggested Fix:** Add unit tests for `exportTableCsv` (CSV escaping, hierarchical row collection, modification application). Add a Tauri command test for `save_file` error path. Toggle logic could be tested via DOM tests.
+- **Detected:** 2026-03-28 (commit effec4a)
 
 ### Low
 
@@ -117,6 +136,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| effec4a | 2026-03-28 | 62/100 | Acceptable |
 | 6a127b2 | 2026-03-28 | 72/100 | Good |
 | 4191125 | 2026-03-28 | 88/100 | Good |
 | b17d52a | 2026-03-28 | 58/100 | Acceptable |

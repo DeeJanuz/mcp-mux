@@ -41,6 +41,7 @@
   var setAllRowDecisions = sdu.setAllRowDecisions;
   var buildDecisionPayload = sdu.buildDecisionPayload;
   var applyBulkDecision = sdu.applyBulkDecision;
+  var buildCsvString = sdu.buildCsvString;
 
   // ── 1. CSS Injection ──
 
@@ -313,43 +314,7 @@
   }
 
   function exportTableCsv(tableData, state) {
-    var columns = tableData.columns;
-
-    function escapeCsv(val) {
-      var s = String(val == null ? '' : val);
-      if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
-    }
-
-    function collectRows(rows, depth) {
-      var result = [];
-      if (!rows) return result;
-      rows.forEach(function (row) {
-        var cells = columns.map(function (col) {
-          var modKey = row.id + '.' + col.id;
-          if (state.modifications[modKey]) {
-            return JSON.parse(state.modifications[modKey]).value;
-          }
-          return getCellValue(row, col.id);
-        });
-        result.push(cells);
-        if (row.children && row.children.length > 0) {
-          result = result.concat(collectRows(row.children, depth + 1));
-        }
-      });
-      return result;
-    }
-
-    var header = columns.map(function (col) { return escapeCsv(col.name); });
-    var rows = collectRows(tableData.rows, 0);
-    var lines = [header.join(',')];
-    rows.forEach(function (cells) {
-      lines.push(cells.map(escapeCsv).join(','));
-    });
-
-    var csv = lines.join('\n');
+    var csv = buildCsvString(tableData, state.modifications);
     var fileName = (tableData.name || tableData.id || 'table') + '.csv';
 
     // Use Tauri IPC save_file command (native save dialog)

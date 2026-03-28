@@ -246,3 +246,75 @@ describe('applyBulkDecision', function () {
     expect(states.t1.decisions['col:c1']).toBe('reject');
   });
 });
+
+describe('buildCsvString', function () {
+  it('builds CSV with header and rows', function () {
+    var tableData = {
+      columns: [
+        { id: 'name', name: 'Name' },
+        { id: 'value', name: 'Value' }
+      ],
+      rows: [
+        { id: 'r1', cells: { name: { value: 'alpha' }, value: { value: '100' } } },
+        { id: 'r2', cells: { name: { value: 'beta' }, value: { value: '200' } } }
+      ]
+    };
+    var csv = sdu.buildCsvString(tableData, {});
+    expect(csv).toBe('Name,Value\nalpha,100\nbeta,200');
+  });
+
+  it('escapes commas and quotes', function () {
+    var tableData = {
+      columns: [{ id: 'c1', name: 'Col' }],
+      rows: [
+        { id: 'r1', cells: { c1: { value: 'hello, world' } } },
+        { id: 'r2', cells: { c1: { value: 'say "hi"' } } }
+      ]
+    };
+    var csv = sdu.buildCsvString(tableData, {});
+    expect(csv).toBe('Col\n"hello, world"\n"say ""hi"""');
+  });
+
+  it('handles null and missing values', function () {
+    var tableData = {
+      columns: [{ id: 'c1', name: 'Col' }],
+      rows: [
+        { id: 'r1', cells: { c1: { value: null } } },
+        { id: 'r2', cells: {} }
+      ]
+    };
+    var csv = sdu.buildCsvString(tableData, {});
+    expect(csv).toBe('Col\n\n');
+  });
+
+  it('flattens nested children', function () {
+    var tableData = {
+      columns: [{ id: 'name', name: 'Name' }],
+      rows: [{
+        id: 'r1', cells: { name: { value: 'parent' } },
+        children: [{ id: 'r1a', cells: { name: { value: 'child' } }, children: [] }]
+      }]
+    };
+    var csv = sdu.buildCsvString(tableData, {});
+    expect(csv).toBe('Name\nparent\nchild');
+  });
+
+  it('uses modifications when present', function () {
+    var tableData = {
+      columns: [{ id: 'c1', name: 'Col' }],
+      rows: [{ id: 'r1', cells: { c1: { value: 'original' } } }]
+    };
+    var mods = { 'r1.c1': JSON.stringify({ value: 'edited', user_edited: true }) };
+    var csv = sdu.buildCsvString(tableData, mods);
+    expect(csv).toBe('Col\nedited');
+  });
+
+  it('escapes newlines in values', function () {
+    var tableData = {
+      columns: [{ id: 'c1', name: 'Col' }],
+      rows: [{ id: 'r1', cells: { c1: { value: 'line1\nline2' } } }]
+    };
+    var csv = sdu.buildCsvString(tableData, {});
+    expect(csv).toBe('Col\n"line1\nline2"');
+  });
+});

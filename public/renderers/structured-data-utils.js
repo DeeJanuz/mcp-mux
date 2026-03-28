@@ -138,6 +138,46 @@
     });
   }
 
+  function buildCsvString(tableData, modifications) {
+    var columns = tableData.columns;
+    modifications = modifications || {};
+
+    function escapeCsv(val) {
+      var s = String(val == null ? '' : val);
+      if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    }
+
+    function collectRows(rows) {
+      var result = [];
+      if (!rows) return result;
+      rows.forEach(function (row) {
+        var cells = columns.map(function (col) {
+          var modKey = row.id + '.' + col.id;
+          if (modifications[modKey]) {
+            return JSON.parse(modifications[modKey]).value;
+          }
+          return getCellValue(row, col.id);
+        });
+        result.push(cells);
+        if (row.children && row.children.length > 0) {
+          result = result.concat(collectRows(row.children));
+        }
+      });
+      return result;
+    }
+
+    var header = columns.map(function (col) { return escapeCsv(col.name); });
+    var rows = collectRows(tableData.rows);
+    var lines = [header.join(',')];
+    rows.forEach(function (cells) {
+      lines.push(cells.map(escapeCsv).join(','));
+    });
+    return lines.join('\n');
+  }
+
   window.__structuredDataUtils = {
     getCellValue: getCellValue,
     getCellChange: getCellChange,
@@ -147,6 +187,7 @@
     createTableState: createTableState,
     setAllRowDecisions: setAllRowDecisions,
     buildDecisionPayload: buildDecisionPayload,
-    applyBulkDecision: applyBulkDecision
+    applyBulkDecision: applyBulkDecision,
+    buildCsvString: buildCsvString
   };
 })();

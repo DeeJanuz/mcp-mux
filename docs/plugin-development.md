@@ -445,26 +445,11 @@ Per-tool behavioral rules (tool names are auto-prefixed):
 }
 ```
 
-## Suppressing Auto-Push for Mutation Tools
+## Auto-Push Removed (Explicit Push Only)
 
-By default, when a plugin tool is called, MCPViews auto-pushes the result to the companion window. This works well for read/query tools whose results benefit from rich rendering. However, mutation tools (writes, deletes, management operations) typically return thin confirmation responses like `{"success": true}` that overwrite the current companion display with empty or broken previews.
+Plugin tool results are no longer auto-pushed to the companion window. Content only appears when the coordinator agent explicitly calls `push_content` or `push_review`. This prevents sub-agent research calls from flooding the UI with unwanted content.
 
-Use the `no_auto_push` field to declare which tools should skip auto-push:
-
-```json
-{
-  "name": "my-plugin",
-  "version": "1.0.0",
-  "no_auto_push": [
-    "write_document",
-    "delete_document",
-    "manage_settings"
-  ],
-  "mcp": { ... }
-}
-```
-
-Tools listed in `no_auto_push` still return their results to the calling agent normally -- only the automatic companion window push is suppressed. The coordinator agent can still explicitly push content via `push_content` when appropriate.
+The `no_auto_push` manifest field is still accepted for backward compatibility but has no effect since auto-push has been removed entirely.
 
 ## ZIP Plugin Packages
 

@@ -1,8 +1,8 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-28
-**Total Active Issues:** 7
-**Resolved This Month:** 33
+**Total Active Issues:** 0
+**Resolved This Month:** 40
 
 ---
 
@@ -18,60 +18,25 @@ _None_
 
 ### Medium
 
-#### M-018: No tests for drawer-stack, invocation-registry, or mcpview:// URI parsing
-- **File(s):** `public/renderers/drawer-stack.js`, `public/renderers/invocation-registry.js`, `public/renderers/shared.js`
-- **Principle:** Testability
-- **Description:** Three new frontend modules totaling ~250 lines were added with zero unit tests. The `globToRegex` function, mcpview:// URI parser, drawer stack open/close lifecycle, and `autoDetectLinks` DOM mutation are all testable. Pure functions like `globToRegex` and the URI parser can be extracted and tested directly.
-- **Suggested Fix:** Extract `globToRegex` and `parseMcpviewUri` into a utils module; add vitest tests covering glob matching, URI parsing edge cases, and drawer stack push/pop behavior.
-- **Detected:** 2026-03-28 (commit 21d2ff4)
-
-#### M-019: get_renderer_registry test duplicates filtering logic instead of calling the function
-- **File(s):** `src-tauri/src/commands.rs`
-- **Principle:** DRY / Testability
-- **Description:** The test for `get_renderer_registry` (line ~555) duplicates the entire filtering/json-building loop from the command function (line ~404) rather than calling the actual function through a helper. The test validates a copy of the logic, not the real implementation -- a bug in one may not appear in the other.
-- **Suggested Fix:** Extract the filtering logic into a standalone `fn collect_invocable_renderers(manifests: &[PluginManifest]) -> Vec<serde_json::Value>` and test that directly, or find a way to call `get_renderer_registry` with a mock State.
-- **Detected:** 2026-03-28 (commit 21d2ff4)
+_None_
 
 ### Low
 
-#### L-017: display_mode is stringly-typed Option<String> instead of an enum
-- **File(s):** `shared/src/lib.rs`
-- **Principle:** OCP / Type Safety
-- **Description:** `display_mode: Option<String>` on `RendererDef` accepts any string, but the system only supports "drawer", "modal", and "replace". Invalid values silently fall through to a default. An enum would provide compile-time validation and exhaustive matching.
-- **Suggested Fix:** Define `enum DisplayMode { Drawer, Modal, Replace }` with `serde` rename attributes and use `Option<DisplayMode>` on the struct.
-- **Detected:** 2026-03-28 (commit 21d2ff4)
-
-#### L-014: Large inline documentation strings in builtin_renderer_definitions()
-- **File(s):** `src-tauri/src/mcp_tools.rs`
-- **Principle:** SRP / Maintainability
-- **Description:** The `structured_data` renderer rule is a ~90-line raw string literal embedded in `builtin_renderer_definitions()`. As renderer documentation grows, this function becomes harder to navigate and mixes documentation content with code structure. Other renderers will follow the same pattern.
-- **Suggested Fix:** Extract long rule text into constants, a dedicated module, or use `include_str!` to load from embedded files.
-- **Detected:** 2026-03-28 (commit 6a127b2)
-
-#### L-015: Fragile positional index assertions in collect_rules tests
-- **File(s):** `src-tauri/src/mcp_tools.rs`
-- **Principle:** Maintainability
-- **Description:** All `collect_rules` tests use hardcoded `rules[0]` / `rules[1]` positional indexing. Adding any new cross-cutting rule requires updating indices in every test. The renderer_selection addition already caused this cascade.
-- **Suggested Fix:** Use `rules.iter().find(|r| r["name"] == "target_name")` instead of positional indexing.
-- **Detected:** 2026-03-28 (commit 6a127b2)
-
-#### L-016: Duplicated renderer hint iteration in builtin_tool_definitions
-- **File(s):** `src-tauri/src/mcp_tools.rs`
-- **Principle:** DRY
-- **Description:** The `renderers.iter().filter_map(|r| r.data_hint.as_ref().map(...))` pattern is duplicated identically in both `push_content` and `push_review` tool definitions.
-- **Suggested Fix:** Extract a helper function like `build_data_description(renderers: &[RendererDef], prefix: &str) -> String`.
-- **Detected:** 2026-03-28 (commit 6a127b2)
-
-#### L-011: PluginStore reconstructed via with_dir instead of reused in AppState
-- **File(s):** `src-tauri/src/state.rs`
-- **Principle:** DRY
-- **Description:** Both `new_with_store()` (line 35) and `reload_plugins()` (line 64) call `PluginStore::with_dir(self.plugin_store.dir().to_path_buf())` to create a fresh store from the path, rather than passing or cloning the stored `plugin_store` field directly. If `PluginStore` gains configuration beyond the directory path, these reconstructions would silently lose it.
-- **Suggested Fix:** If `PluginStore` implements `Clone`, use `self.plugin_store.clone()`. Otherwise, add a `PluginStore::clone_fresh()` method that preserves all configuration.
-- **Detected:** 2026-03-26 (commit 2b0f6cb)
+_None_
 
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-03-28 (commit 4b0b747)
+
+- **M-018:** No tests for drawer-stack, invocation-registry, or mcpview:// URI parsing -- added 26 vitest tests covering drawer-stack, invocation-registry, and mcpview:// URI parsing
+- **M-019:** get_renderer_registry test duplicates filtering logic instead of calling the function -- extracted `collect_invocable_renderers()` so test calls real logic instead of duplicating it
+- **L-017:** display_mode is stringly-typed Option<String> instead of an enum -- replaced with `DisplayMode` enum (Drawer/Modal/Replace) with serde rename attributes
+- **L-014:** Large inline documentation strings in builtin_renderer_definitions() -- extracted `RICH_CONTENT_RULE` and `STRUCTURED_DATA_RULE` constants from inline strings
+- **L-015:** Fragile positional index assertions in collect_rules tests -- replaced `rules[0]`/`rules[1]` positional indexing with `.iter().find()`
+- **L-016:** Duplicated renderer hint iteration in builtin_tool_definitions -- extracted `build_data_description()` helper to DRY renderer hint iteration
+- **L-011:** PluginStore reconstructed via with_dir instead of reused in AppState -- derived Clone on PluginStore, use `store.clone()` instead of reconstructing via `with_dir`
 
 ### Resolved 2026-03-28 (commit 9663b17)
 

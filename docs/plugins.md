@@ -37,7 +37,7 @@ A plugin manifest is a JSON file with the following structure:
 | `renderers` | object | No | Map of MCP tool names to frontend renderer names. When a tool result arrives, MCPViews uses this mapping to select the correct renderer. If a tool is not listed, the default `rich_content` renderer is used. |
 | `renderer_definitions` | RendererDef[] | **Recommended** | Structured renderer definitions with payload schemas for agent discovery. Each entry defines a renderer's name, description, scope, associated tools, data schema hint, and optional behavioral rule. Without these, agents can discover renderer names (via auto-discovery from the `renderers` map) but won't know how to construct payloads. See [Agent Discovery](#agent-discovery) below. |
 | `tool_rules` | object | No | Map of tool names to behavioral rule strings. These rules are returned by the `init_session` and `mcpviews_setup` MCP tools so agents can persist them for guided tool usage. Tool names are automatically prefixed with the plugin's `tool_prefix`. |
-| `no_auto_push` | string[] | No | Tool names that should NOT auto-push results to the companion window. Mutation tools (writes, deletes, manages) typically belong here to prevent their thin confirmation responses from overwriting deliberately pushed content. Defaults to empty. |
+| `no_auto_push` | string[] | No | **Deprecated.** Previously controlled which tools skipped auto-push. Auto-push has been removed entirely -- pushes now only happen via explicit `push_content`/`push_review` calls. Field is still accepted for backward compatibility but has no effect. |
 | `mcp` | object | No | MCP server connection configuration. If omitted, the plugin provides renderers only (no remote tools). |
 
 ### RendererDef

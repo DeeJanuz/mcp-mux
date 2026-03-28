@@ -456,6 +456,7 @@ listen('push_preview', (event) => {
   "data": {},
   "meta": {},
   "reviewRequired": false,
+  "timeoutSecs": null,
   "createdAt": 1711388400000
 }
 ```

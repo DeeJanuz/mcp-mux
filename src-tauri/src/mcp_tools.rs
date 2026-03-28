@@ -141,10 +141,52 @@ async fn ensure_plugins_refreshed(
 
 // ─── Built-in tool implementations ───
 
+/// Remove `change` fields from structured_data payloads so the read-only view
+/// never displays diff markers even if the caller accidentally includes them.
+fn strip_change_fields(data: &mut Value) {
+    if let Some(tables) = data.get_mut("tables").and_then(|t| t.as_array_mut()) {
+        for table in tables {
+            // Strip column-level change
+            if let Some(columns) = table.get_mut("columns").and_then(|c| c.as_array_mut()) {
+                for col in columns {
+                    if let Some(obj) = col.as_object_mut() {
+                        obj.insert("change".into(), Value::Null);
+                    }
+                }
+            }
+            // Strip cell-level change (recursive for nested rows)
+            if let Some(rows) = table.get_mut("rows").and_then(|r| r.as_array_mut()) {
+                strip_row_changes(rows);
+            }
+        }
+    }
+}
+
+fn strip_row_changes(rows: &mut Vec<Value>) {
+    for row in rows {
+        if let Some(cells) = row.get_mut("cells").and_then(|c| c.as_object_mut()) {
+            for (_key, cell) in cells.iter_mut() {
+                if let Some(obj) = cell.as_object_mut() {
+                    obj.insert("change".into(), Value::Null);
+                }
+            }
+        }
+        // Recurse into children
+        if let Some(children) = row.get_mut("children").and_then(|c| c.as_array_mut()) {
+            strip_row_changes(children);
+        }
+    }
+}
+
 async fn call_push_content(
     arguments: Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<Value, String> {
+    let mut arguments = arguments;
+    // Strip change markers from structured_data — read-only view should never show diffs
+    if let Some(data) = arguments.get_mut("data") {
+        strip_change_fields(data);
+    }
     call_push_impl(arguments, state, false).await
 }
 
@@ -563,7 +605,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             scope: "universal".into(),
             tools: vec![],
             data_hint: Some(r#"{ "title": "Optional", "tables": [{ "id": "t1", "name": "Name", "columns": [{ "id": "c1", "name": "Col", "change": null|"add"|"delete" }], "rows": [{ "id": "r1", "cells": { "c1": { "value": "v", "change": null|"add"|"delete"|"update" } }, "children": [] }] }] }"#.into()),
-            rule: Some("Use structured_data for tabular/schema data. Supports nested rows via children arrays (arbitrary depth). In review mode (push_review), users can accept/reject individual rows and new columns, edit cells, then submit. For simple flat tables without change tracking, prefer rich_content with markdown tables.".into()),
+            rule: Some("Use structured_data for tabular/schema data. Supports nested rows via children arrays (arbitrary depth).\n\npush_content (read-only): Display-only tables. Change markers (column.change, cell.change) are automatically stripped — the server removes them and the renderer ignores them. Do NOT include change fields; use null for all change values. For simple flat tables without change tracking, prefer rich_content with markdown tables.\n\npush_review (review mode): Users can see proposed changes (add/delete/update highlighted), accept/reject individual rows and columns, edit cell values, then submit decisions. Include change fields to indicate what was added, deleted, or updated.".into()),
         },
     ]
 }

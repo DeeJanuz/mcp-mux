@@ -259,15 +259,22 @@ pub(crate) fn collect_rules(
 ) -> Vec<Value> {
     let mut rules: Vec<Value> = Vec::new();
 
-    // Renderer rules — covers built-in, explicit, AND synthesized renderers
+    // Renderer rules — covers built-in, explicit, AND synthesized renderers.
+    // Always include description, data_hint, scope, and tools so agents know
+    // the payload schema regardless of how the renderer was defined.
     for renderer in all_renderers {
         if let Some(rule) = &renderer.rule {
             // Renderer has an explicit rule
+            let source = if renderer.scope == "universal" { "built-in" } else { "plugin" };
             rules.push(serde_json::json!({
                 "name": format!("{}_usage", renderer.name),
                 "category": "renderer",
-                "source": "built-in",
+                "source": source,
                 "renderer": renderer.name,
+                "description": renderer.description,
+                "scope": renderer.scope,
+                "data_hint": renderer.data_hint,
+                "tools": renderer.tools,
                 "rule": rule,
             }));
         } else if renderer.scope == "tool" && !renderer.tools.is_empty() {
@@ -278,6 +285,7 @@ pub(crate) fn collect_rules(
                 "source": "plugin",
                 "renderer": renderer.name,
                 "description": renderer.description,
+                "scope": renderer.scope,
                 "data_hint": renderer.data_hint,
                 "tools": renderer.tools,
             }));
@@ -779,10 +787,10 @@ mod tests {
     fn test_collect_rules_builtin_renderer_with_rule() {
         let renderers = vec![RendererDef {
             name: "rich_content".into(),
-            description: "test".into(),
+            description: "Universal markdown display".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: None,
+            data_hint: Some(r#"{ "title": "heading", "body": "markdown" }"#.into()),
             rule: Some("Always use rich_content for plans.".into()),
         }];
         let rules = collect_rules(&renderers, &[]);
@@ -792,6 +800,10 @@ mod tests {
         assert_eq!(rules[0]["source"], "built-in");
         assert_eq!(rules[0]["renderer"], "rich_content");
         assert_eq!(rules[0]["rule"], "Always use rich_content for plans.");
+        // New fields: description, scope, data_hint always present
+        assert_eq!(rules[0]["description"], "Universal markdown display");
+        assert_eq!(rules[0]["scope"], "universal");
+        assert_eq!(rules[0]["data_hint"], r#"{ "title": "heading", "body": "markdown" }"#);
     }
 
     #[test]
@@ -820,8 +832,11 @@ mod tests {
         }];
         let rules = collect_rules(&renderers, &[]);
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0]["source"], "built-in");
+        // tool-scoped renderer with rule → source is "plugin"
+        assert_eq!(rules[0]["source"], "plugin");
         assert_eq!(rules[0]["renderer"], "custom_view");
+        assert_eq!(rules[0]["description"], "Custom");
+        assert_eq!(rules[0]["scope"], "tool");
     }
 
     #[test]
@@ -840,6 +855,9 @@ mod tests {
         assert_eq!(rules[0]["source"], "plugin");
         assert_eq!(rules[0]["renderer"], "search_results");
         assert_eq!(rules[0]["tools"][0], "search_codebase");
+        assert_eq!(rules[0]["scope"], "tool");
+        assert_eq!(rules[0]["description"], "Renders search output");
+        assert_eq!(rules[0]["data_hint"], "Pass search results");
     }
 
     #[test]

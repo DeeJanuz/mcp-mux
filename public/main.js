@@ -130,16 +130,7 @@
     });
   }
 
-  function closeTab(sessionId) {
-    // Dismiss session via Tauri IPC (handles review dismissal too)
-    if (window.__TAURI__) {
-      window.__TAURI__.core.invoke('dismiss_session', {
-        sessionId: sessionId,
-      }).catch(function (err) {
-        console.error('Failed to dismiss session:', err);
-      });
-    }
-
+  function removeSession(sessionId) {
     stopHeartbeat();
     stopCountdown(sessionId);
     sessions.delete(sessionId);
@@ -153,7 +144,6 @@
 
     if (sessionId === activeSessionId) {
       activeSessionId = null;
-      // Select adjacent tab
       var keys = Array.from(sessions.keys());
       if (keys.length > 0) {
         selectSession(keys[keys.length - 1]);
@@ -164,6 +154,19 @@
     } else {
       renderTabBar();
     }
+  }
+
+  function closeTab(sessionId) {
+    // Dismiss session via Tauri IPC (handles review dismissal too)
+    if (window.__TAURI__) {
+      window.__TAURI__.core.invoke('dismiss_session', {
+        sessionId: sessionId,
+      }).catch(function (err) {
+        console.error('Failed to dismiss session:', err);
+      });
+    }
+
+    removeSession(sessionId);
   }
 
   // --- Countdown Timer ---
@@ -404,8 +407,6 @@
   // --- Decision ---
 
   function onDecision(sessionId, decision) {
-    stopHeartbeat();
-    stopCountdown(sessionId);
     // Build the decision payload for Tauri IPC
     var decisionStr = '';
     var operationDecisions = null;
@@ -444,26 +445,7 @@
       });
     }
 
-    // Clean up local state
-    sessions.delete(sessionId);
-    var cached = contentCache.get(sessionId);
-    if (cached && cached.parentNode) {
-      cached.parentNode.removeChild(cached);
-    }
-    contentCache.delete(sessionId);
-
-    if (sessionId === activeSessionId) {
-      activeSessionId = null;
-      var remaining = Array.from(sessions.keys());
-      if (remaining.length > 0) {
-        selectSession(remaining[remaining.length - 1]);
-      } else {
-        renderEmpty();
-        renderTabBar();
-      }
-    } else {
-      renderTabBar();
-    }
+    removeSession(sessionId);
   }
 
   // --- Global citation click handler ---

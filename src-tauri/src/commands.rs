@@ -374,17 +374,26 @@ pub async fn save_file(
 ) -> Result<bool, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let path = app_handle
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    app_handle
         .dialog()
         .file()
         .set_file_name(&filename)
         .add_filter("CSV", &["csv"])
         .add_filter("All Files", &["*"])
-        .blocking_save_file();
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+
+    let path = rx.await.map_err(|_| "Save dialog cancelled unexpectedly".to_string())?;
 
     match path {
         Some(file_path) => {
-            std::fs::write(file_path.as_path().unwrap(), &content)
+            let p = file_path
+                .as_path()
+                .ok_or_else(|| "Save dialog returned a non-local path".to_string())?;
+            std::fs::write(p, &content)
                 .map_err(|e| format!("Failed to write file: {}", e))?;
             Ok(true)
         }

@@ -398,6 +398,10 @@ Initialize MCPViews for the current session. Returns current renderer definition
       "category": "renderer",
       "source": "built-in",
       "renderer": "rich_content",
+      "description": "Universal markdown display with mermaid diagrams",
+      "scope": "universal",
+      "data_hint": "{ \"title\": \"heading\", \"body\": \"markdown\" }",
+      "tools": [],
       "rule": "When presenting implementation plans..."
     }
   ],

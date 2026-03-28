@@ -1,7 +1,7 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-28
-**Total Active Issues:** 1
+**Total Active Issues:** 4
 **Resolved This Month:** 30
 
 ---
@@ -21,6 +21,27 @@ _None_
 _None_
 
 ### Low
+
+#### L-014: Large inline documentation strings in builtin_renderer_definitions()
+- **File(s):** `src-tauri/src/mcp_tools.rs`
+- **Principle:** SRP / Maintainability
+- **Description:** The `structured_data` renderer rule is a ~90-line raw string literal embedded in `builtin_renderer_definitions()`. As renderer documentation grows, this function becomes harder to navigate and mixes documentation content with code structure. Other renderers will follow the same pattern.
+- **Suggested Fix:** Extract long rule text into constants, a dedicated module, or use `include_str!` to load from embedded files.
+- **Detected:** 2026-03-28 (commit 6a127b2)
+
+#### L-015: Fragile positional index assertions in collect_rules tests
+- **File(s):** `src-tauri/src/mcp_tools.rs`
+- **Principle:** Maintainability
+- **Description:** All `collect_rules` tests use hardcoded `rules[0]` / `rules[1]` positional indexing. Adding any new cross-cutting rule requires updating indices in every test. The renderer_selection addition already caused this cascade.
+- **Suggested Fix:** Use `rules.iter().find(|r| r["name"] == "target_name")` instead of positional indexing.
+- **Detected:** 2026-03-28 (commit 6a127b2)
+
+#### L-016: Duplicated renderer hint iteration in builtin_tool_definitions
+- **File(s):** `src-tauri/src/mcp_tools.rs`
+- **Principle:** DRY
+- **Description:** The `renderers.iter().filter_map(|r| r.data_hint.as_ref().map(...))` pattern is duplicated identically in both `push_content` and `push_review` tool definitions.
+- **Suggested Fix:** Extract a helper function like `build_data_description(renderers: &[RendererDef], prefix: &str) -> String`.
+- **Detected:** 2026-03-28 (commit 6a127b2)
 
 #### L-011: PluginStore reconstructed via with_dir instead of reused in AppState
 - **File(s):** `src-tauri/src/state.rs`
@@ -96,6 +117,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 6a127b2 | 2026-03-28 | 72/100 | Good |
 | 4191125 | 2026-03-28 | 88/100 | Good |
 | b17d52a | 2026-03-28 | 58/100 | Acceptable |
 | a24b465 | 2026-03-28 | 85/100 | Good |

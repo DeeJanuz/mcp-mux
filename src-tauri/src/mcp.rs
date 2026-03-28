@@ -84,6 +84,7 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
             }
             instructions.push_str("\n");
         }
+        instructions.push_str("\n**Quick selection guide:** Use `rich_content` for prose, diagrams, and simple tables. Use `structured_data` for interactive tabular data with sort/filter, hierarchical rows, or change review workflows. Call `init_session` for full renderer documentation and examples.\n");
     }
 
     instructions.push_str("\n## Sub-Agent Restriction\n\n");
@@ -104,11 +105,11 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
 
     instructions.push_str("\n## Session Initialization\n\n");
     instructions.push_str(
-        "IMPORTANT: Call `init_session` at the start of every conversation, chat session, or \
-         interaction — not just once. This returns renderer definitions, behavioral rules, \
-         plugin auth status, and the list of available tools. If this is your first time using \
-         MCPViews, call `mcpviews_setup` to configure automatic session initialization for \
-         your platform.\n"
+        "IMPORTANT: You MUST call `init_session` at the start of every conversation to receive \
+         full renderer documentation, payload examples, behavioral rules, and plugin status. \
+         The brief descriptions above are insufficient for correct usage — `init_session` returns \
+         the complete reference. If this is your first time using MCPViews, call `mcpviews_setup` \
+         to configure automatic session initialization for your platform.\n"
     );
 
     // Check for plugins needing authentication

@@ -31,6 +31,17 @@
     return d.innerHTML;
   };
 
+  var sdu = window.__structuredDataUtils || {};
+  var getCellValue = sdu.getCellValue;
+  var getCellChange = sdu.getCellChange;
+  var flattenRows = sdu.flattenRows;
+  var sortRows = sdu.sortRows;
+  var filterRows = sdu.filterRows;
+  var createTableState = sdu.createTableState;
+  var setAllRowDecisions = sdu.setAllRowDecisions;
+  var buildDecisionPayload = sdu.buildDecisionPayload;
+  var applyBulkDecision = sdu.applyBulkDecision;
+
   // ── 1. CSS Injection ──
 
   function injectStyles() {
@@ -80,92 +91,7 @@
     document.head.appendChild(style);
   }
 
-  // ── 2. State Factory ──
-
-  function createTableState(tableData) {
-    var expanded = new Set();
-
-    function autoExpand(rows, depth) {
-      if (!rows) return;
-      rows.forEach(function (r) {
-        if (depth < 2) expanded.add(r.id);
-        if (r.children) autoExpand(r.children, depth + 1);
-      });
-    }
-    autoExpand(tableData.rows, 0);
-
-    return {
-      decisions: {},
-      modifications: {},
-      sortColumn: null,
-      sortDirection: null,
-      filterText: '',
-      expandedRows: expanded
-    };
-  }
-
-  // ── 3. Data Utilities ──
-
-  function getCellValue(row, colId) {
-    if (!row || !row.cells || !row.cells[colId]) return '';
-    return row.cells[colId].value != null ? row.cells[colId].value : '';
-  }
-
-  function getCellChange(row, colId) {
-    if (!row || !row.cells || !row.cells[colId]) return null;
-    return row.cells[colId].change || null;
-  }
-
-  function flattenRows(rows, depth, expandedRows) {
-    var result = [];
-    if (!rows) return result;
-    rows.forEach(function (row) {
-      result.push({ row: row, depth: depth });
-      if (row.children && row.children.length > 0 && expandedRows.has(row.id)) {
-        var childFlat = flattenRows(row.children, depth + 1, expandedRows);
-        result = result.concat(childFlat);
-      }
-    });
-    return result;
-  }
-
-  function sortRows(rows, colId, direction) {
-    if (!rows || !colId || !direction) return rows;
-    var sorted = rows.slice().sort(function (a, b) {
-      var va = String(getCellValue(a, colId)).toLowerCase();
-      var vb = String(getCellValue(b, colId)).toLowerCase();
-      if (va < vb) return direction === 'asc' ? -1 : 1;
-      if (va > vb) return direction === 'asc' ? 1 : -1;
-      return 0;
-    });
-    sorted.forEach(function (row) {
-      if (row.children && row.children.length > 0) {
-        row.children = sortRows(row.children, colId, direction);
-      }
-    });
-    return sorted;
-  }
-
-  function filterRows(rows, columns, text) {
-    if (!rows || !text) return rows;
-    var lower = text.toLowerCase();
-    return rows.filter(function (row) {
-      var match = columns.some(function (col) {
-        return String(getCellValue(row, col.id)).toLowerCase().indexOf(lower) !== -1;
-      });
-      if (match) return true;
-      if (row.children && row.children.length > 0) {
-        var filteredChildren = filterRows(row.children, columns, text);
-        if (filteredChildren.length > 0) {
-          row = Object.assign({}, row, { children: filteredChildren });
-          return true;
-        }
-      }
-      return false;
-    });
-  }
-
-  // ── 4. Table Builders — Read-Only ──
+  // ── 2. Table Builders — Read-Only ──
 
   function buildSortIndicator(colId, state) {
     var span = document.createElement('span');
@@ -200,6 +126,36 @@
     return btn;
   }
 
+  function buildDecisionToggle(key, state, rerenderFn, opts) {
+    var wrapper = document.createElement('span');
+    wrapper.className = 'sd-decision-toggle';
+    var currentDecision = state.decisions[key] || 'accept';
+
+    var acceptBtn = document.createElement('button');
+    acceptBtn.textContent = '\u2713';
+    acceptBtn.title = opts.acceptTitle || 'Accept';
+    if (currentDecision === 'accept') acceptBtn.classList.add('sd-decision-accept');
+    acceptBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      state.decisions[key] = 'accept';
+      rerenderFn();
+    });
+
+    var rejectBtn = document.createElement('button');
+    rejectBtn.textContent = '\u2717';
+    rejectBtn.title = opts.rejectTitle || 'Reject';
+    if (currentDecision === 'reject') rejectBtn.classList.add('sd-decision-reject');
+    rejectBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      state.decisions[key] = 'reject';
+      rerenderFn();
+    });
+
+    wrapper.appendChild(acceptBtn);
+    wrapper.appendChild(rejectBtn);
+    return wrapper;
+  }
+
   function buildTableHeader(columns, state, reviewRequired, rerenderFn) {
     var thead = document.createElement('thead');
     var tr = document.createElement('tr');
@@ -213,13 +169,15 @@
       var th = document.createElement('th');
       th.className = 'sd-th';
 
-      if (col.change === 'add') th.classList.add('sd-col-add');
-      if (col.change === 'delete') th.classList.add('sd-col-delete');
+      if (reviewRequired) {
+        if (col.change === 'add') th.classList.add('sd-col-add');
+        if (col.change === 'delete') th.classList.add('sd-col-delete');
 
-      // Check if column is rejected
-      var colDecisionKey = 'col:' + col.id;
-      if (state.decisions[colDecisionKey] === 'reject') {
-        th.classList.add('sd-col-rejected');
+        // Check if column is rejected
+        var colDecisionKey = 'col:' + col.id;
+        if (state.decisions[colDecisionKey] === 'reject') {
+          th.classList.add('sd-col-rejected');
+        }
       }
 
       var nameSpan = document.createElement('span');
@@ -246,7 +204,7 @@
 
       // Column decision toggle in review mode (for added or deleted columns)
       if (reviewRequired && (col.change === 'add' || col.change === 'delete')) {
-        th.appendChild(buildColumnDecisionToggle(col.id, state, rerenderFn));
+        th.appendChild(buildDecisionToggle('col:' + col.id, state, rerenderFn, { acceptTitle: 'Accept column', rejectTitle: 'Reject column' }));
       }
 
       tr.appendChild(th);
@@ -295,22 +253,24 @@
           td.classList.add(depthClass);
         }
 
-        // Cell change styling
-        var change = getCellChange(row, col.id);
-        if (change === 'add') td.classList.add('sd-cell-add');
-        if (change === 'delete') td.classList.add('sd-cell-delete');
-        if (change === 'update') td.classList.add('sd-cell-update');
+        if (reviewRequired) {
+          // Cell change styling
+          var change = getCellChange(row, col.id);
+          if (change === 'add') td.classList.add('sd-cell-add');
+          if (change === 'delete') td.classList.add('sd-cell-delete');
+          if (change === 'update') td.classList.add('sd-cell-update');
 
-        // Check for user modifications
-        var modKey = row.id + '.' + col.id;
-        if (state.modifications[modKey]) {
-          td.classList.add('sd-cell-edited');
-        }
+          // Check for user modifications
+          var modKey = row.id + '.' + col.id;
+          if (state.modifications[modKey]) {
+            td.classList.add('sd-cell-edited');
+          }
 
-        // Column rejected styling
-        var colDecisionKey = 'col:' + col.id;
-        if (state.decisions[colDecisionKey] === 'reject') {
-          td.classList.add('sd-col-rejected');
+          // Column rejected styling
+          var colDecisionKey = 'col:' + col.id;
+          if (state.decisions[colDecisionKey] === 'reject') {
+            td.classList.add('sd-col-rejected');
+          }
         }
 
         var value = state.modifications[modKey]
@@ -337,7 +297,7 @@
           return getCellChange(row, col.id) != null;
         });
         if (hasChange) {
-          decTd.appendChild(buildRowDecisionToggle(row.id, state, rerenderFn));
+          decTd.appendChild(buildDecisionToggle(row.id, state, rerenderFn, { acceptTitle: 'Accept', rejectTitle: 'Reject' }));
         }
         tr.appendChild(decTd);
       }
@@ -368,12 +328,9 @@
       tableAcceptAll.textContent = 'Accept All';
       tableAcceptAll.style.cssText = 'padding: var(--space-1) var(--space-2); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-xs);';
       tableAcceptAll.addEventListener('click', function () {
-        tableData.rows.forEach(function (row) {
-          setAllRowDecisions(row, state, 'accept');
-        });
-        tableData.columns.forEach(function (col) {
-          if (col.change === 'add' || col.change === 'delete') state.decisions['col:' + col.id] = 'accept';
-        });
+        var tempStates = {};
+        tempStates[tableData.id] = state;
+        applyBulkDecision([tableData], tempStates, 'accept');
         renderTableContent();
       });
 
@@ -381,12 +338,9 @@
       tableRejectAll.textContent = 'Reject All';
       tableRejectAll.style.cssText = 'padding: var(--space-1) var(--space-2); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-xs);';
       tableRejectAll.addEventListener('click', function () {
-        tableData.rows.forEach(function (row) {
-          setAllRowDecisions(row, state, 'reject');
-        });
-        tableData.columns.forEach(function (col) {
-          if (col.change === 'add' || col.change === 'delete') state.decisions['col:' + col.id] = 'reject';
-        });
+        var tempStates = {};
+        tempStates[tableData.id] = state;
+        applyBulkDecision([tableData], tempStates, 'reject');
         renderTableContent();
       });
 
@@ -442,70 +396,7 @@
     return container;
   }
 
-  // ── 5. Table Builders — Review Mode ──
-
-  function buildRowDecisionToggle(rowId, state, rerenderFn) {
-    var wrapper = document.createElement('span');
-    wrapper.className = 'sd-decision-toggle';
-
-    var currentDecision = state.decisions[rowId] || 'accept';
-
-    var acceptBtn = document.createElement('button');
-    acceptBtn.textContent = '\u2713';
-    acceptBtn.title = 'Accept';
-    if (currentDecision === 'accept') acceptBtn.classList.add('sd-decision-accept');
-    acceptBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      state.decisions[rowId] = 'accept';
-      rerenderFn();
-    });
-
-    var rejectBtn = document.createElement('button');
-    rejectBtn.textContent = '\u2717';
-    rejectBtn.title = 'Reject';
-    if (currentDecision === 'reject') rejectBtn.classList.add('sd-decision-reject');
-    rejectBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      state.decisions[rowId] = 'reject';
-      rerenderFn();
-    });
-
-    wrapper.appendChild(acceptBtn);
-    wrapper.appendChild(rejectBtn);
-    return wrapper;
-  }
-
-  function buildColumnDecisionToggle(colId, state, rerenderFn) {
-    var wrapper = document.createElement('span');
-    wrapper.className = 'sd-decision-toggle';
-
-    var key = 'col:' + colId;
-    var currentDecision = state.decisions[key] || 'accept';
-
-    var acceptBtn = document.createElement('button');
-    acceptBtn.textContent = '\u2713';
-    acceptBtn.title = 'Accept column';
-    if (currentDecision === 'accept') acceptBtn.classList.add('sd-decision-accept');
-    acceptBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      state.decisions[key] = 'accept';
-      rerenderFn();
-    });
-
-    var rejectBtn = document.createElement('button');
-    rejectBtn.textContent = '\u2717';
-    rejectBtn.title = 'Reject column';
-    if (currentDecision === 'reject') rejectBtn.classList.add('sd-decision-reject');
-    rejectBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      state.decisions[key] = 'reject';
-      rerenderFn();
-    });
-
-    wrapper.appendChild(acceptBtn);
-    wrapper.appendChild(rejectBtn);
-    return wrapper;
-  }
+  // ── 3. Table Builders — Review Mode ──
 
   function buildCellEditor(td, rowId, colId, currentValue, state, rerenderFn) {
     var input = document.createElement('input');
@@ -553,15 +444,7 @@
     acceptAllBtn.textContent = 'Accept All';
     acceptAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-small);';
     acceptAllBtn.addEventListener('click', function () {
-      tables.forEach(function (tableData) {
-        var st = states[tableData.id];
-        tableData.rows.forEach(function (row) {
-          setAllRowDecisions(row, st, 'accept');
-        });
-        tableData.columns.forEach(function (col) {
-          if (col.change === 'add' || col.change === 'delete') st.decisions['col:' + col.id] = 'accept';
-        });
-      });
+      applyBulkDecision(tables, states, 'accept');
       rerenderAllTables();
     });
 
@@ -569,15 +452,7 @@
     rejectAllBtn.textContent = 'Reject All';
     rejectAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-small);';
     rejectAllBtn.addEventListener('click', function () {
-      tables.forEach(function (tableData) {
-        var st = states[tableData.id];
-        tableData.rows.forEach(function (row) {
-          setAllRowDecisions(row, st, 'reject');
-        });
-        tableData.columns.forEach(function (col) {
-          if (col.change === 'add' || col.change === 'delete') st.decisions['col:' + col.id] = 'reject';
-        });
-      });
+      applyBulkDecision(tables, states, 'reject');
       rerenderAllTables();
     });
 
@@ -595,58 +470,12 @@
     return bar;
   }
 
-  function setAllRowDecisions(row, state, decision) {
-    var columns = [];
-    if (row.cells) {
-      Object.keys(row.cells).forEach(function (colId) {
-        if (row.cells[colId].change) {
-          state.decisions[row.id] = decision;
-        }
-      });
-    }
-    if (row.children) {
-      row.children.forEach(function (child) {
-        setAllRowDecisions(child, state, decision);
-      });
-    }
-  }
-
-  function buildDecisionPayload(tables, states) {
-    var decisions = {};
-    var modifications = {};
-    var userEdits = {};
-
-    tables.forEach(function (tableData) {
-      var st = states[tableData.id];
-
-      // Merge decisions
-      Object.keys(st.decisions).forEach(function (key) {
-        decisions[key] = st.decisions[key];
-      });
-
-      // Merge modifications
-      Object.keys(st.modifications).forEach(function (key) {
-        modifications[key] = st.modifications[key];
-        var parsed = JSON.parse(st.modifications[key]);
-        if (parsed.user_edited) {
-          userEdits[key] = parsed.value;
-        }
-      });
-    });
-
-    return {
-      type: 'operation_decisions',
-      decisions: decisions,
-      modifications: modifications,
-      additions: {
-        user_edits: userEdits
-      }
-    };
-  }
-
-  // ── 6. Legend ──
+  // ── 4. Legend ──
 
   function buildLegend(data, reviewRequired) {
+    // Legend is only meaningful in review mode
+    if (!reviewRequired) return null;
+
     // Detect which change types are present
     var hasAdd = false, hasDelete = false, hasUpdate = false;
     (data.tables || []).forEach(function (t) {
@@ -700,7 +529,7 @@
     return legend;
   }
 
-  // ── 7. Orchestrator ──
+  // ── 5. Orchestrator ──
 
   function renderStructuredData(container, data, meta, toolArgs, reviewRequired, onDecision) {
     container.innerHTML = '';

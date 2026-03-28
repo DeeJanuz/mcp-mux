@@ -1,7 +1,7 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-28
-**Total Active Issues:** 1
+**Total Active Issues:** 4
 **Resolved This Month:** 27
 
 ---
@@ -18,7 +18,19 @@ _None_
 
 ### Medium
 
-_None_
+#### M-013: structured-data.js is a 743-line monolith with 7+ responsibilities
+- **File(s):** `public/renderers/structured-data.js`
+- **Principle:** SRP
+- **Description:** A single IIFE handles CSS injection, state management, data utilities (sort/filter/flatten), read-only table DOM construction, review-mode controls (decision toggles, cell editing), decision payload building, legend rendering, and orchestration. This makes isolated testing and modification difficult.
+- **Suggested Fix:** Extract pure data utilities (sort, filter, flatten, buildDecisionPayload) into a testable module. Separate review-mode builders from read-only builders. Consider extracting CSS injection into the shared style system.
+- **Detected:** 2026-03-28 (commit b17d52a)
+
+#### M-014: Duplicated decision toggle builders in structured-data.js
+- **File(s):** `public/renderers/structured-data.js`
+- **Principle:** DRY / OCP
+- **Description:** `buildRowDecisionToggle` and `buildColumnDecisionToggle` are nearly identical, differing only in the decision key format and button titles. The per-table and global Accept All / Reject All button handlers also duplicate the same iteration logic.
+- **Suggested Fix:** Extract a generic `buildDecisionToggle(key, state, rerenderFn, titles)` function. Extract the "set all decisions" iteration into a shared helper called by both per-table and global buttons.
+- **Detected:** 2026-03-28 (commit b17d52a)
 
 ### Low
 
@@ -28,6 +40,13 @@ _None_
 - **Description:** Both `new_with_store()` (line 35) and `reload_plugins()` (line 64) call `PluginStore::with_dir(self.plugin_store.dir().to_path_buf())` to create a fresh store from the path, rather than passing or cloning the stored `plugin_store` field directly. If `PluginStore` gains configuration beyond the directory path, these reconstructions would silently lose it.
 - **Suggested Fix:** If `PluginStore` implements `Clone`, use `self.plugin_store.clone()`. Otherwise, add a `PluginStore::clone_fresh()` method that preserves all configuration.
 - **Detected:** 2026-03-26 (commit 2b0f6cb)
+
+#### L-013: No tests for structured-data renderer logic
+- **File(s):** `public/renderers/structured-data.js`
+- **Principle:** Testability
+- **Description:** Pure data functions (sortRows, filterRows, flattenRows, buildDecisionPayload, getCellValue) have no test coverage despite being highly testable. The interactive logic (cell editing commit/cancel, decision state management) is also untested.
+- **Suggested Fix:** Extract pure functions into a module importable by a test runner. Add unit tests for sort, filter, flatten, and payload building at minimum.
+- **Detected:** 2026-03-28 (commit b17d52a)
 
 ---
 
@@ -90,6 +109,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| b17d52a | 2026-03-28 | 58/100 | Acceptable |
 | a24b465 | 2026-03-28 | 85/100 | Good |
 | 630efb9 | 2026-03-28 | 82/100 | Good |
 | b0bc543 | 2026-03-28 | 88/100 | Good |

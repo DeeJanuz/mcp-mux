@@ -372,6 +372,87 @@ Display content and block until the user accepts or rejects. Returns the user's 
 | `data` | object | Yes | Content data to display. |
 | `timeout` | number | No | Timeout in seconds (default: 120). |
 
+#### structured_data renderer
+
+**Read-only display (push_content):**
+
+```json
+{
+  "tool_name": "structured_data",
+  "data": {
+    "title": "Optional Title",
+    "tables": [{
+      "id": "t1",
+      "name": "Table Name",
+      "columns": [
+        { "id": "c1", "name": "Column Name", "change": null }
+      ],
+      "rows": [{
+        "id": "r1",
+        "cells": { "c1": { "value": "cell value", "change": null } },
+        "children": []
+      }]
+    }]
+  }
+}
+```
+
+All `change` fields must be `null` for push_content. The server strips non-null change values automatically.
+
+**Change review (push_review):**
+
+```json
+{
+  "tool_name": "structured_data",
+  "data": {
+    "title": "Review Title",
+    "tables": [{
+      "id": "t1",
+      "name": "Table Name",
+      "columns": [
+        { "id": "c1", "name": "Existing Col", "change": null },
+        { "id": "c2", "name": "New Col", "change": "add" }
+      ],
+      "rows": [{
+        "id": "r1",
+        "cells": {
+          "c1": { "value": "updated value", "change": "update" },
+          "c2": { "value": "new value", "change": "add" }
+        },
+        "children": []
+      }]
+    }]
+  },
+  "timeout": 300
+}
+```
+
+Change values: `"add"` (green highlight), `"delete"` (red strikethrough), `"update"` (yellow highlight), `null` (unchanged).
+
+**push_review response (structured_data):**
+
+```json
+{
+  "sessionId": "uuid",
+  "status": "decision_received",
+  "decision": "partial",
+  "operationDecisions": {
+    "r1": "accept",
+    "col:c2": "reject"
+  },
+  "modifications": {
+    "r1.c1": "{\"value\":\"user changed this\",\"user_edited\":true}"
+  },
+  "additions": {
+    "user_edits": { "r1.c1": "user changed this" }
+  }
+}
+```
+
+- `operationDecisions`: Row IDs map to "accept"/"reject". Column decisions use `"col:<colId>"` prefix.
+- `modifications`: Cell edits as `"<rowId>.<colId>"` keys with JSON-encoded value objects.
+- `additions.user_edits`: Convenience map of user-edited cell values.
+
 ### `push_check`
 
 Check the status or result of a previously pushed review session.

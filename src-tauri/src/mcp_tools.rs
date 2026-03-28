@@ -376,14 +376,35 @@ pub(crate) fn persistence_instructions(agent_type: &str) -> String {
     }
 }
 
-/// Gather rules and plugin auth status from the current state.
-async fn gather_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>) {
+/// Extract lightweight tool summaries (name + description) from full tool definitions.
+fn extract_tool_summaries(tools: &[Value]) -> Vec<Value> {
+    tools
+        .iter()
+        .filter_map(|t| {
+            let name = t.get("name")?.as_str()?;
+            let description = t
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            Some(serde_json::json!({
+                "name": name,
+                "description": description,
+            }))
+        })
+        .collect()
+}
+
+/// Gather rules, plugin auth status, and available tool summaries from the current state.
+async fn gather_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
+    let all_tools = list_tools(state).await;
+    let available_tools = extract_tool_summaries(&all_tools);
+
     let state_guard = state.lock().await;
     let all_renderers = available_renderers(&state_guard.inner);
     let registry = state_guard.inner.plugin_registry.lock().unwrap();
     let rules = collect_rules(&all_renderers, &registry.manifests);
     let plugin_status = collect_plugin_auth_status(&registry.manifests);
-    (rules, plugin_status)
+    (rules, plugin_status, available_tools)
 }
 
 async fn call_init_session(
@@ -395,12 +416,13 @@ async fn call_init_session(
         .and_then(|v| v.as_str())
         .unwrap_or("generic");
 
-    let (rules, plugin_status) = gather_session_data(state).await;
+    let (rules, plugin_status, available_tools) = gather_session_data(state).await;
 
     let response = serde_json::json!({
         "rules": rules,
         "plugin_status": plugin_status,
         "persistence_instructions": persistence_instructions(agent_type),
+        "available_tools": available_tools,
     });
 
     Ok(serde_json::json!({
@@ -437,13 +459,14 @@ async fn call_mcpviews_setup(
         .and_then(|v| v.as_str())
         .unwrap_or("generic");
 
-    let (rules, plugin_status) = gather_session_data(state).await;
+    let (rules, plugin_status, available_tools) = gather_session_data(state).await;
 
     let response = serde_json::json!({
         "rules": rules,
         "plugin_status": plugin_status,
         "persistence_instructions": persistence_instructions(agent_type),
         "setup_instructions": setup_instructions(agent_type),
+        "available_tools": available_tools,
     });
 
     Ok(serde_json::json!({
@@ -1113,6 +1136,53 @@ mod tests {
     }
 
     // ─── synthesize_renderer_defs tests ───
+
+    // ─── extract_tool_summaries tests ───
+
+    #[test]
+    fn test_extract_tool_summaries_extracts_name_and_description() {
+        let tools = vec![
+            serde_json::json!({
+                "name": "push_content",
+                "description": "Display content in the MCPViews window.",
+                "inputSchema": { "type": "object" }
+            }),
+            serde_json::json!({
+                "name": "push_review",
+                "description": "Display content and block until review.",
+                "inputSchema": { "type": "object" }
+            }),
+        ];
+        let summaries = extract_tool_summaries(&tools);
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0]["name"], "push_content");
+        assert_eq!(summaries[0]["description"], "Display content in the MCPViews window.");
+        // Should NOT include inputSchema
+        assert!(summaries[0].get("inputSchema").is_none());
+        assert_eq!(summaries[1]["name"], "push_review");
+    }
+
+    #[test]
+    fn test_extract_tool_summaries_skips_entries_without_name() {
+        let tools = vec![
+            serde_json::json!({ "description": "no name field" }),
+            serde_json::json!({ "name": "valid_tool", "description": "has name" }),
+        ];
+        let summaries = extract_tool_summaries(&tools);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0]["name"], "valid_tool");
+    }
+
+    #[test]
+    fn test_extract_tool_summaries_handles_missing_description() {
+        let tools = vec![
+            serde_json::json!({ "name": "no_desc_tool" }),
+        ];
+        let summaries = extract_tool_summaries(&tools);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0]["name"], "no_desc_tool");
+        assert_eq!(summaries[0]["description"], "");
+    }
 
     #[test]
     fn test_synthesize_groups_multiple_tools_under_one_renderer() {

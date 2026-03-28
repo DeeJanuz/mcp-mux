@@ -1,8 +1,8 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-28
-**Total Active Issues:** 7
-**Resolved This Month:** 30
+**Total Active Issues:** 4
+**Resolved This Month:** 33
 
 ---
 
@@ -18,26 +18,7 @@ _None_
 
 ### Medium
 
-#### M-015: Duplicated dark mode CSS for mermaid-rendered and mermaid-modal-body
-- **File(s):** `src/styles.css`
-- **Principle:** DRY / SRP
-- **Description:** The dark mode mermaid SVG overrides are duplicated nearly identically for `.mermaid-rendered` and `.mermaid-modal-body` selectors (~50 lines of near-duplicate CSS). Adding a new mermaid context would require triplicating these rules.
-- **Suggested Fix:** Apply a shared class (e.g., `.mermaid-container`) to both containers and write the dark mode rules once against that class, or use a comma-separated selector list.
-- **Detected:** 2026-03-28 (commit effec4a)
-
-#### M-016: blocking_save_file called in async Tauri command
-- **File(s):** `src-tauri/src/commands.rs`
-- **Principle:** Correctness / Robustness
-- **Description:** The `save_file` async command calls `blocking_save_file()` which blocks the Tokio thread. Additionally, `file_path.as_path().unwrap()` will panic if the dialog returns a non-local (e.g., URI-based) path.
-- **Suggested Fix:** Use the async dialog API or wrap in `tokio::task::spawn_blocking`. Replace `unwrap()` with proper error handling via `ok_or_else`.
-- **Detected:** 2026-03-28 (commit effec4a)
-
-#### M-017: No tests for CSV export, save_file command, or markdown toggle
-- **File(s):** `public/renderers/structured-data.js`, `src-tauri/src/commands.rs`, `public/renderers/rich-content.js`
-- **Principle:** Testability
-- **Description:** Three new features (CSV export with `exportTableCsv`, Tauri `save_file` command, and markdown/rendered toggle) were added with zero test coverage. The `exportTableCsv` function is pure and highly testable.
-- **Suggested Fix:** Add unit tests for `exportTableCsv` (CSV escaping, hierarchical row collection, modification application). Add a Tauri command test for `save_file` error path. Toggle logic could be tested via DOM tests.
-- **Detected:** 2026-03-28 (commit effec4a)
+_None_
 
 ### Low
 
@@ -72,6 +53,12 @@ _None_
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-03-28 (commit 9663b17)
+
+- **M-015:** Duplicated dark mode CSS for mermaid-rendered and mermaid-modal-body -- consolidated using `:is(.mermaid-rendered, .mermaid-modal-body)` selectors, reducing ~100 lines of near-duplicate CSS to ~50 lines
+- **M-016:** blocking_save_file called in async Tauri command -- replaced with async oneshot channel pattern and added proper error handling via `ok_or_else` instead of `unwrap()`
+- **M-017:** No tests for CSV export, save_file command, or markdown toggle -- extracted `buildCsvString` to `structured-data-utils.js` and added 6 unit tests covering escaping, null handling, nested rows, and modifications
 
 ### Resolved 2026-03-28 (commit 4191125)
 
@@ -136,6 +123,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 9663b17 | 2026-03-28 | 85/100 | Good |
 | effec4a | 2026-03-28 | 62/100 | Acceptable |
 | 6a127b2 | 2026-03-28 | 72/100 | Good |
 | 4191125 | 2026-03-28 | 88/100 | Good |

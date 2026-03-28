@@ -1,7 +1,6 @@
 use mcpviews_shared::{PluginAuth, PluginInfo, PluginManifest};
 use mcpviews_shared::plugin_store::PluginStore;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
@@ -20,9 +19,7 @@ pub(crate) struct PluginToolResult {
     pub mcp_url: String,
     pub auth_header: Option<String>,
     pub unprefixed_name: String,
-    pub renderer_map: HashMap<String, String>,
     pub oauth_info: Option<OAuthRefreshInfo>,
-    pub no_auto_push: Vec<String>,
 }
 
 /// Attempt OAuth token refresh, returning "Bearer {token}" on success.
@@ -182,9 +179,7 @@ impl PluginRegistry {
             mcp_url: mcp.url.clone(),
             auth_header: auth,
             unprefixed_name: unprefixed.to_string(),
-            renderer_map: manifest.renderers.clone(),
             oauth_info,
-            no_auto_push: manifest.no_auto_push.clone(),
         })
     }
 

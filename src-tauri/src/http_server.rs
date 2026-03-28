@@ -119,6 +119,7 @@ pub async fn execute_push(
         data,
         meta: meta.unwrap_or(serde_json::Value::Object(Default::default())),
         review_required,
+        timeout_secs: if review_required { Some(timeout_secs) } else { None },
         created_at: now,
         decided_at: None,
         decision: None,
@@ -127,10 +128,8 @@ pub async fn execute_push(
 
     let state_guard = state.lock().await;
 
-    // Single-session: clear existing sessions
     {
         let mut sessions = state_guard.inner.sessions.lock().unwrap();
-        sessions.clear();
         sessions.set(session.clone());
     }
 

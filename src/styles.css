@@ -272,41 +272,109 @@ body {
   z-index: 1;
 }
 
-.session-tab {
-  padding: 10px 12px;
-  margin-bottom: 4px;
-  border-radius: 6px;
+/* --- Tab Bar --- */
+#tab-bar {
+  display: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--glass-bg-heavy);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  scrollbar-width: thin;
+  flex-shrink: 0;
+}
+
+#tab-bar::-webkit-scrollbar {
+  height: 3px;
+}
+
+#tab-bar::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 2px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--border-radius-md);
   cursor: pointer;
-  transition: background var(--transition-fast);
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
   border: 1px solid transparent;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  max-width: 180px;
+  flex-shrink: 0;
 }
 
-.session-tab:hover {
-  background: var(--bg-surface-inset);
+.tab:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
 }
 
-.session-tab.active {
+.tab.active {
   background: var(--bg-surface-inset);
+  color: var(--text-primary);
   border-color: var(--accent-primary);
 }
 
-.session-tab .tool-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-primary);
-  margin-bottom: 4px;
+.tab .tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.session-tab .session-time {
-  font-size: 11px;
-  color: var(--text-secondary);
+.tab .review-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  flex-shrink: 0;
 }
 
-.session-tab .session-id {
-  font-size: 10px;
+.tab .close-btn {
+  font-size: 14px;
+  line-height: 1;
   color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+.tab:hover .close-btn {
+  opacity: 1;
+}
+
+.tab .close-btn:hover {
+  color: var(--color-error);
+}
+
+.tab .tab-timer {
+  font-size: 10px;
   font-family: var(--font-mono);
-  margin-top: 2px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
+}
+
+.tab .tab-timer.urgent {
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+.session-content {
+  height: 100%;
 }
 
 /* Content type badges */
@@ -1144,26 +1212,6 @@ body {
 .doc-no-ops { color: var(--text-secondary); text-align: center; padding: var(--space-8); }
 .doc-bulk-row { display: flex; gap: var(--space-2); margin-bottom: var(--space-4); }
 
-/* -- Queue badge -- */
-.queue-badge {
-  display: none;
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  background: var(--accent-primary);
-  color: var(--text-inverse);
-  font-size: 13px;
-  font-weight: var(--weight-semibold);
-  padding: 4px 10px;
-  border-radius: var(--border-radius-pill);
-  z-index: 9999;
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
-  pointer-events: none;
-  font-family: inherit;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-.queue-badge.visible { display: block; }
 
 /* ============================================
    PHASE 6: Polish — Transitions & Animations
@@ -1175,6 +1223,7 @@ html[data-theme] {
 }
 html[data-theme] body,
 html[data-theme] #main-header,
+html[data-theme] #tab-bar,
 html[data-theme] #content-area,
 html[data-theme] .citation-slideout,
 html[data-theme] .citation-slideout-header,

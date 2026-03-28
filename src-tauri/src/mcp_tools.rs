@@ -82,18 +82,6 @@ pub async fn call_tool(
                         proxy_plugin_tool_call(&client, &info.mcp_url, info.auth_header.as_deref(), &info.unprefixed_name, &arguments)
                             .await?;
 
-                    // Auto-push to viewer as a side effect (skip for denylisted tools)
-                    if !info.no_auto_push.contains(&info.unprefixed_name) {
-                        auto_push_plugin_result(
-                            state,
-                            &info.unprefixed_name,
-                            &arguments,
-                            &result,
-                            &info.renderer_map,
-                        )
-                        .await;
-                    }
-
                     Ok(result)
                 }
                 None => Err(format!("Unknown tool: {}", name)),
@@ -524,52 +512,6 @@ async fn proxy_plugin_tool_call(
     body.get("result")
         .cloned()
         .ok_or_else(|| "Plugin response missing result".to_string())
-}
-
-/// Auto-push plugin tool results to the viewer as a side effect
-async fn auto_push_plugin_result(
-    state: &Arc<TokioMutex<AsyncAppState>>,
-    tool_name: &str,
-    _arguments: &Value,
-    mcp_result: &Value,
-    renderer_map: &std::collections::HashMap<String, String>,
-) {
-    // Extract text content from MCP result
-    let data = if let Some(content) = mcp_result.get("content").and_then(|c| c.as_array()) {
-        // Try to parse the first text content as JSON for structured display
-        content
-            .iter()
-            .find_map(|item| {
-                if item.get("type").and_then(|t| t.as_str()) == Some("text") {
-                    item.get("text")
-                        .and_then(|t| t.as_str())
-                        .and_then(|s| serde_json::from_str::<Value>(s).ok())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| mcp_result.clone())
-    } else {
-        mcp_result.clone()
-    };
-
-    // Use renderer_map to map tool_name -> content_type for display, fallback to tool_name
-    let display_tool = renderer_map
-        .get(tool_name)
-        .cloned()
-        .unwrap_or_else(|| tool_name.to_string());
-
-    let _ = execute_push(
-        state,
-        display_tool,
-        None,
-        data,
-        None,
-        false, // non-blocking
-        120,
-        None,
-    )
-    .await;
 }
 
 // ─── Renderer definitions ───

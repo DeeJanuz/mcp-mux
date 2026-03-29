@@ -326,7 +326,7 @@ Two caches operate with different TTLs:
 
 ### Runtime Add/Remove
 
-Plugins can be added or removed at runtime via the CLI or GUI. When a plugin is added:
+Plugins can be added or removed at runtime via the CLI, GUI, or the `mcpviews_install_plugin` MCP tool (allowing agents to install plugins programmatically). When a plugin is added:
 
 1. The manifest is written to `~/.mcpviews/plugins/<name>.json` (or extracted to `~/.mcpviews/plugins/<name>/` for ZIP packages)
 2. The desktop app detects the change and loads the new plugin

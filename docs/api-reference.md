@@ -246,6 +246,16 @@ const token = await invoke('start_plugin_auth', { pluginName: 'my-plugin' });
 // Returns: token string on success
 ```
 
+### `get_plugin_auth_header`
+
+Retrieve the resolved authentication header for a plugin. Returns the full header value (e.g., `Bearer <token>` or a custom header value). Checks stored tokens first, then environment variable fallbacks, and attempts an OAuth token refresh if the stored token has expired.
+
+```javascript
+const header = await invoke('get_plugin_auth_header', { pluginName: 'my-plugin' });
+// Returns: "Bearer sk-abc123" (or custom header value)
+// Throws: if plugin not found, has no auth config, or no token is available
+```
+
 ### `store_plugin_token`
 
 Store a Bearer token or API key for a plugin. Saves to `~/.mcpviews/auth/<pluginName>.json`.
@@ -302,7 +312,8 @@ Scan installed plugin directories for custom renderer JS files.
 const renderers = await invoke('get_plugin_renderers');
 // Returns: RendererInfo[]
 // RendererInfo: { plugin_name, file_name, url }
-// url format: plugin://localhost/{plugin_name}/renderers/{file_name}
+// url format: plugin://localhost/{plugin_name}/renderers/{file_name}?v={mtime}
+// mtime is the file's last-modified Unix timestamp for cache busting
 ```
 
 ### `get_renderer_registry`

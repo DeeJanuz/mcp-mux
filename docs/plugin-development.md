@@ -300,8 +300,10 @@ Renderers register on `window.__renderers` and export a `render(data, container)
 Custom renderer JS files are served via the `plugin://` URI scheme:
 
 ```
-plugin://localhost/{plugin-name}/renderers/{file-name}.js
+plugin://localhost/{plugin-name}/renderers/{file-name}.js?v={mtime}
 ```
+
+The `?v={mtime}` query parameter is a cache-busting suffix based on the file's last-modified timestamp, added automatically by the renderer scanner.
 
 The renderer scanner (`renderer_scanner.rs`) automatically discovers JS files in each plugin's `renderers/` directory. Map your tools to the custom renderer in the manifest:
 
@@ -676,3 +678,5 @@ A full-featured plugin manifest with all optional fields:
 **Hot reload:**
 - `POST /api/reload-plugins` reloads all plugins from disk
 - Connected MCP clients receive a `notifications/tools/list_changed` notification
+- Renderer JS URLs include `?v={mtime}` cache-busting parameters, so reinstalling a plugin loads new JS without needing an uninstall/reinstall cycle
+- The `plugin://` protocol sets `Cache-Control: no-store` to prevent the webview from serving stale renderer scripts

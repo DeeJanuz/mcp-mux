@@ -114,6 +114,8 @@ pub fn uninstall_plugin(name: String, state: State<'_, Arc<AppState>>) -> Result
     let mut registry = state.plugin_registry.lock().unwrap();
     registry.remove_plugin(&name)?;
     drop(registry);
+    // Clean up any stored auth tokens for this plugin
+    let _ = mcpviews_shared::token_store::remove_token(&mcpviews_shared::auth_dir(), &name);
     state.notify_tools_changed();
     Ok(())
 }
@@ -332,6 +334,39 @@ pub fn install_plugin_from_zip(
 }
 
 #[tauri::command]
+pub async fn reinstall_plugin(
+    name: String,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let entry = {
+        let cached = state.latest_registry.lock().unwrap();
+        cached.iter().find(|e| e.name == name).cloned()
+    };
+
+    if let Some(entry) = entry {
+        install_or_update_from_entry(&entry, &state).await?;
+    } else {
+        // For non-registry plugins, just reload from existing manifest
+        let registry = state.plugin_registry.lock().unwrap();
+        if !registry.manifests.iter().any(|m| m.name == name) {
+            return Err(format!("Plugin '{}' not found", name));
+        }
+        drop(registry);
+        // Plugin exists but not in registry - just notify to refresh
+    }
+
+    state.notify_tools_changed();
+    let _ = app_handle.emit("reload_renderers", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_plugin_auth(name: String) -> Result<(), String> {
+    mcpviews_shared::token_store::remove_token(&mcpviews_shared::auth_dir(), &name)
+}
+
+#[tauri::command]
 pub fn get_settings() -> Result<mcpviews_shared::settings::Settings, String> {
     Ok(mcpviews_shared::settings::Settings::load())
 }
@@ -527,6 +562,52 @@ mod tests {
         let cached = state.latest_registry.lock().unwrap();
         let plugins = registry.list_plugins_with_updates(&cached);
         assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_reinstall_plugin_from_registry() {
+        let (state, _dir) = test_app_state();
+        let entry = test_registry_entry("reinstall-me");
+
+        // First install
+        install_or_update_from_entry(&entry, &state).await.unwrap();
+
+        // Cache the registry entry (simulating fetch_registry)
+        {
+            let mut cached = state.latest_registry.lock().unwrap();
+            cached.push(entry.clone());
+        }
+
+        // Reinstall logic (same as the command does, minus Tauri State wrapper)
+        let found_entry = {
+            let cached = state.latest_registry.lock().unwrap();
+            cached.iter().find(|e| e.name == "reinstall-me").cloned()
+        };
+        assert!(found_entry.is_some());
+        install_or_update_from_entry(&found_entry.unwrap(), &state).await.unwrap();
+
+        let registry = state.plugin_registry.lock().unwrap();
+        let count = registry.manifests.iter().filter(|m| m.name == "reinstall-me").count();
+        assert_eq!(count, 1, "Should have exactly one instance after reinstall");
+    }
+
+    #[tokio::test]
+    async fn test_reinstall_plugin_not_in_registry() {
+        let (state, _dir) = test_app_state();
+
+        // Install a plugin directly (not via registry)
+        let manifest = test_manifest("local-only");
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        // Registry cache is empty, so reinstall should not find it
+        let found_entry = {
+            let cached = state.latest_registry.lock().unwrap();
+            cached.iter().find(|e| e.name == "local-only").cloned()
+        };
+        assert!(found_entry.is_none(), "Should not find local-only plugin in registry");
     }
 
     #[test]

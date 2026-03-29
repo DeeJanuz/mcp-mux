@@ -163,9 +163,11 @@
         if (plugin.update_available) {
           actionsHtml += '<button class="btn btn-primary update-btn">Update</button>';
         }
-        if (hasAuth && !authConfigured) {
-          actionsHtml += '<button class="btn btn-secondary configure-auth-btn">Configure Auth</button>';
+        if (hasAuth) {
+          actionsHtml += '<button class="btn btn-secondary reauth-btn">' +
+            (authConfigured ? 'Re-auth' : 'Configure Auth') + '</button>';
         }
+        actionsHtml += '<button class="btn btn-secondary reinstall-btn">Reinstall</button>';
         actionsHtml += '<button class="btn btn-danger remove-btn">Remove</button>';
 
         row.innerHTML =
@@ -186,10 +188,17 @@
           });
         }
 
-        var authBtn = row.querySelector('.configure-auth-btn');
-        if (authBtn) {
-          authBtn.addEventListener('click', function () {
-            configureAuth(plugin.name);
+        var reauthBtn = row.querySelector('.reauth-btn');
+        if (reauthBtn) {
+          reauthBtn.addEventListener('click', function () {
+            reauthenticate(plugin.name);
+          });
+        }
+
+        var reinstallBtn = row.querySelector('.reinstall-btn');
+        if (reinstallBtn) {
+          reinstallBtn.addEventListener('click', function () {
+            reinstallPlugin(plugin.name);
           });
         }
 
@@ -303,6 +312,28 @@
       promptAuth(pluginName, { type: plugin.auth_type });
     } catch (e) {
       showNotification('Auth error: ' + e, true);
+    }
+  }
+
+  async function reauthenticate(pluginName) {
+    try {
+      // Clear existing auth token first
+      await window.__TAURI__.core.invoke('clear_plugin_auth', { name: pluginName });
+      // Then trigger the auth flow
+      configureAuth(pluginName);
+    } catch (e) {
+      showNotification('Re-authentication error: ' + e, true);
+    }
+  }
+
+  async function reinstallPlugin(name) {
+    try {
+      await window.__TAURI__.core.invoke('reinstall_plugin', { name: name });
+      showNotification('Plugin ' + name + ' reinstalled');
+      loadInstalled();
+      loadRegistry();
+    } catch (e) {
+      showNotification('Failed to reinstall plugin: ' + e, true);
     }
   }
 

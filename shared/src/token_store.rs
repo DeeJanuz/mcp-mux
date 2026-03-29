@@ -58,6 +58,16 @@ pub fn store_token(dir: &Path, plugin_name: &str, token: &StoredToken) -> Result
     Ok(())
 }
 
+/// Remove the stored token file for a plugin. Returns Ok(()) even if the file doesn't exist.
+pub fn remove_token(dir: &Path, plugin_name: &str) -> Result<(), String> {
+    let path = dir.join(format!("{}.json", plugin_name));
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|e| format!("Failed to delete token for '{}': {}", plugin_name, e))?;
+    }
+    Ok(())
+}
+
 /// Check if a stored token file exists at {dir}/{plugin_name}.json
 pub fn has_stored_token(dir: &Path, plugin_name: &str) -> bool {
     dir.join(format!("{}.json", plugin_name)).exists()
@@ -215,6 +225,28 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let token = load_stored_token_unvalidated(dir.path(), "nonexistent");
         assert!(token.is_none());
+    }
+
+    #[test]
+    fn test_remove_token_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = StoredToken {
+            access_token: "delete-me".to_string(),
+            refresh_token: None,
+            expires_at: None,
+        };
+        store_token(dir.path(), "removable", &token).unwrap();
+        assert!(has_stored_token(dir.path(), "removable"));
+
+        remove_token(dir.path(), "removable").unwrap();
+        assert!(!has_stored_token(dir.path(), "removable"));
+    }
+
+    #[test]
+    fn test_remove_token_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        // Should not error when file doesn't exist
+        remove_token(dir.path(), "nonexistent").unwrap();
     }
 
     #[test]

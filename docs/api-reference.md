@@ -540,6 +540,32 @@ Initialize MCPViews for the current session. Returns current renderer definition
 
 The `available_tools` array contains lightweight summaries (name and description only) of all MCP tools currently registered. This ensures the LLM knows what tools exist even on platforms with deferred tool loading that may not surface all tools via discovery.
 
+### `mcpviews_install_plugin`
+
+Install a plugin into MCPViews programmatically. Accepts a plugin manifest as JSON and optionally a download URL for a ZIP package containing renderer assets. If a plugin with the same name already exists, it is replaced. After installation, connected MCP clients are notified via `notifications/tools/list_changed` and the GUI receives a `reload_renderers` event.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `manifest_json` | string | Yes | JSON string of a `PluginManifest` object defining the plugin's name, version, renderers, MCP config, and tool rules. |
+| `download_url` | string | No | URL to a `.zip` package to download and install. If provided, the manifest is extracted from the package and `manifest_json` is used only for validation. |
+
+**Response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "Plugin 'my-plugin' installed successfully."
+  }]
+}
+```
+
+**Behavior:**
+- **Manifest-only install** (no `download_url`): Parses `manifest_json` and registers the plugin in the in-memory registry.
+- **ZIP install** (with `download_url`): Downloads the ZIP package, extracts it to `~/.mcpviews/plugins/{plugin-name}/`, and registers the extracted manifest.
+- If a plugin with the same name is already installed, it is removed first and then re-added.
+- After installation, a `notifications/tools/list_changed` notification is broadcast to all MCP SSE sessions and a `reload_renderers` event is emitted to the WebView.
+
 ### `mcpviews_setup`
 
 One-time setup for MCPViews. Returns instructions for persisting a rule that ensures `init_session` is called automatically at the start of every conversation, chat session, or interaction. Also returns current rules and plugin status.
@@ -589,4 +615,14 @@ listen('push_preview', (event) => {
   "timeoutSecs": null,
   "createdAt": 1711388400000
 }
+```
+
+### `reload_renderers` (Rust → WebView)
+
+Emitted when plugin renderers should be reloaded (e.g., after a plugin is installed or updated via the `mcpviews_install_plugin` MCP tool). The WebView re-runs `loadPluginRenderers()` to discover and load any new renderer scripts.
+
+```javascript
+listen('reload_renderers', () => {
+  loadPluginRenderers();
+});
 ```

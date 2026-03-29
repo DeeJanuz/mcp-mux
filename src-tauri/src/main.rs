@@ -127,6 +127,8 @@ fn main() {
             commands::remove_registry_source,
             commands::toggle_registry_source,
             commands::update_plugin,
+            commands::reinstall_plugin,
+            commands::clear_plugin_auth,
             commands::save_file,
             commands::get_renderer_registry,
         ])

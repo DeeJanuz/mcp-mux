@@ -56,6 +56,28 @@ impl AppState {
         sessions.broadcast(&notification);
     }
 
+    /// Return the plugins directory path from the underlying PluginStore.
+    pub fn plugins_dir(&self) -> &std::path::Path {
+        self.plugin_store.dir()
+    }
+
+    /// Install a plugin from a parsed manifest, upserting (removing any existing plugin
+    /// with the same name first). This is the core logic shared by MCP and Tauri commands.
+    pub fn install_plugin_from_manifest(
+        &self,
+        manifest: mcpviews_shared::PluginManifest,
+    ) -> Result<String, String> {
+        let plugin_name = manifest.name.clone();
+        {
+            let mut registry = self.plugin_registry.lock().unwrap();
+            if registry.manifests.iter().any(|m| m.name == plugin_name) {
+                let _ = registry.remove_plugin(&plugin_name);
+            }
+            registry.add_plugin(manifest)?;
+        }
+        Ok(plugin_name)
+    }
+
     /// Reload all plugins from disk and broadcast a tools/list_changed notification
     /// to all connected MCP SSE sessions.
     pub fn reload_plugins(&self) {

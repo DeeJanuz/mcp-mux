@@ -836,27 +836,23 @@ async fn call_install_plugin(
         .map(|s| s.to_string());
 
     let manifest = if let Some(url) = &download_url {
-        let client = {
+        let (client, plugins_dir) = {
             let state_guard = state.lock().await;
-            state_guard.inner.http_client.clone()
+            (
+                state_guard.inner.http_client.clone(),
+                state_guard.inner.plugins_dir().to_path_buf(),
+            )
         };
-        let plugins_dir = mcpviews_shared::plugins_dir();
         mcpviews_shared::package::download_and_install_plugin(&client, url, &plugins_dir).await?
     } else {
         serde_json::from_str::<mcpviews_shared::PluginManifest>(manifest_json)
             .map_err(|e| format!("Invalid manifest JSON: {}", e))?
     };
 
-    let plugin_name = manifest.name.clone();
-
-    {
+    let plugin_name = {
         let state_guard = state.lock().await;
-        let mut registry = state_guard.inner.plugin_registry.lock().unwrap();
-        if registry.manifests.iter().any(|m| m.name == plugin_name) {
-            let _ = registry.remove_plugin(&plugin_name);
-        }
-        registry.add_plugin(manifest)?;
-    }
+        state_guard.inner.install_plugin_from_manifest(manifest)?
+    };
 
     // Notify MCP clients and GUI
     {
@@ -992,7 +988,7 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
                     },
                     "download_url": {
                         "type": "string",
-                        "description": "Optional URL to a .zip package to download and install. If provided, the manifest is extracted from the package and manifest_json is ignored for plugin registration (but still required for validation)."
+                        "description": "Optional URL to a .zip package to download and install. If provided, the manifest is extracted from the package and the manifest_json parameter is not used."
                     }
                 },
                 "required": ["manifest_json"]
@@ -1467,6 +1463,86 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0]["name"], "no_desc_tool");
         assert_eq!(summaries[0]["description"], "");
+    }
+
+    // ─── install_plugin_from_manifest tests ───
+
+    #[test]
+    fn test_install_plugin_manifest_only() {
+        let (state, _dir) = crate::test_utils::test_app_state();
+        let manifest = crate::test_utils::test_manifest("test-install");
+
+        let result = state.install_plugin_from_manifest(manifest);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test-install");
+
+        let registry = state.plugin_registry.lock().unwrap();
+        assert_eq!(registry.manifests.len(), 1);
+        assert_eq!(registry.manifests[0].name, "test-install");
+    }
+
+    #[test]
+    fn test_install_plugin_invalid_manifest_json() {
+        // Verify that serde_json rejects invalid JSON before it reaches install_plugin_from_manifest
+        let bad_json = "{ not valid json }";
+        let result = serde_json::from_str::<mcpviews_shared::PluginManifest>(bad_json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_install_plugin_upsert_replaces_existing() {
+        let (state, _dir) = crate::test_utils::test_app_state();
+        let manifest_v1 = crate::test_utils::test_manifest("upsert-plugin");
+
+        state.install_plugin_from_manifest(manifest_v1).unwrap();
+        {
+            let registry = state.plugin_registry.lock().unwrap();
+            assert_eq!(registry.manifests.len(), 1);
+        }
+
+        let mut manifest_v2 = crate::test_utils::test_manifest("upsert-plugin");
+        manifest_v2.version = "2.0.0".to_string();
+        state.install_plugin_from_manifest(manifest_v2).unwrap();
+
+        let registry = state.plugin_registry.lock().unwrap();
+        assert_eq!(registry.manifests.len(), 1);
+        assert_eq!(registry.manifests[0].name, "upsert-plugin");
+        assert_eq!(registry.manifests[0].version, "2.0.0");
+    }
+
+    #[test]
+    fn test_install_plugin_missing_manifest_json_param() {
+        // Simulates the extraction logic in call_install_plugin: missing manifest_json → error
+        let arguments = serde_json::json!({});
+        let result = arguments
+            .get("manifest_json")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing required parameter: manifest_json");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Missing required parameter: manifest_json");
+    }
+
+    // ─── schema description tests ───
+
+    #[test]
+    fn test_install_plugin_schema_download_url_description() {
+        let tools = builtin_tool_definitions(&[]);
+        let install_tool = tools.iter()
+            .find(|t| t["name"] == "mcpviews_install_plugin")
+            .expect("mcpviews_install_plugin tool should exist");
+        let desc = install_tool["inputSchema"]["properties"]["download_url"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            desc.contains("the manifest_json parameter is not used"),
+            "Description should accurately reflect that manifest_json is not used when download_url is provided. Got: {}",
+            desc,
+        );
+        assert!(
+            !desc.contains("still required for validation"),
+            "Description should not claim manifest_json is required for validation. Got: {}",
+            desc,
+        );
     }
 
     #[test]

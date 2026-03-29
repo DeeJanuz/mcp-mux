@@ -39,8 +39,8 @@ config_path_for() {
         echo "$HOME/.config/Claude/claude_desktop_config.json"
       fi
       ;;
-    1) # Claude Code CLI
-      echo "$HOME/.claude/.mcp.json"
+    1) # Claude Code CLI — uses ~/.claude.json global mcpServers (managed via `claude mcp` CLI)
+      echo "$HOME/.claude.json"
       ;;
     2) # Cursor IDE
       echo "$HOME/.cursor/mcp.json"
@@ -109,14 +109,36 @@ already_configured() {
   local cfg
   cfg="$(config_path_for "$idx")"
 
+  # Claude Code CLI — check via `claude mcp list` for authoritative answer
+  if [[ "$idx" -eq 1 ]]; then
+    if command -v claude &>/dev/null; then
+      claude mcp list 2>/dev/null | grep -q 'mcpviews'
+    else
+      return 1
+    fi
+    return $?
+  fi
+
   [[ -f "$cfg" ]] || return 1
 
   if [[ "$idx" -eq 4 ]]; then
     # Codex TOML
     grep -q '\[mcp_servers\.mcpviews\]' "$cfg" 2>/dev/null
   else
-    # JSON platforms — look for "mcpviews" key
-    grep -q '"mcpviews"' "$cfg" 2>/dev/null
+    # JSON platforms — check "mcpviews" exists inside the mcpServers/mcp block
+    local key
+    key="$(mcp_key_for "$idx")"
+    if $HAS_PYTHON; then
+      python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+sys.exit(0 if 'mcpviews' in data.get(sys.argv[2], {}) else 1)
+" "$cfg" "$key" 2>/dev/null
+    else
+      # Fallback: grep for "mcpviews" near the mcpServers key
+      grep -A 20 "\"$key\"" "$cfg" 2>/dev/null | grep -q '"mcpviews"'
+    fi
   fi
 }
 
@@ -127,13 +149,18 @@ if command -v python3 &>/dev/null; then
   HAS_PYTHON=true
 fi
 
-# Claude Desktop requires stdio transport — use mcp-remote bridge for HTTP servers.
 # Returns the JSON snippet for the mcpviews entry based on platform.
+# Claude Desktop requires stdio transport (mcp-remote bridge).
+# Claude Code CLI is configured via `claude mcp add` (not JSON merge).
+# Other platforms support direct URL.
 mcpviews_entry_for() {
   local idx="$1"
   case "$idx" in
-    0|1) # Claude Desktop & Claude Code CLI — need mcp-remote bridge
+    0) # Claude Desktop — needs mcp-remote stdio bridge
       echo "{\"command\":\"npx\",\"args\":[\"-y\",\"mcp-remote\",\"$MCPVIEWS_URL\"]}"
+      ;;
+    1) # Claude Code CLI — handled by configure_claude_code, not used
+      echo "{\"type\":\"http\",\"url\":\"$MCPVIEWS_URL\"}"
       ;;
     *) # Other JSON platforms support url directly
       echo "{\"url\":\"$MCPVIEWS_URL\"}"
@@ -317,11 +344,22 @@ ENDTOML
   } >> "$cfg"
 }
 
+# Configure Claude Code CLI via its native `claude mcp` command
+configure_claude_code() {
+  if ! command -v claude &>/dev/null; then
+    echo "FAILED (claude CLI not found in PATH)."
+    return 1
+  fi
+  claude mcp add --transport http --scope user mcpviews "$MCPVIEWS_URL" >/dev/null 2>&1
+}
+
 # ─── Configure a single platform by index ─────────────────────────────────────
 
 configure_platform() {
   local idx="$1"
-  if [[ "$idx" -eq 4 ]]; then
+  if [[ "$idx" -eq 1 ]]; then
+    configure_claude_code
+  elif [[ "$idx" -eq 4 ]]; then
     configure_codex
   else
     configure_json "$idx"

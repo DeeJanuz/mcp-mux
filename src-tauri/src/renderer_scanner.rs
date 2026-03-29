@@ -39,12 +39,16 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                     let renderer_path = renderer_entry.path();
                     if renderer_path.extension().and_then(|e| e.to_str()) == Some("js") {
                         let file_name = renderer_entry.file_name().to_string_lossy().to_string();
+                        let mtime = renderer_entry.metadata()
+                            .and_then(|m| m.modified())
+                            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+                            .unwrap_or(0);
                         renderers.push(RendererInfo {
                             plugin_name: plugin_name.clone(),
                             file_name: file_name.clone(),
                             url: format!(
-                                "plugin://localhost/{}/renderers/{}",
-                                plugin_name, file_name
+                                "plugin://localhost/{}/renderers/{}?v={}",
+                                plugin_name, file_name, mtime
                             ),
                         });
                     }

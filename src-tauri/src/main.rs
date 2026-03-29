@@ -42,6 +42,17 @@ fn build_csp(extra_origins: &[String]) -> String {
     )
 }
 
+fn csp_request_hook(state: Arc<AppState>) -> impl Fn(tauri::http::Request<Vec<u8>>, &mut tauri::http::Response<std::borrow::Cow<'static, [u8]>>) + Send + Sync + 'static {
+    move |_req, resp| {
+        let origins = state.plugin_csp_origins();
+        let csp = build_csp(&origins);
+        resp.headers_mut().insert(
+            "content-security-policy",
+            csp.parse().unwrap(),
+        );
+    }
+}
+
 fn mime_from_extension(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
         Some("js") => "application/javascript",
@@ -107,6 +118,7 @@ fn main() {
                         .status(200)
                         .header("Content-Type", mime)
                         .header("Access-Control-Allow-Origin", "*")
+                        .header("Cache-Control", "no-store")
                         .body(contents)
                         .unwrap()
                 }
@@ -132,6 +144,7 @@ fn main() {
             commands::install_plugin_from_zip,
             commands::fetch_registry,
             commands::start_plugin_auth,
+            commands::get_plugin_auth_header,
             commands::store_plugin_token,
             commands::get_settings,
             commands::save_settings,
@@ -170,19 +183,11 @@ fn main() {
                 .expect("Failed to spawn HTTP thread");
 
             // Create main window programmatically with dynamic CSP
-            let csp_state = app_state.clone();
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
                 .title("MCPViews")
                 .inner_size(1200.0, 800.0)
                 .resizable(true)
-                .on_web_resource_request(move |_req, resp| {
-                    let origins = csp_state.plugin_csp_origins();
-                    let csp = build_csp(&origins);
-                    resp.headers_mut().insert(
-                        "content-security-policy",
-                        csp.parse().unwrap(),
-                    );
-                })
+                .on_web_resource_request(csp_request_hook(app_state.clone()))
                 .build()?;
 
             // Listen for reload_renderers to refresh main window CSP
@@ -228,7 +233,6 @@ fn main() {
                             let _ = window.set_focus();
                         } else {
                             let state: tauri::State<'_, Arc<AppState>> = app.state();
-                            let csp_state = state.inner().clone();
                             let _ = tauri::WebviewWindowBuilder::new(
                                 app,
                                 "plugin-manager",
@@ -236,14 +240,7 @@ fn main() {
                             )
                             .title("MCPViews - Plugin Manager")
                             .inner_size(800.0, 600.0)
-                            .on_web_resource_request(move |_req, resp| {
-                                let origins = csp_state.plugin_csp_origins();
-                                let csp = build_csp(&origins);
-                                resp.headers_mut().insert(
-                                    "content-security-policy",
-                                    csp.parse().unwrap(),
-                                );
-                            })
+                            .on_web_resource_request(csp_request_hook(state.inner().clone()))
                             .build();
                         }
                     }

@@ -255,6 +255,51 @@ pub async fn start_plugin_auth(
 }
 
 #[tauri::command]
+pub async fn get_plugin_auth_header(
+    plugin_name: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    let auth = {
+        let registry = state.plugin_registry.lock().unwrap();
+        let manifest = registry
+            .manifests
+            .iter()
+            .find(|m| m.name == plugin_name)
+            .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
+        manifest
+            .mcp
+            .as_ref()
+            .and_then(|m| m.auth.clone())
+            .ok_or_else(|| format!("Plugin '{}' has no auth config", plugin_name))?
+    };
+
+    // Try resolving from stored token (env var fallback for Bearer/ApiKey, stored file for OAuth)
+    if let Some(header) = auth.resolve_header(&plugin_name) {
+        return Ok(header);
+    }
+
+    // If OAuth with expired token, attempt refresh
+    if let PluginAuth::OAuth {
+        client_id,
+        token_url,
+        ..
+    } = &auth
+    {
+        let client = state.http_client.clone();
+        let token = crate::auth::refresh_oauth_token(
+            &plugin_name,
+            token_url,
+            client_id.as_deref(),
+            &client,
+        )
+        .await?;
+        return Ok(format!("Bearer {}", token));
+    }
+
+    Err(format!("No token available for plugin '{}'", plugin_name))
+}
+
+#[tauri::command]
 pub fn store_plugin_token(plugin_name: String, token: String) -> Result<(), String> {
     crate::auth::store_api_key(&plugin_name, &token)
 }

@@ -140,6 +140,17 @@ Tear down an MCP SSE session.
 
 **Error** `400 Bad Request` if header missing, `404 Not Found` if session does not exist.
 
+### `GET /.well-known/oauth-authorization-server`
+
+Returns a JSON 404 response for OAuth authorization server discovery. MCPViews does not use OAuth authentication. This endpoint exists because Claude Code's HTTP transport client probes this well-known path before connecting and expects a parseable JSON response; axum's default plain-text 404 causes a JSON parse error in the client.
+
+**Response** `404 Not Found`
+```json
+{
+  "error": "not_found"
+}
+```
+
 ### `OPTIONS /api/push`
 
 CORS preflight. Returns `200` with:

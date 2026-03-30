@@ -210,10 +210,17 @@ async fn call_push_impl(
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: tool_name")?
         .to_string();
-    let data = arguments
-        .get("data")
-        .ok_or("Missing required parameter: data")?
-        .clone();
+    let data = {
+        let raw = arguments
+            .get("data")
+            .ok_or("Missing required parameter: data")?;
+        // Agents sometimes pass data as a JSON string instead of an object — auto-parse it
+        if let Some(s) = raw.as_str() {
+            serde_json::from_str(s).unwrap_or_else(|_| raw.clone())
+        } else {
+            raw.clone()
+        }
+    };
     let meta = arguments.get("meta").cloned();
     let timeout = if review_required {
         arguments
@@ -600,7 +607,36 @@ async fn proxy_plugin_tool_call(
 
 // ─── Renderer definitions ───
 
-const RICH_CONTENT_RULE: &str = "CALLER RESTRICTION: ONLY the main/coordinator agent may call push_content, push_review, and push_check. Sub-agents and background agents must NEVER call these tools — they return results to the coordinator, which decides what to push.\n\nWhen to push (main agent only):\n- Detailed explanations that benefit from structured formatting, diagrams, or tables\n- Plan summaries for human review\n- Architecture, data flows, system diagrams, API designs, database schemas\n- Implementation plans with structural decisions\n\nKeep your chat response concise (context, next steps, decisions needed). The detailed explanation with mermaid diagrams, tables, and formatted markdown goes to push_content.";
+const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call push_content, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
+
+When to push: detailed explanations, plans, architecture/data-flow diagrams, API designs, database schemas. Keep chat concise; rich detail goes to push_content.
+
+## `data` parameter
+
+`data` MUST be a JSON **object**, not a stringified JSON string.
+Correct: `"data": { "title": "...", "body": "..." }`
+Wrong:   `"data": "{\"title\": \"...\"}"`
+
+## Formatting the `body` field
+
+Body is markdown (CommonMark). Supported: headings, bold/italic, lists, blockquotes, fenced code blocks, markdown tables (<10 rows; use structured_data for more), horizontal rules.
+
+### Mermaid diagrams
+
+MUST be wrapped in a fenced code block with language identifier `mermaid`. Bare `mermaid` without triple-backtick fences renders as plain text — this is the most common mistake.
+
+In the JSON string value for body, a mermaid block looks like:
+`"```mermaid\\nflowchart TD\\n  A[Start] --> B[End]\\n```"`
+
+**Line breaks in node labels**: use `<br/>` tags. Never use `\\n` or literal newlines inside node text.
+Correct: `A[Line one<br/>Line two]`
+Wrong:   `A[Line one\nLine two]`
+
+**Special characters in node text**: wrap node labels in quotes if they contain parentheses, brackets, or other Mermaid syntax characters.
+
+### JSON string escaping
+
+The body value is a JSON string. Use `\n` for newlines, `\"` for quotes, `\\` for backslashes. Backticks need no escaping."#;
 
 const STRUCTURED_DATA_RULE: &str = r#"Use structured_data when presenting tabular or schema data that benefits from sort, filter, expand/collapse, or review workflows. Prefer it over rich_content markdown tables when:
 - Data has hierarchical/nested rows (parent-child relationships)
@@ -707,7 +743,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Universal markdown display with mermaid diagrams, tables, code blocks, and citations. Use for any rich text content.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some("{ \"title\": \"Optional heading\", \"body\": \"Markdown content\" }".into()),
+            data_hint: Some("{ \"title\": \"Optional heading\", \"body\": \"Markdown with ```mermaid blocks\" } — data must be a JSON object, not a string".into()),
             rule: Some(RICH_CONTENT_RULE.into()),
             display_mode: None,
             invoke_schema: None,

@@ -140,14 +140,88 @@ Tear down an MCP SSE session.
 
 **Error** `400 Bad Request` if header missing, `404 Not Found` if session does not exist.
 
-### `GET /.well-known/oauth-authorization-server`
+### Mock OAuth Endpoints
 
-Returns a JSON 404 response for OAuth authorization server discovery. MCPViews does not use OAuth authentication. This endpoint exists because Claude Code's HTTP transport client probes this well-known path before connecting and expects a parseable JSON response; axum's default plain-text 404 causes a JSON parse error in the client.
+MCPViews implements a complete mock OAuth flow so that Claude Code's HTTP transport auth handshake completes instantly without real authentication. These endpoints satisfy the RFC 9728 / RFC 8414 discovery probes and the subsequent registration, authorization, and token exchange.
 
-**Response** `404 Not Found`
+#### `GET /.well-known/oauth-protected-resource`
+
+RFC 9728 protected resource metadata.
+
+**Response** `200 OK`
 ```json
 {
-  "error": "not_found"
+  "resource": "http://localhost:4200",
+  "authorization_servers": ["http://localhost:4200"]
+}
+```
+
+#### `GET /.well-known/oauth-authorization-server`
+
+RFC 8414 authorization server metadata.
+
+**Response** `200 OK`
+```json
+{
+  "issuer": "http://localhost:4200",
+  "authorization_endpoint": "http://localhost:4200/oauth/authorize",
+  "token_endpoint": "http://localhost:4200/oauth/token",
+  "registration_endpoint": "http://localhost:4200/oauth/register",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code", "refresh_token"],
+  "code_challenge_methods_supported": ["S256"],
+  "token_endpoint_auth_methods_supported": ["none"]
+}
+```
+
+#### `POST /oauth/register`
+
+Dynamic client registration (mock). Echoes back provided `redirect_uris` with a fixed `client_id`.
+
+**Request Body** (JSON, extra fields ignored)
+```json
+{
+  "redirect_uris": ["http://localhost:9999/callback"]
+}
+```
+
+**Response** `200 OK`
+```json
+{
+  "client_id": "mcpviews-mock-client",
+  "client_name": "MCPViews Mock Client",
+  "redirect_uris": ["http://localhost:9999/callback"],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none"
+}
+```
+
+#### `GET /oauth/authorize`
+
+Immediately redirects with a mock authorization code.
+
+**Query Parameters:**
+| Param | Required | Description |
+|-------|----------|-------------|
+| `redirect_uri` | Yes | Client callback URL |
+| `state` | No | Opaque state value passed through |
+
+**Response** `302 Found` with `Location: {redirect_uri}?code=mcpviews-mock-code&state={state}`
+
+**Error** `400 Bad Request` if `redirect_uri` is missing.
+
+#### `POST /oauth/token`
+
+Returns a mock access token.
+
+**Response** `200 OK`
+```json
+{
+  "access_token": "mcpviews-mock-token",
+  "token_type": "bearer",
+  "expires_in": 86400,
+  "scope": "mcp"
 }
 ```
 

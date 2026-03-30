@@ -172,6 +172,13 @@ fn main() {
             let handle = app.handle().clone();
             let state = app_state.clone();
 
+            // Pre-bind the TCP listener on the main thread so the port is ready
+            // before Claude Code probes it (eliminates MCP startup race condition)
+            let std_listener = std::net::TcpListener::bind("0.0.0.0:4200")
+                .map_err(|e| format!("Failed to bind to port 4200: {e}"))?;
+            std_listener.set_nonblocking(true)
+                .map_err(|e| format!("Failed to set non-blocking: {e}"))?;
+
             // Spawn the axum HTTP server on a dedicated thread with its own tokio runtime
             std::thread::Builder::new()
                 .name("http-server".into())
@@ -179,7 +186,7 @@ fn main() {
                     let rt = tokio::runtime::Runtime::new()
                         .expect("Failed to create tokio runtime");
                     rt.block_on(async move {
-                        http_server::start_http_server(state, handle).await;
+                        http_server::start_http_server(state, handle, std_listener).await;
                     });
                 })
                 .expect("Failed to spawn HTTP thread");

@@ -397,7 +397,7 @@ async fn reload_plugins_handler(
     StatusCode::OK
 }
 
-pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle) {
+pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle, std_listener: std::net::TcpListener) {
     eprintln!("[mcpviews] Starting HTTP server on :4200");
     let _ = get_start_info(); // Initialize start time
 
@@ -456,16 +456,11 @@ pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle) 
         }
     });
 
-    match tokio::net::TcpListener::bind("0.0.0.0:4200").await {
-        Ok(listener) => {
-            eprintln!("[mcpviews] HTTP server listening on :4200");
-            if let Err(e) = axum::serve(listener, app).await {
-                eprintln!("[mcpviews] HTTP server error: {}", e);
-            }
-        }
-        Err(e) => {
-            eprintln!("[mcpviews] Failed to bind to port 4200: {}", e);
-        }
+    let listener = tokio::net::TcpListener::from_std(std_listener)
+        .expect("Failed to convert std listener to tokio listener");
+    eprintln!("[mcpviews] HTTP server listening on :4200");
+    if let Err(e) = axum::serve(listener, app).await {
+        eprintln!("[mcpviews] HTTP server error: {}", e);
     }
 }
 

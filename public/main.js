@@ -275,6 +275,18 @@
     if (!window.__TAURI__) return;
     try {
       var renderers = await window.__TAURI__.core.invoke('get_plugin_renderers');
+
+      // Inject plugin config before loading any renderer scripts.
+      // Renderers read window.__mcpviews_plugins[pluginName] for their MCP URL.
+      window.__mcpviews_plugins = window.__mcpviews_plugins || {};
+      renderers.forEach(function (renderer) {
+        if (!window.__mcpviews_plugins[renderer.plugin_name]) {
+          window.__mcpviews_plugins[renderer.plugin_name] = {
+            mcp_url: renderer.mcp_url || null,
+          };
+        }
+      });
+
       var loadPromises = [];
       renderers.forEach(function (renderer) {
         // Check if already loaded

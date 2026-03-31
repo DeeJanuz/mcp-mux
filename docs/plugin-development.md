@@ -295,6 +295,100 @@ Renderers register on `window.__renderers` and export a `render(data, container)
 })();
 ```
 
+### Accessing Plugin Config from Renderers
+
+When renderers need to call your plugin's backend API (e.g., to fetch entity data in ref-only mode), they need two things: the API base URL and an auth token. MCPViews provides a standard contract for both.
+
+#### Base URL: `window.__mcpviews_plugins`
+
+Before any plugin renderer scripts are loaded, MCPViews injects a global config object:
+
+```javascript
+window.__mcpviews_plugins = {
+  "my-plugin": {
+    mcp_url: "https://api.example.com/api/mcp"
+  },
+  "another-plugin": {
+    mcp_url: "https://other.example.com/api/mcp"
+  }
+};
+```
+
+Each entry is keyed by plugin name (matching `manifest.json` → `name`) and contains `mcp_url` from the manifest's `mcp.url` field. Your renderer reads its base URL from here:
+
+```javascript
+var pluginConfig = window.__mcpviews_plugins && window.__mcpviews_plugins['my-plugin'];
+var baseUrl = pluginConfig
+  ? pluginConfig.mcp_url.replace(/\/api\/mcp\/?$/, '/api')
+  : 'http://localhost:3001/api'; // dev fallback
+```
+
+**Do not** use per-plugin globals like `window.__myPluginManifest`. The `__mcpviews_plugins` contract is the standard mechanism — it's set automatically by MCPViews and works for all plugins without any plugin-specific wiring.
+
+#### Auth Token: Tauri `get_plugin_auth_header` Command
+
+For auth tokens, use the Tauri IPC command:
+
+```javascript
+if (window.__TAURI__ && window.__TAURI__.core) {
+  window.__TAURI__.core.invoke('get_plugin_auth_header', { pluginName: 'my-plugin' })
+    .then(function(authHeader) {
+      // authHeader = "Bearer <token>"
+      var token = authHeader.replace(/^Bearer\s+/i, '');
+      // use token for fetch() calls
+    });
+}
+```
+
+This resolves the token from stored OAuth credentials, environment variables, or API keys — matching the same auth resolution used for MCP tool calls.
+
+#### Complete `autoInit` Pattern
+
+Here's the recommended pattern for a renderer that needs API access:
+
+```javascript
+var api = {
+  _baseUrl: '',
+  _token: '',
+  _initialized: false,
+
+  autoInit: function(meta) {
+    if (api._initialized) return Promise.resolve();
+
+    // 1. Resolve base URL (meta override → MCPViews config → dev fallback)
+    var base = '';
+    if (meta && meta._api_base) {
+      base = meta._api_base;
+    } else if (window.__mcpviews_plugins && window.__mcpviews_plugins['my-plugin'] && window.__mcpviews_plugins['my-plugin'].mcp_url) {
+      base = window.__mcpviews_plugins['my-plugin'].mcp_url.replace(/\/api\/mcp\/?$/, '/api');
+    } else {
+      base = 'http://localhost:3001/api';
+    }
+    api._baseUrl = base.replace(/\/$/, '');
+
+    // 2. Resolve auth token
+    if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
+      return window.__TAURI__.core.invoke('get_plugin_auth_header', { pluginName: 'my-plugin' })
+        .then(function(authHeader) {
+          api._token = (authHeader || '').replace(/^Bearer\s+/i, '');
+          api._initialized = true;
+        })
+        .catch(function() {
+          api._initialized = true;
+        });
+    }
+
+    api._initialized = true;
+    return Promise.resolve();
+  }
+};
+```
+
+The resolution order for the base URL is:
+1. `meta._api_base` — explicit override passed in push data
+2. `window.__mcpviews_plugins[pluginName].mcp_url` — standard MCPViews config (recommended)
+3. Hardcoded fallback — for local development only
+
 ### Accessing Custom Renderers
 
 Custom renderer JS files are served via the `plugin://` URI scheme:

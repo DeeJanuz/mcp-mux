@@ -36,14 +36,14 @@ A plugin manifest is a JSON file with the following structure:
 | `version` | string | Yes | Semantic version of the plugin. |
 | `renderers` | object | No | Map of MCP tool names to frontend renderer names. When a tool result arrives, MCPViews uses this mapping to select the correct renderer. If a tool is not listed, the default `rich_content` renderer is used. |
 | `renderer_definitions` | RendererDef[] | **Recommended** | Structured renderer definitions with payload schemas for agent discovery. Each entry defines a renderer's name, description, scope, associated tools, data schema hint, and optional behavioral rule. Without these, agents can discover renderer names (via auto-discovery from the `renderers` map) but won't know how to construct payloads. See [Agent Discovery](#agent-discovery) below. |
-| `tool_rules` | object | No | Map of tool names to behavioral rule strings. These rules are returned by the `init_session` and `mcpviews_setup` MCP tools so agents can persist them for guided tool usage. Tool names are automatically prefixed with the plugin's `tool_prefix`. |
+| `tool_rules` | object | No | Map of tool names to behavioral rule strings. These rules are returned by the `get_plugin_docs` and `mcpviews_setup` MCP tools so agents can persist them for guided tool usage. Tool names are automatically prefixed with the plugin's `tool_prefix`. |
 | `no_auto_push` | string[] | No | **Deprecated.** Previously controlled which tools skipped auto-push. Auto-push has been removed entirely -- pushes now only happen via explicit `push_content`/`push_review` calls. Field is still accepted for backward compatibility but has no effect. |
 | `registry_index` | object | No | Pre-authored compact index for the `init_session` plugin registry. Contains `summary` (string), `tags` (string[]), `tool_groups` (ToolGroupEntry[]), and `renderer_names` (string[]). If omitted, MCPViews auto-derives the index from the `renderers` map and tool cache. |
 | `mcp` | object | No | MCP server connection configuration. If omitted, the plugin provides renderers only (no remote tools). |
 
 ### RendererDef
 
-Structured renderer definition used for agent rule bootstrapping via the `init_session` and `mcpviews_setup` MCP tools.
+Structured renderer definition used for agent rule bootstrapping via the `get_plugin_docs` and `mcpviews_setup` MCP tools.
 
 ```json
 {
@@ -63,7 +63,7 @@ Structured renderer definition used for agent rule bootstrapping via the `init_s
 | `scope` | string | No | `"universal"` (any agent can use it) or `"tool"` (tied to specific MCP tools). Defaults to `"tool"`. |
 | `tools` | string[] | No | For tool-scoped renderers: which tool names trigger this renderer. |
 | `data_hint` | string | No | Data schema hint for agents (e.g., `"{ title: string, body: markdown }"`). |
-| `rule` | string | No | Behavioral rule text returned by `init_session`/`mcpviews_setup` for agent persistence. |
+| `rule` | string | No | Behavioral rule text returned by `get_plugin_docs`/`mcpviews_setup` for agent persistence. |
 
 ### Agent Discovery
 

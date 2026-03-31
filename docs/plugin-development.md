@@ -397,7 +397,7 @@ Every renderer in your `renderers` map should have a corresponding entry in `ren
 | `scope` | No | `"universal"` = any agent can use it directly. `"tool"` = tied to specific MCP tools (default). |
 | `tools` | No | For tool-scoped renderers: which unprefixed tool names produce output for this renderer. |
 | `data_hint` | **Yes** | JSON schema hint showing the expected shape of the `data` payload. This is what agents use to construct correct `push_content` calls. Without it, agents cannot format payloads. |
-| `rule` | No | Behavioral rule text returned by `init_session`/`mcpviews_setup` for agent persistence. |
+| `rule` | No | Behavioral rule text returned by `get_plugin_docs`/`mcpviews_setup` for agent persistence. |
 | `display_mode` | No | Preferred display mode when invoked by another renderer: `"drawer"` (slide-out panel, default), `"modal"`, or `"replace"`. |
 | `invoke_schema` | No | JSON schema hint for invocation parameters (e.g., `"{ id: string }"`). Setting this marks the renderer as invocable — it will appear in the frontend invocation registry and can be linked to via `mcpview://` URIs. |
 | `url_patterns` | No | Array of glob patterns for auto-detecting URLs in rendered content to convert to invocation links (e.g., `["/decisions/*", "/api/decisions/*"]`). Supports `*` (single segment) and `**` (any path). |
@@ -478,6 +478,53 @@ After adding `renderer_definitions`:
 ````
 
 </details>
+
+## Migrating Agent Prompts to Lazy-Load Docs
+
+### What changed
+
+As of commit `ce2de40`, `init_session` no longer returns plugin-specific rules, tool summaries, or renderer definitions. Instead it returns:
+
+- Built-in (universal) renderer rules (`rich_content`, `structured_data`)
+- A compact `plugin_registry` index listing each installed plugin with its name, summary, tags, tool groups, and renderer names
+
+Plugin-specific rules are now fetched on-demand via the new `get_plugin_docs` tool. This keeps session-start token usage minimal and avoids loading documentation for plugins the agent never uses in a given conversation.
+
+### What plugin providers need to update
+
+If your agent prompts or instructions tell agents to get all rules from `init_session`, you need to update them to use the two-step flow:
+
+1. **`init_session`** -- Scan the `plugin_registry` in the response to find the relevant plugin by name or tags.
+2. **`get_plugin_docs`** -- Fetch detailed rules for that plugin, with optional filters for specific tool groups, tools, or renderers.
+
+### Before/After agent prompt example
+
+**Before (old -- no longer works):**
+```
+Call init_session at the start of every conversation. The response contains all
+renderer rules, data hints, and tool rules for all installed plugins.
+```
+
+**After (new -- lazy-load):**
+```
+Call init_session at the start of every conversation. The response contains:
+- Built-in renderer rules (rich_content, structured_data)
+- A plugin_registry index listing installed plugins with their tool groups and renderer names
+
+When you need to use a plugin's tools or renderers, call get_plugin_docs with the
+plugin name to fetch detailed rules. You can filter by:
+- groups: ["Search", "Code Analysis"] — fetch rules for a tool group
+- tools: ["search_codebase"] — fetch rules for specific tools
+- renderers: ["search_results"] — fetch rules for specific renderers
+```
+
+### Note about `mcpviews_setup`
+
+`mcpviews_setup` (the one-time setup tool for first-time users) still returns all rules including plugin rules via the older `gather_session_data` path. First-time setup flows continue to get everything in a single call. Only the per-session `init_session` is slimmed down.
+
+### Backward compatibility
+
+Agents that do not call `get_plugin_docs` will still work for built-in renderers (`rich_content`, `structured_data`) but will not have access to plugin-specific renderer rules or data hints. Plugin-specific tools will still appear in the MCP tools list (via `tools/list`), but agents will lack the behavioral guidance from plugin rules. To get full plugin documentation, agents must call `get_plugin_docs`.
 
 ### tool_rules
 

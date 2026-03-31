@@ -94,6 +94,74 @@ pub(crate) async fn call_list_registry(
     Ok(result)
 }
 
+/// Reusable OAuth/auth trigger logic. Resolves auth config for the given plugin,
+/// then starts the appropriate flow (OAuth browser flow, or env-var check for Bearer/ApiKey).
+/// Returns a human-readable result message on success.
+pub(crate) async fn trigger_plugin_oauth(
+    plugin_name: &str,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<String, String> {
+    let (auth, client) = {
+        let state_guard = state.lock().await;
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+        let auth = registry.resolve_plugin_auth(plugin_name)?;
+        let client = state_guard.inner.http_client.clone();
+        (auth, client)
+    };
+
+    match &auth {
+        mcpviews_shared::PluginAuth::OAuth {
+            client_id,
+            auth_url,
+            token_url,
+            scopes,
+        } => {
+            match crate::auth::start_oauth_flow(
+                plugin_name,
+                client_id.as_deref(),
+                auth_url,
+                token_url,
+                scopes,
+                &client,
+            )
+            .await
+            {
+                Ok(_token) => Ok(format!(
+                    "OAuth authentication for '{}' completed successfully.",
+                    plugin_name
+                )),
+                Err(e) => Err(format!("OAuth flow failed for '{}': {}", plugin_name, e)),
+            }
+        }
+        mcpviews_shared::PluginAuth::Bearer { token_env } => match std::env::var(token_env) {
+            Ok(_) => Ok(format!(
+                "Bearer token for '{}' is configured via env var '{}'.",
+                plugin_name, token_env
+            )),
+            Err(_) => Err(format!(
+                "Environment variable '{}' is not set. Set it and restart.",
+                token_env
+            )),
+        },
+        mcpviews_shared::PluginAuth::ApiKey { key_env, .. } => {
+            if let Some(env_var) = key_env {
+                match std::env::var(env_var) {
+                    Ok(_) => Ok(format!(
+                        "API key for '{}' is configured via env var '{}'.",
+                        plugin_name, env_var
+                    )),
+                    Err(_) => Err(format!(
+                        "Environment variable '{}' is not set. Set it and restart.",
+                        env_var
+                    )),
+                }
+            } else {
+                Err("No key_env configured for this plugin".to_string())
+            }
+        }
+    }
+}
+
 pub(crate) async fn call_start_plugin_auth(
     arguments: Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
@@ -104,71 +172,7 @@ pub(crate) async fn call_start_plugin_auth(
         .ok_or("Missing required parameter: plugin_name")?
         .to_string();
 
-    let (auth, client) = {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let auth = registry.resolve_plugin_auth(&plugin_name)?;
-        let client = state_guard.inner.http_client.clone();
-        (auth, client)
-    };
-
-    let result_text = match &auth {
-        mcpviews_shared::PluginAuth::OAuth {
-            client_id,
-            auth_url,
-            token_url,
-            scopes,
-        } => {
-            match crate::auth::start_oauth_flow(
-                &plugin_name,
-                client_id.as_deref(),
-                auth_url,
-                token_url,
-                scopes,
-                &client,
-            )
-            .await
-            {
-                Ok(_token) => format!(
-                    "OAuth authentication for '{}' completed successfully.",
-                    plugin_name
-                ),
-                Err(e) => {
-                    return Err(format!("OAuth flow failed for '{}': {}", plugin_name, e))
-                }
-            }
-        }
-        mcpviews_shared::PluginAuth::Bearer { token_env } => match std::env::var(token_env) {
-            Ok(_) => format!(
-                "Bearer token for '{}' is configured via env var '{}'.",
-                plugin_name, token_env
-            ),
-            Err(_) => {
-                return Err(format!(
-                    "Environment variable '{}' is not set. Set it and restart.",
-                    token_env
-                ))
-            }
-        },
-        mcpviews_shared::PluginAuth::ApiKey { key_env, .. } => {
-            if let Some(env_var) = key_env {
-                match std::env::var(env_var) {
-                    Ok(_) => format!(
-                        "API key for '{}' is configured via env var '{}'.",
-                        plugin_name, env_var
-                    ),
-                    Err(_) => {
-                        return Err(format!(
-                            "Environment variable '{}' is not set. Set it and restart.",
-                            env_var
-                        ))
-                    }
-                }
-            } else {
-                return Err("No key_env configured for this plugin".to_string());
-            }
-        }
-    };
+    let result_text = trigger_plugin_oauth(&plugin_name, state).await?;
 
     Ok(serde_json::json!({
         "content": [{
@@ -303,6 +307,16 @@ mod tests {
         let result = build_registry_entries(&cached, &manifests, &auth_status, None);
         assert_eq!(result[0]["auth_type"], "bearer");
         assert_eq!(result[0]["auth_configured"], true);
+    }
+
+    /// Compile-time verification that `trigger_plugin_oauth` is accessible
+    /// and has the expected return type. We reference it via a type alias to
+    /// confirm it compiles without needing full async state.
+    #[allow(dead_code)]
+    async fn _assert_trigger_plugin_oauth_signature(
+        state: &Arc<TokioMutex<AsyncAppState>>,
+    ) -> Result<String, String> {
+        trigger_plugin_oauth("test", state).await
     }
 
     #[test]

@@ -55,7 +55,7 @@
     },
     {
       "name": "decidr",
-      "version": "1.0.0",
+      "version": "0.1.0",
       "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
@@ -63,8 +63,8 @@
       "tags": ["governance", "decisions", "project-management", "approvals"],
       "manifest": {
         "name": "decidr",
-        "version": "1.0.0",
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/v1.0.0/decidr.zip",
+        "version": "0.1.0",
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.0/decidr.zip",
         "renderers": {
           "list_initiatives": "decidr_list",
           "list_projects": "decidr_list",

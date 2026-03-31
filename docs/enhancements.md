@@ -1,8 +1,8 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-31
-**Total Active Issues:** 8
-**Resolved This Month:** 44
+**Total Active Issues:** 6
+**Resolved This Month:** 49
 
 ---
 
@@ -18,11 +18,9 @@ _None_
 
 ### Medium
 
-- **M-024:** `mcp_tools.rs` is 2823 lines with 11+ responsibilities (tool dispatch, rule collection, registry building, session gathering, plugin proxy, auth status, tool definitions, plugin update orchestration, prompt system, registry browsing, plugin auth initiation) -- extract prompt functions into `prompts.rs` and registry/auth tools into `registry_tools.rs`. _(Commit ce2de40, worsened by 3b9f265, 44e1f76)_
+- **M-024:** `mcp_tools.rs` still has 8+ responsibilities (tool dispatch, rule collection, registry building, session gathering, plugin proxy, auth status, tool definitions, plugin update orchestration, registry browsing, plugin auth initiation) -- prompt code extracted to `mcp_prompts.rs` but registry/auth tools still need extraction into `registry_tools.rs`. _(Commit ce2de40, worsened by 3b9f265, 44e1f76; partially resolved 4d55dc6)_
 - **M-027:** No test coverage for `newer_version` helper in `shared/src/lib.rs` -- the function has 4 code paths (both valid + newer, both valid + equal/older, installed parse fails, available parse fails) with no tests. The existing `test_version_guard_prevents_downgrade` in `commands.rs` still duplicates comparison logic inline rather than exercising `newer_version` directly. _(Commit 846d72e)_
-- **M-028:** No test coverage for `call_list_registry`, `call_start_plugin_auth`, `call_get_plugin_prompt`, `list_prompts`, or `get_prompt` -- these 5 functions have ~15 code paths (tag filtering, missing plugin/prompt, template substitution, OAuth/Bearer/ApiKey branches, built-in vs plugin prompt resolution) with zero tests. _(Commit 44e1f76)_
-- **M-029:** `get_prompt` uses hard-coded match on `"onboarding"` to resolve built-in prompts -- adding a new built-in prompt requires modifying the function body. Pair prompt content with definitions in `builtin_prompt_definitions` or use a `HashMap` for extensibility. _(Commit 44e1f76)_
-- **M-022:** Duplicated auth-lookup block across `commands.rs` and `mcp_tools.rs` -- `get_plugin_auth_header`, `start_plugin_auth` (commands.rs), and `call_start_plugin_auth` (mcp_tools.rs) all contain the same "lock registry, find manifest by name, extract auth config" pattern. Extract to `resolve_plugin_auth(state, plugin_name) -> Result<PluginAuth, String>` helper. _(Commit 2565475, worsened by 44e1f76)_
+- **M-028:** No async integration test coverage for `call_list_registry`, `call_start_plugin_auth`, `list_prompts`, or `get_prompt` -- tool definition tests and `builtin_prompt_definitions` test added in 4d55dc6, but the async functions themselves (~10 code paths) remain untested. _(Commit 44e1f76, partially addressed 4d55dc6)_
 - **M-023:** No test coverage for `get_plugin_auth_header` command -- function has 3 code paths (stored token, OAuth refresh, no token error) with no tests. Prior commit (8e9fc5f) established the pattern of testing new commands. _(Commit 2565475)_
 
 ### Low
@@ -33,6 +31,13 @@ _None_
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-03-31 (commit 4d55dc6)
+
+- **M-024 (partial):** Extracted prompt system (`ONBOARDING_PROMPT`, `builtin_prompt_definitions`, `list_prompts`, `get_prompt`, `call_get_plugin_prompt`) from `mcp_tools.rs` into new `mcp_prompts.rs` module, reducing `mcp_tools.rs` by ~210 lines. `mcp.rs` now routes `prompts/list` and `prompts/get` to `crate::mcp_prompts`. Remaining: registry/auth tools still in `mcp_tools.rs`
+- **M-022:** Duplicated auth-lookup block -- extracted `PluginRegistry::resolve_plugin_auth(&self, plugin_name) -> Result<PluginAuth, String>` in `plugin.rs`, replacing 3 identical 12-line blocks in `commands.rs` (`start_plugin_auth`, `get_plugin_auth_header`) and `mcp_tools.rs` (`call_start_plugin_auth`). Added 3 unit tests (not found, no auth config, success)
+- **M-029:** `get_prompt` hard-coded match on `"onboarding"` -- `builtin_prompt_definitions()` now returns a 4-tuple `(name, description, arguments, content)` pairing content with definitions; `get_prompt` iterates the definitions list instead of matching on a string literal, so new built-in prompts only require adding a tuple entry
+- **M-028 (partial):** Added 7 tests: 3 for `resolve_plugin_auth` in `plugin.rs`, 3 for tool definitions (`list_registry`, `start_plugin_auth`, `get_plugin_prompt`) in `mcp_tools.rs`, 1 for `builtin_prompt_definitions` in `mcp_prompts.rs`. Remaining async integration tests tracked under active M-028
 
 ### Resolved 2026-03-30 (commit 846d72e)
 
@@ -127,6 +132,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 4d55dc6 | 2026-03-31 | 88/100 | Good |
 | 44e1f76 | 2026-03-31 | 62/100 | Acceptable |
 | 7ed9962 | 2026-03-31 | 80/100 | Good |
 | 846d72e | 2026-03-30 | 88/100 | Good |

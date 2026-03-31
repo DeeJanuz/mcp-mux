@@ -396,9 +396,11 @@ Scan installed plugin directories for custom renderer JS files.
 ```javascript
 const renderers = await invoke('get_plugin_renderers');
 // Returns: RendererInfo[]
-// RendererInfo: { plugin_name, file_name, url }
+// RendererInfo: { plugin_name, file_name, url, mcp_url }
 // url format: plugin://localhost/{plugin_name}/renderers/{file_name}?v={mtime}
 // mtime is the file's last-modified Unix timestamp for cache busting
+// mcp_url: the plugin's MCP URL from manifest.json (mcp.url field), or null
+//          Used by the frontend to populate window.__mcpviews_plugins
 ```
 
 ### `get_renderer_registry`

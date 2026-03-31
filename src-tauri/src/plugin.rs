@@ -235,6 +235,19 @@ impl PluginRegistry {
         Ok(())
     }
 
+    /// Extract the PluginAuth config for a plugin by name.
+    pub fn resolve_plugin_auth(&self, plugin_name: &str) -> Result<PluginAuth, String> {
+        let manifest = self.manifests
+            .iter()
+            .find(|m| m.name == plugin_name)
+            .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
+        manifest
+            .mcp
+            .as_ref()
+            .and_then(|m| m.auth.clone())
+            .ok_or_else(|| format!("Plugin '{}' has no auth config", plugin_name))
+    }
+
     /// Return info about all loaded plugins, checking for updates against registry.
     pub fn list_plugins_with_updates(&self, registry_entries: &[mcpviews_shared::RegistryEntry]) -> Vec<PluginInfo> {
         self.manifests
@@ -441,6 +454,68 @@ fn extract_oauth_refresh_info(plugin_name: &str, auth: &Option<PluginAuth>) -> O
             client_id: client_id.clone(),
         }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mcpviews_shared::{PluginMcpConfig, PluginAuth};
+
+    fn test_manifest(name: &str) -> PluginManifest {
+        crate::test_utils::test_manifest(name)
+    }
+
+    fn test_registry() -> (PluginRegistry, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().to_path_buf());
+        (PluginRegistry::load_plugins_with_store(store), dir)
+    }
+
+    #[test]
+    fn test_resolve_plugin_auth_not_found() {
+        let (registry, _dir) = test_registry();
+        let result = registry.resolve_plugin_auth("nonexistent");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_resolve_plugin_auth_no_auth_config() {
+        let (mut registry, _dir) = test_registry();
+        // Manifest with mcp but no auth
+        let mut manifest = test_manifest("no-auth-plugin");
+        manifest.mcp = Some(PluginMcpConfig {
+            url: "http://localhost:8080".into(),
+            auth: None,
+            tool_prefix: "nap__".into(),
+        });
+        registry.add_plugin(manifest).unwrap();
+
+        let result = registry.resolve_plugin_auth("no-auth-plugin");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("has no auth config"));
+    }
+
+    #[test]
+    fn test_resolve_plugin_auth_success() {
+        let (mut registry, _dir) = test_registry();
+        let mut manifest = test_manifest("auth-plugin");
+        manifest.mcp = Some(PluginMcpConfig {
+            url: "http://localhost:8080".into(),
+            auth: Some(PluginAuth::Bearer {
+                token_env: "TEST_TOKEN".into(),
+            }),
+            tool_prefix: "ap__".into(),
+        });
+        registry.add_plugin(manifest).unwrap();
+
+        let result = registry.resolve_plugin_auth("auth-plugin");
+        assert!(result.is_ok());
+        match result.unwrap() {
+            PluginAuth::Bearer { token_env } => assert_eq!(token_env, "TEST_TOKEN"),
+            _ => panic!("Expected Bearer auth"),
+        }
     }
 }
 

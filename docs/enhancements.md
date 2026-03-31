@@ -1,7 +1,7 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-03-31
-**Total Active Issues:** 5
+**Total Active Issues:** 8
 **Resolved This Month:** 44
 
 ---
@@ -18,9 +18,11 @@ _None_
 
 ### Medium
 
-- **M-024:** `mcp_tools.rs` is 2184+ lines with 8+ responsibilities (tool dispatch, rule collection, registry building, session gathering, plugin proxy, auth status, tool definitions, plugin update orchestration) -- extract update-related functions into a `plugin_updates.rs` module. _(Commit ce2de40, worsened by 3b9f265)_
+- **M-024:** `mcp_tools.rs` is 2823 lines with 11+ responsibilities (tool dispatch, rule collection, registry building, session gathering, plugin proxy, auth status, tool definitions, plugin update orchestration, prompt system, registry browsing, plugin auth initiation) -- extract prompt functions into `prompts.rs` and registry/auth tools into `registry_tools.rs`. _(Commit ce2de40, worsened by 3b9f265, 44e1f76)_
 - **M-027:** No test coverage for `newer_version` helper in `shared/src/lib.rs` -- the function has 4 code paths (both valid + newer, both valid + equal/older, installed parse fails, available parse fails) with no tests. The existing `test_version_guard_prevents_downgrade` in `commands.rs` still duplicates comparison logic inline rather than exercising `newer_version` directly. _(Commit 846d72e)_
-- **M-022:** Duplicated auth-lookup block in `commands.rs` -- `get_plugin_auth_header` (lines 262-274) and `start_plugin_auth` (lines 203-215) contain identical 12-line pattern: lock registry, find manifest by name, extract auth config. Extract to `resolve_plugin_auth(state, plugin_name) -> Result<PluginAuth, String>` helper. _(Commit 2565475)_
+- **M-028:** No test coverage for `call_list_registry`, `call_start_plugin_auth`, `call_get_plugin_prompt`, `list_prompts`, or `get_prompt` -- these 5 functions have ~15 code paths (tag filtering, missing plugin/prompt, template substitution, OAuth/Bearer/ApiKey branches, built-in vs plugin prompt resolution) with zero tests. _(Commit 44e1f76)_
+- **M-029:** `get_prompt` uses hard-coded match on `"onboarding"` to resolve built-in prompts -- adding a new built-in prompt requires modifying the function body. Pair prompt content with definitions in `builtin_prompt_definitions` or use a `HashMap` for extensibility. _(Commit 44e1f76)_
+- **M-022:** Duplicated auth-lookup block across `commands.rs` and `mcp_tools.rs` -- `get_plugin_auth_header`, `start_plugin_auth` (commands.rs), and `call_start_plugin_auth` (mcp_tools.rs) all contain the same "lock registry, find manifest by name, extract auth config" pattern. Extract to `resolve_plugin_auth(state, plugin_name) -> Result<PluginAuth, String>` helper. _(Commit 2565475, worsened by 44e1f76)_
 - **M-023:** No test coverage for `get_plugin_auth_header` command -- function has 3 code paths (stored token, OAuth refresh, no token error) with no tests. Prior commit (8e9fc5f) established the pattern of testing new commands. _(Commit 2565475)_
 
 ### Low
@@ -125,6 +127,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 44e1f76 | 2026-03-31 | 62/100 | Acceptable |
 | 7ed9962 | 2026-03-31 | 80/100 | Good |
 | 846d72e | 2026-03-30 | 88/100 | Good |
 | 3b9f265 | 2026-03-30 | 78/100 | Good |

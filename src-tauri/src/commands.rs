@@ -202,16 +202,7 @@ pub async fn start_plugin_auth(
 ) -> Result<String, String> {
     let auth = {
         let registry = state.plugin_registry.lock().unwrap();
-        let manifest = registry
-            .manifests
-            .iter()
-            .find(|m| m.name == plugin_name)
-            .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
-        manifest
-            .mcp
-            .as_ref()
-            .and_then(|m| m.auth.clone())
-            .ok_or_else(|| format!("Plugin '{}' has no auth config", plugin_name))?
+        registry.resolve_plugin_auth(&plugin_name)?
     };
 
     let client = state.http_client.clone();
@@ -261,16 +252,7 @@ pub async fn get_plugin_auth_header(
 ) -> Result<String, String> {
     let auth = {
         let registry = state.plugin_registry.lock().unwrap();
-        let manifest = registry
-            .manifests
-            .iter()
-            .find(|m| m.name == plugin_name)
-            .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
-        manifest
-            .mcp
-            .as_ref()
-            .and_then(|m| m.auth.clone())
-            .ok_or_else(|| format!("Plugin '{}' has no auth config", plugin_name))?
+        registry.resolve_plugin_auth(&plugin_name)?
     };
 
     // Try resolving from stored token (env var fallback for Bearer/ApiKey, stored file for OAuth)

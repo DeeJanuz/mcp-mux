@@ -8,6 +8,43 @@ use tauri::Emitter;
 use crate::http_server::{execute_push, AsyncAppState, ExecutePushResult};
 use crate::plugin::{PluginRegistry, PluginToolResult, try_refresh_oauth};
 
+const ONBOARDING_PROMPT: &str = r#"# MCPViews Plugin Onboarding
+
+You are helping the user discover and install MCPViews plugins. Follow these steps:
+
+## Step 1: Show Available Plugins
+
+Call `list_registry` to see all available plugins. Present them to the user in a clear format showing:
+- Plugin name and description
+- Whether it's already installed
+- Whether auth is needed
+- Whether an update is available
+
+## Step 2: Install Plugins
+
+Ask the user which plugins they'd like to install. For each one:
+1. Call `mcpviews_install_plugin` with the `download_url` from the registry entry
+2. Report success or failure
+
+## Step 3: Authenticate Plugins
+
+For plugins that require authentication:
+1. Call `start_plugin_auth` with the plugin name
+2. For OAuth plugins, this will open the user's browser — wait for them to complete the flow
+3. For Bearer/ApiKey plugins, tell the user which environment variable to set
+
+## Step 4: Verify
+
+Call `init_session` to verify all plugins are loaded and authenticated.
+
+## Troubleshooting Tips
+
+- If a plugin's tools don't appear after install, the MCP connection may need to be refreshed. Suggest the user reconnect MCP (e.g., `/mcp` in Claude Code).
+- For OAuth auth failures, suggest retrying `start_plugin_auth` — the browser flow may have timed out.
+- For Bearer/ApiKey auth, remind the user to restart their agent after setting environment variables.
+- If `list_registry` returns empty, the registry may be unreachable — check network connectivity.
+"#;
+
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
     // Get available renderers for dynamic tool descriptions
@@ -65,7 +102,10 @@ pub async fn call_tool(
         "mcpviews_setup" => call_mcpviews_setup(arguments, state).await,
         "mcpviews_install_plugin" => call_install_plugin(arguments, state).await,
         "get_plugin_docs" => call_get_plugin_docs(arguments, state).await,
+        "get_plugin_prompt" => call_get_plugin_prompt(arguments, state).await,
         "update_plugins" => call_update_plugins(arguments, state).await,
+        "list_registry" => call_list_registry(arguments, state).await,
+        "start_plugin_auth" => call_start_plugin_auth(arguments, state).await,
         _ => {
             // Check plugin tools — scope MutexGuard to block before any .await
             let (plugin_info, client) = lookup_plugin_tool(name, state).await;
@@ -760,6 +800,11 @@ fn build_plugin_registry(
                 "tools": g.tools,
             })).collect::<Vec<Value>>(),
             "renderers": index.renderer_names,
+            "prompts": manifest.prompt_definitions.iter().map(|p| serde_json::json!({
+                "name": p.name,
+                "description": p.description,
+                "arguments": p.arguments,
+            })).collect::<Vec<Value>>(),
         })
     }).collect()
 }
@@ -950,6 +995,60 @@ async fn call_get_plugin_docs(
         "content": [{
             "type": "text",
             "text": serde_json::to_string(&response).unwrap()
+        }]
+    }))
+}
+
+async fn call_get_plugin_prompt(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let plugin_name = arguments
+        .get("plugin")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: plugin")?;
+
+    let prompt_name = arguments
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: prompt")?;
+
+    let template_args: std::collections::HashMap<String, String> = arguments
+        .get("arguments")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
+    let (source_path, plugins_dir) = {
+        let state_guard = state.lock().await;
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+
+        let (_, manifest) = registry
+            .find_plugin_by_name(plugin_name)
+            .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
+
+        let prompt_def = manifest
+            .prompt_definitions
+            .iter()
+            .find(|p| p.name == prompt_name)
+            .ok_or_else(|| format!("Prompt '{}' not found in plugin '{}'", prompt_name, plugin_name))?;
+
+        (prompt_def.source.clone(), state_guard.inner.plugins_dir().to_path_buf())
+    };
+
+    let path = plugins_dir.join(plugin_name).join(&source_path);
+    let mut content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read prompt '{}' from plugin '{}': {}", source_path, plugin_name, e))?;
+
+    // Template arguments: replace {{arg_name}} with provided values
+    for (key, value) in &template_args {
+        let placeholder = format!("{{{{{}}}}}", key);
+        content = content.replace(&placeholder, value);
+    }
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": content
         }]
     }))
 }
@@ -1407,6 +1506,157 @@ async fn call_update_plugins(
     }))
 }
 
+async fn call_list_registry(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    // Ensure registry is populated
+    ensure_registry_fresh(state).await;
+
+    let tag_filter = arguments
+        .get("tag")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_lowercase());
+
+    let result = {
+        let state_guard = state.lock().await;
+        let cached = state_guard.inner.latest_registry.lock().unwrap();
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+        let auth_status = collect_plugin_auth_status(&registry.manifests);
+
+        let entries: Vec<Value> = cached
+            .iter()
+            .filter(|entry| {
+                if let Some(ref tag) = tag_filter {
+                    entry.tags.iter().any(|t| t.to_lowercase() == *tag)
+                } else {
+                    true
+                }
+            })
+            .map(|entry| {
+                let installed_manifest = registry.manifests.iter().find(|m| m.name == entry.name);
+                let is_installed = installed_manifest.is_some();
+                let installed_version = installed_manifest.map(|m| m.version.clone());
+                let update_available = installed_manifest.and_then(|m| {
+                    mcpviews_shared::newer_version(&m.version, &entry.version)
+                        .map(|v| v.to_string())
+                });
+
+                // Find auth info from collected status
+                let auth_info = auth_status.iter().find(|s| s["plugin"] == entry.name);
+                let auth_type = auth_info.and_then(|s| s["auth_type"].as_str());
+                let auth_configured = auth_info.and_then(|s| s["auth_configured"].as_bool()).unwrap_or(false);
+
+                serde_json::json!({
+                    "name": entry.name,
+                    "description": entry.description,
+                    "version": entry.version,
+                    "author": entry.author,
+                    "tags": entry.tags,
+                    "download_url": entry.download_url,
+                    "installed": is_installed,
+                    "installed_version": installed_version,
+                    "auth_type": auth_type,
+                    "auth_configured": if is_installed { auth_configured } else { false },
+                    "update_available": update_available,
+                })
+            })
+            .collect();
+
+        serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string_pretty(&serde_json::json!({
+                    "plugins": entries,
+                    "total": entries.len(),
+                })).unwrap()
+            }]
+        })
+    };
+
+    Ok(result)
+}
+
+async fn call_start_plugin_auth(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let plugin_name = arguments
+        .get("plugin_name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: plugin_name")?
+        .to_string();
+
+    let (auth, client) = {
+        let state_guard = state.lock().await;
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+        let manifest = registry
+            .manifests
+            .iter()
+            .find(|m| m.name == plugin_name)
+            .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
+        let auth = manifest
+            .mcp
+            .as_ref()
+            .and_then(|m| m.auth.clone())
+            .ok_or_else(|| format!("Plugin '{}' has no auth config", plugin_name))?;
+        let client = state_guard.inner.http_client.clone();
+        (auth, client)
+    };
+
+    let result_text = match &auth {
+        mcpviews_shared::PluginAuth::OAuth {
+            client_id,
+            auth_url,
+            token_url,
+            scopes,
+        } => {
+            match crate::auth::start_oauth_flow(
+                &plugin_name,
+                client_id.as_deref(),
+                auth_url,
+                token_url,
+                scopes,
+                &client,
+            )
+            .await
+            {
+                Ok(_token) => format!("OAuth authentication for '{}' completed successfully.", plugin_name),
+                Err(e) => return Err(format!("OAuth flow failed for '{}': {}", plugin_name, e)),
+            }
+        }
+        mcpviews_shared::PluginAuth::Bearer { token_env } => {
+            match std::env::var(token_env) {
+                Ok(_) => format!("Bearer token for '{}' is configured via env var '{}'.", plugin_name, token_env),
+                Err(_) => return Err(format!(
+                    "Environment variable '{}' is not set. Set it and restart.",
+                    token_env
+                )),
+            }
+        }
+        mcpviews_shared::PluginAuth::ApiKey { key_env, .. } => {
+            if let Some(env_var) = key_env {
+                match std::env::var(env_var) {
+                    Ok(_) => format!("API key for '{}' is configured via env var '{}'.", plugin_name, env_var),
+                    Err(_) => return Err(format!(
+                        "Environment variable '{}' is not set. Set it and restart.",
+                        env_var
+                    )),
+                }
+            } else {
+                return Err("No key_env configured for this plugin".to_string());
+            }
+        }
+    };
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": result_text
+        }]
+    }))
+}
+
 // ─── Tool definitions ───
 
 fn build_data_description(renderers: &[RendererDef], prefix: &str) -> String {
@@ -1575,6 +1825,147 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
                 }
             }
         }),
+        serde_json::json!({
+            "name": "get_plugin_prompt",
+            "description": "Fetch a prompt from a plugin. Returns the prompt content that should be used as system instructions for a guided workflow.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "plugin": { "type": "string", "description": "Plugin name" },
+                    "prompt": { "type": "string", "description": "Prompt name" },
+                    "arguments": {
+                        "type": "object",
+                        "description": "Optional arguments to template into the prompt",
+                        "additionalProperties": { "type": "string" }
+                    }
+                },
+                "required": ["plugin", "prompt"]
+            }
+        }),
+        serde_json::json!({
+            "name": "list_registry",
+            "description": "List all available plugins from the MCPViews registry, including install status, auth status, and available updates.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "tag": { "type": "string", "description": "Optional: filter plugins by tag" }
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "start_plugin_auth",
+            "description": "Start authentication for an installed plugin. Opens browser for OAuth, or checks env var for Bearer/ApiKey.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "plugin_name": { "type": "string", "description": "Name of the plugin to authenticate" }
+                },
+                "required": ["plugin_name"]
+            }
+        }),
+    ]
+}
+
+/// Return all prompts available (built-in + plugin prompts) in MCP format.
+pub async fn list_prompts(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
+    let mut prompts: Vec<Value> = Vec::new();
+
+    // Built-in prompts
+    for (name, description, arguments) in builtin_prompt_definitions() {
+        prompts.push(serde_json::json!({
+            "name": name,
+            "description": description,
+            "arguments": arguments,
+        }));
+    }
+
+    // Plugin prompts (namespaced as {plugin}/{prompt})
+    {
+        let state_guard = state.lock().await;
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+        for manifest in &registry.manifests {
+            for prompt_def in &manifest.prompt_definitions {
+                let namespaced = format!("{}/{}", manifest.name, prompt_def.name);
+                prompts.push(serde_json::json!({
+                    "name": namespaced,
+                    "description": prompt_def.description,
+                    "arguments": prompt_def.arguments.iter().map(|a| serde_json::json!({
+                        "name": a.name,
+                        "description": a.description,
+                        "required": a.required,
+                    })).collect::<Vec<Value>>(),
+                }));
+            }
+        }
+    }
+
+    prompts
+}
+
+/// Resolve a prompt by name and return MCP-formatted messages.
+pub async fn get_prompt(
+    name: &str,
+    arguments: Option<Value>,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    // Check built-in prompts first
+    for (builtin_name, _, _) in builtin_prompt_definitions() {
+        if name == builtin_name {
+            let content = match name {
+                "onboarding" => ONBOARDING_PROMPT.to_string(),
+                _ => return Err(format!("Unknown built-in prompt: {}", name)),
+            };
+            return Ok(serde_json::json!({
+                "messages": [{
+                    "role": "user",
+                    "content": {
+                        "type": "text",
+                        "text": content
+                    }
+                }]
+            }));
+        }
+    }
+
+    // Check plugin prompts ({plugin}/{prompt} format)
+    if let Some((plugin_name, prompt_name)) = name.split_once('/') {
+        let mut args = serde_json::json!({
+            "plugin": plugin_name,
+            "prompt": prompt_name,
+        });
+        if let Some(template_args) = arguments {
+            args.as_object_mut().unwrap().insert("arguments".to_string(), template_args);
+        }
+        let result = call_get_plugin_prompt(args, state).await?;
+        // Transform plugin prompt result into MCP prompt format
+        let text = result
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        return Ok(serde_json::json!({
+            "messages": [{
+                "role": "user",
+                "content": {
+                    "type": "text",
+                    "text": text
+                }
+            }]
+        }));
+    }
+
+    Err(format!("Unknown prompt: {}", name))
+}
+
+fn builtin_prompt_definitions() -> Vec<(&'static str, &'static str, Vec<Value>)> {
+    vec![
+        (
+            "onboarding",
+            "Guided setup to discover, install, and authenticate MCPViews plugins.",
+            vec![], // no arguments needed
+        ),
     ]
 }
 
@@ -1599,6 +1990,7 @@ mod tests {
             no_auto_push: vec![],
             registry_index: None,
             download_url: None,
+            prompt_definitions: vec![],
         }
     }
 
@@ -1886,6 +2278,7 @@ mod tests {
             no_auto_push: vec![],
             registry_index: None,
             download_url: None,
+            prompt_definitions: vec![],
         }
     }
 

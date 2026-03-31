@@ -1319,12 +1319,58 @@ async fn call_install_plugin(
         let _ = state_guard.app_handle.emit("reload_renderers", ());
     }
 
-    Ok(serde_json::json!({
+    let trigger_auth = arguments
+        .get("trigger_auth")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Build auth status for the installed plugin
+    let auth_status_entry = {
+        let state_guard = state.lock().await;
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+        if let Some(m) = registry.manifests.iter().find(|m| m.name == plugin_name) {
+            let statuses = collect_plugin_auth_status(&[m.clone()]);
+            statuses.into_iter().next()
+        } else {
+            None
+        }
+    };
+
+    // Optionally trigger auth
+    let auth_result = if trigger_auth {
+        if let Some(ref status) = auth_status_entry {
+            let is_oauth = status["auth_type"].as_str() == Some("oauth");
+            let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
+            if is_oauth && !is_configured {
+                match crate::mcp_registry_tools::trigger_plugin_oauth(&plugin_name, state).await {
+                    Ok(msg) => Some(msg),
+                    Err(e) => Some(format!("Auth trigger failed: {}", e)),
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut response = serde_json::json!({
         "content": [{
             "type": "text",
             "text": format!("Plugin '{}' installed successfully.", plugin_name)
         }]
-    }))
+    });
+
+    if let Some(status) = auth_status_entry {
+        response["auth_status"] = status;
+    }
+    if let Some(result) = auth_result {
+        response["auth_result"] = serde_json::Value::String(result);
+    }
+
+    Ok(response)
 }
 
 async fn call_update_plugins(
@@ -1410,14 +1456,71 @@ async fn call_update_plugins(
         let _ = state_guard.app_handle.emit("reload_renderers", ());
     }
 
-    Ok(serde_json::json!({
+    let trigger_auth = arguments
+        .get("trigger_auth")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Build auth status for each successfully updated plugin
+    let mut auth_statuses: Vec<Value> = Vec::new();
+    let mut auth_results: Vec<Value> = Vec::new();
+
+    let successfully_updated: Vec<String> = results
+        .iter()
+        .filter(|r| r["status"] == "success")
+        .filter_map(|r| r["plugin"].as_str().map(|s| s.to_string()))
+        .collect();
+
+    for updated_name in &successfully_updated {
+        let status_entry = {
+            let state_guard = state.lock().await;
+            let registry = state_guard.inner.plugin_registry.lock().unwrap();
+            if let Some(m) = registry.manifests.iter().find(|m| m.name == *updated_name) {
+                let statuses = collect_plugin_auth_status(&[m.clone()]);
+                statuses.into_iter().next()
+            } else {
+                None
+            }
+        };
+
+        if let Some(status) = status_entry {
+            let is_oauth = status["auth_type"].as_str() == Some("oauth");
+            let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
+
+            if trigger_auth && is_oauth && !is_configured {
+                match crate::mcp_registry_tools::trigger_plugin_oauth(updated_name, state).await {
+                    Ok(msg) => auth_results.push(serde_json::json!({
+                        "plugin": updated_name,
+                        "result": msg,
+                    })),
+                    Err(e) => auth_results.push(serde_json::json!({
+                        "plugin": updated_name,
+                        "result": format!("Auth trigger failed: {}", e),
+                    })),
+                }
+            }
+
+            auth_statuses.push(status);
+        }
+    }
+
+    let mut response = serde_json::json!({
         "content": [{
             "type": "text",
             "text": serde_json::to_string(&serde_json::json!({
                 "updated": results
             })).unwrap()
         }]
-    }))
+    });
+
+    if !auth_statuses.is_empty() {
+        response["auth_status"] = serde_json::Value::Array(auth_statuses);
+    }
+    if !auth_results.is_empty() {
+        response["auth_results"] = serde_json::Value::Array(auth_results);
+    }
+
+    Ok(response)
 }
 
 
@@ -1542,6 +1645,10 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
                     "download_url": {
                         "type": "string",
                         "description": "Optional URL to a .zip package to download and install. If provided, the manifest is extracted from the package and the manifest_json parameter is not used."
+                    },
+                    "trigger_auth": {
+                        "type": "boolean",
+                        "description": "If true, automatically start OAuth authentication after install if the plugin requires it. Defaults to false."
                     }
                 },
                 "required": ["manifest_json"]
@@ -1585,6 +1692,10 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
                     "plugin_name": {
                         "type": "string",
                         "description": "Specific plugin to update. If omitted, updates all plugins with available updates."
+                    },
+                    "trigger_auth": {
+                        "type": "boolean",
+                        "description": "If true, automatically start OAuth authentication after update for plugins that require it. Defaults to false."
                     }
                 }
             }
@@ -2526,5 +2637,139 @@ mod tests {
         let s = serde_json::json!("not json at all");
         let result = normalize_data_param(&s);
         assert_eq!(result, serde_json::json!("not json at all"));
+    }
+
+    // ─── trigger_auth schema tests ───
+
+    #[test]
+    fn test_install_plugin_schema_has_trigger_auth() {
+        let tools = builtin_tool_definitions(&[]);
+        let install_tool = tools
+            .iter()
+            .find(|t| t["name"] == "mcpviews_install_plugin")
+            .expect("mcpviews_install_plugin tool should exist");
+        let trigger_auth = &install_tool["inputSchema"]["properties"]["trigger_auth"];
+        assert_eq!(
+            trigger_auth["type"], "boolean",
+            "trigger_auth should be boolean type"
+        );
+        assert!(
+            trigger_auth["description"]
+                .as_str()
+                .unwrap()
+                .contains("OAuth"),
+            "trigger_auth description should mention OAuth"
+        );
+    }
+
+    #[test]
+    fn test_update_plugins_schema_has_trigger_auth() {
+        let tools = builtin_tool_definitions(&[]);
+        let update_tool = tools
+            .iter()
+            .find(|t| t["name"] == "update_plugins")
+            .expect("update_plugins tool should exist");
+        let trigger_auth = &update_tool["inputSchema"]["properties"]["trigger_auth"];
+        assert_eq!(
+            trigger_auth["type"], "boolean",
+            "trigger_auth should be boolean type"
+        );
+        assert!(
+            trigger_auth["description"]
+                .as_str()
+                .unwrap()
+                .contains("OAuth"),
+            "trigger_auth description should mention OAuth"
+        );
+    }
+
+    // ─── install auth_status tests ───
+
+    #[test]
+    fn test_collect_auth_status_for_plugin_with_auth() {
+        let manifest = make_manifest(
+            "auth-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            Some(PluginMcpConfig {
+                url: "http://localhost:8080".into(),
+                auth: Some(PluginAuth::OAuth {
+                    client_id: Some("client123".into()),
+                    auth_url: "https://example.com/auth".into(),
+                    token_url: "https://example.com/token".into(),
+                    scopes: vec![],
+                }),
+                tool_prefix: "ap".into(),
+            }),
+        );
+        let status = collect_plugin_auth_status(&[manifest]);
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0]["plugin"], "auth-plugin");
+        assert_eq!(status[0]["auth_type"], "oauth");
+    }
+
+    #[test]
+    fn test_collect_auth_status_for_plugin_without_auth() {
+        let manifest = make_manifest(
+            "no-auth-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            Some(PluginMcpConfig {
+                url: "http://localhost:8080".into(),
+                auth: None,
+                tool_prefix: "na".into(),
+            }),
+        );
+        let status = collect_plugin_auth_status(&[manifest]);
+        assert!(
+            status.is_empty(),
+            "Plugin without auth should produce no auth_status entries"
+        );
+    }
+
+    #[test]
+    fn test_collect_auth_status_for_plugin_without_mcp() {
+        let manifest = make_manifest(
+            "no-mcp-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
+        let status = collect_plugin_auth_status(&[manifest]);
+        assert!(
+            status.is_empty(),
+            "Plugin without MCP config should produce no auth_status entries"
+        );
+    }
+
+    #[test]
+    fn test_trigger_auth_defaults_to_false() {
+        // Verify the default extraction logic used in call_install_plugin
+        let args = serde_json::json!({});
+        let trigger_auth = args
+            .get("trigger_auth")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(!trigger_auth, "trigger_auth should default to false");
+    }
+
+    #[test]
+    fn test_trigger_auth_reads_true() {
+        let args = serde_json::json!({"trigger_auth": true});
+        let trigger_auth = args
+            .get("trigger_auth")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(trigger_auth, "trigger_auth should be true when set");
+    }
+
+    #[test]
+    fn test_trigger_auth_reads_false_explicitly() {
+        let args = serde_json::json!({"trigger_auth": false});
+        let trigger_auth = args
+            .get("trigger_auth")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        assert!(!trigger_auth, "trigger_auth false should remain false");
     }
 }

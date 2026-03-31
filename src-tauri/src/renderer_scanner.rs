@@ -6,6 +6,7 @@ pub struct RendererInfo {
     pub plugin_name: String,
     pub file_name: String,
     pub url: String,
+    pub mcp_url: Option<String>,
 }
 
 /// Scan all installed plugin directories for renderer JS files.
@@ -34,6 +35,9 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                 continue;
             }
 
+            // Read MCP URL from manifest
+            let mcp_url = read_mcp_url(&path.join("manifest.json"));
+
             if let Ok(renderer_entries) = std::fs::read_dir(&renderers_dir) {
                 for renderer_entry in renderer_entries.flatten() {
                     let renderer_path = renderer_entry.path();
@@ -50,6 +54,7 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                                 "plugin://localhost/{}/renderers/{}?v={}",
                                 plugin_name, file_name, mtime
                             ),
+                            mcp_url: mcp_url.clone(),
                         });
                     }
                 }
@@ -58,4 +63,10 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
     }
 
     renderers
+}
+
+fn read_mcp_url(manifest_path: &std::path::Path) -> Option<String> {
+    let data = std::fs::read_to_string(manifest_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
+    value.get("mcp")?.get("url")?.as_str().map(|s| s.to_string())
 }

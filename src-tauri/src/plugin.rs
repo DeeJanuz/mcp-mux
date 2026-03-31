@@ -312,6 +312,13 @@ async fn fetch_plugin_tools(
         ));
     }
 
+    // Capture mcp-session-id for subsequent requests
+    let session_id = resp
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     // Send initialized notification
     let notif = serde_json::json!({
         "jsonrpc": "2.0",
@@ -323,6 +330,9 @@ async fn fetch_plugin_tools(
         .json(&notif);
     if let Some(auth_val) = auth {
         notif_builder = notif_builder.header("Authorization", auth_val);
+    }
+    if let Some(ref sid) = session_id {
+        notif_builder = notif_builder.header("mcp-session-id", sid);
     }
     let _ = notif_builder.send().await;
 
@@ -338,6 +348,9 @@ async fn fetch_plugin_tools(
         .json(&list_req);
     if let Some(auth_val) = auth {
         list_builder = list_builder.header("Authorization", auth_val);
+    }
+    if let Some(ref sid) = session_id {
+        list_builder = list_builder.header("mcp-session-id", sid);
     }
 
     let list_resp = list_builder
@@ -356,12 +369,22 @@ async fn fetch_plugin_tools(
         .await
         .map_err(|e| format!("[mcpviews] Failed to parse tools/list response: {}", e))?;
 
-    Ok(body
+    let tools = body
         .get("result")
         .and_then(|r| r.get("tools"))
         .and_then(|t| t.as_array())
         .cloned()
-        .unwrap_or_default())
+        .unwrap_or_default();
+
+    if tools.is_empty() {
+        eprintln!(
+            "[mcpviews] Plugin tools/list returned 0 tools from {} (response: {})",
+            url,
+            serde_json::to_string(&body).unwrap_or_default()
+        );
+    }
+
+    Ok(tools)
 }
 
 /// Apply fetched tools to the plugin cache: prefix names, update tool_index, set timestamps.

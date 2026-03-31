@@ -399,7 +399,7 @@ pub(crate) fn collect_rules(
             let prefixed_name = if tool_prefix.is_empty() {
                 tool_name.clone()
             } else {
-                format!("{}__{}", tool_prefix, tool_name)
+                format!("{}{}", tool_prefix, tool_name)
             };
             rules.push(serde_json::json!({
                 "name": format!("{}_usage", prefixed_name),
@@ -529,7 +529,7 @@ pub(crate) fn collect_plugin_rules(
         let prefixed_name = if tool_prefix.is_empty() {
             tool_name.clone()
         } else {
-            format!("{}__{}", tool_prefix, tool_name)
+            format!("{}{}", tool_prefix, tool_name)
         };
         rules.push(serde_json::json!({
             "name": format!("{}_usage", prefixed_name),

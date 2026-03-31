@@ -6,8 +6,6 @@ The real power is the plugin system. Each plugin pairs an MCP server with a cust
 
 This blurs the line between agentic workflows and traditional applications. Instead of choosing between an AI-only flow or a manual UI, MCPViews lets both happen simultaneously — agents and humans collaborating through a shared visual layer.
 
-**Built with:** Tauri v2 (Rust + WebView), Streamable HTTP MCP server, system tray with auto-start.
-
 ## Quick Start
 
 ### 1. Install MCPViews

@@ -176,7 +176,8 @@ async fn handle_single_request(
                 serde_json::json!({
                     "protocolVersion": negotiated,
                     "capabilities": {
-                        "tools": { "listChanged": true }
+                        "tools": { "listChanged": true },
+                        "prompts": { "listChanged": true }
                     },
                     "serverInfo": {
                         "name": "mcpviews",
@@ -221,6 +222,33 @@ async fn handle_single_request(
                         }],
                         "isError": true
                     }),
+                )),
+            }
+        }
+
+        "prompts/list" => {
+            let prompts = mcp_tools::list_prompts(state).await;
+            Some(JsonRpcResponse::success(
+                id,
+                serde_json::json!({ "prompts": prompts }),
+            ))
+        }
+
+        "prompts/get" => {
+            let params = req.params.unwrap_or(Value::Object(Default::default()));
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let arguments = params.get("arguments").cloned();
+
+            match mcp_tools::get_prompt(&name, arguments, state).await {
+                Ok(result) => Some(JsonRpcResponse::success(id, result)),
+                Err(err_msg) => Some(JsonRpcResponse::error(
+                    id,
+                    -32602,
+                    err_msg,
                 )),
             }
         }

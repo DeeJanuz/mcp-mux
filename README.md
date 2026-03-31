@@ -1,6 +1,12 @@
 # MCPViews
 
-A standalone Tauri v2 desktop app that serves as a rich display for AI agents. Replaces the companion Node.js server with a native app featuring system tray, auto-start, and a built-in HTTP push API.
+MCPViews is a desktop application that gives AI agents a visual interface. Through the Model Context Protocol (MCP), agents can push rich content, interactive data, and full application UIs to a companion window — turning text-only conversations into visual, interactive workflows.
+
+The real power is the plugin system. Each plugin pairs an MCP server with a custom renderer: the agent calls tools over MCP, and the renderer displays the results as a live, interactive UI — complete with its own API connections, state, and user interactions. A plugin can be a data governance dashboard, a code browser, a document editor, or anything else. The agent works through MCP; the user works through the UI. Both see the same data.
+
+This blurs the line between agentic workflows and traditional applications. Instead of choosing between an AI-only flow or a manual UI, MCPViews lets both happen simultaneously — agents and humans collaborating through a shared visual layer.
+
+**Built with:** Tauri v2 (Rust + WebView), Streamable HTTP MCP server, system tray with auto-start.
 
 ## Quick Start
 

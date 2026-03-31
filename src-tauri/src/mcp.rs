@@ -227,7 +227,7 @@ async fn handle_single_request(
         }
 
         "prompts/list" => {
-            let prompts = mcp_tools::list_prompts(state).await;
+            let prompts = crate::mcp_prompts::list_prompts(state).await;
             Some(JsonRpcResponse::success(
                 id,
                 serde_json::json!({ "prompts": prompts }),
@@ -243,7 +243,7 @@ async fn handle_single_request(
                 .to_string();
             let arguments = params.get("arguments").cloned();
 
-            match mcp_tools::get_prompt(&name, arguments, state).await {
+            match crate::mcp_prompts::get_prompt(&name, arguments, state).await {
                 Ok(result) => Some(JsonRpcResponse::success(id, result)),
                 Err(err_msg) => Some(JsonRpcResponse::error(
                     id,

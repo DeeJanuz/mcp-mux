@@ -8,43 +8,6 @@ use tauri::Emitter;
 use crate::http_server::{execute_push, AsyncAppState, ExecutePushResult};
 use crate::plugin::{PluginRegistry, PluginToolResult, try_refresh_oauth};
 
-const ONBOARDING_PROMPT: &str = r#"# MCPViews Plugin Onboarding
-
-You are helping the user discover and install MCPViews plugins. Follow these steps:
-
-## Step 1: Show Available Plugins
-
-Call `list_registry` to see all available plugins. Present them to the user in a clear format showing:
-- Plugin name and description
-- Whether it's already installed
-- Whether auth is needed
-- Whether an update is available
-
-## Step 2: Install Plugins
-
-Ask the user which plugins they'd like to install. For each one:
-1. Call `mcpviews_install_plugin` with the `download_url` from the registry entry
-2. Report success or failure
-
-## Step 3: Authenticate Plugins
-
-For plugins that require authentication:
-1. Call `start_plugin_auth` with the plugin name
-2. For OAuth plugins, this will open the user's browser — wait for them to complete the flow
-3. For Bearer/ApiKey plugins, tell the user which environment variable to set
-
-## Step 4: Verify
-
-Call `init_session` to verify all plugins are loaded and authenticated.
-
-## Troubleshooting Tips
-
-- If a plugin's tools don't appear after install, the MCP connection may need to be refreshed. Suggest the user reconnect MCP (e.g., `/mcp` in Claude Code).
-- For OAuth auth failures, suggest retrying `start_plugin_auth` — the browser flow may have timed out.
-- For Bearer/ApiKey auth, remind the user to restart their agent after setting environment variables.
-- If `list_registry` returns empty, the registry may be unreachable — check network connectivity.
-"#;
-
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
     // Get available renderers for dynamic tool descriptions
@@ -102,7 +65,7 @@ pub async fn call_tool(
         "mcpviews_setup" => call_mcpviews_setup(arguments, state).await,
         "mcpviews_install_plugin" => call_install_plugin(arguments, state).await,
         "get_plugin_docs" => call_get_plugin_docs(arguments, state).await,
-        "get_plugin_prompt" => call_get_plugin_prompt(arguments, state).await,
+        "get_plugin_prompt" => crate::mcp_prompts::call_get_plugin_prompt(arguments, state).await,
         "update_plugins" => call_update_plugins(arguments, state).await,
         "list_registry" => call_list_registry(arguments, state).await,
         "start_plugin_auth" => call_start_plugin_auth(arguments, state).await,
@@ -999,60 +962,6 @@ async fn call_get_plugin_docs(
     }))
 }
 
-async fn call_get_plugin_prompt(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let plugin_name = arguments
-        .get("plugin")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: plugin")?;
-
-    let prompt_name = arguments
-        .get("prompt")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: prompt")?;
-
-    let template_args: std::collections::HashMap<String, String> = arguments
-        .get("arguments")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
-
-    let (source_path, plugins_dir) = {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-
-        let (_, manifest) = registry
-            .find_plugin_by_name(plugin_name)
-            .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
-
-        let prompt_def = manifest
-            .prompt_definitions
-            .iter()
-            .find(|p| p.name == prompt_name)
-            .ok_or_else(|| format!("Prompt '{}' not found in plugin '{}'", prompt_name, plugin_name))?;
-
-        (prompt_def.source.clone(), state_guard.inner.plugins_dir().to_path_buf())
-    };
-
-    let path = plugins_dir.join(plugin_name).join(&source_path);
-    let mut content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read prompt '{}' from plugin '{}': {}", source_path, plugin_name, e))?;
-
-    // Template arguments: replace {{arg_name}} with provided values
-    for (key, value) in &template_args {
-        let placeholder = format!("{{{{{}}}}}", key);
-        content = content.replace(&placeholder, value);
-    }
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": content
-        }]
-    }))
-}
-
 // ─── Plugin proxy ───
 
 async fn proxy_plugin_tool_call(
@@ -1590,16 +1499,7 @@ async fn call_start_plugin_auth(
     let (auth, client) = {
         let state_guard = state.lock().await;
         let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let manifest = registry
-            .manifests
-            .iter()
-            .find(|m| m.name == plugin_name)
-            .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
-        let auth = manifest
-            .mcp
-            .as_ref()
-            .and_then(|m| m.auth.clone())
-            .ok_or_else(|| format!("Plugin '{}' has no auth config", plugin_name))?;
+        let auth = registry.resolve_plugin_auth(&plugin_name)?;
         let client = state_guard.inner.http_client.clone();
         (auth, client)
     };
@@ -1863,109 +1763,6 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
                 "required": ["plugin_name"]
             }
         }),
-    ]
-}
-
-/// Return all prompts available (built-in + plugin prompts) in MCP format.
-pub async fn list_prompts(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
-    let mut prompts: Vec<Value> = Vec::new();
-
-    // Built-in prompts
-    for (name, description, arguments) in builtin_prompt_definitions() {
-        prompts.push(serde_json::json!({
-            "name": name,
-            "description": description,
-            "arguments": arguments,
-        }));
-    }
-
-    // Plugin prompts (namespaced as {plugin}/{prompt})
-    {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        for manifest in &registry.manifests {
-            for prompt_def in &manifest.prompt_definitions {
-                let namespaced = format!("{}/{}", manifest.name, prompt_def.name);
-                prompts.push(serde_json::json!({
-                    "name": namespaced,
-                    "description": prompt_def.description,
-                    "arguments": prompt_def.arguments.iter().map(|a| serde_json::json!({
-                        "name": a.name,
-                        "description": a.description,
-                        "required": a.required,
-                    })).collect::<Vec<Value>>(),
-                }));
-            }
-        }
-    }
-
-    prompts
-}
-
-/// Resolve a prompt by name and return MCP-formatted messages.
-pub async fn get_prompt(
-    name: &str,
-    arguments: Option<Value>,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    // Check built-in prompts first
-    for (builtin_name, _, _) in builtin_prompt_definitions() {
-        if name == builtin_name {
-            let content = match name {
-                "onboarding" => ONBOARDING_PROMPT.to_string(),
-                _ => return Err(format!("Unknown built-in prompt: {}", name)),
-            };
-            return Ok(serde_json::json!({
-                "messages": [{
-                    "role": "user",
-                    "content": {
-                        "type": "text",
-                        "text": content
-                    }
-                }]
-            }));
-        }
-    }
-
-    // Check plugin prompts ({plugin}/{prompt} format)
-    if let Some((plugin_name, prompt_name)) = name.split_once('/') {
-        let mut args = serde_json::json!({
-            "plugin": plugin_name,
-            "prompt": prompt_name,
-        });
-        if let Some(template_args) = arguments {
-            args.as_object_mut().unwrap().insert("arguments".to_string(), template_args);
-        }
-        let result = call_get_plugin_prompt(args, state).await?;
-        // Transform plugin prompt result into MCP prompt format
-        let text = result
-            .get("content")
-            .and_then(|c| c.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|item| item.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("");
-        return Ok(serde_json::json!({
-            "messages": [{
-                "role": "user",
-                "content": {
-                    "type": "text",
-                    "text": text
-                }
-            }]
-        }));
-    }
-
-    Err(format!("Unknown prompt: {}", name))
-}
-
-fn builtin_prompt_definitions() -> Vec<(&'static str, &'static str, Vec<Value>)> {
-    vec![
-        (
-            "onboarding",
-            "Guided setup to discover, install, and authenticate MCPViews plugins.",
-            vec![], // no arguments needed
-        ),
     ]
 }
 
@@ -2819,5 +2616,31 @@ mod tests {
         assert!(update_tool.is_some(), "update_plugins tool should be defined");
         let schema = &update_tool.unwrap()["inputSchema"];
         assert!(schema["properties"]["plugin_name"].is_object());
+    }
+
+    // ─── M-028: tool definition tests ───
+
+    #[test]
+    fn test_list_registry_tool_defined() {
+        let tools = builtin_tool_definitions(&[]);
+        let tool = tools.iter().find(|t| t["name"] == "list_registry");
+        assert!(tool.is_some(), "list_registry tool should be defined");
+    }
+
+    #[test]
+    fn test_start_plugin_auth_tool_defined() {
+        let tools = builtin_tool_definitions(&[]);
+        let tool = tools.iter().find(|t| t["name"] == "start_plugin_auth");
+        assert!(tool.is_some(), "start_plugin_auth tool should be defined");
+        let schema = &tool.unwrap()["inputSchema"];
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.iter().any(|r| r == "plugin_name"));
+    }
+
+    #[test]
+    fn test_get_plugin_prompt_tool_defined() {
+        let tools = builtin_tool_definitions(&[]);
+        let tool = tools.iter().find(|t| t["name"] == "get_plugin_prompt");
+        assert!(tool.is_some(), "get_plugin_prompt tool should be defined");
     }
 }

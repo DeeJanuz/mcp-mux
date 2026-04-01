@@ -173,11 +173,7 @@ impl PluginRegistry {
         let mcp = manifest.mcp.as_ref()?;
         let unprefixed = prefixed_name.strip_prefix(&mcp.tool_prefix)?;
         let auth = resolve_auth_header(&manifest.name, &mcp.auth);
-        let oauth_info = if auth.is_none() {
-            extract_oauth_refresh_info(&manifest.name, &mcp.auth)
-        } else {
-            None
-        };
+        let oauth_info = extract_oauth_refresh_info(&manifest.name, &mcp.auth);
 
         Some(PluginToolResult {
             mcp_url: mcp.url.clone(),

@@ -187,7 +187,8 @@ fn open_browser(url: &str) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     let result = std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
+        .arg("/C")
+        .arg(format!("start \"\" \"{}\"", url))
         .spawn();
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

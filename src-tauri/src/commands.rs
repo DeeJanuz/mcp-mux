@@ -198,6 +198,7 @@ pub fn toggle_registry_source(url: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn start_plugin_auth(
     plugin_name: String,
+    org_id: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
     let auth = {
@@ -221,6 +222,7 @@ pub async fn start_plugin_auth(
                 token_url,
                 scopes,
                 &client,
+                org_id.as_deref(),
             )
             .await
         }
@@ -248,6 +250,7 @@ pub async fn start_plugin_auth(
 #[tauri::command]
 pub async fn get_plugin_auth_header(
     plugin_name: String,
+    org_id: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<String, String> {
     let auth = {
@@ -256,7 +259,12 @@ pub async fn get_plugin_auth_header(
     };
 
     // Try resolving from stored token (env var fallback for Bearer/ApiKey, stored file for OAuth)
-    if let Some(header) = auth.resolve_header(&plugin_name) {
+    let header = if let Some(ref oid) = org_id {
+        auth.resolve_header_for_org(&plugin_name, oid)
+    } else {
+        auth.resolve_header(&plugin_name)
+    };
+    if let Some(header) = header {
         return Ok(header);
     }
 
@@ -273,6 +281,7 @@ pub async fn get_plugin_auth_header(
             token_url,
             client_id.as_deref(),
             &client,
+            org_id.as_deref(),
         )
         .await?;
         return Ok(format!("Bearer {}", token));
@@ -282,8 +291,17 @@ pub async fn get_plugin_auth_header(
 }
 
 #[tauri::command]
-pub fn store_plugin_token(plugin_name: String, token: String) -> Result<(), String> {
-    crate::auth::store_api_key(&plugin_name, &token)
+pub fn store_plugin_token(plugin_name: String, token: String, org_id: Option<String>) -> Result<(), String> {
+    if let Some(ref oid) = org_id {
+        let stored = mcpviews_shared::token_store::StoredToken {
+            access_token: token,
+            refresh_token: None,
+            expires_at: None,
+        };
+        mcpviews_shared::token_store::store_token_for_org(&mcpviews_shared::auth_dir(), &plugin_name, oid, &stored)
+    } else {
+        crate::auth::store_api_key(&plugin_name, &token)
+    }
 }
 
 #[tauri::command]
@@ -357,8 +375,17 @@ pub async fn reinstall_plugin(
 }
 
 #[tauri::command]
-pub fn clear_plugin_auth(name: String) -> Result<(), String> {
-    mcpviews_shared::token_store::remove_token(&mcpviews_shared::auth_dir(), &name)
+pub fn clear_plugin_auth(name: String, org_id: Option<String>) -> Result<(), String> {
+    if let Some(ref oid) = org_id {
+        mcpviews_shared::token_store::remove_org_token(&mcpviews_shared::auth_dir(), &name, oid)
+    } else {
+        mcpviews_shared::token_store::remove_token(&mcpviews_shared::auth_dir(), &name)
+    }
+}
+
+#[tauri::command]
+pub fn list_plugin_orgs(plugin_name: String) -> Vec<String> {
+    mcpviews_shared::token_store::list_orgs(&mcpviews_shared::auth_dir(), &plugin_name)
 }
 
 #[tauri::command]

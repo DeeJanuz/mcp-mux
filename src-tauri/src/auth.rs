@@ -20,6 +20,7 @@ pub async fn start_oauth_flow(
     token_url: &str,
     scopes: &[String],
     http_client: &reqwest::Client,
+    organization_id: Option<&str>,
 ) -> Result<String, String> {
     let (code_tx, code_rx) = tokio::sync::oneshot::channel::<String>();
     let code_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(code_tx)));
@@ -94,6 +95,11 @@ pub async fn start_oauth_flow(
         .append_pair("scope", &scopes_joined)
         .append_pair("code_challenge", &code_challenge)
         .append_pair("code_challenge_method", "S256");
+    if let Some(org_id) = organization_id {
+        parsed_url
+            .query_pairs_mut()
+            .append_pair("organization_id", org_id);
+    }
     let authorization_url = parsed_url.to_string();
 
     // Start the server in a background task
@@ -145,6 +151,12 @@ pub async fn start_oauth_flow(
         .await
         .map_err(|e| format!("Failed to parse token response: {}", e))?;
 
+    let response_org_id = token_data
+        .get("organization_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| organization_id.map(|s| s.to_string()));
+
     let access_token = token_data
         .get("access_token")
         .and_then(|v| v.as_str())
@@ -171,7 +183,15 @@ pub async fn start_oauth_flow(
         refresh_token,
         expires_at,
     };
-    store_token(plugin_name, &stored)?;
+    if let Some(ref org_id) = response_org_id {
+        mcpviews_shared::token_store::store_token_for_org(&auth_dir(), plugin_name, org_id, &stored)?;
+        // Set as default if it's the first org token
+        if mcpviews_shared::token_store::list_orgs(&auth_dir(), plugin_name).len() <= 1 {
+            mcpviews_shared::token_store::set_default_org(&auth_dir(), plugin_name, org_id)?;
+        }
+    } else {
+        store_token(plugin_name, &stored)?;
+    }
 
     eprintln!("[mcpviews] OAuth flow completed for plugin '{}'", plugin_name);
     Ok(access_token)
@@ -212,10 +232,15 @@ pub async fn refresh_oauth_token(
     token_url: &str,
     client_id: Option<&str>,
     http_client: &reqwest::Client,
+    org_id: Option<&str>,
 ) -> Result<String, String> {
     let auth_dir = mcpviews_shared::auth_dir();
-    let stored = mcpviews_shared::token_store::load_stored_token_unvalidated(&auth_dir, plugin_name)
-        .ok_or_else(|| format!("No stored token for plugin '{}'", plugin_name))?;
+    let stored = if let Some(oid) = org_id {
+        mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(&auth_dir, plugin_name, oid)
+    } else {
+        mcpviews_shared::token_store::load_stored_token_unvalidated(&auth_dir, plugin_name)
+    }
+    .ok_or_else(|| format!("No stored token for plugin '{}'", plugin_name))?;
 
     let refresh_token = stored
         .refresh_token
@@ -278,7 +303,11 @@ pub async fn refresh_oauth_token(
         refresh_token: new_refresh_token,
         expires_at,
     };
-    store_token(plugin_name, &new_stored)?;
+    if let Some(oid) = org_id {
+        mcpviews_shared::token_store::store_token_for_org(&auth_dir, plugin_name, oid, &new_stored)?;
+    } else {
+        store_token(plugin_name, &new_stored)?;
+    }
 
     eprintln!(
         "[mcpviews] Refreshed OAuth token for plugin '{}'",

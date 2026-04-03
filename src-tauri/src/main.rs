@@ -166,6 +166,7 @@ fn main() {
             commands::set_native_theme,
             commands::set_plugin_update_policy,
             commands::get_plugin_update_policy,
+            commands::list_plugin_orgs,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

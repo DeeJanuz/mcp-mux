@@ -60,6 +60,10 @@ jobs:
             sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" "$f"
           done
 
+      - name: Update install page download links
+        run: |
+          sed -i "s/MCPViews_[0-9]\+\.[0-9]\+\.[0-9]\+/MCPViews_$VERSION/g" docs/install.md
+
       - name: Update changelog
         run: |
           DATE=$(date +%Y-%m-%d)

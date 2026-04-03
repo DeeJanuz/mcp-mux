@@ -23,9 +23,11 @@ graph LR
 
 ### 1. Install MCPViews
 
-**macOS / Windows**: Download the latest installer from [Releases](https://github.com/DeeJanuz/mcpviews/releases) (`.dmg` for macOS, `.msi` or `.exe` for Windows).
+**macOS / Windows**: Download the latest installer from [Releases](https://github.com/DeeJanuz/mcpviews/releases/latest) (`.dmg` for macOS, `.msi` or `.exe` for Windows).
 
-**Linux**: See [Building from Source](#building-from-source) below.
+**Linux**: Build from source (see below).
+
+For detailed platform instructions and post-install setup, see the [Install Guide](docs/install.md).
 
 ### 2. Connect your AI agent
 

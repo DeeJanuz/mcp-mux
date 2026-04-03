@@ -4,10 +4,49 @@
 (function () {
   'use strict';
 
-  var stack = [];
+  var stacks = new Map();
+  var currentSessionId = null;
   var BASE_Z = 150;
   var Z_INCREMENT = 2;
   var WIDTH_SHRINK = 20; // px narrower per level
+
+  function getStack(sessionId) {
+    if (sessionId == null) return [];
+    if (!stacks.has(sessionId)) stacks.set(sessionId, []);
+    return stacks.get(sessionId);
+  }
+
+  function setActiveSession(sessionId) {
+    currentSessionId = sessionId;
+  }
+
+  function hideSessionDrawers(sessionId) {
+    var stack = stacks.get(sessionId);
+    if (!stack) return;
+    for (var i = 0; i < stack.length; i++) {
+      stack[i].overlay.style.display = 'none';
+      stack[i].panel.style.display = 'none';
+    }
+  }
+
+  function showSessionDrawers(sessionId) {
+    var stack = stacks.get(sessionId);
+    if (!stack) return;
+    for (var i = 0; i < stack.length; i++) {
+      stack[i].overlay.style.display = '';
+      stack[i].panel.style.display = '';
+    }
+  }
+
+  function closeSessionDrawers(sessionId) {
+    var stack = stacks.get(sessionId);
+    if (!stack) return;
+    for (var i = 0; i < stack.length; i++) {
+      if (stack[i].overlay.parentNode) stack[i].overlay.parentNode.removeChild(stack[i].overlay);
+      if (stack[i].panel.parentNode) stack[i].panel.parentNode.removeChild(stack[i].panel);
+    }
+    stacks.delete(sessionId);
+  }
 
   function createOverlay(level) {
     var overlay = document.createElement('div');
@@ -49,6 +88,7 @@
   }
 
   function invokeRenderer(rendererName, params, displayMode) {
+    var stack = getStack(currentSessionId);
     var level = stack.length;
 
     var overlay = createOverlay(level);
@@ -63,8 +103,10 @@
     content.className = 'drawer-stack-content';
     panel.appendChild(content);
 
-    document.body.appendChild(overlay);
-    document.body.appendChild(panel);
+    var host = (currentSessionId && document.querySelector('.session-content[data-session-id="' + currentSessionId + '"]'))
+      || document.getElementById('content-area') || document.body;
+    host.appendChild(overlay);
+    host.appendChild(panel);
 
     stack.push({ overlay: overlay, panel: panel, rendererName: rendererName });
 
@@ -101,6 +143,7 @@
   }
 
   function closeDrawer() {
+    var stack = getStack(currentSessionId);
     if (stack.length === 0) return;
     var entry = stack.pop();
 
@@ -115,6 +158,7 @@
   }
 
   function closeAllDrawers() {
+    var stack = getStack(currentSessionId);
     while (stack.length > 0) {
       closeDrawer();
     }
@@ -125,5 +169,9 @@
   utils.invokeRenderer = invokeRenderer;
   utils.closeDrawer = closeDrawer;
   utils.closeAllDrawers = closeAllDrawers;
+  utils.setActiveSession = setActiveSession;
+  utils.hideSessionDrawers = hideSessionDrawers;
+  utils.showSessionDrawers = showSessionDrawers;
+  utils.closeSessionDrawers = closeSessionDrawers;
   window.__companionUtils = utils;
 })();

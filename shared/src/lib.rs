@@ -274,6 +274,69 @@ impl PluginAuth {
             }
         }
     }
+
+    /// Resolve the auth header for a specific org (uses default auth_dir).
+    pub fn resolve_header_for_org(&self, plugin_name: &str, org_id: &str) -> Option<String> {
+        self.resolve_header_for_org_with_auth_dir(plugin_name, org_id, &auth_dir())
+    }
+
+    /// Resolve the auth header for a specific org with a custom auth directory.
+    /// For OAuth: only stored token (no env fallback).
+    /// For Bearer: stored token for org only (no env fallback for org-specific).
+    /// For ApiKey: stored token for org formatted as "{header}:{key}".
+    pub fn resolve_header_for_org_with_auth_dir(
+        &self,
+        plugin_name: &str,
+        org_id: &str,
+        dir: &std::path::Path,
+    ) -> Option<String> {
+        match self {
+            PluginAuth::Bearer { .. } => {
+                let stored =
+                    token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
+                Some(format!("Bearer {}", stored.access_token))
+            }
+            PluginAuth::ApiKey { header_name, .. } => {
+                let stored =
+                    token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
+                Some(format!("{}:{}", header_name, stored.access_token))
+            }
+            PluginAuth::OAuth { .. } => {
+                let stored =
+                    token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
+                Some(format!("Bearer {}", stored.access_token))
+            }
+        }
+    }
+
+    /// Check if auth is configured for a specific org.
+    pub fn is_configured_for_org(&self, plugin_name: &str, org_id: &str) -> bool {
+        self.is_configured_for_org_with_auth_dir(plugin_name, org_id, &auth_dir())
+    }
+
+    /// Check if auth is configured for a specific org with a custom auth directory.
+    pub fn is_configured_for_org_with_auth_dir(
+        &self,
+        plugin_name: &str,
+        org_id: &str,
+        dir: &std::path::Path,
+    ) -> bool {
+        token_store::has_stored_token_for_org(dir, plugin_name, org_id)
+    }
+
+    /// List all configured org IDs for this plugin (uses default auth_dir).
+    pub fn list_configured_orgs(&self, plugin_name: &str) -> Vec<String> {
+        token_store::list_orgs(&auth_dir(), plugin_name)
+    }
+
+    /// List all configured org IDs for this plugin with a custom auth directory.
+    pub fn list_configured_orgs_with_auth_dir(
+        &self,
+        plugin_name: &str,
+        dir: &std::path::Path,
+    ) -> Vec<String> {
+        token_store::list_orgs(dir, plugin_name)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -828,5 +891,110 @@ mod tests {
         let serialized = serde_json::to_string(&manifest).unwrap();
         let deserialized: PluginManifest = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.no_auto_push, vec!["write_document", "manage_data_draft"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Org-aware PluginAuth tests
+    // -----------------------------------------------------------------------
+
+    fn store_org_token(dir: &std::path::Path, plugin: &str, org: &str, tok: &str) {
+        let token = token_store::StoredToken {
+            access_token: tok.to_string(),
+            refresh_token: None,
+            expires_at: None,
+        };
+        token_store::store_token_for_org(dir, plugin, org, &token).unwrap();
+    }
+
+    #[test]
+    fn test_resolve_header_for_org_bearer() {
+        let dir = tempfile::tempdir().unwrap();
+        store_org_token(dir.path(), "plug", "org_1", "bearer-tok-1");
+
+        let auth = PluginAuth::Bearer {
+            token_env: "NONEXISTENT_VAR".to_string(),
+        };
+        let header =
+            auth.resolve_header_for_org_with_auth_dir("plug", "org_1", dir.path());
+        assert_eq!(header, Some("Bearer bearer-tok-1".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_header_for_org_apikey() {
+        let dir = tempfile::tempdir().unwrap();
+        store_org_token(dir.path(), "plug", "org_2", "key-val");
+
+        let auth = PluginAuth::ApiKey {
+            header_name: "X-Custom".to_string(),
+            key_env: None,
+        };
+        let header =
+            auth.resolve_header_for_org_with_auth_dir("plug", "org_2", dir.path());
+        assert_eq!(header, Some("X-Custom:key-val".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_header_for_org_oauth() {
+        let dir = tempfile::tempdir().unwrap();
+        store_org_token(dir.path(), "plug", "org_3", "oauth-tok");
+
+        let auth = PluginAuth::OAuth {
+            client_id: Some("c".to_string()),
+            auth_url: "https://example.com/auth".to_string(),
+            token_url: "https://example.com/token".to_string(),
+            scopes: vec![],
+        };
+        let header =
+            auth.resolve_header_for_org_with_auth_dir("plug", "org_3", dir.path());
+        assert_eq!(header, Some("Bearer oauth-tok".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_header_for_org_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let auth = PluginAuth::Bearer {
+            token_env: "NONEXISTENT_VAR".to_string(),
+        };
+        let header =
+            auth.resolve_header_for_org_with_auth_dir("plug", "no_org", dir.path());
+        assert!(header.is_none());
+    }
+
+    #[test]
+    fn test_is_configured_for_org() {
+        let dir = tempfile::tempdir().unwrap();
+        store_org_token(dir.path(), "plug", "org_yes", "t");
+
+        let auth = PluginAuth::OAuth {
+            client_id: None,
+            auth_url: "https://example.com/auth".to_string(),
+            token_url: "https://example.com/token".to_string(),
+            scopes: vec![],
+        };
+        assert!(auth.is_configured_for_org_with_auth_dir("plug", "org_yes", dir.path()));
+        assert!(!auth.is_configured_for_org_with_auth_dir("plug", "org_no", dir.path()));
+    }
+
+    #[test]
+    fn test_list_configured_orgs() {
+        let dir = tempfile::tempdir().unwrap();
+        store_org_token(dir.path(), "plug", "org_a", "t");
+        store_org_token(dir.path(), "plug", "org_b", "t");
+
+        let auth = PluginAuth::Bearer {
+            token_env: "X".to_string(),
+        };
+        let orgs = auth.list_configured_orgs_with_auth_dir("plug", dir.path());
+        assert_eq!(orgs, vec!["org_a", "org_b"]);
+    }
+
+    #[test]
+    fn test_list_configured_orgs_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let auth = PluginAuth::Bearer {
+            token_env: "X".to_string(),
+        };
+        let orgs = auth.list_configured_orgs_with_auth_dir("noplug", dir.path());
+        assert!(orgs.is_empty());
     }
 }

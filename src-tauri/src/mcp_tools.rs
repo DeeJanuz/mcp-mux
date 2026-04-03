@@ -8,7 +8,7 @@ use tauri::Emitter;
 use crate::http_server::{execute_push, store_push, await_decision, AsyncAppState, ExecutePushResult};
 use crate::plugin::{PluginRegistry, PluginToolResult, try_refresh_oauth};
 
-const RULES_VERSION: &str = "3"; // Bump when built-in rules change
+const RULES_VERSION: &str = "4"; // Bump when built-in rules change
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -75,7 +75,7 @@ pub async fn call_tool(
         "start_plugin_auth" => crate::mcp_registry_tools::call_start_plugin_auth(arguments, state).await,
         _ => {
             // Check plugin tools — scope MutexGuard to block before any .await
-            let (plugin_info, client) = lookup_plugin_tool(name, state).await;
+            let (plugin_info, client) = lookup_plugin_tool(name, &arguments, state).await;
 
             // If not found, refresh stale plugins and retry once (handles race
             // where tools/call arrives before lazy tools/list cache is populated)
@@ -83,7 +83,7 @@ pub async fn call_tool(
                 Some(info) => Some(info),
                 None => {
                     ensure_plugins_refreshed(state, &client).await;
-                    let (retry_info, _) = lookup_plugin_tool(name, state).await;
+                    let (retry_info, _) = lookup_plugin_tool(name, &arguments, state).await;
                     retry_info
                 }
             };
@@ -95,13 +95,21 @@ pub async fn call_tool(
                             .await;
 
                     match result {
-                        Ok(val) => Ok(val),
+                        Ok(mut val) => {
+                            if info.unprefixed_name == "list_organizations" {
+                                enrich_list_organizations(&mut val, &info.plugin_name);
+                            }
+                            Ok(val)
+                        }
                         Err(ref e) if e.contains("HTTP 401") => {
                             // Token may have been revoked server-side before expiry — force refresh and retry once
                             if let Some(ref oauth) = info.oauth_info {
                                 if let Some(new_header) = crate::plugin::try_refresh_oauth(oauth, &client).await {
-                                    let retry = proxy_plugin_tool_call(&client, &info.mcp_url, Some(&new_header), &info.unprefixed_name, &arguments)
+                                    let mut retry = proxy_plugin_tool_call(&client, &info.mcp_url, Some(&new_header), &info.unprefixed_name, &arguments)
                                         .await?;
+                                    if info.unprefixed_name == "list_organizations" {
+                                        enrich_list_organizations(&mut retry, &info.plugin_name);
+                                    }
                                     return Ok(retry);
                                 }
                             }
@@ -120,12 +128,13 @@ pub async fn call_tool(
 /// If auth is None but OAuth refresh info is available, attempts token refresh.
 async fn lookup_plugin_tool(
     name: &str,
+    arguments: &Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> (Option<PluginToolResult>, reqwest::Client) {
     let (info, client) = {
         let state_guard = state.lock().await;
         let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let info = registry.find_plugin_for_tool(name);
+        let info = registry.find_plugin_for_tool_with_args(name, arguments);
         let client = state_guard.inner.http_client.clone();
         (info, client)
     };
@@ -533,6 +542,13 @@ pub(crate) fn collect_builtin_rules(all_renderers: &[RendererDef]) -> Vec<Value>
         "category": "system",
         "source": "built-in",
         "rule": BULK_ACTION_REVIEW_RULE
+    }));
+
+    rules.push(serde_json::json!({
+        "name": "org_switching",
+        "category": "system",
+        "source": "built-in",
+        "rule": "When working with multi-org plugins, be aware of which organization the current token is scoped to. The init_session response includes org_tokens showing available organizations and token status per plugin. If the user asks about data in a different org, include organization_id in tool call arguments. If no token exists for that org, call start_plugin_auth with organization_id to authenticate."
     }));
 
     // Only built-in (universal scope) renderers with rules
@@ -955,7 +971,42 @@ fn evaluate_update_preferences(
     })
 }
 
-async fn gather_slim_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>, Value) {
+/// Collect org token status for each OAuth plugin.
+fn collect_org_tokens(manifests: &[mcpviews_shared::PluginManifest]) -> Value {
+    let auth_dir = mcpviews_shared::auth_dir();
+    let mut result = serde_json::Map::new();
+
+    for manifest in manifests {
+        if let Some(mcp) = &manifest.mcp {
+            if let Some(mcpviews_shared::PluginAuth::OAuth { .. }) = &mcp.auth {
+                let orgs = mcpviews_shared::token_store::list_orgs(&auth_dir, &manifest.name);
+                if !orgs.is_empty() {
+                    let org_entries: Vec<Value> = orgs.iter().map(|org_id| {
+                        let token = mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(
+                            &auth_dir, &manifest.name, org_id
+                        );
+                        let status = match token {
+                            Some(t) => if t.is_expired() { "expired" } else { "valid" },
+                            None => "missing",
+                        };
+                        serde_json::json!({
+                            "org_id": org_id,
+                            "status": status
+                        })
+                    }).collect();
+
+                    result.insert(manifest.name.clone(), serde_json::json!({
+                        "orgs": org_entries
+                    }));
+                }
+            }
+        }
+    }
+
+    Value::Object(result)
+}
+
+async fn gather_slim_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>, Value, Value) {
     ensure_registry_fresh(state).await;
 
     let state_guard = state.lock().await;
@@ -964,13 +1015,14 @@ async fn gather_slim_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Ve
     let cached_registry = state_guard.inner.latest_registry.lock().unwrap();
     let rules = collect_builtin_rules(&all_renderers);
     let plugin_status = collect_plugin_auth_status(&registry.manifests);
+    let org_tokens = collect_org_tokens(&registry.manifests);
     let plugin_registry = build_plugin_registry(&registry.manifests, &registry.tool_cache);
     let plugin_updates = collect_plugin_updates(&registry.manifests, &cached_registry);
 
     let store = state_guard.inner.plugin_store();
     let plugin_update_actions = evaluate_update_preferences(&plugin_updates, store);
 
-    (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions)
+    (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions, org_tokens)
 }
 
 async fn call_init_session(
@@ -982,12 +1034,13 @@ async fn call_init_session(
         .and_then(|v| v.as_str())
         .unwrap_or("generic");
 
-    let (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions) = gather_slim_session_data(state).await;
+    let (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions, org_tokens) = gather_slim_session_data(state).await;
 
     let mut response = serde_json::json!({
         "rules": rules,
         "rules_version": RULES_VERSION,
         "plugin_status": plugin_status,
+        "org_tokens": org_tokens,
         "persistence_instructions": persistence_instructions(agent_type),
         "plugin_registry": plugin_registry,
         "plugin_updates": plugin_updates,
@@ -1146,6 +1199,79 @@ async fn call_get_plugin_docs(
     }))
 }
 
+// ─── Response enrichment ───
+
+/// Post-process `list_organizations` responses to inject `has_mcpviews_token` per org.
+fn enrich_list_organizations(result: &mut Value, plugin_name: &str) {
+    let auth_dir = mcpviews_shared::auth_dir();
+
+    // The result is an MCP tools/call response: { content: [{ type: "text", text: "..." }] }
+    // The text field contains JSON with a data array of organizations
+    if let Some(content) = result.get_mut("content").and_then(|c| c.as_array_mut()) {
+        for item in content.iter_mut() {
+            if item.get("type").and_then(|t| t.as_str()) != Some("text") {
+                continue;
+            }
+            let text = match item.get("text").and_then(|t| t.as_str()) {
+                Some(t) => t.to_string(),
+                None => continue,
+            };
+            let mut parsed = match serde_json::from_str::<Value>(&text) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let mut modified = false;
+
+            // Check for { data: [...] } shape
+            if let Some(data) = parsed.get_mut("data").and_then(|d| d.as_array_mut()) {
+                for org in data.iter_mut() {
+                    if let Some(org_id) = org.get("id").and_then(|id| id.as_str()) {
+                        let has_token = mcpviews_shared::token_store::has_stored_token_for_org(
+                            &auth_dir,
+                            plugin_name,
+                            org_id,
+                        );
+                        if let Some(obj) = org.as_object_mut() {
+                            obj.insert(
+                                "has_mcpviews_token".to_string(),
+                                Value::Bool(has_token),
+                            );
+                            modified = true;
+                        }
+                    }
+                }
+            }
+
+            // Also check top-level array shape
+            if let Some(arr) = parsed.as_array_mut() {
+                for org in arr.iter_mut() {
+                    if let Some(org_id) = org.get("id").and_then(|id| id.as_str()) {
+                        let has_token = mcpviews_shared::token_store::has_stored_token_for_org(
+                            &auth_dir,
+                            plugin_name,
+                            org_id,
+                        );
+                        if let Some(obj) = org.as_object_mut() {
+                            obj.insert(
+                                "has_mcpviews_token".to_string(),
+                                Value::Bool(has_token),
+                            );
+                            modified = true;
+                        }
+                    }
+                }
+            }
+
+            if modified {
+                if let Ok(new_text) = serde_json::to_string(&parsed) {
+                    *item.get_mut("text").unwrap() = Value::String(new_text);
+                }
+            }
+        }
+    }
+}
+
 // ─── Plugin proxy ───
 
 async fn proxy_plugin_tool_call(
@@ -1155,13 +1281,24 @@ async fn proxy_plugin_tool_call(
     tool_name: &str,
     arguments: &Value,
 ) -> Result<Value, String> {
+    // Strip organization_id from arguments before forwarding — the token already scopes the request
+    let clean_args = if arguments.get("organization_id").is_some() {
+        let mut args = arguments.clone();
+        if let Some(obj) = args.as_object_mut() {
+            obj.remove("organization_id");
+        }
+        args
+    } else {
+        arguments.clone()
+    };
+
     let rpc_request = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "tools/call",
         "params": {
             "name": tool_name,
-            "arguments": arguments
+            "arguments": clean_args
         }
     });
 
@@ -1570,7 +1707,7 @@ async fn call_install_plugin(
             let is_oauth = status["auth_type"].as_str() == Some("oauth");
             let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
             if is_oauth && !is_configured {
-                match crate::mcp_registry_tools::trigger_plugin_oauth(&plugin_name, state).await {
+                match crate::mcp_registry_tools::trigger_plugin_oauth(&plugin_name, None, state).await {
                     Ok(msg) => Some(msg),
                     Err(e) => Some(format!("Auth trigger failed: {}", e)),
                 }
@@ -1716,7 +1853,7 @@ async fn call_update_plugins(
             let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
 
             if trigger_auth && is_oauth && !is_configured {
-                match crate::mcp_registry_tools::trigger_plugin_oauth(updated_name, state).await {
+                match crate::mcp_registry_tools::trigger_plugin_oauth(updated_name, None, state).await {
                     Ok(msg) => auth_results.push(serde_json::json!({
                         "plugin": updated_name,
                         "result": msg,
@@ -2035,7 +2172,8 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "plugin_name": { "type": "string", "description": "Name of the plugin to authenticate" }
+                    "plugin_name": { "type": "string", "description": "Name of the plugin to authenticate" },
+                    "organization_id": { "type": "string", "description": "Optional organization ID to scope the auth flow to a specific org" }
                 },
                 "required": ["plugin_name"]
             }
@@ -2664,7 +2802,7 @@ mod tests {
     #[test]
     fn test_collect_builtin_rules_includes_renderer_selection() {
         let rules = collect_builtin_rules(&[]);
-        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.len(), 3);
         assert_eq!(rules[0]["name"], "renderer_selection");
     }
 
@@ -2699,8 +2837,8 @@ mod tests {
             },
         ];
         let rules = collect_builtin_rules(&renderers);
-        // renderer_selection + bulk_action_review + rich_content_usage, but NOT search_results
-        assert_eq!(rules.len(), 3);
+        // renderer_selection + bulk_action_review + org_switching + rich_content_usage, but NOT search_results
+        assert_eq!(rules.len(), 4);
         assert!(rules.iter().any(|r| r["name"] == "rich_content_usage"));
         assert!(!rules.iter().any(|r| r["name"] == "search_results_usage"));
     }

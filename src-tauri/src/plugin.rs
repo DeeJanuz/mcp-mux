@@ -12,14 +12,17 @@ pub(crate) struct OAuthRefreshInfo {
     pub plugin_name: String,
     pub token_url: String,
     pub client_id: Option<String>,
+    pub org_id: Option<String>,
 }
 
 /// Result of looking up a plugin tool by prefixed name.
 pub(crate) struct PluginToolResult {
+    pub plugin_name: String,
     pub mcp_url: String,
     pub auth_header: Option<String>,
     pub unprefixed_name: String,
     pub oauth_info: Option<OAuthRefreshInfo>,
+    pub org_id: Option<String>,
 }
 
 /// Attempt OAuth token refresh, returning "Bearer {token}" on success.
@@ -32,6 +35,7 @@ pub async fn try_refresh_oauth(
         &oauth_info.token_url,
         oauth_info.client_id.as_deref(),
         client,
+        oauth_info.org_id.as_deref(),
     )
     .await
     {
@@ -176,10 +180,53 @@ impl PluginRegistry {
         let oauth_info = extract_oauth_refresh_info(&manifest.name, &mcp.auth);
 
         Some(PluginToolResult {
+            plugin_name: manifest.name.clone(),
             mcp_url: mcp.url.clone(),
             auth_header: auth,
             unprefixed_name: unprefixed.to_string(),
             oauth_info,
+            org_id: None,
+        })
+    }
+
+    /// Find which plugin handles a tool, using organization_id from arguments for org-aware auth.
+    pub fn find_plugin_for_tool_with_args(
+        &self,
+        prefixed_name: &str,
+        arguments: &serde_json::Value,
+    ) -> Option<PluginToolResult> {
+        let idx = self.tool_cache.tool_index.get(prefixed_name)?;
+        let manifest = self.manifests.get(*idx)?;
+        let mcp = manifest.mcp.as_ref()?;
+        let unprefixed = prefixed_name.strip_prefix(&mcp.tool_prefix)?;
+
+        // Extract organization_id from tool arguments
+        let org_id = arguments
+            .get("organization_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        // Resolve auth header — use org-specific if org_id present
+        let auth = if let Some(ref oid) = org_id {
+            mcp.auth
+                .as_ref()
+                .and_then(|a| a.resolve_header_for_org(&manifest.name, oid))
+        } else {
+            resolve_auth_header(&manifest.name, &mcp.auth)
+        };
+
+        let oauth_info = extract_oauth_refresh_info(&manifest.name, &mcp.auth).map(|mut info| {
+            info.org_id = org_id.clone();
+            info
+        });
+
+        Some(PluginToolResult {
+            plugin_name: manifest.name.clone(),
+            mcp_url: mcp.url.clone(),
+            auth_header: auth,
+            unprefixed_name: unprefixed.to_string(),
+            oauth_info,
+            org_id,
         })
     }
 
@@ -448,6 +495,7 @@ fn extract_oauth_refresh_info(plugin_name: &str, auth: &Option<PluginAuth>) -> O
             plugin_name: plugin_name.to_string(),
             token_url: token_url.clone(),
             client_id: client_id.clone(),
+            org_id: None,
         }),
         _ => None,
     }

@@ -99,6 +99,7 @@ pub(crate) async fn call_list_registry(
 /// Returns a human-readable result message on success.
 pub(crate) async fn trigger_plugin_oauth(
     plugin_name: &str,
+    organization_id: Option<&str>,
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<String, String> {
     let (auth, client) = {
@@ -123,6 +124,7 @@ pub(crate) async fn trigger_plugin_oauth(
                 token_url,
                 scopes,
                 &client,
+                organization_id,
             )
             .await
             {
@@ -172,7 +174,12 @@ pub(crate) async fn call_start_plugin_auth(
         .ok_or("Missing required parameter: plugin_name")?
         .to_string();
 
-    let result_text = trigger_plugin_oauth(&plugin_name, state).await?;
+    let organization_id = arguments
+        .get("organization_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let result_text = trigger_plugin_oauth(&plugin_name, organization_id.as_deref(), state).await?;
 
     Ok(serde_json::json!({
         "content": [{
@@ -316,7 +323,7 @@ mod tests {
     async fn _assert_trigger_plugin_oauth_signature(
         state: &Arc<TokioMutex<AsyncAppState>>,
     ) -> Result<String, String> {
-        trigger_plugin_oauth("test", state).await
+        trigger_plugin_oauth("test", None, state).await
     }
 
     #[test]

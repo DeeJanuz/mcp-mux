@@ -503,6 +503,27 @@ pub fn get_renderer_registry(state: State<'_, Arc<AppState>>) -> Vec<serde_json:
 }
 
 #[tauri::command]
+pub fn set_plugin_update_policy(
+    plugin_name: String,
+    policy: String,
+) -> Result<(), String> {
+    let store = mcpviews_shared::plugin_store::PluginStore::new();
+    let prefs = mcpviews_shared::PluginPreferences {
+        update_policy: policy,
+        update_policy_version: None,
+        update_policy_source: "ui".to_string(),
+    };
+    store.save_preferences(&plugin_name, &prefs)
+}
+
+#[tauri::command]
+pub fn get_plugin_update_policy(plugin_name: String) -> Result<String, String> {
+    let store = mcpviews_shared::plugin_store::PluginStore::new();
+    let prefs = store.load_preferences(&plugin_name);
+    Ok(prefs.update_policy)
+}
+
+#[tauri::command]
 pub fn set_native_theme(theme: String, window: tauri::Window) -> Result<(), String> {
     let native_theme = match theme.as_str() {
         "dark" => Some(tauri::Theme::Dark),

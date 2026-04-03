@@ -111,6 +111,41 @@ pub struct PluginManifest {
     pub download_url: Option<String>,
     #[serde(default)]
     pub prompt_definitions: Vec<PromptDef>,
+    #[serde(default)]
+    pub plugin_rules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginPreferences {
+    /// Update policy: "always", "ask", or "skip"
+    #[serde(default = "default_update_policy")]
+    pub update_policy: String,
+
+    /// Version this preference applies to (for "skip" — skip only this version)
+    #[serde(default)]
+    pub update_policy_version: Option<String>,
+
+    /// Source of the preference: "chat" or "ui"
+    #[serde(default = "default_preference_source")]
+    pub update_policy_source: String,
+}
+
+impl Default for PluginPreferences {
+    fn default() -> Self {
+        Self {
+            update_policy: "ask".to_string(),
+            update_policy_version: None,
+            update_policy_source: "chat".to_string(),
+        }
+    }
+}
+
+fn default_update_policy() -> String {
+    "ask".to_string()
+}
+
+fn default_preference_source() -> String {
+    "chat".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

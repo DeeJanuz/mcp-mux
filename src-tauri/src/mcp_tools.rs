@@ -8,6 +8,8 @@ use tauri::Emitter;
 use crate::http_server::{execute_push, AsyncAppState, ExecutePushResult};
 use crate::plugin::{PluginRegistry, PluginToolResult, try_refresh_oauth};
 
+const RULES_VERSION: &str = "3"; // Bump when built-in rules change
+
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
     // Get available renderers for dynamic tool descriptions
@@ -67,6 +69,7 @@ pub async fn call_tool(
         "get_plugin_docs" => call_get_plugin_docs(arguments, state).await,
         "get_plugin_prompt" => crate::mcp_prompts::call_get_plugin_prompt(arguments, state).await,
         "update_plugins" => call_update_plugins(arguments, state).await,
+        "save_update_preference" => call_save_update_preference(arguments, state).await,
         "list_registry" => crate::mcp_registry_tools::call_list_registry(arguments, state).await,
         "start_plugin_auth" => crate::mcp_registry_tools::call_start_plugin_auth(arguments, state).await,
         _ => {
@@ -372,7 +375,14 @@ pub(crate) fn collect_rules(
         "name": "renderer_selection",
         "category": "system",
         "source": "built-in",
-        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows). Default choice.\n- **structured_data**: Tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows.\n- **Plugin renderers**: If a plugin provides a domain-specific renderer (e.g., search_results), prefer it over generic renderers for that plugin's tool output.\n\nWhen uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows."
+        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows). Default choice.\n- **structured_data**: Tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **Plugin renderers**: If a plugin provides a domain-specific renderer (e.g., search_results), prefer it over generic renderers for that plugin's tool output.\n\nWhen uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows."
+    }));
+
+    rules.push(serde_json::json!({
+        "name": "bulk_action_review",
+        "category": "system",
+        "source": "built-in",
+        "rule": BULK_ACTION_REVIEW_RULE
     }));
 
     // Renderer rules — covers built-in, explicit, AND synthesized renderers.
@@ -433,6 +443,18 @@ pub(crate) fn collect_rules(
         }
     }
 
+    // Plugin-level behavioral rules
+    for manifest in manifests {
+        for (i, rule) in manifest.plugin_rules.iter().enumerate() {
+            rules.push(serde_json::json!({
+                "name": format!("{}_plugin_rule_{}", manifest.name, i),
+                "category": "plugin",
+                "source": &manifest.name,
+                "rule": rule,
+            }));
+        }
+    }
+
     rules
 }
 
@@ -445,7 +467,14 @@ pub(crate) fn collect_builtin_rules(all_renderers: &[RendererDef]) -> Vec<Value>
         "name": "renderer_selection",
         "category": "system",
         "source": "built-in",
-        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows). Default choice.\n- **structured_data**: Tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows.\n- **Plugin renderers**: If a plugin provides a domain-specific renderer (e.g., search_results), prefer it over generic renderers for that plugin's tool output.\n\nWhen uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows."
+        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows). Default choice.\n- **structured_data**: Tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **Plugin renderers**: If a plugin provides a domain-specific renderer (e.g., search_results), prefer it over generic renderers for that plugin's tool output.\n\nWhen uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows."
+    }));
+
+    rules.push(serde_json::json!({
+        "name": "bulk_action_review",
+        "category": "system",
+        "source": "built-in",
+        "rule": BULK_ACTION_REVIEW_RULE
     }));
 
     // Only built-in (universal scope) renderers with rules
@@ -562,6 +591,16 @@ pub(crate) fn collect_plugin_rules(
         }));
     }
 
+    // Plugin-level behavioral rules (always included regardless of filters)
+    for (i, rule) in manifest.plugin_rules.iter().enumerate() {
+        rules.push(serde_json::json!({
+            "name": format!("{}_plugin_rule_{}", manifest.name, i),
+            "category": "plugin",
+            "source": &manifest.name,
+            "rule": rule,
+        }));
+    }
+
     rules
 }
 
@@ -611,21 +650,21 @@ pub(crate) fn collect_plugin_auth_status(
 /// Return agent-type-specific persistence instructions.
 pub(crate) fn persistence_instructions(agent_type: &str) -> String {
     match agent_type {
-        "claude_code" => "Create a file at `.claude/rules/mcpviews.md` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. This file will be automatically loaded by Claude Code as project-level rules.".to_string(),
+        "claude_code" => format!("Create a file at `.claude/rules/mcpviews.md` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line. This file will be automatically loaded by Claude Code as project-level rules.", RULES_VERSION),
 
-        "claude_desktop" => "For each rule below, create an individual memory using your memory creation capability. Use the title `mcpviews: <rule name>` and the rule text as the content. Creating individual memories (rather than one combined memory) ensures each rule is retrievable independently and survives context window limits.".to_string(),
+        "claude_desktop" => format!("For each rule below, create an individual memory using your memory creation capability. Use the title `mcpviews: <rule name>` and the rule text as the content. Include `mcpviews-rules-version: {}` in a separate memory titled `mcpviews: version`. Creating individual memories (rather than one combined memory) ensures each rule is retrievable independently and survives context window limits.", RULES_VERSION),
 
-        "codex" | "opencode" | "antigravity" => "Append all rules below to `AGENTS.md` in the project root. Each rule should be a separate section with its name as a heading and its rule text as the body.".to_string(),
+        "codex" | "opencode" | "antigravity" => format!("Append all rules below to `AGENTS.md` in the project root. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line of the MCPViews section.", RULES_VERSION),
 
-        "cursor" => "Create a file at `.cursor/rules/mcpviews.mdc` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. This file is read by Cursor as project-level rules.".to_string(),
+        "cursor" => format!("Create a file at `.cursor/rules/mcpviews.mdc` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line. This file is read by Cursor as project-level rules.", RULES_VERSION),
 
-        "windsurf" => "Append all rules below to `.windsurfrules` in the project root. Each rule should be a separate section with its name as a heading and its rule text as the body.".to_string(),
+        "windsurf" => format!("Append all rules below to `.windsurfrules` in the project root. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line of the MCPViews section.", RULES_VERSION),
 
-        _ => "These rules should be persisted so they guide your behavior in future conversations. \
+        _ => format!("These rules should be persisted so they guide your behavior in future conversations. \
               Ask the user: \"I have received behavioral rules from MCPViews for its renderers and tools. \
               How would you like me to persist them? I can write them to a rules file in this project, \
               create memories, or use another method your platform supports.\" \
-              Then follow the user's direction to commit the rules.".to_string(),
+              Then follow the user's direction to commit the rules. Include version marker `mcpviews-rules-version: {}` so updates can be detected.", RULES_VERSION),
     }
 }
 
@@ -787,6 +826,7 @@ fn build_plugin_registry(
                 "description": p.description,
                 "arguments": p.arguments,
             })).collect::<Vec<Value>>(),
+            "plugin_rules": manifest.plugin_rules,
         })
     }).collect()
 }
@@ -810,7 +850,7 @@ fn collect_plugin_updates(
         .collect()
 }
 
-async fn gather_slim_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>) {
+async fn gather_slim_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>, Value) {
     ensure_registry_fresh(state).await;
 
     let state_guard = state.lock().await;
@@ -821,7 +861,50 @@ async fn gather_slim_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Ve
     let plugin_status = collect_plugin_auth_status(&registry.manifests);
     let plugin_registry = build_plugin_registry(&registry.manifests, &registry.tool_cache);
     let plugin_updates = collect_plugin_updates(&registry.manifests, &cached_registry);
-    (rules, plugin_status, plugin_registry, plugin_updates)
+
+    // Evaluate update preferences for each pending update
+    let store = state_guard.inner.plugin_store();
+    let mut auto_update: Vec<Value> = Vec::new();
+    let mut ask_user: Vec<Value> = Vec::new();
+
+    for update in &plugin_updates {
+        let name = update["name"].as_str().unwrap_or("");
+        let available_version = update["available_version"].as_str().unwrap_or("");
+        let installed_version = update["installed_version"].as_str().unwrap_or("");
+        let prefs = store.load_preferences(name);
+
+        let entry = serde_json::json!({
+            "name": name,
+            "from": installed_version,
+            "to": available_version,
+        });
+
+        match prefs.update_policy.as_str() {
+            "always" => {
+                auto_update.push(entry);
+            }
+            "skip" => {
+                if prefs.update_policy_version.as_deref() == Some(available_version) {
+                    // Skip this version — don't include in either list
+                    continue;
+                }
+                // New version available, re-ask
+                ask_user.push(entry);
+            }
+            _ => {
+                // "ask" or default
+                ask_user.push(entry);
+            }
+        }
+    }
+
+    let plugin_update_actions = serde_json::json!({
+        "auto_update": auto_update,
+        "ask_user": ask_user,
+        "instruction": "For plugins in auto_update: call update_plugins immediately, then call mcpviews_setup to re-persist rules. For plugins in ask_user: ask the user with three options: (1) Yes, update this time (2) Yes, always auto-update (3) Skip this update. Then call save_update_preference with the user's choice before proceeding."
+    });
+
+    (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions)
 }
 
 async fn call_init_session(
@@ -833,15 +916,30 @@ async fn call_init_session(
         .and_then(|v| v.as_str())
         .unwrap_or("generic");
 
-    let (rules, plugin_status, plugin_registry, plugin_updates) = gather_slim_session_data(state).await;
+    let (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions) = gather_slim_session_data(state).await;
 
-    let response = serde_json::json!({
+    let mut response = serde_json::json!({
         "rules": rules,
+        "rules_version": RULES_VERSION,
         "plugin_status": plugin_status,
         "persistence_instructions": persistence_instructions(agent_type),
         "plugin_registry": plugin_registry,
         "plugin_updates": plugin_updates,
+        "plugin_update_actions": plugin_update_actions,
     });
+
+    response.as_object_mut().unwrap().insert(
+        "rules_update".to_string(),
+        serde_json::json!({
+            "current_version": RULES_VERSION,
+            "instruction": format!(
+                "Check if your persisted MCPViews rules file contains `mcpviews-rules-version: {}`. \
+                 If the version is missing or different, overwrite the file with the rules from this \
+                 response using the persistence_instructions format. This ensures you have the latest rules.",
+                RULES_VERSION
+            )
+        })
+    );
 
     Ok(serde_json::json!({
         "content": [{
@@ -881,6 +979,7 @@ async fn call_mcpviews_setup(
 
     let response = serde_json::json!({
         "rules": rules,
+        "rules_version": RULES_VERSION,
         "plugin_status": plugin_status,
         "persistence_instructions": persistence_instructions(agent_type),
         "setup_instructions": setup_instructions(agent_type),
@@ -1074,6 +1173,45 @@ Wrong:   `A[Line one\nLine two]`
 
 The body value is a JSON string. Use `\n` for newlines, `\"` for quotes, `\\` for backslashes. Backticks need no escaping."#;
 
+const BULK_ACTION_REVIEW_RULE: &str = r#"When an agent plans 2 or more MCP tool calls that create, update, or delete external resources (mutations), it MUST present the planned actions to the user for review before executing any of them.
+
+## Trigger
+
+Any time the agent intends to make 2+ MCP tool calls that mutate external state (create, update, delete operations on files, database records, API resources, etc.).
+
+## Mandate
+
+Present all planned actions as `structured_data` via `push_review` before executing any mutation.
+
+## Table structure
+
+Use a single table with these columns:
+- **Action** — the operation type: create, update, or delete
+- **Entity Type** — what kind of resource (e.g., file, record, API endpoint)
+- **Target** — the specific resource identifier (name, path, ID)
+- **Details** — brief description of what will be created/changed/removed
+
+Mark each row's `change` field to visually distinguish operations:
+- `"add"` for create actions (green)
+- `"update"` for update actions (yellow)
+- `"delete"` for delete actions (red strikethrough)
+
+## Workflow
+
+1. **Gather**: Collect all planned mutations before executing any
+2. **Present**: Send them via `push_review` as a structured_data table
+3. **Wait**: Wait for the user's decisions (accept/reject per row, possible cell edits)
+4. **Execute**: Only execute rows the user accepted, respecting any user edits to cell values
+5. **Report**: Summarize what was executed and what was skipped
+
+## Single-action exception
+
+If only 1 mutation is planned, `push_review` is not required — proceed directly.
+
+## Formatting
+
+See the `structured_data_usage` rule for full structured_data formatting details, column/row schema, and push_review response handling."#;
+
 const STRUCTURED_DATA_RULE: &str = r#"Use structured_data when presenting tabular or schema data that benefits from sort, filter, expand/collapse, or review workflows. Prefer it over rich_content markdown tables when:
 - Data has hierarchical/nested rows (parent-child relationships)
 - Users need to sort or filter interactively
@@ -1164,6 +1302,8 @@ push_review response contains user decisions:
   "additions": { "user_edits": { "r1.type": "text" } }
 }
 ```
+
+**Bulk MCP actions**: When an agent plans 2+ MCP tool calls that mutate external resources, it MUST present them via push_review before executing. See the bulk_action_review rule for the full workflow and table structure.
 
 ## Data shape reference
 
@@ -1544,6 +1684,66 @@ async fn call_update_plugins(
 }
 
 
+async fn call_save_update_preference(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let plugin = arguments
+        .get("plugin")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: plugin")?;
+    let policy = arguments
+        .get("policy")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: policy")?;
+    let version = arguments
+        .get("version")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: version")?;
+
+    let prefs = match policy {
+        "once" => mcpviews_shared::PluginPreferences {
+            update_policy: "ask".to_string(),
+            update_policy_version: None,
+            update_policy_source: "chat".to_string(),
+        },
+        "always" => mcpviews_shared::PluginPreferences {
+            update_policy: "always".to_string(),
+            update_policy_version: None,
+            update_policy_source: "chat".to_string(),
+        },
+        "skip" => mcpviews_shared::PluginPreferences {
+            update_policy: "skip".to_string(),
+            update_policy_version: Some(version.to_string()),
+            update_policy_source: "chat".to_string(),
+        },
+        _ => return Err(format!("Invalid policy '{}'. Must be 'once', 'always', or 'skip'.", policy)),
+    };
+
+    let state_guard = state.lock().await;
+    let store = state_guard.inner.plugin_store();
+    store.save_preferences(plugin, &prefs)?;
+
+    let message = match policy {
+        "once" => format!("Preference saved for '{}'. Proceed with update_plugins, then call mcpviews_setup to re-persist rules.", plugin),
+        "always" => format!("Auto-update enabled for '{}'. Proceed with update_plugins, then call mcpviews_setup to re-persist rules.", plugin),
+        "skip" => format!("Update to version {} skipped for '{}'.", version, plugin),
+        _ => unreachable!(),
+    };
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&serde_json::json!({
+                "status": "saved",
+                "plugin": plugin,
+                "policy": policy,
+                "message": message,
+            })).unwrap()
+        }]
+    }))
+}
+
 // ─── Tool definitions ───
 
 fn build_data_description(renderers: &[RendererDef], prefix: &str) -> String {
@@ -1758,6 +1958,29 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
                 "required": ["plugin_name"]
             }
         }),
+        serde_json::json!({
+            "name": "save_update_preference",
+            "description": "Save the user's update preference for a plugin after asking them about a pending update.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "plugin": {
+                        "type": "string",
+                        "description": "Plugin name"
+                    },
+                    "policy": {
+                        "type": "string",
+                        "enum": ["once", "always", "skip"],
+                        "description": "Update policy: 'once' (update this time only), 'always' (auto-update), 'skip' (skip this version)"
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "The version this preference applies to"
+                    }
+                },
+                "required": ["plugin", "policy", "version"]
+            }
+        }),
     ]
 }
 
@@ -1783,6 +2006,7 @@ mod tests {
             registry_index: None,
             download_url: None,
             prompt_definitions: vec![],
+            plugin_rules: vec![],
         }
     }
 
@@ -1791,7 +2015,7 @@ mod tests {
     #[test]
     fn test_collect_rules_includes_renderer_selection() {
         let rules = collect_rules(&[], &[]);
-        assert_eq!(rules.len(), 1);
+        assert_eq!(rules.len(), 2);
         let sel = rules.iter().find(|r| r["name"] == "renderer_selection").expect("renderer_selection rule should exist");
         assert_eq!(sel["category"], "system");
     }
@@ -1812,7 +2036,7 @@ mod tests {
             standalone_label: None,
         }];
         let rules = collect_rules(&renderers, &[]);
-        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.len(), 3);
         let sel = rules.iter().find(|r| r["name"] == "renderer_selection").expect("renderer_selection rule should exist");
         assert_eq!(sel["category"], "system");
 
@@ -1842,8 +2066,8 @@ mod tests {
             standalone_label: None,
         }];
         let rules = collect_rules(&renderers, &[]);
-        // Only the renderer_selection rule, no renderer-specific rule
-        assert_eq!(rules.len(), 1);
+        // Only the renderer_selection + bulk_action_review rules, no renderer-specific rule
+        assert_eq!(rules.len(), 2);
         let sel = rules.iter().find(|r| r["name"] == "renderer_selection").expect("renderer_selection rule should exist");
         assert_eq!(sel["category"], "system");
     }
@@ -1864,7 +2088,7 @@ mod tests {
             standalone_label: None,
         }];
         let rules = collect_rules(&renderers, &[]);
-        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.len(), 3);
         let cv = rules.iter().find(|r| r["renderer"] == "custom_view").expect("custom_view rule should exist");
         assert_eq!(cv["source"], "plugin");
         assert_eq!(cv["description"], "Custom");
@@ -1887,7 +2111,7 @@ mod tests {
             standalone_label: None,
         }];
         let rules = collect_rules(&renderers, &[]);
-        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.len(), 3);
         let sr = rules.iter().find(|r| r["renderer"] == "search_results").expect("search_results rule should exist");
         assert_eq!(sr["category"], "renderer");
         assert_eq!(sr["source"], "plugin");
@@ -1908,11 +2132,11 @@ mod tests {
             Some(PluginMcpConfig {
                 url: "http://localhost:8080".into(),
                 auth: None,
-                tool_prefix: "sp".into(),
+                tool_prefix: "sp__".into(),
             }),
         );
         let rules = collect_rules(&[], &[manifest]);
-        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.len(), 3);
         let tr = rules.iter().find(|r| r["name"] == "sp__search_usage").expect("sp__search_usage rule should exist");
         assert_eq!(tr["category"], "tool");
         assert_eq!(tr["tool"], "sp__search");
@@ -1934,7 +2158,7 @@ mod tests {
             }),
         );
         let rules = collect_rules(&[], &[manifest]);
-        assert_eq!(rules.len(), 2);
+        assert_eq!(rules.len(), 3);
         let tr = rules.iter().find(|r| r["tool"] == "do_thing").expect("do_thing rule should exist");
         assert_eq!(tr["name"], "do_thing_usage");
     }
@@ -2079,6 +2303,7 @@ mod tests {
             registry_index: None,
             download_url: None,
             prompt_definitions: vec![],
+            plugin_rules: vec![],
         }
     }
 
@@ -2357,7 +2582,7 @@ mod tests {
     #[test]
     fn test_collect_builtin_rules_includes_renderer_selection() {
         let rules = collect_builtin_rules(&[]);
-        assert_eq!(rules.len(), 1);
+        assert_eq!(rules.len(), 2);
         assert_eq!(rules[0]["name"], "renderer_selection");
     }
 
@@ -2392,8 +2617,8 @@ mod tests {
             },
         ];
         let rules = collect_builtin_rules(&renderers);
-        // renderer_selection + rich_content_usage, but NOT search_results
-        assert_eq!(rules.len(), 2);
+        // renderer_selection + bulk_action_review + rich_content_usage, but NOT search_results
+        assert_eq!(rules.len(), 3);
         assert!(rules.iter().any(|r| r["name"] == "rich_content_usage"));
         assert!(!rules.iter().any(|r| r["name"] == "search_results_usage"));
     }

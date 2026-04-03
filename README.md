@@ -152,7 +152,7 @@ curl -X POST http://localhost:4200/api/push \
   -H 'Content-Type: application/json' \
   -d '{"toolName":"rich_content","result":{"data":{"title":"Test","body":"## Hello\n\nThis is a test."}}}'
 
-# Push with review (blocks until user decides)
+# Push with review (returns immediately with session_id; call await_review to wait for decision)
 curl -X POST http://localhost:4200/api/push \
   -H 'Content-Type: application/json' \
   -d '{"toolName":"write_document","result":{"data":{"operations":[{"type":"replace","target":"Introduction","replacement":"New intro text"}]}},"reviewRequired":true}'

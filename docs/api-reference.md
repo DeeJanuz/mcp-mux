@@ -18,7 +18,7 @@ Returns server status.
 
 ### `POST /api/push`
 
-Push content to the viewer. Optionally block until user reviews.
+Push content to the viewer. For reviews, returns immediately with a `session_id` (see `POST /api/await-decision` to block until the user decides).
 
 **Request Body**
 ```json
@@ -54,7 +54,22 @@ Content type (renderer name) is resolved by searching all loaded plugin manifest
 }
 ```
 
-**Response (review — accepted)** `200 OK`
+**Response (review)** `200 OK`
+
+Reviews use a two-step flow. `POST /api/push` with `reviewRequired: true` returns immediately with a pending status:
+
+```json
+{
+  "sessionId": "uuid",
+  "status": "pending"
+}
+```
+
+The caller then uses `POST /api/await-decision` (or the MCP `await_review` tool) to block until the user submits their decision. If the transport times out, the caller can call `await-decision` again with the same `sessionId` -- the review session persists on the server and the deadline resets on reconnect.
+
+**Decision responses** (returned by `await-decision`):
+
+Accepted:
 ```json
 {
   "sessionId": "uuid",
@@ -63,7 +78,7 @@ Content type (renderer name) is resolved by searching all loaded plugin manifest
 }
 ```
 
-**Response (review — rejected)** `200 OK`
+Rejected:
 ```json
 {
   "sessionId": "uuid",
@@ -72,7 +87,7 @@ Content type (renderer name) is resolved by searching all loaded plugin manifest
 }
 ```
 
-**Response (review — partial)** `200 OK`
+Partial:
 ```json
 {
   "sessionId": "uuid",
@@ -87,7 +102,7 @@ Content type (renderer name) is resolved by searching all loaded plugin manifest
 }
 ```
 
-**Response (review — timeout)** `408 Request Timeout`
+Timeout (deadline expired with no user action):
 ```json
 {
   "sessionId": "uuid",
@@ -507,7 +522,7 @@ Display content in the MCPViews window. Supports multiple content types.
 
 ### `push_review`
 
-Display content and block until the user accepts or rejects. Returns the user's decision.
+Display content for user review. Returns immediately with a `session_id` and `"pending"` status. The agent then calls `await_review(session_id)` to block until the user submits their decision.
 
 **Parameters:**
 | Field | Type | Required | Description |
@@ -516,7 +531,16 @@ Display content and block until the user accepts or rejects. Returns the user's 
 | `data` | object | Yes | Content data to display. |
 | `timeout` | number | No | Timeout in seconds (default: 120). |
 
-The following diagram shows the push_review blocking flow, including the timeout fallback.
+**Response:**
+```json
+{
+  "session_id": "uuid",
+  "status": "pending",
+  "message": "Review is displayed in the companion window. Call await_review with this session_id to wait for the user's decision."
+}
+```
+
+The following diagram shows the two-step `push_review` + `await_review` flow, including transport timeout reconnection.
 
 ```mermaid
 sequenceDiagram
@@ -527,15 +551,39 @@ sequenceDiagram
 
     Agent->>MV: push_review(tool_name, data, timeout)
     MV->>WebView: Render review UI
-    Note over MV: HTTP blocked on oneshot channel
-    User->>WebView: Review and decide
-    WebView->>MV: submit_decision
-    MV->>Agent: Decision response
+    MV->>Agent: { session_id, status: "pending" }
+    Agent->>MV: await_review(session_id)
+    Note over MV: Blocks on watch channel
 
-    alt Timeout expires
-        MV->>Agent: 408 dismissed
+    alt User decides before timeout
+        User->>WebView: Review and decide
+        WebView->>MV: submit_decision
+        MV->>Agent: Decision response
+    end
+
+    alt Transport timeout (connection drops)
+        Agent->>MV: await_review(session_id) [reconnect]
+        Note over MV: Deadline resets, blocks again
+        User->>WebView: Review and decide
+        WebView->>MV: submit_decision
+        MV->>Agent: Decision response
+    end
+
+    alt Server deadline expires
+        MV->>Agent: dismissed
     end
 ```
+
+### `await_review`
+
+Block until a user submits a decision for a pending review session. If the transport connection drops, the agent can call `await_review` again with the same `session_id` -- the review session persists on the server and the deadline resets on reconnect.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `session_id` | string | Yes | The session ID returned by `push_review`. |
+
+**Response:** The user's decision (same shape as the decision responses documented under `POST /api/push`).
 
 #### structured_data renderer
 
@@ -594,7 +642,9 @@ All `change` fields must be `null` for push_content. The server strips non-null 
 
 Change values: `"add"` (green highlight), `"delete"` (red strikethrough), `"update"` (yellow highlight), `null` (unchanged).
 
-**push_review response (structured_data):**
+**await_review response (structured_data):**
+
+After calling `push_review` to display the structured data review and `await_review(session_id)` to wait for the user's decision:
 
 ```json
 {
@@ -620,12 +670,12 @@ Change values: `"add"` (green highlight), `"delete"` (red strikethrough), `"upda
 
 ### `push_check`
 
-Check the status or result of a previously pushed review session.
+Non-blocking status check for a review session. Returns the current status without waiting. Use `await_review` to block until a decision is submitted.
 
 **Parameters:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `session_id` | string | Yes | The session ID to check. |
+| `session_id` | string | Yes | The session ID returned by `push_review`. |
 
 ### `init_session`
 

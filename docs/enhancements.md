@@ -1,7 +1,7 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-04-03
-**Total Active Issues:** 3
+**Total Active Issues:** 5
 **Resolved This Month:** 59
 
 ---
@@ -18,6 +18,8 @@ _None_
 
 ### Medium
 
+- **M-032:** No test coverage for `store_push` or `await_decision` in `http_server.rs` -- these are the two core async functions of the new non-blocking review flow. `store_push` -> `Pending` path and `await_decision` reconnection logic are untested. _(Commit bb32c45)_
+- **M-033:** `PushResponse` construction duplicated 4 times in `await_decision` (`http_server.rs`) and push parameter extraction duplicated between `call_push_review` and `call_push_impl` (`mcp_tools.rs`). Extract `build_push_response` helper and `extract_push_params` helper to DRY. _(Commit bb32c45)_
 - **M-028:** No async integration test coverage for `list_prompts`, or `get_prompt` -- `build_registry_entries` and `resolve_builtin_prompt` now have pure-function tests (a36294a), but remaining async functions (~5 code paths) still need integration tests. _(Commit 44e1f76, partially addressed 4d55dc6, a36294a)_
 - **M-023:** No test coverage for `get_plugin_auth_header` command -- function has 3 code paths (stored token, OAuth refresh, no token error) with no tests. Requires integration test infrastructure. _(Commit 2565475)_
 
@@ -142,6 +144,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| bb32c45 | 2026-04-03 | 78/100 | Good |
 | 556252a | 2026-04-03 | 90/100 | Excellent |
 | 6fe89c5 | 2026-04-03 | 82/100 | Good |
 | 1924ce6 | 2026-04-03 | 68/100 | Acceptable |

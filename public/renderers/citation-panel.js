@@ -4,24 +4,62 @@
 (function () {
   'use strict';
 
-  var panelEl = null;
-  var overlayEl = null;
+  var panels = new Map();
+  var currentSessionId = null;
+
+  function citationSetActiveSession(sessionId) {
+    currentSessionId = sessionId;
+  }
 
   function ensurePanel() {
-    if (panelEl) return;
+    var key = currentSessionId;
+    if (key == null) key = '__global__';
+    var entry = panels.get(key);
+    if (entry) return entry;
 
-    overlayEl = document.createElement('div');
+    var host = (currentSessionId && document.querySelector('.session-content[data-session-id="' + currentSessionId + '"]'))
+      || document.getElementById('content-area') || document.body;
+
+    var overlayEl = document.createElement('div');
     overlayEl.className = 'citation-slideout-overlay';
     overlayEl.addEventListener('click', closeCitationPanel);
-    document.body.appendChild(overlayEl);
+    host.appendChild(overlayEl);
 
-    panelEl = document.createElement('div');
+    var panelEl = document.createElement('div');
     panelEl.className = 'citation-slideout';
-    document.body.appendChild(panelEl);
+    host.appendChild(panelEl);
+
+    entry = { panelEl: panelEl, overlayEl: overlayEl };
+    panels.set(key, entry);
+    return entry;
+  }
+
+  function hideSessionCitation(sessionId) {
+    var entry = panels.get(sessionId);
+    if (!entry) return;
+    entry.panelEl.style.display = 'none';
+    entry.overlayEl.style.display = 'none';
+  }
+
+  function showSessionCitation(sessionId) {
+    var entry = panels.get(sessionId);
+    if (!entry) return;
+    entry.panelEl.style.display = '';
+    entry.overlayEl.style.display = '';
+  }
+
+  function closeSessionCitation(sessionId) {
+    var entry = panels.get(sessionId);
+    if (!entry) return;
+    if (entry.overlayEl.parentNode) entry.overlayEl.parentNode.removeChild(entry.overlayEl);
+    if (entry.panelEl.parentNode) entry.panelEl.parentNode.removeChild(entry.panelEl);
+    panels.delete(sessionId);
   }
 
   function openCitationPanel(type, data) {
-    ensurePanel();
+    var entry = ensurePanel();
+    var panelEl = entry.panelEl;
+    var overlayEl = entry.overlayEl;
     panelEl.innerHTML = '';
 
     var utils = window.__companionUtils;
@@ -66,8 +104,13 @@
   }
 
   function closeCitationPanel() {
-    if (panelEl) panelEl.classList.remove('open');
-    if (overlayEl) overlayEl.classList.remove('open');
+    var key = currentSessionId;
+    if (key == null) key = '__global__';
+    var entry = panels.get(key);
+    if (entry) {
+      entry.panelEl.classList.remove('open');
+      entry.overlayEl.classList.remove('open');
+    }
   }
 
   // ── Code detail ──
@@ -496,4 +539,8 @@
   window.__companionUtils = window.__companionUtils || {};
   window.__companionUtils.openCitationPanel = openCitationPanel;
   window.__companionUtils.closeCitationPanel = closeCitationPanel;
+  window.__companionUtils.citationSetActiveSession = citationSetActiveSession;
+  window.__companionUtils.hideSessionCitation = hideSessionCitation;
+  window.__companionUtils.showSessionCitation = showSessionCitation;
+  window.__companionUtils.closeSessionCitation = closeSessionCitation;
 })();

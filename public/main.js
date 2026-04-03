@@ -144,9 +144,11 @@
   }
 
   function removeSession(sessionId) {
-    // Close any open drawers when session is removed
-    if (window.__companionUtils && window.__companionUtils.closeAllDrawers) {
-      window.__companionUtils.closeAllDrawers();
+    // Close drawers and citation panel scoped to this session
+    var utils = window.__companionUtils;
+    if (utils) {
+      if (utils.closeSessionDrawers) utils.closeSessionDrawers(sessionId);
+      if (utils.closeSessionCitation) utils.closeSessionCitation(sessionId);
     }
     stopHeartbeat();
     stopCountdown(sessionId);
@@ -369,7 +371,21 @@
   // --- Rendering ---
 
   function selectSession(sessionId) {
+    var previousSessionId = activeSessionId;
     activeSessionId = sessionId;
+
+    var utils = window.__companionUtils;
+    if (utils && previousSessionId && previousSessionId !== sessionId) {
+      if (utils.hideSessionDrawers) utils.hideSessionDrawers(previousSessionId);
+      if (utils.hideSessionCitation) utils.hideSessionCitation(previousSessionId);
+    }
+    if (utils) {
+      if (utils.setActiveSession) utils.setActiveSession(sessionId);
+      if (utils.citationSetActiveSession) utils.citationSetActiveSession(sessionId);
+      if (utils.showSessionDrawers) utils.showSessionDrawers(sessionId);
+      if (utils.showSessionCitation) utils.showSessionCitation(sessionId);
+    }
+
     var session = sessions.get(sessionId);
     if (session && session.reviewRequired) {
       startHeartbeat(sessionId);
@@ -407,9 +423,9 @@
     mainTitle.textContent = session.toolName + ' \u2014 ' + session.contentType;
     if (refreshButton) refreshButton.style.display = '';
 
-    // Hide all cached containers
+    // Deactivate all cached containers
     contentCache.forEach(function (container) {
-      container.style.display = 'none';
+      container.classList.remove('active');
     });
 
     // Hide empty state if present
@@ -421,19 +437,24 @@
     // Check if we already have a cached container for this session
     var cached = contentCache.get(sessionId);
     if (cached) {
-      cached.style.display = 'block';
+      cached.classList.add('active');
       return;
     }
 
-    // Create new container and render
+    // Create new container with inner scroll wrapper
     var container = document.createElement('div');
-    container.className = 'session-content';
+    container.className = 'session-content active';
     container.setAttribute('data-session-id', sessionId);
+
+    var scroll = document.createElement('div');
+    scroll.className = 'session-scroll';
+    container.appendChild(scroll);
+
     contentArea.appendChild(container);
     contentCache.set(sessionId, container);
 
     const renderer = getRenderer(session.contentType);
-    renderer(container, session.data, session.meta, session.toolArgs || {}, session.reviewRequired, function (decision) {
+    renderer(scroll, session.data, session.meta, session.toolArgs || {}, session.reviewRequired, function (decision) {
       onDecision(sessionId, decision);
     });
   }
@@ -441,9 +462,9 @@
   function renderEmpty() {
     mainTitle.textContent = 'MCPViews';
     if (refreshButton) refreshButton.style.display = 'none';
-    // Hide all cached containers
+    // Deactivate all cached containers
     contentCache.forEach(function (container) {
-      container.style.display = 'none';
+      container.classList.remove('active');
     });
     // Show empty state if no sessions
     var emptyState = contentArea.querySelector('.empty-state');

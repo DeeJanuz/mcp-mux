@@ -5,7 +5,7 @@ use tokio::sync::Mutex as TokioMutex;
 
 use tauri::Emitter;
 
-use crate::http_server::{execute_push, AsyncAppState, ExecutePushResult};
+use crate::http_server::{execute_push, store_push, await_decision, AsyncAppState, ExecutePushResult};
 use crate::plugin::{PluginRegistry, PluginToolResult, try_refresh_oauth};
 
 const RULES_VERSION: &str = "3"; // Bump when built-in rules change
@@ -62,6 +62,7 @@ pub async fn call_tool(
     match name {
         "push_content" => call_push_content(arguments, state).await,
         "push_review" => call_push_review(arguments, state).await,
+        "await_review" => call_await_review(arguments, state).await,
         "push_check" => call_push_check(arguments, state).await,
         "init_session" => call_init_session(arguments, state).await,
         "mcpviews_setup" => call_mcpviews_setup(arguments, state).await,
@@ -251,7 +252,60 @@ async fn call_push_review(
     arguments: Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<Value, String> {
-    call_push_impl(arguments, state, true).await
+    let tool_name = arguments
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: tool_name")?
+        .to_string();
+    let data = {
+        let raw = arguments
+            .get("data")
+            .ok_or("Missing required parameter: data")?;
+        normalize_data_param(raw)
+    };
+    let meta = arguments.get("meta").cloned();
+    let timeout = arguments
+        .get("timeout")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(120);
+
+    let result = store_push(state, tool_name, None, data, meta, true, timeout, None).await;
+
+    match result {
+        ExecutePushResult::Pending { session_id } => Ok(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&serde_json::json!({
+                    "session_id": session_id,
+                    "status": "pending",
+                    "message": "Review is displayed in the companion window. Call await_review with this session_id to wait for the user's decision. If your transport times out, call await_review again — the session persists."
+                })).unwrap()
+            }]
+        })),
+        _ => unreachable!("store_push with review_required=true always returns Pending"),
+    }
+}
+
+async fn call_await_review(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let session_id = arguments
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: session_id")?;
+
+    let result = await_decision(state, session_id).await;
+
+    match result {
+        ExecutePushResult::Decision(resp) => Ok(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&resp).unwrap()
+            }]
+        })),
+        _ => Err(format!("No pending review for session_id: {}", session_id)),
+    }
 }
 
 /// Normalize a data parameter: if it's a JSON string, parse it into an object.
@@ -318,6 +372,9 @@ async fn call_push_impl(
                 "text": serde_json::to_string(&resp).unwrap()
             }]
         })),
+        ExecutePushResult::Pending { .. } => {
+            unreachable!("execute_push never returns Pending directly")
+        }
     }
 }
 
@@ -1207,8 +1264,8 @@ Mark each row's `change` field to visually distinguish operations:
 ## Workflow
 
 1. **Gather**: Collect all planned mutations before executing any
-2. **Present**: Send them via `push_review` as a structured_data table
-3. **Wait**: Wait for the user's decisions (accept/reject per row, possible cell edits)
+2. **Present**: Send them via `push_review` as a structured_data table — this returns immediately with a `session_id`
+3. **Wait**: Call `await_review(session_id)` to block until the user's decisions (accept/reject per row, possible cell edits). If your transport times out, call `await_review` again with the same `session_id` — the session persists on the server
 4. **Execute**: Only execute rows the user accepted, respecting any user edits to cell values
 5. **Report**: Summarize what was executed and what was skipped
 
@@ -1262,7 +1319,9 @@ Example:
 }
 ```
 
-## push_review (change review mode)
+## push_review (change review mode — two-step flow)
+
+`push_review` returns immediately with a `session_id`. Call `await_review(session_id)` to block until the user submits. If your transport times out, call `await_review` again — the session persists on the server.
 
 Shows proposed changes with color-coded diffs. Users can accept/reject individual rows and columns, edit cell values, then submit. Use `change` fields to mark what was added, deleted, or updated.
 
@@ -1311,7 +1370,7 @@ push_review response contains user decisions:
 }
 ```
 
-**Bulk MCP actions**: When an agent plans 2+ MCP tool calls that mutate external resources, it MUST present them via push_review before executing. See the bulk_action_review rule for the full workflow and table structure.
+**Bulk MCP actions**: When an agent plans 2+ MCP tool calls that mutate external resources, it MUST present them via push_review before executing. push_review returns a session_id; call await_review(session_id) to block until the user decides. See the bulk_action_review rule for the full workflow and table structure.
 
 ## Data shape reference
 
@@ -1796,7 +1855,7 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
         }),
         serde_json::json!({
             "name": "push_review",
-            "description": "Display content in the MCPViews window and block until the user submits a review decision (accept/reject/partial). Use for mutation operations that need user approval before proceeding.",
+            "description": "Display content in the MCPViews companion window for user review. Returns immediately with a session_id. Call await_review(session_id) to wait for the user's decision. If your transport times out, call await_review again with the same session_id — the review session persists on the server.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1821,8 +1880,22 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
             }
         }),
         serde_json::json!({
+            "name": "await_review",
+            "description": "Wait for a pending review decision. Blocks until the user submits their review in the companion window, or the server-side timeout expires. If your transport times out before the user decides, call this again with the same session_id to reconnect — the review session persists. Returns the full decision payload (status, decision, operation_decisions, comments, modifications).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "The session_id returned by push_review."
+                    }
+                },
+                "required": ["session_id"]
+            }
+        }),
+        serde_json::json!({
             "name": "push_check",
-            "description": "Check the status of a pending review session. Use as a fallback if push_review timed out, to see if the user has since submitted a decision.",
+            "description": "Non-blocking status check for a review session. Returns current status without waiting. Use await_review to block until decision.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -2441,7 +2514,7 @@ mod tests {
             }),
             serde_json::json!({
                 "name": "push_review",
-                "description": "Display content and block until review.",
+                "description": "Display content for review. Returns session_id; call await_review to wait.",
                 "inputSchema": { "type": "object" }
             }),
         ];

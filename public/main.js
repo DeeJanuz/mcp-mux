@@ -32,9 +32,21 @@
     stopHeartbeat();
     lastActivity = Date.now();
 
+    var heartbeatDebounceTimer = null;
     var onActivity = function () {
       lastActivity = Date.now();
       if (activeSessionId) resetCountdown(activeSessionId);
+      // Send immediate debounced heartbeat to keep server deadline in sync
+      if (!heartbeatDebounceTimer) {
+        heartbeatDebounceTimer = setTimeout(function () {
+          heartbeatDebounceTimer = null;
+        }, 5000);
+        fetch('http://localhost:4200/api/heartbeat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId }),
+        }).catch(function () {});
+      }
     };
     contentArea.addEventListener('click', onActivity);
     contentArea.addEventListener('scroll', onActivity);
@@ -52,7 +64,7 @@
     heartbeatInterval = window.setInterval(function () {
       // Only send if user was active in last 60s
       if (Date.now() - lastActivity < 60000) {
-        fetch('/api/heartbeat', {
+        fetch('http://localhost:4200/api/heartbeat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: sessionId }),

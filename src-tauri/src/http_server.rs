@@ -82,11 +82,14 @@ struct HealthResponse {
 /// Result of executing a push operation
 pub enum ExecutePushResult {
     Stored { session_id: String },
+    Pending { session_id: String },
     Decision(PushResponse),
 }
 
-/// Core push logic shared by HTTP `/api/push` and MCP `push_content`/`push_review` tools
-pub async fn execute_push(
+/// Store a push session (emit to WebView, register review if needed) but do NOT block.
+/// For reviews, returns `Pending { session_id }`.
+/// For non-reviews, returns `Stored { session_id }`.
+pub async fn store_push(
     state: &Arc<TokioMutex<AsyncAppState>>,
     tool_name: String,
     tool_args: Option<serde_json::Value>,
@@ -143,12 +146,12 @@ pub async fn execute_push(
     }
 
     if review_required {
-        let rx = {
+        // Register pending review and set up deadline
+        {
             let mut reviews = state_guard.inner.reviews.lock().unwrap();
-            reviews.add_pending(session_id.clone())
-        };
+            reviews.add_pending(session_id.clone());
+        }
 
-        // Set up resettable deadline
         let deadline = Arc::new(TokioMutex::new(
             tokio::time::Instant::now() + Duration::from_secs(timeout_secs),
         ));
@@ -158,34 +161,53 @@ pub async fn execute_push(
         }
         drop(state_guard);
 
-        // Resettable timeout loop
-        let mut rx = rx;
-        let result = loop {
-            let current_deadline = *deadline.lock().await;
-            tokio::select! {
-                decision = &mut rx => {
-                    break decision.ok();
-                }
-                _ = tokio::time::sleep_until(current_deadline) => {
-                    let now = tokio::time::Instant::now();
-                    let dl = *deadline.lock().await;
-                    if dl > now {
-                        continue; // deadline was bumped by heartbeat
-                    }
-                    break None; // truly expired
-                }
-            }
-        };
+        ExecutePushResult::Pending { session_id }
+    } else {
+        drop(state_guard);
+        ExecutePushResult::Stored { session_id }
+    }
+}
 
-        // Clean up deadline entry
-        {
+/// Subscribe to a watch channel and block until the user submits a decision or the deadline expires.
+/// Called by the MCP `await_review` tool (via `call_await_review`) and by `execute_push` for
+/// HTTP `/api/push` backward compatibility. The deadline resets to the full timeout on each call,
+/// so agents can reconnect after a transport timeout without losing the review session.
+pub async fn await_decision(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+    session_id: &str,
+) -> ExecutePushResult {
+    // Subscribe to the watch channel
+    let mut rx = {
+        let state_guard = state.lock().await;
+        let reviews = state_guard.inner.reviews.lock().unwrap();
+        match reviews.subscribe(session_id) {
+            Some(rx) => rx,
+            None => {
+                return ExecutePushResult::Decision(PushResponse {
+                    session_id: session_id.to_string(),
+                    status: "error".to_string(),
+                    decision: Some("not_found".to_string()),
+                    operation_decisions: None,
+                    comments: None,
+                    modifications: None,
+                    additions: None,
+                });
+            }
+        }
+    };
+
+    // Check if decision already arrived
+    {
+        let current = rx.borrow().clone();
+        if let Some(decision) = current {
+            // Clean up
             let state_guard = state.lock().await;
             let mut deadlines = state_guard.inner.review_deadlines.lock().unwrap();
-            deadlines.remove(&session_id);
-        }
-
-        match result {
-            Some(decision) => ExecutePushResult::Decision(PushResponse {
+            deadlines.remove(session_id);
+            drop(deadlines);
+            let mut reviews = state_guard.inner.reviews.lock().unwrap();
+            reviews.remove_resolved(session_id);
+            return ExecutePushResult::Decision(PushResponse {
                 session_id: decision.session_id,
                 status: decision.status,
                 decision: decision.decision,
@@ -193,26 +215,142 @@ pub async fn execute_push(
                 comments: decision.comments,
                 modifications: decision.modifications,
                 additions: decision.additions,
-            }),
+            });
+        }
+    }
+
+    // Get the deadline arc
+    let deadline = {
+        let state_guard = state.lock().await;
+        let deadlines = state_guard.inner.review_deadlines.lock().unwrap();
+        match deadlines.get(session_id) {
+            Some((dl, _)) => dl.clone(),
             None => {
-                // Timeout or channel dropped
-                let state_guard = state.lock().await;
-                let mut reviews = state_guard.inner.reviews.lock().unwrap();
-                reviews.dismiss(&session_id);
-                ExecutePushResult::Decision(PushResponse {
-                    session_id,
-                    status: "decision_received".to_string(),
-                    decision: Some("dismissed".to_string()),
+                // No deadline means review already cleaned up
+                return ExecutePushResult::Decision(PushResponse {
+                    session_id: session_id.to_string(),
+                    status: "error".to_string(),
+                    decision: Some("expired".to_string()),
                     operation_decisions: None,
                     comments: None,
                     modifications: None,
                     additions: None,
-                })
+                });
             }
         }
-    } else {
-        drop(state_guard);
-        ExecutePushResult::Stored { session_id }
+    };
+
+    let session_id_owned = session_id.to_string();
+
+    // Reset deadline to full timeout from now — await_review may arrive long
+    // after store_push created the original deadline (e.g. after a transport
+    // timeout + reconnect).
+    {
+        let timeout_secs = {
+            let state_guard = state.lock().await;
+            let deadlines = state_guard.inner.review_deadlines.lock().unwrap();
+            deadlines.get(&session_id_owned).map(|(_, t)| *t)
+        };
+        if let Some(t) = timeout_secs {
+            let mut dl = deadline.lock().await;
+            *dl = tokio::time::Instant::now() + Duration::from_secs(t);
+        }
+    }
+
+    // Resettable timeout loop
+    let result = loop {
+        let current_deadline = *deadline.lock().await;
+        tokio::select! {
+            changed = rx.changed() => {
+                match changed {
+                    Ok(()) => {
+                        let val = rx.borrow().clone();
+                        if let Some(decision) = val {
+                            break Some(decision);
+                        }
+                        // None means spurious wake, continue
+                    }
+                    Err(_) => {
+                        // Sender dropped
+                        break None;
+                    }
+                }
+            }
+            _ = tokio::time::sleep_until(current_deadline) => {
+                let now = tokio::time::Instant::now();
+                let dl = *deadline.lock().await;
+                if dl > now {
+                    eprintln!("[mcpviews] Review {}: deadline was bumped, continuing", session_id_owned);
+                    continue; // deadline was bumped by heartbeat
+                }
+                eprintln!("[mcpviews] Review {}: truly expired", session_id_owned);
+                break None; // truly expired
+            }
+        }
+    };
+
+    // Clean up deadline entry
+    {
+        let state_guard = state.lock().await;
+        let mut deadlines = state_guard.inner.review_deadlines.lock().unwrap();
+        deadlines.remove(&session_id_owned);
+    }
+
+    match result {
+        Some(decision) => {
+            let state_guard = state.lock().await;
+            let mut reviews = state_guard.inner.reviews.lock().unwrap();
+            reviews.remove_resolved(&session_id_owned);
+            ExecutePushResult::Decision(PushResponse {
+                session_id: decision.session_id,
+                status: decision.status,
+                decision: decision.decision,
+                operation_decisions: decision.operation_decisions,
+                comments: decision.comments,
+                modifications: decision.modifications,
+                additions: decision.additions,
+            })
+        }
+        None => {
+            // Timeout or channel dropped — dismiss
+            let state_guard = state.lock().await;
+            let mut reviews = state_guard.inner.reviews.lock().unwrap();
+            reviews.dismiss(&session_id_owned);
+            reviews.remove_resolved(&session_id_owned);
+            ExecutePushResult::Decision(PushResponse {
+                session_id: session_id_owned,
+                status: "decision_received".to_string(),
+                decision: Some("dismissed".to_string()),
+                operation_decisions: None,
+                comments: None,
+                modifications: None,
+                additions: None,
+            })
+        }
+    }
+}
+
+/// Core push logic shared by HTTP `/api/push` and MCP `push_content` tools.
+/// For non-reviews, calls `store_push` and returns `Stored`.
+/// For reviews, composes `store_push` + `await_decision` (blocking until the user decides).
+/// Note: The MCP `push_review` tool uses `store_push` directly (non-blocking) and returns
+/// immediately; the agent then calls `await_review` which calls `await_decision` separately.
+/// This function is used by the HTTP `/api/push` endpoint which still does the blocking
+/// compose for backward compatibility.
+pub async fn execute_push(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+    tool_name: String,
+    tool_args: Option<serde_json::Value>,
+    data: serde_json::Value,
+    meta: Option<serde_json::Value>,
+    review_required: bool,
+    timeout_secs: u64,
+    session_id: Option<String>,
+) -> ExecutePushResult {
+    let result = store_push(state, tool_name, tool_args, data, meta, review_required, timeout_secs, session_id).await;
+    match result {
+        ExecutePushResult::Pending { ref session_id } => await_decision(state, session_id).await,
+        other => other,
     }
 }
 
@@ -277,6 +415,9 @@ async fn push_handler(
             };
             (status_code, Json(resp))
         }
+        ExecutePushResult::Pending { .. } => {
+            unreachable!("execute_push never returns Pending directly")
+        }
     }
 }
 
@@ -307,9 +448,13 @@ async fn heartbeat_handler(
         Some((deadline, timeout_secs)) => {
             let mut dl = deadline.lock().await;
             *dl = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+            eprintln!("[mcpviews] Heartbeat OK for session {} (reset to {}s)", session_id, timeout_secs);
             StatusCode::OK
         }
-        None => StatusCode::NOT_FOUND,
+        None => {
+            eprintln!("[mcpviews] Heartbeat 404 for session {}", session_id);
+            StatusCode::NOT_FOUND
+        }
     }
 }
 
@@ -347,11 +492,13 @@ async fn mcp_post_handler(
     Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
     body: String,
 ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
-    // If session header present, verify it exists
-    if let Some(session_id) = headers
+    let mcp_session_id = headers
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
-    {
+        .map(|s| s.to_string());
+
+    // If session header present, verify it exists
+    if let Some(ref session_id) = mcp_session_id {
         let state_guard = state.lock().await;
         let exists = {
             let sessions = state_guard.inner.mcp_sessions.lock().unwrap();
@@ -362,7 +509,7 @@ async fn mcp_post_handler(
             return Err(StatusCode::NOT_FOUND);
         }
     }
-    let (status, value) = mcp::mcp_handler(state, body).await;
+    let (status, value) = mcp::mcp_handler(state, body, mcp_session_id).await;
     Ok((status, Json(value)))
 }
 

@@ -36,6 +36,14 @@ impl McpSessionManager {
         self.sessions.remove(session_id).is_some()
     }
 
+    /// Send a notification to a specific session (not broadcast)
+    pub fn send_to_session(&self, session_id: &str, json: &str) -> bool {
+        match self.sessions.get(session_id) {
+            Some(session) => session.tx.send(json.to_string()).is_ok(),
+            None => false,
+        }
+    }
+
     /// Broadcast a notification to ALL active sessions
     pub fn broadcast(&self, notification_json: &str) {
         for session in self.sessions.values() {
@@ -179,6 +187,23 @@ mod tests {
 
         mgr.retain_active();
         assert!(mgr.has_session(&id));
+    }
+
+    #[test]
+    fn test_send_to_session_delivers_to_target_only() {
+        let mut mgr = McpSessionManager::new();
+        let (id1, mut rx1) = mgr.create_session();
+        let (_id2, mut rx2) = mgr.create_session();
+
+        assert!(mgr.send_to_session(&id1, "targeted-msg"));
+        assert_eq!(rx1.try_recv().unwrap(), "targeted-msg");
+        assert!(rx2.try_recv().is_err()); // other session should not receive
+    }
+
+    #[test]
+    fn test_send_to_session_returns_false_for_unknown() {
+        let mgr = McpSessionManager::new();
+        assert!(!mgr.send_to_session("nonexistent", "msg"));
     }
 
     #[test]

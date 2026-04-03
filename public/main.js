@@ -17,6 +17,7 @@
   const connectionDot = document.getElementById('connection-dot');
   const connectionText = document.getElementById('connection-text');
   const tabBar = document.getElementById('tab-bar');
+  const refreshButton = document.getElementById('refresh-button');
 
   /** @type {Map<string, HTMLElement>} Cached content containers per session */
   const contentCache = new Map();
@@ -379,6 +380,23 @@
     renderContent(sessionId);
   }
 
+  function refreshCurrentSession() {
+    if (!activeSessionId) return;
+    var session = sessions.get(activeSessionId);
+    if (!session) return;
+    // Remove cached container to force re-render
+    var cached = contentCache.get(activeSessionId);
+    if (cached && cached.parentNode) {
+      cached.parentNode.removeChild(cached);
+    }
+    contentCache.delete(activeSessionId);
+    renderContent(activeSessionId);
+  }
+
+  if (refreshButton) {
+    refreshButton.addEventListener('click', refreshCurrentSession);
+  }
+
   function renderContent(sessionId) {
     const session = sessions.get(sessionId);
     if (!session) {
@@ -387,6 +405,7 @@
     }
 
     mainTitle.textContent = session.toolName + ' \u2014 ' + session.contentType;
+    if (refreshButton) refreshButton.style.display = '';
 
     // Hide all cached containers
     contentCache.forEach(function (container) {
@@ -421,6 +440,7 @@
 
   function renderEmpty() {
     mainTitle.textContent = 'MCPViews';
+    if (refreshButton) refreshButton.style.display = 'none';
     // Hide all cached containers
     contentCache.forEach(function (container) {
       container.style.display = 'none';

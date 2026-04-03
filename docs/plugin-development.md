@@ -141,7 +141,7 @@ server.tool("analyze_code", { path: z.string() }, async ({ path }) => {
 
 ### Step 2: Choose Renderers
 
-MCPViews ships with built-in renderers for general-purpose content. Domain-specific renderers are delivered via plugins (e.g., the [Ludflow plugin](https://github.com/DeeJanuz/ludflow-mcpviews) provides renderers for code analysis, data governance, and knowledge management).
+MCPViews ships with built-in renderers for general-purpose content. Domain-specific renderers are delivered via plugins (e.g., the [DecidR plugin](https://github.com/DeeJanuz/decidr-plugin) provides renderers for decision governance, project management dashboards, and interactive graph views).
 
 #### Built-in Renderers
 
@@ -156,20 +156,13 @@ These are general-purpose renderers bundled with MCPViews. If no renderer is spe
 
 #### Plugin-Provided Renderers
 
-Plugins can bundle their own renderers as JavaScript files in a `renderers/` subdirectory (see [Custom Renderers](#advanced-custom-renderers) below). For example, the Ludflow plugin provides these renderers:
+Plugins can bundle their own renderers as JavaScript files in a `renderers/` subdirectory (see [Custom Renderers](#advanced-custom-renderers) below). For example, the DecidR plugin provides these renderers:
 
 | Renderer | Best For | Data Shape |
 |----------|----------|------------|
-| `search_results` | Grouped search results with type chips | `{ results: [{ type, items }] }` |
-| `code_units` | Source code with complexity badges | `{ units: [{ name, source, complexity }] }` |
-| `module_overview` | File tree + exports + dependencies | `{ files, exports, dependencies }` |
-| `analysis_stats` | Metric cards + repository list | `{ stats: {}, repositories? }` |
-| `knowledge_dex` | Table with bulk accept/reject | `{ entries: [{ name, type, status }] }` |
-| `data_schema` | Expandable table/column view | `{ tables: [{ name, columns }] }` |
-| `column_context` | Breadcrumb navigation + related entities | `{ breadcrumb, column, related }` |
-| `data_draft_diff` | Grid-based draft review | `{ columns: [], changes: {} }` |
-| `dependencies` | Grouped imports by source file | `{ dependencies: [{ file, imports }] }` |
-| `file_content` | Source with line numbers | `{ path, content, language? }` |
+| `decidr_list` | Entity lists, details, search results, action items | `{ entities: [{ type, id }], meta: { organization_id, tool_name } }` |
+| `decidr_dashboard` | Initiative overview with project cards and health bars | `{ organization_id: string }` |
+| `decidr_graph` | Force-directed graph of projects and bridges | `{ organization_id: string, initiative_ids?: string[] }` |
 
 ### Step 3: Configure Authentication
 

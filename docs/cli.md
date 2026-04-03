@@ -37,7 +37,7 @@ mcpviews-cli plugin list
 
 ```
 Installed Plugins:
-  ludflow  0.1.0  bearer auth  http://localhost:4200/mcp
+  decidr  0.1.4  oauth auth  https://app.decidrmcp.com/api/mcp
 ```
 
 Shows each plugin's name, version, authentication type, and MCP server URL. If no plugins are installed, prints "No plugins installed."
@@ -47,13 +47,13 @@ Shows each plugin's name, version, authentication type, and MCP server URL. If n
 Install a plugin from the registry by name.
 
 ```bash
-mcpviews-cli plugin add ludflow
+mcpviews-cli plugin add decidr
 ```
 
 **Example output:**
 
 ```
-Installed plugin 'ludflow' v0.1.0
+Installed plugin 'decidr' v0.1.4
 ```
 
 This fetches the registry, finds the entry matching `<name>`, and writes its manifest to `~/.mcpviews/plugins/<name>.json`. If the plugin is not found, the CLI prints available plugins and exits with an error.
@@ -63,13 +63,13 @@ This fetches the registry, finds the entry matching `<name>`, and writes its man
 Remove an installed plugin.
 
 ```bash
-mcpviews-cli plugin remove ludflow
+mcpviews-cli plugin remove decidr
 ```
 
 **Example output:**
 
 ```
-Removed plugin 'ludflow'.
+Removed plugin 'decidr'.
 ```
 
 Deletes the manifest file from `~/.mcpviews/plugins/`. If the plugin is not installed, the CLI exits with an error.
@@ -106,7 +106,7 @@ mcpviews-cli plugin search code-analysis
 
 ```
 Registry (1 plugin available):
-  ludflow  0.1.0  Code analysis, documentation, and data governance powered by Ludflow
+  decidr  0.1.4  Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows
 ```
 
 Search matches against plugin name, description, and tags. The match is case-insensitive.

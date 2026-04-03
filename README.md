@@ -226,7 +226,7 @@ Open the system tray menu and select **Manage Plugins**. From there you can:
 mcpviews-cli plugin search
 
 # Install a plugin from the registry
-mcpviews-cli plugin add ludflow
+mcpviews-cli plugin add decidr
 
 # List installed plugins
 mcpviews-cli plugin list
@@ -235,7 +235,7 @@ mcpviews-cli plugin list
 mcpviews-cli plugin add-custom ./my-plugin.json
 
 # Remove a plugin
-mcpviews-cli plugin remove ludflow
+mcpviews-cli plugin remove decidr
 ```
 
 For full CLI documentation, see [docs/cli.md](docs/cli.md).

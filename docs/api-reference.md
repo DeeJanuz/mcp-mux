@@ -745,7 +745,7 @@ Fetch detailed usage docs for a plugin's tools and renderers. Call after `init_s
 **Parameters:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `plugin` | string | Yes | Plugin name (e.g., `"ludflow"`, `"decidr"`). |
+| `plugin` | string | Yes | Plugin name (e.g., `"decidr"`, `"my-plugin"`). |
 | `groups` | string[] | No | Specific tool group names to fetch (e.g., `["Search", "Code Analysis"]`). Group names come from `plugin_registry[].tool_groups[].name` in the `init_session` response. |
 | `tools` | string[] | No | Specific tool names to fetch, unprefixed (e.g., `["search_codebase"]`). |
 | `renderers` | string[] | No | Specific renderer names to fetch (e.g., `["code_units", "search_results"]`). |

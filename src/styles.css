@@ -575,13 +575,19 @@ body {
   top: calc(100% + 8px);
   right: 0;
   min-width: 220px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  backdrop-filter: blur(calc(var(--glass-blur) + 8px));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 8px));
+  border: 1px solid var(--glass-border);
   border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--glass-shadow-elevated);
   padding: 8px 0;
   z-index: var(--z-dropdown);
   overflow: hidden;
+}
+
+[data-theme="dark"] .apps-dropdown {
+  background: rgba(30, 30, 35, 0.92);
 }
 
 .apps-dropdown.hidden {

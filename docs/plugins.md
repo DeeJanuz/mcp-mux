@@ -122,7 +122,7 @@ However, **auto-discovery cannot infer payload shapes**. The tool cache contains
 |-------|------|----------|-------------|
 | `url` | string | Yes | The MCP server endpoint URL. |
 | `auth` | object | No | Authentication configuration. If omitted, no authentication is sent. |
-| `tool_prefix` | string | Yes | Prefix added to tool names from this plugin to avoid collisions (e.g., `ludflow_search_codebase`). |
+| `tool_prefix` | string | Yes | Prefix added to tool names from this plugin to avoid collisions (e.g., `decidr__list_decisions`). |
 
 ### PluginAuth
 
@@ -335,7 +335,7 @@ MCPViews includes built-in renderers for general-purpose content:
 | `document_diff` | Two-column diff with accept/reject |
 | `citation_panel` | Citation list (used as sub-component) |
 
-Domain-specific renderers (code analysis, data governance, knowledge management) are delivered via plugins. For example, the [Ludflow plugin](https://github.com/DeeJanuz/ludflow-mcpviews) provides renderers for `search_results`, `code_units`, `data_schema`, `column_context`, `module_overview`, `analysis_stats`, `knowledge_dex`, `data_draft_diff`, `dependencies`, and `file_content`.
+Domain-specific renderers (decision governance, project management) are delivered via plugins. For example, the [DecidR plugin](https://github.com/DeeJanuz/decidr-plugin) provides renderers for `decidr_list` (entity lists, details, search results, and action items), `decidr_dashboard` (initiative dashboard with health bars and project cards), and `decidr_graph` (force-directed graph of projects and bridges).
 
 Map each of your tools to the renderer that best fits its output in the `renderers` field.
 

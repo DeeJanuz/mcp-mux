@@ -140,6 +140,34 @@ impl PluginStore {
             .map_err(|e| format!("Failed to read prompt '{}' from plugin '{}': {}", source_path, plugin_name, e))
     }
 
+    /// Load plugin preferences from disk. Returns defaults if file doesn't exist.
+    pub fn load_preferences(&self, name: &str) -> crate::PluginPreferences {
+        let path = self.dir.join(name).join("preferences.json");
+        if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(prefs) => return prefs,
+                    Err(e) => eprintln!("[mcpviews] Failed to parse preferences for '{}': {}", name, e),
+                },
+                Err(e) => eprintln!("[mcpviews] Failed to read preferences for '{}': {}", name, e),
+            }
+        }
+        crate::PluginPreferences::default()
+    }
+
+    /// Save plugin preferences to disk.
+    pub fn save_preferences(&self, name: &str, prefs: &crate::PluginPreferences) -> Result<(), String> {
+        let plugin_dir = self.dir.join(name);
+        std::fs::create_dir_all(&plugin_dir)
+            .map_err(|e| format!("Failed to create plugin directory: {}", e))?;
+        let path = plugin_dir.join("preferences.json");
+        let json = serde_json::to_string_pretty(prefs)
+            .map_err(|e| format!("Failed to serialize preferences: {}", e))?;
+        std::fs::write(&path, json)
+            .map_err(|e| format!("Failed to write preferences: {}", e))?;
+        Ok(())
+    }
+
     /// Check if a plugin is installed (supports both directory and legacy formats)
     pub fn exists(&self, name: &str) -> bool {
         self.dir.join(name).join("manifest.json").exists()
@@ -202,6 +230,7 @@ mod tests {
             registry_index: None,
             download_url: None,
             prompt_definitions: vec![],
+            plugin_rules: vec![],
         }
     }
 
@@ -358,5 +387,43 @@ mod tests {
         let store = PluginStore::with_dir(dir.path().to_path_buf());
         let expected = dir.path().join("my-plugin");
         assert_eq!(store.plugin_dir("my-plugin"), expected);
+    }
+
+    #[test]
+    fn test_load_preferences_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().to_path_buf());
+        let prefs = store.load_preferences("nonexistent");
+        assert_eq!(prefs.update_policy, "ask");
+        assert_eq!(prefs.update_policy_source, "chat");
+        assert!(prefs.update_policy_version.is_none());
+    }
+
+    #[test]
+    fn test_save_and_load_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().to_path_buf());
+        // Need plugin dir to exist
+        store.save(&test_manifest("my-plugin")).unwrap();
+
+        let prefs = crate::PluginPreferences {
+            update_policy: "always".to_string(),
+            update_policy_version: None,
+            update_policy_source: "ui".to_string(),
+        };
+        store.save_preferences("my-plugin", &prefs).unwrap();
+
+        let loaded = store.load_preferences("my-plugin");
+        assert_eq!(loaded.update_policy, "always");
+        assert_eq!(loaded.update_policy_source, "ui");
+    }
+
+    #[test]
+    fn test_save_preferences_creates_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().to_path_buf());
+        let prefs = crate::PluginPreferences::default();
+        store.save_preferences("new-plugin", &prefs).unwrap();
+        assert!(dir.path().join("new-plugin").join("preferences.json").exists());
     }
 }

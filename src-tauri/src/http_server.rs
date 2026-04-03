@@ -582,6 +582,7 @@ mod tests {
             registry_index: None,
             download_url: None,
             prompt_definitions: vec![],
+            plugin_rules: vec![],
         }
     }
 

@@ -61,6 +61,11 @@ impl AppState {
         self.plugin_store.dir()
     }
 
+    /// Return a reference to the PluginStore.
+    pub fn plugin_store(&self) -> &PluginStore {
+        &self.plugin_store
+    }
+
     /// Install a plugin from a parsed manifest, upserting (removing any existing plugin
     /// with the same name first). This is the core logic shared by MCP and Tauri commands.
     /// When `preserve_files` is true, only clears in-memory state on upsert (used by

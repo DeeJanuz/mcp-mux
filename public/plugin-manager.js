@@ -159,6 +159,12 @@
           updateBadgeHtml = '<span class="auth-badge" style="background:#1e1b4b;color:#818cf8">v' + escapeHtml(plugin.update_available) + ' available</span>';
         }
 
+        var autoUpdateHtml = '<label class="auto-update-toggle" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#737373;cursor:pointer">' +
+            '<input type="checkbox" class="auto-update-checkbox" ' +
+            'data-plugin="' + escapeHtml(plugin.name) + '" /> ' +
+            '<span class="auto-update-label">Auto-update</span>' +
+            '</label>';
+
         var actionsHtml = '';
         if (plugin.update_available) {
           actionsHtml += '<button class="btn btn-primary update-btn">Update</button>';
@@ -177,6 +183,7 @@
               (plugin.version ? 'v' + escapeHtml(plugin.version) : '') +
               (authBadgeHtml ? ' ' + authBadgeHtml : '') +
               (updateBadgeHtml ? ' ' + updateBadgeHtml : '') +
+              ' ' + autoUpdateHtml +
             '</div>' +
           '</div>' +
           '<div class="plugin-actions">' + actionsHtml + '</div>';
@@ -206,6 +213,29 @@
         if (updateBtn) {
           updateBtn.addEventListener('click', function () {
             updatePlugin(plugin.name);
+          });
+        }
+
+        var autoUpdateCheckbox = row.querySelector('.auto-update-checkbox');
+        if (autoUpdateCheckbox) {
+          // Load current preference
+          (function(cb, name) {
+            window.__TAURI__.core.invoke('get_plugin_update_policy', { pluginName: name })
+              .then(function(policy) {
+                cb.checked = (policy === 'always');
+              })
+              .catch(function() { /* default unchecked */ });
+          })(autoUpdateCheckbox, plugin.name);
+
+          autoUpdateCheckbox.addEventListener('change', function () {
+            var name = this.getAttribute('data-plugin');
+            var newPolicy = this.checked ? 'always' : 'ask';
+            window.__TAURI__.core.invoke('set_plugin_update_policy', {
+              pluginName: name,
+              policy: newPolicy
+            }).catch(function (e) {
+              showNotification('Failed to save preference: ' + e, true);
+            });
           });
         }
 

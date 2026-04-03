@@ -111,6 +111,21 @@ Timeout (deadline expired with no user action):
 }
 ```
 
+### `POST /api/heartbeat`
+
+Reset the review deadline for a pending review session. The frontend calls this periodically to keep a review session alive while the user is actively interacting (scrolling, clicking, typing).
+
+**Request Body**
+```json
+{
+  "session_id": "uuid"
+}
+```
+
+**Response** `200 OK` if the deadline was reset.
+
+**Error** `400 Bad Request` if `session_id` is missing or body is invalid JSON. `404 Not Found` if no pending review exists for the given session.
+
 ### `POST /api/reload-plugins`
 
 Reload all plugins from disk and broadcast `notifications/tools/list_changed` to all active MCP SSE sessions.

@@ -1,8 +1,8 @@
 # Technical Debt & Enhancement Log
 
 **Last Updated:** 2026-04-05
-**Total Active Issues:** 1
-**Resolved This Month:** 68
+**Total Active Issues:** 0
+**Resolved This Month:** 69
 
 ---
 
@@ -22,11 +22,15 @@ _None_
 
 ### Low
 
-- **L-020:** No test coverage for `set_native_theme` command (`commands.rs`) -- function has 3 code paths (dark, light, unrecognized string) with no tests. Requires Tauri integration test infrastructure. _(Commit c5f6d1c)_
+_None_
 
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-04-05
+
+- **L-020:** Extracted `parse_theme()` pure function from `set_native_theme` command and added 3 tests covering dark, light, and unrecognized inputs. _(Commit 94311bd+)_
 
 ### Resolved 2026-04-05 (commit 94311bd)
 

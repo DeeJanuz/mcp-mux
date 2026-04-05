@@ -2,7 +2,6 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::http_server::AsyncAppState;
@@ -157,8 +156,6 @@ async fn handle_single_request(
 
     match req.method.as_str() {
         "initialize" => {
-            let started = Instant::now();
-            eprintln!("[mcpviews] initialize: start");
             let requested_version = req
                 .params
                 .as_ref()
@@ -173,10 +170,6 @@ async fn handle_single_request(
             };
 
             let instructions = build_instructions(state).await;
-            eprintln!(
-                "[mcpviews] initialize: built instructions in {:?}",
-                started.elapsed()
-            );
 
             let response = JsonRpcResponse::success(
                 id,
@@ -193,10 +186,6 @@ async fn handle_single_request(
                     },
                     "instructions": instructions
                 }),
-            );
-            eprintln!(
-                "[mcpviews] initialize: returning response after {:?}",
-                started.elapsed()
             );
             Some(response)
         }

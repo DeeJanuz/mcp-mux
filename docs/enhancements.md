@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-04-05
 **Total Active Issues:** 0
-**Resolved This Month:** 69
+**Resolved This Month:** 72
 
 ---
 
@@ -30,6 +30,9 @@ _None_
 
 ### Resolved 2026-04-05
 
+- **M-038:** Refactored `mcp_post_handler` — parse body once, extracted `maybe_create_session` and `build_mcp_response` helpers (SRP)
+- **M-039:** Removed redundant timing/diagnostic `eprintln!` calls; kept operationally useful logs
+- **L-021:** Fixed 2 broken `retain_active` tests, added grace period tests (within window + expired)
 - **L-020:** Extracted `parse_theme()` pure function from `set_native_theme` command and added 3 tests covering dark, light, and unrecognized inputs. _(Commit 94311bd+)_
 
 ### Resolved 2026-04-05 (commit 94311bd)
@@ -158,6 +161,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 23d09ac | 2026-04-05 | 62/100 | Acceptable |
 | 94311bd | 2026-04-05 | 92/100 | Excellent |
 | 3f5c856 | 2026-04-05 | 58/100 | Acceptable |
 | f509ef2 | 2026-04-03 | 72/100 | Good |

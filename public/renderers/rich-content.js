@@ -1,11 +1,21 @@
 // @ts-nocheck
-/* Rich content renderer — renders arbitrary markdown + mermaid + citations
+/* Rich content renderer — renders arbitrary markdown + mermaid + citations + suggestions + table embeds
  *
  * Data shape:
  * {
  *   title: "Optional Heading",        // Optional
- *   body: "## Markdown content\n\n```mermaid\ngraph LR\n  A-->B\n```\n\nMore text...",  // Required
- *   citations: { ... }                // Optional — same shape as search_results citations
+ *   body: "Context paragraph {{suggest:id=s1}}\n\n```structured_data:t1\n```\n\nMore context",
+ *   citations: { ... },               // Optional — same shape as search_results citations
+ *   suggestions: {                     // Optional — inline text suggestions
+ *     "s1": { "old": "existing", "new": "proposed" },
+ *     "s2": { "type": "insert", "new": "new text" },
+ *     "s3": { "type": "delete", "old": "remove this" }
+ *   },
+ *   tables: [{                         // Optional — embedded structured_data tables
+ *     "id": "t1", "name": "users",
+ *     "columns": [{ "id": "c1", "name": "Col", "change": null }],
+ *     "rows": [{ "id": "r1", "cells": { "c1": { "value": "v", "change": null } }, "children": [] }]
+ *   }]
  * }
  *
  * Also handles:
@@ -18,38 +28,60 @@
 
   window.__renderers = window.__renderers || {};
 
-  // ── Citation type map from legacy markers ──
-  var CITE_TYPE_MAP = {
-    documents: 'doc',
-    code: 'code',
-    dataGovernance: 'dg',
-    data_governance: 'dg',
-    api: 'api',
-    knowledgeDex: 'kdex',
-    knowledge_dex: 'kdex',
-    dataLake: 'dl',
-    data_lake: 'dl',
-  };
+  // ── Table embed helpers ──
 
   /**
-   * Build a flat lookup map: { "doc:1": citationData, "code:2": citationData, ... }
+   * Pre-process table embed fenced blocks into placeholder divs before markdown parsing.
+   * Replaces ```structured_data:tableId``` blocks with <div data-table-embed="tableId"></div>
    */
-  function buildCitationMap(citations) {
-    var map = {};
-    if (!citations || typeof citations !== 'object') return map;
-
-    Object.keys(citations).forEach(function (key) {
-      var type = CITE_TYPE_MAP[key] || key;
-      var items = citations[key];
-      if (!Array.isArray(items)) return;
-      items.forEach(function (item) {
-        var idx = item.index != null ? item.index : item.number;
-        if (idx != null) {
-          map[type + ':' + idx] = item;
-        }
-      });
+  function preprocessTableEmbeds(text) {
+    return text.replace(/```structured_data:([^\s`]+)\s*\n?```/g, function (match, tableId) {
+      return '<div data-table-embed="' + tableId.replace(/"/g, '&quot;') + '"></div>';
     });
-    return map;
+  }
+
+  /**
+   * Find a table by ID from the tables array.
+   */
+  function findTableById(tables, id) {
+    if (!tables) return null;
+    for (var i = 0; i < tables.length; i++) {
+      if (tables[i].id === id) return tables[i];
+    }
+    return null;
+  }
+
+  /**
+   * Hydrate table embed placeholders with actual structured_data table components.
+   * Must be called after markdown rendering.
+   */
+  function hydrateTableEmbeds(container, tables, reviewRequired, tableStates) {
+    var embed = window.__structuredDataEmbed;
+    var sdu = window.__structuredDataUtils;
+    if (!embed || !sdu) return;
+
+    // Inject structured_data styles (idempotent)
+    embed.injectStyles();
+
+    var placeholders = container.querySelectorAll('[data-table-embed]');
+    placeholders.forEach(function (ph) {
+      var tableId = ph.getAttribute('data-table-embed');
+      var tableData = findTableById(tables, tableId);
+      if (!tableData) {
+        ph.textContent = 'Table not found: ' + tableId;
+        ph.style.cssText = 'color: var(--color-error); padding: 8px; font-style: italic;';
+        return;
+      }
+
+      // Create table state if not already created
+      if (!tableStates[tableId]) {
+        tableStates[tableId] = sdu.createTableState(tableData);
+      }
+
+      // Build the table container (no per-table onDecision — combined submit handles it)
+      var tableContainer = embed.buildTableContainer(tableData, tableStates[tableId], reviewRequired, null);
+      ph.parentNode.replaceChild(tableContainer, ph);
+    });
   }
 
   // ── Main renderer ──
@@ -98,12 +130,24 @@
     // Body
     if (data.body) {
       var hasCitations = data.citations && typeof data.citations === 'object' && Object.keys(data.citations).length > 0;
-      var contentEl;
+      var hasSuggestions = data.suggestions && typeof data.suggestions === 'object' && Object.keys(data.suggestions).length > 0;
+      var hasTables = data.tables && Array.isArray(data.tables) && data.tables.length > 0;
+      var tableStates = {};
+      var bodyText = data.body;
 
-      if (hasCitations) {
-        contentEl = utils.renderMarkdownWithCitations(data.body);
+      // Step 1: Pre-process table embeds (before markdown parsing)
+      if (hasTables) {
+        bodyText = preprocessTableEmbeds(bodyText);
+      }
+
+      // Step 2: Render markdown (with suggestions or citations if present)
+      var contentEl;
+      if (hasSuggestions && reviewRequired) {
+        contentEl = utils.renderMarkdownWithSuggestions(bodyText, data.suggestions);
+      } else if (hasCitations) {
+        contentEl = utils.renderMarkdownWithCitations(bodyText);
       } else {
-        contentEl = utils.renderMarkdown(data.body);
+        contentEl = utils.renderMarkdown(bodyText);
       }
 
       // Raw markdown view (hidden by default)
@@ -118,7 +162,15 @@
         container.appendChild(contentEl);
         container.appendChild(rawEl);
 
-        // Render mermaid diagrams
+        // Step 3: Parse citation markers if citations present
+        // (already handled by renderMarkdownWithCitations)
+
+        // Step 4: Hydrate table embeds
+        if (hasTables) {
+          hydrateTableEmbeds(contentEl, data.tables, reviewRequired, tableStates);
+        }
+
+        // Step 5: Render mermaid diagrams
         utils.renderMermaidBlocks(contentEl);
 
         // Toggle between rendered and raw
@@ -143,7 +195,7 @@
 
       // Wire up citation clicks
       if (hasCitations) {
-        var citationMap = buildCitationMap(data.citations);
+        var citationMap = utils.buildCitationMap(data.citations);
 
         container.addEventListener('click', function (e) {
           var citeEl = e.target.closest('[data-cite-type]');
@@ -159,6 +211,102 @@
             utils.openCitationPanel(type, citationData);
           }
         });
+      }
+
+      // Step 6: Combined submit bar (review mode with suggestions OR tables)
+      if (reviewRequired && onDecision && (hasSuggestions || hasTables)) {
+        var submitBar = document.createElement('div');
+        submitBar.className = 'sd-submit-bar';
+
+        var acceptAllBtn = document.createElement('button');
+        acceptAllBtn.textContent = 'Accept All';
+        acceptAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-small);';
+        acceptAllBtn.addEventListener('click', function () {
+          // Accept all suggestions
+          var widgets = container.querySelectorAll('.suggest-widget');
+          widgets.forEach(function (w) {
+            w.classList.remove('suggest-rejected');
+            w.classList.add('suggest-accepted');
+            w.setAttribute('data-suggest-status', 'accept');
+          });
+          // Accept all table rows
+          if (hasTables && window.__structuredDataUtils) {
+            var sdu = window.__structuredDataUtils;
+            data.tables.forEach(function (t) {
+              if (tableStates[t.id]) {
+                sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, 'accept');
+              }
+            });
+          }
+        });
+
+        var rejectAllBtn = document.createElement('button');
+        rejectAllBtn.textContent = 'Reject All';
+        rejectAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-small);';
+        rejectAllBtn.addEventListener('click', function () {
+          // Reject all suggestions
+          var widgets = container.querySelectorAll('.suggest-widget');
+          widgets.forEach(function (w) {
+            w.classList.remove('suggest-accepted');
+            w.classList.add('suggest-rejected');
+            w.setAttribute('data-suggest-status', 'reject');
+          });
+          // Reject all table rows
+          if (hasTables && window.__structuredDataUtils) {
+            var sdu = window.__structuredDataUtils;
+            data.tables.forEach(function (t) {
+              if (tableStates[t.id]) {
+                sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, 'reject');
+              }
+            });
+          }
+        });
+
+        var submitBtn = document.createElement('button');
+        submitBtn.textContent = 'Submit Decisions';
+        submitBtn.style.cssText = 'padding: var(--space-2) var(--space-4); border-radius: var(--border-radius-sm); border: 1px solid var(--color-info); background: var(--color-info); color: white; cursor: pointer; font-size: var(--text-small); font-weight: var(--weight-semibold);';
+        submitBtn.addEventListener('click', function () {
+          // Build combined payload
+          var suggestionDecisions = null;
+          if (hasSuggestions) {
+            suggestionDecisions = {};
+            var widgets = container.querySelectorAll('.suggest-widget');
+            widgets.forEach(function (w) {
+              var id = w.getAttribute('data-suggest-id');
+              var status = w.getAttribute('data-suggest-status') || 'pending';
+              var comment = w.getAttribute('data-suggest-comment') || null;
+              suggestionDecisions[id] = { status: status, comment: comment };
+            });
+          }
+
+          var tableDecisions = null;
+          if (hasTables && window.__structuredDataUtils) {
+            tableDecisions = {};
+            var sdu = window.__structuredDataUtils;
+            data.tables.forEach(function (t) {
+              if (tableStates[t.id]) {
+                var tablePayload = sdu.buildDecisionPayload([t], { [t.id]: tableStates[t.id] });
+                tableDecisions[t.id] = {
+                  decisions: tablePayload.decisions || {},
+                  modifications: tablePayload.modifications || {},
+                  additions: tablePayload.additions || {},
+                };
+              }
+            });
+          }
+
+          var payload = {
+            type: 'rich_content_decisions',
+            suggestion_decisions: suggestionDecisions,
+            table_decisions: tableDecisions,
+          };
+          onDecision(payload);
+        });
+
+        submitBar.appendChild(acceptAllBtn);
+        submitBar.appendChild(rejectAllBtn);
+        submitBar.appendChild(submitBtn);
+        container.appendChild(submitBar);
       }
     }
   };

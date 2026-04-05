@@ -627,4 +627,10 @@
   }
 
   window.__renderers.structured_data = renderStructuredData;
+
+  // Expose embeddable API for rich_content table embeds
+  window.__structuredDataEmbed = {
+    injectStyles: injectStyles,
+    buildTableContainer: buildTableContainer,
+  };
 })();

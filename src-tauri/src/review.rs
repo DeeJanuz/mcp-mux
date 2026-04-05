@@ -17,6 +17,10 @@ pub struct ReviewDecision {
     pub modifications: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub additions: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion_decisions: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_decisions: Option<HashMap<String, serde_json::Value>>,
 }
 
 pub struct ReviewState {
@@ -68,6 +72,8 @@ impl ReviewState {
                 comments: None,
                 modifications: None,
                 additions: None,
+                suggestion_decisions: None,
+                table_decisions: None,
             }));
             true
         } else {
@@ -98,6 +104,8 @@ mod tests {
             comments: None,
             modifications: None,
             additions: None,
+            suggestion_decisions: None,
+            table_decisions: None,
         }
     }
 

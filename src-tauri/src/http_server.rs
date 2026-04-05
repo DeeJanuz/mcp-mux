@@ -70,6 +70,10 @@ pub struct PushResponse {
     pub modifications: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub additions: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion_decisions: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_decisions: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl From<ReviewDecision> for PushResponse {
@@ -82,6 +86,8 @@ impl From<ReviewDecision> for PushResponse {
             comments: d.comments,
             modifications: d.modifications,
             additions: d.additions,
+            suggestion_decisions: d.suggestion_decisions,
+            table_decisions: d.table_decisions,
         }
     }
 }
@@ -206,6 +212,8 @@ pub async fn await_decision(
                     comments: None,
                     modifications: None,
                     additions: None,
+                    suggestion_decisions: None,
+                    table_decisions: None,
                 }.into());
             }
         }
@@ -242,6 +250,8 @@ pub async fn await_decision(
                     comments: None,
                     modifications: None,
                     additions: None,
+                    suggestion_decisions: None,
+                    table_decisions: None,
                 }.into());
             }
         }
@@ -324,6 +334,8 @@ pub async fn await_decision(
                 comments: None,
                 modifications: None,
                 additions: None,
+                suggestion_decisions: None,
+                table_decisions: None,
             }.into())
         }
     }
@@ -404,6 +416,8 @@ async fn push_handler(
                 comments: None,
                 modifications: None,
                 additions: None,
+                suggestion_decisions: None,
+                table_decisions: None,
             }),
         ),
         ExecutePushResult::Decision(resp) => {
@@ -891,6 +905,8 @@ mod tests {
             comments: Some(comments.clone()),
             modifications: Some(modifications.clone()),
             additions: Some(serde_json::json!({"extra": "data"})),
+            suggestion_decisions: None,
+            table_decisions: None,
         };
 
         let response: PushResponse = decision.into();
@@ -914,6 +930,8 @@ mod tests {
             comments: None,
             modifications: None,
             additions: None,
+            suggestion_decisions: None,
+            table_decisions: None,
         };
 
         let response = PushResponse::from(decision);

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_stream::wrappers::BroadcastStream;
@@ -484,12 +485,30 @@ async fn mcp_sse_handler(
         return Err(StatusCode::NOT_ACCEPTABLE);
     }
 
+    let requested_session_id = headers
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let state_guard = state.lock().await;
     let (session_id, rx) = {
         let mut sessions = state_guard.inner.mcp_sessions.lock().unwrap();
-        sessions.create_session()
+        if let Some(ref requested) = requested_session_id {
+            if let Some(rx) = sessions.subscribe(requested) {
+                (requested.clone(), rx)
+            } else {
+                return Err(StatusCode::NOT_FOUND);
+            }
+        } else {
+            sessions.create_session()
+        }
     };
     drop(state_guard);
+    eprintln!(
+        "[mcpviews] GET /mcp opened SSE session {} (requested={})",
+        session_id,
+        requested_session_id.as_deref().unwrap_or("<none>")
+    );
 
     let stream = BroadcastStream::new(rx)
         .filter_map(|result: Result<String, _>| result.ok())
@@ -504,11 +523,47 @@ async fn mcp_post_handler(
     headers: HeaderMap,
     Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
     body: String,
-) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
-    let mcp_session_id = headers
+) -> Result<impl IntoResponse, StatusCode> {
+    let started = Instant::now();
+    let method_name = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| value.get("method").and_then(|v| v.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "<unparsed>".to_string());
+    let mut mcp_session_id = headers
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    eprintln!(
+        "[mcpviews] POST /mcp method={} session_header={}",
+        method_name,
+        mcp_session_id.as_deref().unwrap_or("<none>")
+    );
+
+    // Streamable HTTP clients may begin with POST /mcp initialize before opening
+    // the SSE stream. In that case, create a server-side session and return its
+    // id in the initialize response so the client can bind follow-up requests.
+    let should_create_session = mcp_session_id.is_none()
+        && serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| value.get("method").and_then(|v| v.as_str()).map(|s| s == "initialize"))
+            .unwrap_or(false);
+    let created_session_id = if should_create_session {
+        let state_guard = state.lock().await;
+        let session_id = {
+            let mut sessions = state_guard.inner.mcp_sessions.lock().unwrap();
+            let (session_id, _rx) = sessions.create_session();
+            session_id
+        };
+        drop(state_guard);
+        mcp_session_id = Some(session_id.clone());
+        eprintln!(
+            "[mcpviews] Created MCP session {} from POST initialize",
+            session_id
+        );
+        Some(session_id)
+    } else {
+        None
+    };
 
     // If session header present, verify it exists
     if let Some(ref session_id) = mcp_session_id {
@@ -519,11 +574,50 @@ async fn mcp_post_handler(
         };
         drop(state_guard);
         if !exists {
+            eprintln!(
+                "[mcpviews] Rejecting method={} for unknown MCP session {}",
+                method_name, session_id
+            );
             return Err(StatusCode::NOT_FOUND);
         }
     }
     let (status, value) = mcp::mcp_handler(state, body, mcp_session_id).await;
-    Ok((status, Json(value)))
+    eprintln!(
+        "[mcpviews] POST /mcp method={} handler completed in {:?} status={}",
+        method_name,
+        started.elapsed(),
+        status
+    );
+    Ok(match value {
+        Some(value) => {
+            let mut response = (status, Json(value)).into_response();
+            if let Some(session_id) = created_session_id {
+                if let Ok(header_value) = session_id.parse() {
+                    response.headers_mut().insert("mcp-session-id", header_value);
+                }
+            }
+            eprintln!(
+                "[mcpviews] POST /mcp method={} response ready in {:?}",
+                method_name,
+                started.elapsed()
+            );
+            response
+        }
+        None => {
+            let mut response = status.into_response();
+            if let Some(session_id) = created_session_id {
+                if let Ok(header_value) = session_id.parse() {
+                    response.headers_mut().insert("mcp-session-id", header_value);
+                }
+            }
+            eprintln!(
+                "[mcpviews] POST /mcp method={} empty response ready in {:?}",
+                method_name,
+                started.elapsed()
+            );
+            response
+        }
+    })
 }
 
 async fn mcp_delete_handler(

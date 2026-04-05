@@ -2,6 +2,7 @@ use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::http_server::AsyncAppState;
@@ -156,6 +157,8 @@ async fn handle_single_request(
 
     match req.method.as_str() {
         "initialize" => {
+            let started = Instant::now();
+            eprintln!("[mcpviews] initialize: start");
             let requested_version = req
                 .params
                 .as_ref()
@@ -170,14 +173,19 @@ async fn handle_single_request(
             };
 
             let instructions = build_instructions(state).await;
+            eprintln!(
+                "[mcpviews] initialize: built instructions in {:?}",
+                started.elapsed()
+            );
 
-            Some(JsonRpcResponse::success(
+            let response = JsonRpcResponse::success(
                 id,
                 serde_json::json!({
                     "protocolVersion": negotiated,
                     "capabilities": {
                         "tools": { "listChanged": true },
-                        "prompts": { "listChanged": true }
+                        "prompts": { "listChanged": true },
+                        "resources": { "listChanged": false, "subscribe": false }
                     },
                     "serverInfo": {
                         "name": "mcpviews",
@@ -185,7 +193,12 @@ async fn handle_single_request(
                     },
                     "instructions": instructions
                 }),
-            ))
+            );
+            eprintln!(
+                "[mcpviews] initialize: returning response after {:?}",
+                started.elapsed()
+            );
+            Some(response)
         }
 
         // Notification — no response
@@ -234,6 +247,16 @@ async fn handle_single_request(
             ))
         }
 
+        "resources/list" => Some(JsonRpcResponse::success(
+            id,
+            serde_json::json!({ "resources": [] }),
+        )),
+
+        "resources/templates/list" => Some(JsonRpcResponse::success(
+            id,
+            serde_json::json!({ "resourceTemplates": [] }),
+        )),
+
         "prompts/get" => {
             let params = req.params.unwrap_or(Value::Object(Default::default()));
             let name = params
@@ -265,19 +288,19 @@ pub async fn mcp_handler(
     state: Arc<TokioMutex<AsyncAppState>>,
     body: String,
     _mcp_session_id: Option<String>,
-) -> (StatusCode, serde_json::Value) {
+) -> (StatusCode, Option<serde_json::Value>) {
     // Try parsing as a single request or a batch
     let body_value: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(_) => {
             return (
                 StatusCode::OK,
-                serde_json::to_value(JsonRpcResponse::error(
+                Some(serde_json::to_value(JsonRpcResponse::error(
                     None,
                     -32700,
                     "Parse error".to_string(),
                 ))
-                .unwrap(),
+                .unwrap()),
             );
         }
     };
@@ -289,12 +312,12 @@ pub async fn mcp_handler(
             Err(_) => {
                 return (
                     StatusCode::OK,
-                    serde_json::to_value(JsonRpcResponse::error(
+                    Some(serde_json::to_value(JsonRpcResponse::error(
                         None,
                         -32700,
                         "Parse error: invalid batch".to_string(),
                     ))
-                    .unwrap(),
+                    .unwrap()),
                 );
             }
         };
@@ -307,11 +330,11 @@ pub async fn mcp_handler(
         }
 
         if responses.is_empty() {
-            // All were notifications — return empty OK (no JSON-RPC response for notifications)
-            return (StatusCode::OK, Value::Null);
+            // All were notifications — return an empty HTTP response body.
+            return (StatusCode::ACCEPTED, None);
         }
 
-        (StatusCode::OK, serde_json::to_value(responses).unwrap())
+        (StatusCode::OK, Some(serde_json::to_value(responses).unwrap()))
     } else {
         // Single request
         let request: JsonRpcRequest = match serde_json::from_value(body_value) {
@@ -319,20 +342,20 @@ pub async fn mcp_handler(
             Err(_) => {
                 return (
                     StatusCode::OK,
-                    serde_json::to_value(JsonRpcResponse::error(
+                    Some(serde_json::to_value(JsonRpcResponse::error(
                         None,
                         -32700,
                         "Parse error: invalid request".to_string(),
                     ))
-                    .unwrap(),
+                    .unwrap()),
                 );
             }
         };
 
         match handle_single_request(request, &state).await {
-            Some(resp) => (StatusCode::OK, serde_json::to_value(resp).unwrap()),
-            // Notification — return empty OK
-            None => (StatusCode::OK, Value::Null),
+            Some(resp) => (StatusCode::OK, Some(serde_json::to_value(resp).unwrap())),
+            // Notification — return an empty HTTP response body.
+            None => (StatusCode::ACCEPTED, None),
         }
     }
 }

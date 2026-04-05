@@ -1,14 +1,18 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 pub struct McpSession {
     pub tx: broadcast::Sender<String>,
+    pub created_at: Instant,
 }
 
 pub struct McpSessionManager {
     sessions: HashMap<String, McpSession>,
 }
+
+const SESSION_GRACE_PERIOD: Duration = Duration::from_secs(30);
 
 impl McpSessionManager {
     pub fn new() -> Self {
@@ -21,7 +25,13 @@ impl McpSessionManager {
     pub fn create_session(&mut self) -> (String, broadcast::Receiver<String>) {
         let session_id = Uuid::new_v4().to_string();
         let (tx, rx) = broadcast::channel(64);
-        self.sessions.insert(session_id.clone(), McpSession { tx });
+        self.sessions.insert(
+            session_id.clone(),
+            McpSession {
+                tx,
+                created_at: Instant::now(),
+            },
+        );
         (session_id, rx)
     }
 
@@ -53,7 +63,10 @@ impl McpSessionManager {
 
     /// GC: remove sessions with no active receivers
     pub fn retain_active(&mut self) {
-        self.sessions.retain(|_, s| s.tx.receiver_count() > 0);
+        let now = Instant::now();
+        self.sessions.retain(|_, s| {
+            s.tx.receiver_count() > 0 || now.duration_since(s.created_at) < SESSION_GRACE_PERIOD
+        });
     }
 
     /// Check if a session exists

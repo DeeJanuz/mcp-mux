@@ -3,33 +3,33 @@
   "plugins": [
     {
       "name": "ludflow",
-      "version": "0.3.0",
-      "description": "Code analysis, documentation, and data governance powered by Ludflow",
+      "version": "0.5.0",
+      "description": "Code intelligence, data governance, and knowledge management powered by Ludflow",
       "author": "Ludflow",
       "homepage": "https://ludflow.com",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/ludflow-mcpviews/master/manifest.json",
-      "tags": ["code-analysis", "documentation", "data-governance", "knowledge-management"],
+      "tags": ["code-analysis", "search", "data-governance", "knowledge-management"],
       "manifest": {
         "name": "ludflow",
-        "version": "0.3.0",
-        "download_url": "https://github.com/DeeJanuz/ludflow-mcpviews/releases/download/v0.3.0/ludflow-plugin.zip",
+        "version": "0.5.0",
+        "download_url": "https://github.com/DeeJanuz/ludflow-mcpviews/releases/download/v0.5.0/ludflow-plugin.zip",
         "renderers": {
-          "search_codebase": "search_results",
-          "vector_search": "search_results",
-          "get_code_units": "code_units",
-          "get_document": "document_preview",
-          "write_document": "document_preview",
-          "list_documents": "document_preview",
+          "search_codebase": "rich_content",
+          "vector_search": "rich_content",
+          "get_code_units": "rich_content",
+          "get_document": "rich_content",
+          "write_document": "rich_content",
+          "list_documents": "rich_content",
           "get_data_schema": "structured_data",
           "manage_data_draft": "structured_data",
           "get_data_lake_schema": "structured_data",
-          "get_dependencies": "dependencies",
-          "get_file_content": "file_content",
-          "get_module_overview": "module_overview",
-          "get_analysis_stats": "analysis_stats",
+          "get_dependencies": "rich_content",
+          "get_file_content": "rich_content",
+          "get_module_overview": "rich_content",
+          "get_analysis_stats": "rich_content",
           "get_business_concepts": "structured_data",
           "manage_knowledge_entries": "structured_data",
-          "get_column_context": "column_context"
+          "get_column_context": "rich_content"
         },
         "no_auto_push": [
           "write_document",
@@ -55,7 +55,7 @@
     },
     {
       "name": "decidr",
-      "version": "0.1.1",
+      "version": "0.1.4",
       "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
@@ -63,8 +63,8 @@
       "tags": ["governance", "decisions", "project-management", "approvals"],
       "manifest": {
         "name": "decidr",
-        "version": "0.1.1",
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/v0.1.1/decidr.zip",
+        "version": "0.1.4",
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.4/decidr.zip",
         "renderers": {
           "list_initiatives": "decidr_list",
           "list_projects": "decidr_list",
@@ -77,7 +77,7 @@
           "get_task": "decidr_list",
           "get_bridge": "decidr_list",
           "search": "decidr_list",
-          "my_action_items": "decidr_dashboard",
+          "my_action_items": "decidr_list",
           "create_organization": "decidr_list",
           "list_organizations": "decidr_list",
           "list_members": "decidr_list",
@@ -121,7 +121,7 @@
             "token_url": "https://app.ludflow.com/oauth/token",
             "scopes": ["mcp:tools"]
           },
-          "tool_prefix": "decidr_"
+          "tool_prefix": "decidr__"
         }
       }
     }

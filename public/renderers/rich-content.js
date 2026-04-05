@@ -84,6 +84,107 @@
     });
   }
 
+  // ── Combined submit bar builder ──
+
+  /**
+   * Build the combined submit bar for review mode with suggestions and/or table embeds.
+   * Returns the submit bar DOM element.
+   */
+  function buildCombinedSubmitBar(container, hasSuggestions, hasTables, data, tableStates, onDecision) {
+    var submitBar = document.createElement('div');
+    submitBar.className = 'sd-submit-bar';
+
+    var acceptAllBtn = document.createElement('button');
+    acceptAllBtn.textContent = 'Accept All';
+    acceptAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-small);';
+    acceptAllBtn.addEventListener('click', function () {
+      // Accept all suggestions
+      var widgets = container.querySelectorAll('.suggest-widget');
+      widgets.forEach(function (w) {
+        w.classList.remove('suggest-rejected');
+        w.classList.add('suggest-accepted');
+        w.setAttribute('data-suggest-status', 'accept');
+      });
+      // Accept all table rows
+      if (hasTables && window.__structuredDataUtils) {
+        var sdu = window.__structuredDataUtils;
+        data.tables.forEach(function (t) {
+          if (tableStates[t.id]) {
+            sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, 'accept');
+          }
+        });
+      }
+    });
+
+    var rejectAllBtn = document.createElement('button');
+    rejectAllBtn.textContent = 'Reject All';
+    rejectAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-small);';
+    rejectAllBtn.addEventListener('click', function () {
+      // Reject all suggestions
+      var widgets = container.querySelectorAll('.suggest-widget');
+      widgets.forEach(function (w) {
+        w.classList.remove('suggest-accepted');
+        w.classList.add('suggest-rejected');
+        w.setAttribute('data-suggest-status', 'reject');
+      });
+      // Reject all table rows
+      if (hasTables && window.__structuredDataUtils) {
+        var sdu = window.__structuredDataUtils;
+        data.tables.forEach(function (t) {
+          if (tableStates[t.id]) {
+            sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, 'reject');
+          }
+        });
+      }
+    });
+
+    var submitBtn = document.createElement('button');
+    submitBtn.textContent = 'Submit Decisions';
+    submitBtn.style.cssText = 'padding: var(--space-2) var(--space-4); border-radius: var(--border-radius-sm); border: 1px solid var(--color-info); background: var(--color-info); color: white; cursor: pointer; font-size: var(--text-small); font-weight: var(--weight-semibold);';
+    submitBtn.addEventListener('click', function () {
+      // Build combined payload
+      var suggestionDecisions = null;
+      if (hasSuggestions) {
+        suggestionDecisions = {};
+        var widgets = container.querySelectorAll('.suggest-widget');
+        widgets.forEach(function (w) {
+          var id = w.getAttribute('data-suggest-id');
+          var status = w.getAttribute('data-suggest-status') || 'pending';
+          var comment = w.getAttribute('data-suggest-comment') || null;
+          suggestionDecisions[id] = { status: status, comment: comment };
+        });
+      }
+
+      var tableDecisions = null;
+      if (hasTables && window.__structuredDataUtils) {
+        tableDecisions = {};
+        var sdu = window.__structuredDataUtils;
+        data.tables.forEach(function (t) {
+          if (tableStates[t.id]) {
+            var tablePayload = sdu.buildDecisionPayload([t], { [t.id]: tableStates[t.id] });
+            tableDecisions[t.id] = {
+              decisions: tablePayload.decisions || {},
+              modifications: tablePayload.modifications || {},
+              additions: tablePayload.additions || {},
+            };
+          }
+        });
+      }
+
+      var payload = {
+        type: 'rich_content_decisions',
+        suggestion_decisions: suggestionDecisions,
+        table_decisions: tableDecisions,
+      };
+      onDecision(payload);
+    });
+
+    submitBar.appendChild(acceptAllBtn);
+    submitBar.appendChild(rejectAllBtn);
+    submitBar.appendChild(submitBtn);
+    return submitBar;
+  }
+
   // ── Main renderer ──
 
   window.__renderers.rich_content = function renderRichContent(container, data, meta, toolArgs, reviewRequired, onDecision) {
@@ -215,97 +316,7 @@
 
       // Step 6: Combined submit bar (review mode with suggestions OR tables)
       if (reviewRequired && onDecision && (hasSuggestions || hasTables)) {
-        var submitBar = document.createElement('div');
-        submitBar.className = 'sd-submit-bar';
-
-        var acceptAllBtn = document.createElement('button');
-        acceptAllBtn.textContent = 'Accept All';
-        acceptAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-small);';
-        acceptAllBtn.addEventListener('click', function () {
-          // Accept all suggestions
-          var widgets = container.querySelectorAll('.suggest-widget');
-          widgets.forEach(function (w) {
-            w.classList.remove('suggest-rejected');
-            w.classList.add('suggest-accepted');
-            w.setAttribute('data-suggest-status', 'accept');
-          });
-          // Accept all table rows
-          if (hasTables && window.__structuredDataUtils) {
-            var sdu = window.__structuredDataUtils;
-            data.tables.forEach(function (t) {
-              if (tableStates[t.id]) {
-                sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, 'accept');
-              }
-            });
-          }
-        });
-
-        var rejectAllBtn = document.createElement('button');
-        rejectAllBtn.textContent = 'Reject All';
-        rejectAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-small);';
-        rejectAllBtn.addEventListener('click', function () {
-          // Reject all suggestions
-          var widgets = container.querySelectorAll('.suggest-widget');
-          widgets.forEach(function (w) {
-            w.classList.remove('suggest-accepted');
-            w.classList.add('suggest-rejected');
-            w.setAttribute('data-suggest-status', 'reject');
-          });
-          // Reject all table rows
-          if (hasTables && window.__structuredDataUtils) {
-            var sdu = window.__structuredDataUtils;
-            data.tables.forEach(function (t) {
-              if (tableStates[t.id]) {
-                sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, 'reject');
-              }
-            });
-          }
-        });
-
-        var submitBtn = document.createElement('button');
-        submitBtn.textContent = 'Submit Decisions';
-        submitBtn.style.cssText = 'padding: var(--space-2) var(--space-4); border-radius: var(--border-radius-sm); border: 1px solid var(--color-info); background: var(--color-info); color: white; cursor: pointer; font-size: var(--text-small); font-weight: var(--weight-semibold);';
-        submitBtn.addEventListener('click', function () {
-          // Build combined payload
-          var suggestionDecisions = null;
-          if (hasSuggestions) {
-            suggestionDecisions = {};
-            var widgets = container.querySelectorAll('.suggest-widget');
-            widgets.forEach(function (w) {
-              var id = w.getAttribute('data-suggest-id');
-              var status = w.getAttribute('data-suggest-status') || 'pending';
-              var comment = w.getAttribute('data-suggest-comment') || null;
-              suggestionDecisions[id] = { status: status, comment: comment };
-            });
-          }
-
-          var tableDecisions = null;
-          if (hasTables && window.__structuredDataUtils) {
-            tableDecisions = {};
-            var sdu = window.__structuredDataUtils;
-            data.tables.forEach(function (t) {
-              if (tableStates[t.id]) {
-                var tablePayload = sdu.buildDecisionPayload([t], { [t.id]: tableStates[t.id] });
-                tableDecisions[t.id] = {
-                  decisions: tablePayload.decisions || {},
-                  modifications: tablePayload.modifications || {},
-                  additions: tablePayload.additions || {},
-                };
-              }
-            });
-          }
-
-          var payload = {
-            type: 'rich_content_decisions',
-            suggestion_decisions: suggestionDecisions,
-            table_decisions: tableDecisions,
-          };
-          onDecision(payload);
-        });
-
-        submitBar.appendChild(acceptAllBtn);
-        submitBar.appendChild(rejectAllBtn);
-        submitBar.appendChild(submitBtn);
+        var submitBar = buildCombinedSubmitBar(container, hasSuggestions, hasTables, data, tableStates, onDecision);
         container.appendChild(submitBar);
       }
     }

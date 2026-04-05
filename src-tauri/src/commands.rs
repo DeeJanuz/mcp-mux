@@ -805,4 +805,120 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("already up to date"));
     }
+
+    // --- M-023: Tests for get_plugin_auth_header logic ---
+    // The Tauri command `get_plugin_auth_header` wraps `resolve_plugin_auth` + `resolve_header`.
+    // We test the underlying logic since the Tauri State wrapper can't be constructed in unit tests.
+
+    #[test]
+    fn test_auth_header_no_plugin_found() {
+        let (state, _dir) = test_app_state();
+        let registry = state.plugin_registry.lock().unwrap();
+        let result = registry.resolve_plugin_auth("nonexistent-plugin");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn test_auth_header_plugin_no_auth_configured() {
+        let (state, _dir) = test_app_state();
+        // Add a plugin with no auth config (mcp is None)
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(test_manifest("no-auth-plugin")).unwrap();
+        }
+        let registry = state.plugin_registry.lock().unwrap();
+        let result = registry.resolve_plugin_auth("no-auth-plugin");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no auth config"));
+    }
+
+    #[test]
+    fn test_auth_header_plugin_with_bearer_stored_token() {
+        let (state, dir) = test_app_state();
+
+        // Create a plugin manifest with Bearer auth
+        let mut manifest = test_manifest("bearer-plugin");
+        manifest.mcp = Some(mcpviews_shared::PluginMcpConfig {
+            url: "https://example.com".to_string(),
+            auth: Some(PluginAuth::Bearer {
+                token_env: "TEST_BEARER_TOKEN_UNUSED".to_string(),
+            }),
+            tool_prefix: "bearer".to_string(),
+        });
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        // Store a token on disk in the temp auth dir
+        let auth_dir = dir.path().join("auth");
+        std::fs::create_dir_all(&auth_dir).unwrap();
+        let token = mcpviews_shared::token_store::StoredToken {
+            access_token: "test-secret-token".to_string(),
+            refresh_token: None,
+            expires_at: None,
+        };
+        mcpviews_shared::token_store::store_token(&auth_dir, "bearer-plugin", &token).unwrap();
+
+        let registry = state.plugin_registry.lock().unwrap();
+        let auth = registry.resolve_plugin_auth("bearer-plugin").unwrap();
+
+        // resolve_header_with_auth_dir lets us point at the temp dir
+        let header = auth.resolve_header_with_auth_dir("bearer-plugin", &auth_dir);
+        assert!(header.is_some());
+        assert_eq!(header.unwrap(), "Bearer test-secret-token");
+    }
+
+    #[test]
+    fn test_auth_header_bearer_no_token_returns_none() {
+        let (state, dir) = test_app_state();
+
+        let mut manifest = test_manifest("bearer-no-token");
+        manifest.mcp = Some(mcpviews_shared::PluginMcpConfig {
+            url: "https://example.com".to_string(),
+            auth: Some(PluginAuth::Bearer {
+                token_env: "MCPVIEWS_TEST_NONEXISTENT_ENV_VAR".to_string(),
+            }),
+            tool_prefix: "bearer".to_string(),
+        });
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        let registry = state.plugin_registry.lock().unwrap();
+        let auth = registry.resolve_plugin_auth("bearer-no-token").unwrap();
+
+        // No stored token, no env var → resolve_header returns None
+        let auth_dir = dir.path().join("auth");
+        let header = auth.resolve_header_with_auth_dir("bearer-no-token", &auth_dir);
+        assert!(header.is_none());
+    }
+
+    #[test]
+    fn test_auth_header_apikey_no_token_returns_none() {
+        let (state, dir) = test_app_state();
+
+        let mut manifest = test_manifest("apikey-plugin");
+        manifest.mcp = Some(mcpviews_shared::PluginMcpConfig {
+            url: "https://example.com".to_string(),
+            auth: Some(PluginAuth::ApiKey {
+                header_name: "X-API-Key".to_string(),
+                key_env: Some("MCPVIEWS_TEST_NONEXISTENT_API_KEY".to_string()),
+            }),
+            tool_prefix: "apikey".to_string(),
+        });
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        let registry = state.plugin_registry.lock().unwrap();
+        let auth = registry.resolve_plugin_auth("apikey-plugin").unwrap();
+
+        let auth_dir = dir.path().join("auth");
+        let header = auth.resolve_header_with_auth_dir("apikey-plugin", &auth_dir);
+        assert!(header.is_none());
+    }
 }

@@ -1,7 +1,7 @@
 # Technical Debt & Enhancement Log
 
-**Last Updated:** 2026-04-03
-**Total Active Issues:** 3
+**Last Updated:** 2026-04-05
+**Total Active Issues:** 8
 **Resolved This Month:** 61
 
 ---
@@ -14,9 +14,15 @@ _None_
 
 ### High
 
-_None_
+- **H-008:** No test coverage for ~500 lines of new suggestion/table-embed/citation frontend logic -- `renderMarkdownWithSuggestions`, `buildSuggestionWidget`, `preprocessTableEmbeds`, `hydrateTableEmbeds`, and combined submit bar in `rich-content.js` and `shared.js` have zero tests. _(Commit 3f5c856)_
 
 ### Medium
+
+- **M-033b:** `shared.js` approaching God-module status (~535+ lines, 8+ distinct responsibilities) -- suggestion widget system (~150 lines), citation map, markdown rendering, badge creation, proxy status, theme detection, and renderer invocation all in one file. Suggestion widget system should be extracted to its own module. _(Commit 3f5c856)_
+- **M-034:** `rich-content.js` renderer function accumulating multiple responsibilities -- now handles markdown, suggestions, table embeds, citations, mermaid, and combined submit bar (~90 lines of inline DOM construction). Submit bar should be extracted to a dedicated function. _(Commit 3f5c856)_
+- **M-035:** Hard-coded plugin entity type-to-tool mapping in `citation-panel.js` -- `if (data.type === 'code_unit') toolName = 'get_code_units'` requires modification for each new entity type. Should use a lookup table or convention-based mapping. _(Commit 3f5c856)_
+- **M-036:** Duplicated `renderer_selection` rule string between `collect_rules` and `collect_builtin_rules` in `mcp_tools.rs` -- both contain identical long string literals updated in tandem. Should be a shared constant. _(Commit 3f5c856, pre-existing, reinforced)_
+- **M-037:** Growing type-switch on `decision.type` in `main.js` `onDecision` handler -- adding new decision types requires modifying the if/else chain. Should use a decision handler registry. _(Commit 3f5c856)_
 
 - **M-028:** No async integration test coverage for `list_prompts`, or `get_prompt` -- `build_registry_entries` and `resolve_builtin_prompt` now have pure-function tests (a36294a), but remaining async functions (~5 code paths) still need integration tests. _(Commit 44e1f76, partially addressed 4d55dc6, a36294a)_
 - **M-023:** No test coverage for `get_plugin_auth_header` command -- function has 3 code paths (stored token, OAuth refresh, no token error) with no tests. Requires integration test infrastructure. _(Commit 2565475)_
@@ -144,6 +150,7 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| 3f5c856 | 2026-04-05 | 58/100 | Acceptable |
 | f509ef2 | 2026-04-03 | 72/100 | Good |
 | c845b89 | 2026-04-03 | 82/100 | Good |
 | bbc20f3 | 2026-04-03 | 92/100 | Excellent |

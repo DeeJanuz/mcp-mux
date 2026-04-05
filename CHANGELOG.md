@@ -5,7 +5,7 @@ All notable changes to MCPViews will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.1] - 2026-04-05
 
 ### Added
 - MCP `resources/list` and `resources/templates/list` stub handlers returning empty arrays
@@ -14,10 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `GET /mcp` accepts optional `mcp-session-id` request header to subscribe to an existing session
 - 30-second grace period (`SESSION_GRACE_PERIOD`) on session GC so newly created sessions survive before their first SSE subscriber connects
 - `created_at` timestamp on `McpSession` for grace period tracking
+- Grace period unit tests for `retain_active` (within window + expired)
 
 ### Changed
 - Notifications return `202 Accepted` with empty body instead of `200 OK` with `null` JSON
 - `mcp_handler` return type changed to `(StatusCode, Option<serde_json::Value>)` to distinguish empty vs JSON responses
+- Refactored `mcp_post_handler` (SRP): parse body once, extracted `maybe_create_session` and `build_mcp_response` helpers
+- Removed redundant timing/diagnostic `eprintln!` calls from `mcp.rs` and `http_server.rs`; kept operationally useful logs
+
+### Fixed
+- `test_retain_active_removes_sessions_with_no_receivers` and `test_retain_active_removes_all_when_no_receivers` now set `created_at` in the past to account for the 30s grace period
 
 ## [0.2.0] - 2026-04-05
 

@@ -2299,7 +2299,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcpviews"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2326,7 +2326,7 @@ dependencies = [
 
 [[package]]
 name = "mcpviews-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "dirs 5.0.1",
@@ -2339,7 +2339,7 @@ dependencies = [
 
 [[package]]
 name = "mcpviews-shared"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dirs 5.0.1",
  "futures",

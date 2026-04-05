@@ -12,6 +12,21 @@ pub struct McpSessionManager {
     sessions: HashMap<String, McpSession>,
 }
 
+#[cfg(test)]
+impl McpSessionManager {
+    /// Test helper: insert a session with a custom created_at timestamp
+    fn create_session_with_created_at(
+        &mut self,
+        created_at: Instant,
+    ) -> (String, broadcast::Receiver<String>) {
+        let session_id = Uuid::new_v4().to_string();
+        let (tx, rx) = broadcast::channel(64);
+        self.sessions
+            .insert(session_id.clone(), McpSession { tx, created_at });
+        (session_id, rx)
+    }
+}
+
 const SESSION_GRACE_PERIOD: Duration = Duration::from_secs(30);
 
 impl McpSessionManager {
@@ -176,7 +191,8 @@ mod tests {
     #[test]
     fn test_retain_active_removes_sessions_with_no_receivers() {
         let mut mgr = McpSessionManager::new();
-        let (id1, rx1) = mgr.create_session();
+        let past = Instant::now() - Duration::from_secs(60);
+        let (id1, rx1) = mgr.create_session_with_created_at(past);
         let (id2, _rx2) = mgr.create_session();
 
         // Drop receiver for session 1
@@ -184,7 +200,7 @@ mod tests {
 
         mgr.retain_active();
 
-        // id1 had its receiver dropped, so it should be removed
+        // id1 had its receiver dropped and is past grace period, so it should be removed
         assert!(!mgr.has_session(&id1));
         // id2 still has a live receiver
         assert!(mgr.has_session(&id2));
@@ -222,8 +238,9 @@ mod tests {
     #[test]
     fn test_retain_active_removes_all_when_no_receivers() {
         let mut mgr = McpSessionManager::new();
-        let (id1, rx1) = mgr.create_session();
-        let (id2, rx2) = mgr.create_session();
+        let past = Instant::now() - Duration::from_secs(60);
+        let (id1, rx1) = mgr.create_session_with_created_at(past);
+        let (id2, rx2) = mgr.create_session_with_created_at(past);
 
         drop(rx1);
         drop(rx2);
@@ -231,5 +248,24 @@ mod tests {
         mgr.retain_active();
         assert!(!mgr.has_session(&id1));
         assert!(!mgr.has_session(&id2));
+    }
+
+    #[test]
+    fn test_retain_active_keeps_session_within_grace_period() {
+        let mut mgr = McpSessionManager::new();
+        let (id, rx) = mgr.create_session(); // created_at = now, within 30s grace
+        drop(rx);
+        mgr.retain_active();
+        assert!(mgr.has_session(&id)); // kept due to grace period
+    }
+
+    #[test]
+    fn test_retain_active_removes_session_past_grace_period() {
+        let mut mgr = McpSessionManager::new();
+        let past = Instant::now() - Duration::from_secs(60);
+        let (id, rx) = mgr.create_session_with_created_at(past);
+        drop(rx);
+        mgr.retain_active();
+        assert!(!mgr.has_session(&id)); // removed: no receivers + past grace period
     }
 }

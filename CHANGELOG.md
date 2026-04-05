@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Extracted suggestion widget system (`renderMarkdownWithSuggestions`, `buildSuggestionWidget`) from `shared.js` into dedicated `suggestion-widgets.js` module (~210 lines)
+- Extracted `buildCombinedSubmitBar` from inline code in `rich-content.js` into a dedicated function (~100 lines)
+- Replaced hard-coded if/else plugin type-to-tool mapping in `citation-panel.js` with `PLUGIN_TYPE_TO_TOOL` lookup table
+- Replaced decision type if/else chain in `main.js` `onDecision` with `DECISION_HANDLERS` registry object
+- Deduplicated `renderer_selection` rule string to `RENDERER_SELECTION_RULE` shared constant in `mcp_tools.rs`
+- Added 49 JS tests (suggestion widgets, table embeds, decision handlers) and 15 Rust tests (`get_plugin_auth_header`, `list_prompts`, `get_prompt`)
+
 ### Added
 - Inline edit suggestions in rich_content: `{{suggest:id=X}}` markers with accept/reject toggles and comment buttons, supporting replace/insert/delete types and block-level multiline diffs
 - Embedded structured_data tables in rich_content: ` ```structured_data:tableId``` ` fenced blocks render fully interactive tables within markdown documents

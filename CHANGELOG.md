@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Inline edit suggestions in rich_content: `{{suggest:id=X}}` markers with accept/reject toggles and comment buttons, supporting replace/insert/delete types and block-level multiline diffs
+- Embedded structured_data tables in rich_content: ` ```structured_data:tableId``` ` fenced blocks render fully interactive tables within markdown documents
+- Plugin citations: `[label](cite:plugin:SOURCE:TYPE:ID)` links that open a slideout panel with lazy-fetched plugin data via companion proxy
+- Combined review payload (`rich_content_decisions`) with `suggestionDecisions` and `tableDecisions` fields returned by `await_review`
+- Plugin detail renderer in citation panel for rendering plugin components in slideout panels
+- `invokeRenderer` helper on `__companionUtils` for programmatically rendering plugin components
+- Ludflow theme CSS variables (`--lf-*`) mapped to core design tokens for consistent plugin styling
+- Suggestion widget CSS styles (inline and block-level) with accept/reject/comment visual states
 - Install guide (`docs/install.md`) with platform-specific instructions for macOS, Windows, and Linux, plus agent connection setup, plugin installation, and troubleshooting
 - CI auto-updates download links in install page when bumping versions
 - Plugin rules system: plugins can declare `plugin_rules` in their manifest — high-level behavioral rules agents see every session via `init_session`, `mcpviews_setup`, and `get_plugin_docs`
@@ -22,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Version-controlled release pipeline: `workflow_dispatch` with optional `version` input bumps all files, updates changelog, tags, and triggers build+release
 
 ### Changed
+- Bumped `RULES_VERSION` from "4" to "5" — triggers agents to re-persist rules files with renderer convergence capabilities
+- Updated `renderer_selection` built-in rule to document inline suggestions, embedded tables, and plugin citations in rich_content
+- Updated `structured_data` built-in rule to emphasize hierarchical row nesting with `children` arrays instead of flat column workarounds
+- Updated `await_review` tool description to include `suggestionDecisions` and `tableDecisions` response fields
+- Updated `rich_content` renderer data hint to document suggestions, tables, and plugin citation schemas
+- Moved `buildCitationMap` and `CITE_TYPE_MAP` from rich-content renderer to shared utilities
 - Bumped `RULES_VERSION` from "2" to "3" — triggers agents to re-persist rules files with new plugin rules
 
 ### Fixed

@@ -498,6 +498,8 @@
     var comments = null;
     var modifications = null;
     var additions = null;
+    var suggestionDecisions = null;
+    var tableDecisions = null;
 
     if (typeof decision === 'string') {
       decisionStr = decision;
@@ -510,6 +512,10 @@
         if (decision.comments) comments = decision.comments;
         if (decision.modifications) modifications = decision.modifications;
         if (decision.additions) additions = decision.additions;
+      } else if (decision.type === 'rich_content_decisions') {
+        decisionStr = 'partial';
+        suggestionDecisions = decision.suggestion_decisions || null;
+        tableDecisions = decision.table_decisions || null;
       } else {
         decisionStr = 'partial';
         operationDecisions = decision;
@@ -525,6 +531,8 @@
         comments: comments,
         modifications: modifications,
         additions: additions,
+        suggestionDecisions: suggestionDecisions,
+        tableDecisions: tableDecisions,
       }).catch(function (err) {
         console.error('Failed to submit decision:', err);
       });

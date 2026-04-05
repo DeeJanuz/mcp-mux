@@ -24,6 +24,8 @@ pub fn submit_decision(
     comments: Option<HashMap<String, String>>,
     modifications: Option<HashMap<String, String>>,
     additions: Option<serde_json::Value>,
+    suggestion_decisions: Option<HashMap<String, serde_json::Value>>,
+    table_decisions: Option<HashMap<String, serde_json::Value>>,
     state: State<Arc<AppState>>,
 ) -> Result<(), String> {
     // Update session state
@@ -55,6 +57,8 @@ pub fn submit_decision(
         comments,
         modifications,
         additions,
+        suggestion_decisions,
+        table_decisions,
     };
 
     let mut reviews = state.reviews.lock().unwrap();

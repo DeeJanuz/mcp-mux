@@ -157,6 +157,26 @@
   --dg-chip-accepted-border: #86efac;
   --dg-value-modified-border: #f59e0b;
   --dg-value-modified-text: #92400e;
+
+  /* === Ludflow theme variables — mapped to core design tokens === */
+  --lf-bg: var(--bg-surface);
+  --lf-bg-subtle: var(--bg-surface-inset);
+  --lf-bg-hover: var(--bg-surface-hover, var(--bg-surface-inset));
+  --lf-border: var(--border-default);
+  --lf-border-light: var(--border-subtle, var(--border-default));
+  --lf-text: var(--text-primary);
+  --lf-text-secondary: var(--text-secondary);
+  --lf-text-tertiary: var(--text-tertiary, var(--text-secondary));
+  --lf-text-mono: var(--text-secondary);
+  --lf-link: var(--accent-primary);
+  --lf-code-bg: #1e1e2e;
+  --lf-code-text: #cdd6f4;
+  --lf-code-line: #6c7086;
+  --lf-badge-bg: var(--bg-surface-inset);
+  --lf-badge-text: var(--text-secondary);
+  --lf-error-bg: var(--color-error-bg);
+  --lf-error-border: var(--color-error);
+  --lf-error-text: var(--color-error-text);
 }
 
 [data-theme="dark"] {
@@ -1693,3 +1713,67 @@ html[data-theme] .collapsible-body {
   background: var(--bg-surface-hover, #e0e7ff);
   border-color: var(--text-link, #2563eb);
 }
+
+/* === Suggestion widgets === */
+
+/* Inline suggestions */
+.suggest-widget { display: inline; position: relative; }
+.suggest-content { display: inline; }
+.suggest-controls { display: inline; vertical-align: middle; }
+.suggest-old { background: var(--color-error-bg); color: var(--color-error-text); text-decoration: line-through; padding: 0 2px; border-radius: 2px; }
+.suggest-new { background: var(--color-success-bg); color: var(--color-success-text); text-decoration: underline; padding: 0 2px; border-radius: 2px; }
+.suggest-toggle { display: inline-flex; gap: 2px; margin-left: 4px; vertical-align: middle; }
+.suggest-toggle-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0; border: 1px solid var(--border-default);
+  border-radius: var(--border-radius-sm); background: var(--bg-surface);
+  color: var(--text-secondary); cursor: pointer; font-size: 11px; line-height: 1;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.suggest-accept-btn:hover { background: var(--color-success-bg); color: var(--color-success-text); border-color: var(--color-success); }
+.suggest-reject-btn:hover { background: var(--color-error-bg); color: var(--color-error-text); border-color: var(--color-error); }
+.suggest-accepted .suggest-old { display: none; }
+.suggest-accepted .suggest-new { text-decoration: none; }
+.suggest-accepted .suggest-accept-btn { background: var(--color-success-bg); color: var(--color-success-text); border-color: var(--color-success); }
+.suggest-rejected .suggest-new { display: none; }
+.suggest-rejected .suggest-old { text-decoration: none; opacity: 0.5; }
+.suggest-rejected .suggest-reject-btn { background: var(--color-error-bg); color: var(--color-error-text); border-color: var(--color-error); }
+
+/* Block-level suggestions (multiline content) */
+.suggest-block { display: block; border: 1px solid var(--border-default); border-radius: var(--border-radius-sm); margin: var(--space-2) 0; padding: 0; overflow: hidden; }
+.suggest-block .suggest-content { display: block; }
+.suggest-block .suggest-old { display: block; padding: var(--space-2) var(--space-3); text-decoration: none; border-left: 3px solid var(--color-error); white-space: pre-wrap; font-family: var(--font-mono, monospace); font-size: var(--text-small); }
+.suggest-block .suggest-new { display: block; padding: var(--space-2) var(--space-3); text-decoration: none; border-left: 3px solid var(--color-success); white-space: pre-wrap; font-family: var(--font-mono, monospace); font-size: var(--text-small); }
+.suggest-block .suggest-controls { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); background: var(--bg-surface-inset); border-top: 1px solid var(--border-default); }
+.suggest-block .suggest-toggle { margin-left: 0; }
+.suggest-block.suggest-accepted .suggest-old { display: none; }
+.suggest-block.suggest-accepted .suggest-new { border-left-color: var(--color-success); background: transparent; }
+.suggest-block.suggest-rejected .suggest-new { display: none; }
+.suggest-block.suggest-rejected .suggest-old { opacity: 0.5; border-left-color: var(--color-error); background: transparent; }
+
+/* Comment button and popover */
+.suggest-comment-btn { font-size: 10px; }
+.suggest-comment-btn.has-comment { color: var(--color-info); border-color: var(--color-info); background: var(--color-info-bg, rgba(59, 130, 246, 0.1)); }
+.suggest-comment-popover {
+  position: absolute; z-index: 10; top: 100%; left: 0; margin-top: 4px;
+  background: var(--bg-surface); border: 1px solid var(--border-default);
+  border-radius: var(--border-radius-sm); box-shadow: var(--glass-shadow-elevated);
+  padding: var(--space-2); min-width: 240px;
+}
+.suggest-block .suggest-comment-popover { position: relative; top: auto; margin-top: 0; border-top: 1px solid var(--border-default); border-radius: 0; box-shadow: none; }
+.suggest-comment-input {
+  width: 100%; box-sizing: border-box; resize: vertical; padding: var(--space-1) var(--space-2);
+  font-family: var(--font-sans); font-size: var(--text-small); color: var(--text-primary);
+  background: var(--bg-surface-inset); border: 1px solid var(--border-default);
+  border-radius: var(--border-radius-sm); outline: none;
+}
+.suggest-comment-input:focus { border-color: var(--accent-primary); }
+.suggest-comment-actions { display: flex; gap: var(--space-1); margin-top: var(--space-1); justify-content: flex-end; }
+.suggest-comment-save, .suggest-comment-cancel {
+  padding: var(--space-1) var(--space-2); font-size: var(--text-xs); border-radius: var(--border-radius-sm);
+  cursor: pointer; border: 1px solid var(--border-default); background: var(--bg-surface);
+  color: var(--text-primary); transition: background 0.15s;
+}
+.suggest-comment-save { background: var(--accent-primary); color: white; border-color: var(--accent-primary); }
+.suggest-comment-save:hover { opacity: 0.9; }
+.suggest-comment-cancel:hover { background: var(--bg-surface-hover); }

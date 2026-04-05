@@ -535,6 +535,60 @@
     kdex: renderKdexDetail
   };
 
+  // ── Plugin detail renderer ──
+  DETAIL_RENDERERS['plugin'] = function renderPluginDetail(body, data) {
+    // data = { source: 'ludflow', type: 'code_unit', id: 'abc123', label: '...' }
+    var rendererName = data.type;
+    var renderers = window.__renderers || {};
+
+    if (typeof renderers[rendererName] === 'function') {
+      // Render the plugin component into the citation panel body
+      var utils = window.__companionUtils;
+
+      // If we have full data, render directly
+      if (data.fullData) {
+        renderers[rendererName](body, data.fullData, null, null, false, null);
+        return;
+      }
+
+      // Otherwise, lazy-fetch via proxy
+      if (utils.companionFetch) {
+        var toolName = 'get_' + data.type;
+        if (data.type === 'code_unit') toolName = 'get_code_units';
+        if (data.type === 'data_table') toolName = 'get_data_schema';
+
+        var statusEl = document.createElement('div');
+        statusEl.style.cssText = 'padding: 16px; color: var(--text-secondary); text-align: center;';
+        statusEl.textContent = 'Loading...';
+        body.appendChild(statusEl);
+
+        utils.companionFetch(toolName, { id: data.id })
+          .then(function (result) {
+            body.removeChild(statusEl);
+            if (result && result.data) {
+              renderers[rendererName](body, result.data, null, null, false, null);
+            } else {
+              var msg = document.createElement('div');
+              msg.style.cssText = 'padding: 16px; color: var(--text-secondary);';
+              msg.textContent = 'No data available';
+              body.appendChild(msg);
+            }
+          })
+          .catch(function (err) {
+            statusEl.textContent = 'Failed to load: ' + err.message;
+            statusEl.style.color = 'var(--color-error)';
+          });
+      } else {
+        var msg = document.createElement('div');
+        msg.style.cssText = 'padding: 16px; color: var(--text-secondary);';
+        msg.textContent = 'Plugin detail not available (no proxy configured)';
+        body.appendChild(msg);
+      }
+    } else {
+      renderGenericDetail(body, data);
+    }
+  };
+
   // Register on shared utils
   window.__companionUtils = window.__companionUtils || {};
   window.__companionUtils.openCitationPanel = openCitationPanel;

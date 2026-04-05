@@ -8,7 +8,7 @@ use tauri::Emitter;
 use crate::http_server::{execute_push, store_push, await_decision, AsyncAppState, ExecutePushResult};
 use crate::plugin::{PluginRegistry, PluginToolResult, try_refresh_oauth};
 
-const RULES_VERSION: &str = "4"; // Bump when built-in rules change
+const RULES_VERSION: &str = "5"; // Bump when built-in rules change
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -442,7 +442,7 @@ pub(crate) fn collect_rules(
         "name": "renderer_selection",
         "category": "system",
         "source": "built-in",
-        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows). Default choice.\n- **structured_data**: Tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **Plugin renderers**: If a plugin provides a domain-specific renderer (e.g., search_results), prefer it over generic renderers for that plugin's tool output.\n\nWhen uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows."
+        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, plugin citations. Default choice. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document."
     }));
 
     rules.push(serde_json::json!({
@@ -534,7 +534,7 @@ pub(crate) fn collect_builtin_rules(all_renderers: &[RendererDef]) -> Vec<Value>
         "name": "renderer_selection",
         "category": "system",
         "source": "built-in",
-        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows). Default choice.\n- **structured_data**: Tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **Plugin renderers**: If a plugin provides a domain-specific renderer (e.g., search_results), prefer it over generic renderers for that plugin's tool output.\n\nWhen uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows."
+        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, plugin citations. Default choice. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document."
     }));
 
     rules.push(serde_json::json!({
@@ -1374,7 +1374,72 @@ Wrong:   `A[Line one\nLine two]`
 
 ### JSON string escaping
 
-The body value is a JSON string. Use `\n` for newlines, `\"` for quotes, `\\` for backslashes. Backticks need no escaping."#;
+The body value is a JSON string. Use `\n` for newlines, `\"` for quotes, `\\` for backslashes. Backticks need no escaping.
+
+## Inline edit suggestions (push_review only)
+
+When proposing text changes for user review, use `suggestions` + `{{suggest:id=X}}` placement marks in the body:
+
+```json
+{
+  "title": "Document Review",
+  "body": "The system {{suggest:id=s1}} token-based auth.\n\n{{suggest:id=s2}}",
+  "suggestions": {
+    "s1": { "old": "uses", "new": "leverages" },
+    "s2": { "type": "insert", "new": "New paragraph to insert." }
+  }
+}
+```
+
+Suggestion types: **replace** (default, has `old` + `new`), **insert** (`type: "insert"`, has `new`), **delete** (`type: "delete"`, has `old`). Multiline old/new values render as block-level diffs. Each suggestion gets accept/reject toggles and a comment button. Push via `push_review`, not `push_content`.
+
+## Embedded structured_data tables (push_review or push_content)
+
+Embed interactive tables within markdown using fenced code blocks:
+
+````
+Context paragraph explaining the changes.
+
+```structured_data:t1
+```
+
+More context after the table.
+````
+
+Include table data in `data.tables`:
+```json
+{
+  "body": "Context\n\n```structured_data:t1\n```",
+  "tables": [{ "id": "t1", "name": "Changes", "columns": [...], "rows": [...] }]
+}
+```
+
+Table data shape matches structured_data (columns with id/name/change, rows with id/cells/children). Tables are fully interactive in review mode (accept/reject rows, edit cells).
+
+## Combined review payload
+
+When `push_review` includes suggestions and/or tables, the user submits a combined `rich_content_decisions` payload:
+```json
+{
+  "suggestion_decisions": { "s1": { "status": "accept", "comment": "looks good" } },
+  "table_decisions": { "t1": { "decisions": {...}, "modifications": {...}, "additions": {...} } }
+}
+```
+
+These arrive as `suggestionDecisions` and `tableDecisions` in the `await_review` response.
+
+## Plugin citations
+
+Reference plugin entities with `[label](cite:plugin:SOURCE:TYPE:ID)` links. Clicking opens a slideout panel that lazy-fetches full data. Include citation metadata in `data.citations.plugin`:
+```json
+{
+  "citations": {
+    "plugin": [
+      { "index": 1, "source": "ludflow", "type": "code_unit", "id": "abc123", "label": "myFunc" }
+    ]
+  }
+}
+```"#;
 
 const BULK_ACTION_REVIEW_RULE: &str = r#"When an agent plans 2 or more MCP tool calls that create, update, or delete external resources (mutations), it MUST present the planned actions to the user for review before executing any of them.
 
@@ -1399,6 +1464,8 @@ Mark each row's `change` field to visually distinguish operations:
 - `"update"` for update actions (yellow)
 - `"delete"` for delete actions (red strikethrough)
 
+**Use hierarchical rows for parent-child operations.** When creating containers with contents (e.g., folders with documents, categories with items), nest child rows inside parent rows using the `children` array. Do NOT flatten everything into a single list with a "Parent" column — the renderer shows collapsible nested rows natively.
+
 ## Workflow
 
 1. **Gather**: Collect all planned mutations before executing any
@@ -1422,6 +1489,38 @@ const STRUCTURED_DATA_RULE: &str = r#"Use structured_data when presenting tabula
 - Tables have many rows (>10) where scrolling + filtering helps
 
 Use rich_content with markdown tables for simple, small, static tables.
+
+## Hierarchical rows — USE THEM
+
+**IMPORTANT**: When data has parent-child relationships (folders containing files, categories with items, sections with sub-items, etc.), use `children` arrays to nest child rows inside parent rows. Do NOT flatten the hierarchy into a single column with descriptions like "parent: X" — the renderer supports collapsible nested rows natively.
+
+Example — folders containing documents:
+```json
+{
+  "rows": [
+    {
+      "id": "folder1",
+      "cells": { "name": { "value": "Architecture", "change": "add" }, "type": { "value": "folder", "change": "add" } },
+      "children": [
+        {
+          "id": "doc1",
+          "cells": { "name": { "value": "API Design", "change": "add" }, "type": { "value": "document", "change": "add" } },
+          "children": []
+        },
+        {
+          "id": "doc2",
+          "cells": { "name": { "value": "Data Model", "change": "add" }, "type": { "value": "document", "change": "add" } },
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+This renders as a collapsible tree: clicking "Architecture" expands to show its two documents indented beneath it. Rows auto-expand to depth 2; deeper rows start collapsed.
+
+**When to nest**: Any time you would otherwise add a "Parent" or "Folder" column to describe containment, or group items by category in a flat list — nest them instead.
 
 ## push_content (read-only display)
 
@@ -1465,29 +1564,44 @@ Shows proposed changes with color-coded diffs. Users can accept/reject individua
 
 Change values: "add" (green), "delete" (red strikethrough), "update" (yellow), null (unchanged).
 
-Example:
+Example with nested rows:
 ```json
 {
   "tool_name": "structured_data",
   "data": {
-    "title": "Schema Migration Review",
+    "title": "Document Organization Review",
     "tables": [{
       "id": "t1",
-      "name": "users",
+      "name": "Folders & Documents",
       "columns": [
-        { "id": "col", "name": "Column", "change": null },
-        { "id": "type", "name": "Type", "change": null },
-        { "id": "new_col", "name": "MFA Provider", "change": "add" }
+        { "id": "name", "name": "Name", "change": null },
+        { "id": "details", "name": "Details", "change": null }
       ],
       "rows": [
         {
-          "id": "r1",
+          "id": "folder1",
           "cells": {
-            "col": { "value": "display_name", "change": "add" },
-            "type": { "value": "varchar(100)", "change": "add" },
-            "new_col": { "value": null, "change": null }
+            "name": { "value": "Design Specs", "change": "add" },
+            "details": { "value": "3 documents", "change": "add" }
           },
-          "children": []
+          "children": [
+            {
+              "id": "doc1",
+              "cells": {
+                "name": { "value": "API Design v2", "change": "add" },
+                "details": { "value": "REST endpoint specifications", "change": "add" }
+              },
+              "children": []
+            },
+            {
+              "id": "doc2",
+              "cells": {
+                "name": { "value": "Data Model", "change": "add" },
+                "details": { "value": "ERD and schema definitions", "change": "add" }
+              },
+              "children": []
+            }
+          ]
         }
       ]
     }]
@@ -1515,6 +1629,7 @@ push_review response contains user decisions:
 - `tables[]`: Array of table objects, each with `id`, `name`, `columns[]`, `rows[]`
 - `columns[]`: `{ id, name, change }` — change is null for read-only, "add"/"delete" for review
 - `rows[]`: `{ id, cells, children }` — cells is `{ [colId]: { value, change } }`, children enables arbitrary nesting
+- **Always use `children` for parent-child relationships** — do not flatten hierarchies into extra columns
 - Nested rows auto-expand to depth 2; deeper rows start collapsed"#;
 
 fn builtin_renderer_definitions() -> Vec<RendererDef> {
@@ -1524,7 +1639,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Universal markdown display with mermaid diagrams, tables, code blocks, and citations. Use for any rich text content.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some("{ \"title\": \"Optional heading\", \"body\": \"Markdown with ```mermaid blocks\" } — data must be a JSON object, not a string".into()),
+            data_hint: Some(r#"{ "title": "Optional heading", "body": "Markdown with ```mermaid blocks and {{suggest:id=X}} markers", "suggestions": { "s1": { "old": "text", "new": "replacement" } }, "tables": [{ "id": "t1", "name": "Name", "columns": [...], "rows": [...] }], "citations": { "plugin": [{ "index": 1, "source": "ludflow", "type": "code_unit", "id": "abc123", "label": "name" }] } } — data must be a JSON object, not a string. suggestions and tables are optional, used with push_review."#.into()),
             rule: Some(RICH_CONTENT_RULE.into()),
             display_mode: None,
             invoke_schema: None,
@@ -2019,7 +2134,7 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
         }),
         serde_json::json!({
             "name": "await_review",
-            "description": "Wait for a pending review decision. Blocks until the user submits their review in the companion window, or the server-side timeout expires. If your transport times out before the user decides, call this again with the same session_id to reconnect — the review session persists. Returns the full decision payload (status, decision, operation_decisions, comments, modifications).",
+            "description": "Wait for a pending review decision. Blocks until the user submits their review in the companion window, or the server-side timeout expires. If your transport times out before the user decides, call this again with the same session_id to reconnect — the review session persists. Returns the full decision payload: status, decision, operationDecisions (structured_data rows), comments, modifications, suggestionDecisions (rich_content inline suggestions), tableDecisions (rich_content embedded tables).",
             "inputSchema": {
                 "type": "object",
                 "properties": {

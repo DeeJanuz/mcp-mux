@@ -185,10 +185,8 @@ pub async fn start_oauth_flow(
     };
     if let Some(ref org_id) = response_org_id {
         mcpviews_shared::token_store::store_token_for_org(&auth_dir(), plugin_name, org_id, &stored)?;
-        // Set as default if it's the first org token
-        if mcpviews_shared::token_store::list_orgs(&auth_dir(), plugin_name).len() <= 1 {
-            mcpviews_shared::token_store::set_default_org(&auth_dir(), plugin_name, org_id)?;
-        }
+        // Always update default org so start_plugin_auth acts as an org-switch command
+        mcpviews_shared::token_store::set_default_org(&auth_dir(), plugin_name, org_id)?;
     } else {
         store_token(plugin_name, &stored)?;
     }

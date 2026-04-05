@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- MCP `resources/list` and `resources/templates/list` stub handlers returning empty arrays
+- MCP `initialize` response now advertises `resources` capability (`listChanged: false`, `subscribe: false`)
+- Session creation from POST `initialize` — Streamable HTTP clients that POST before opening SSE get a server-side session with `mcp-session-id` response header
+- `GET /mcp` accepts optional `mcp-session-id` request header to subscribe to an existing session
+- 30-second grace period (`SESSION_GRACE_PERIOD`) on session GC so newly created sessions survive before their first SSE subscriber connects
+- `created_at` timestamp on `McpSession` for grace period tracking
+
+### Changed
+- Notifications return `202 Accepted` with empty body instead of `200 OK` with `null` JSON
+- `mcp_handler` return type changed to `(StatusCode, Option<serde_json::Value>)` to distinguish empty vs JSON responses
+
 ## [0.2.0] - 2026-04-05
 
 ### Changed

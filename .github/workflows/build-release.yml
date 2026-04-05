@@ -135,6 +135,7 @@ jobs:
             target/aarch64-apple-darwin/release/deps
             target/aarch64-apple-darwin/release/build
             target/aarch64-apple-darwin/release/.fingerprint
+            target/aarch64-apple-darwin/release/incremental
           key: macos-build-${{ hashFiles('Cargo.lock', 'src-tauri/src/**', 'shared/src/**') }}
           restore-keys: macos-build-
 
@@ -246,6 +247,7 @@ jobs:
             target/release/deps
             target/release/build
             target/release/.fingerprint
+            target/release/incremental
           key: windows-build-${{ hashFiles('Cargo.lock', 'src-tauri/src/**', 'shared/src/**') }}
           restore-keys: windows-build-
 

@@ -139,12 +139,17 @@ Open an SSE stream for MCP Streamable HTTP server-to-client notifications.
 **Required Headers:**
 - `Accept: text/event-stream`
 
+**Optional Headers:**
+- `mcp-session-id` — subscribe to an existing session instead of creating a new one
+
 **Response** `200 OK` (SSE stream)
 - Response header `mcp-session-id` contains the session ID
 - Stream sends JSON-RPC notifications as SSE `data:` events
 - Keepalive pings are sent automatically
 
-**Error** `406 Not Acceptable` if `Accept` header missing or incorrect.
+If `mcp-session-id` is provided and the session exists, the stream subscribes to that session. If the session does not exist, returns `404 Not Found`.
+
+**Error** `406 Not Acceptable` if `Accept` header missing or incorrect. `404 Not Found` if `mcp-session-id` header references a nonexistent session.
 
 ### `POST /mcp`
 
@@ -153,9 +158,14 @@ Send a JSON-RPC request to the MCP handler.
 **Optional Headers:**
 - `mcp-session-id` — bind request to an existing SSE session
 
+**Session Creation from POST:** Streamable HTTP clients may POST an `initialize` request before opening an SSE stream. When no `mcp-session-id` header is present and the request method is `initialize`, the server creates a new session and returns the `mcp-session-id` response header. The client should use this session ID for all subsequent requests and SSE subscriptions.
+
 **Request Body:** JSON-RPC 2.0 request
 
 **Response** JSON-RPC 2.0 response with appropriate status code.
+- For standard requests: `200 OK` with JSON-RPC response body
+- For notifications (no JSON-RPC response expected): `202 Accepted` with empty body
+- If a session was created from an `initialize` POST, the `mcp-session-id` response header is included
 
 **Error** `404 Not Found` if `mcp-session-id` is provided but session does not exist.
 

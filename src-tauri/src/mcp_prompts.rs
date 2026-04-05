@@ -236,4 +236,296 @@ mod tests {
             assert!(!content.is_empty(), "content should not be empty");
         }
     }
+
+    // --- M-028: Integration tests for list_prompts / get_prompt logic ---
+    // Note: `list_prompts` and `get_prompt` are async functions that require
+    // `Arc<TokioMutex<AsyncAppState>>`, which needs a Tauri `AppHandle` that
+    // cannot be constructed in unit tests. These tests exercise the underlying
+    // data paths and logic that those async functions read from.
+
+    use crate::test_utils::{test_app_state, test_manifest};
+
+    #[test]
+    fn test_list_prompts_builtin_format() {
+        // Verifies the built-in prompt produces the same JSON structure
+        // that list_prompts would return.
+        let defs = builtin_prompt_definitions();
+        let (name, description, arguments, _content) = &defs[0];
+        let entry = serde_json::json!({
+            "name": name,
+            "description": description,
+            "arguments": arguments,
+        });
+        assert_eq!(entry["name"], "onboarding");
+        assert!(entry["description"].as_str().unwrap().len() > 0);
+        assert!(entry["arguments"].is_array());
+    }
+
+    #[test]
+    fn test_list_prompts_plugin_prompt_data_path() {
+        // Exercises the same registry data path that list_prompts reads:
+        // registry.manifests -> prompt_definitions -> namespaced name.
+        let (state, _dir) = test_app_state();
+
+        let mut manifest = test_manifest("my-plugin");
+        manifest.prompt_definitions.push(mcpviews_shared::PromptDef {
+            name: "setup-guide".to_string(),
+            description: "Setup instructions".to_string(),
+            arguments: vec![mcpviews_shared::PromptArgument {
+                name: "env".to_string(),
+                description: "Target environment".to_string(),
+                required: true,
+            }],
+            source: "prompts/setup.md".to_string(),
+        });
+
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        // Simulate what list_prompts does with plugin prompts
+        let registry = state.plugin_registry.lock().unwrap();
+        let mut plugin_prompts: Vec<Value> = Vec::new();
+        for manifest in &registry.manifests {
+            for prompt_def in &manifest.prompt_definitions {
+                let namespaced = format!("{}/{}", manifest.name, prompt_def.name);
+                plugin_prompts.push(serde_json::json!({
+                    "name": namespaced,
+                    "description": prompt_def.description,
+                    "arguments": prompt_def.arguments.iter().map(|a| serde_json::json!({
+                        "name": a.name,
+                        "description": a.description,
+                        "required": a.required,
+                    })).collect::<Vec<Value>>(),
+                }));
+            }
+        }
+
+        assert_eq!(plugin_prompts.len(), 1);
+        assert_eq!(plugin_prompts[0]["name"], "my-plugin/setup-guide");
+        assert_eq!(plugin_prompts[0]["description"], "Setup instructions");
+        let args = plugin_prompts[0]["arguments"].as_array().unwrap();
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0]["name"], "env");
+        assert_eq!(args[0]["required"], true);
+    }
+
+    #[test]
+    fn test_list_prompts_includes_builtin_and_plugin() {
+        // Verifies the combined result would include both built-in and plugin prompts.
+        let (state, _dir) = test_app_state();
+
+        let mut manifest = test_manifest("test-plugin");
+        manifest.prompt_definitions.push(mcpviews_shared::PromptDef {
+            name: "hello".to_string(),
+            description: "Hello prompt".to_string(),
+            arguments: vec![],
+            source: "prompts/hello.md".to_string(),
+        });
+
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        // Build the same list that list_prompts would
+        let mut prompts: Vec<Value> = Vec::new();
+        for (name, description, arguments, _content) in builtin_prompt_definitions() {
+            prompts.push(serde_json::json!({
+                "name": name,
+                "description": description,
+                "arguments": arguments,
+            }));
+        }
+        {
+            let registry = state.plugin_registry.lock().unwrap();
+            for manifest in &registry.manifests {
+                for prompt_def in &manifest.prompt_definitions {
+                    let namespaced = format!("{}/{}", manifest.name, prompt_def.name);
+                    prompts.push(serde_json::json!({
+                        "name": namespaced,
+                        "description": prompt_def.description,
+                        "arguments": prompt_def.arguments.iter().map(|a| serde_json::json!({
+                            "name": a.name,
+                            "description": a.description,
+                            "required": a.required,
+                        })).collect::<Vec<Value>>(),
+                    }));
+                }
+            }
+        }
+
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts[0]["name"], "onboarding");
+        assert_eq!(prompts[1]["name"], "test-plugin/hello");
+    }
+
+    #[test]
+    fn test_get_prompt_builtin_returns_mcp_format() {
+        // Exercises the same logic as get_prompt for a built-in prompt name.
+        let content = resolve_builtin_prompt("onboarding").unwrap();
+        let result = serde_json::json!({
+            "messages": [{
+                "role": "user",
+                "content": {
+                    "type": "text",
+                    "text": content
+                }
+            }]
+        });
+        assert!(result["messages"].is_array());
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"]["type"], "text");
+        assert!(messages[0]["content"]["text"].as_str().unwrap().contains("MCPViews Plugin Onboarding"));
+    }
+
+    #[test]
+    fn test_get_prompt_unknown_name_error() {
+        // Exercises the error path: name is not built-in and has no "/" (so not a plugin prompt).
+        let content = resolve_builtin_prompt("totally-unknown");
+        assert!(content.is_none());
+        // In get_prompt, after failing builtin and not matching plugin format,
+        // the result would be Err("Unknown prompt: totally-unknown").
+    }
+
+    #[test]
+    fn test_get_prompt_plugin_name_parsing() {
+        // Verifies the name.split_once('/') parsing that get_prompt uses for plugin prompts.
+        let name = "my-plugin/setup-guide";
+        let (plugin_name, prompt_name) = name.split_once('/').unwrap();
+        assert_eq!(plugin_name, "my-plugin");
+        assert_eq!(prompt_name, "setup-guide");
+
+        // Single segment (no slash) should not match
+        assert!("just-a-name".split_once('/').is_none());
+    }
+
+    #[test]
+    fn test_plugin_prompt_template_replacement() {
+        // Tests the template replacement logic used in call_get_plugin_prompt.
+        let mut content = "Hello {{name}}, welcome to {{env}}!".to_string();
+        let args: std::collections::HashMap<String, String> = [
+            ("name".to_string(), "Alice".to_string()),
+            ("env".to_string(), "production".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        for (key, value) in &args {
+            let placeholder = format!("{{{{{}}}}}", key);
+            content = content.replace(&placeholder, value);
+        }
+
+        assert_eq!(content, "Hello Alice, welcome to production!");
+    }
+
+    #[test]
+    fn test_plugin_prompt_template_no_args() {
+        // Template with no arguments should remain unchanged.
+        let content = "Static prompt content with {{placeholder}}.".to_string();
+        let args: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
+        let mut result = content.clone();
+        for (key, value) in &args {
+            let placeholder = format!("{{{{{}}}}}", key);
+            result = result.replace(&placeholder, value);
+        }
+
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_plugin_prompt_file_read_and_template() {
+        // Integration test: creates a real prompt file on disk and verifies
+        // the same read + template logic that call_get_plugin_prompt uses.
+        let (state, _dir) = test_app_state();
+
+        let mut manifest = test_manifest("file-plugin");
+        manifest.prompt_definitions.push(mcpviews_shared::PromptDef {
+            name: "greet".to_string(),
+            description: "Greeting prompt".to_string(),
+            arguments: vec![mcpviews_shared::PromptArgument {
+                name: "user".to_string(),
+                description: "User name".to_string(),
+                required: true,
+            }],
+            source: "prompts/greet.md".to_string(),
+        });
+
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        // Create the prompt file on disk at plugins_dir/file-plugin/prompts/greet.md
+        let plugins_dir = state.plugins_dir();
+        let prompt_dir = plugins_dir.join("file-plugin").join("prompts");
+        std::fs::create_dir_all(&prompt_dir).unwrap();
+        std::fs::write(prompt_dir.join("greet.md"), "Hello {{user}}, how are you?").unwrap();
+
+        // Simulate call_get_plugin_prompt logic
+        let registry = state.plugin_registry.lock().unwrap();
+        let (_, found_manifest) = registry.find_plugin_by_name("file-plugin").unwrap();
+        let prompt_def = found_manifest
+            .prompt_definitions
+            .iter()
+            .find(|p| p.name == "greet")
+            .unwrap();
+
+        let path = plugins_dir.join("file-plugin").join(&prompt_def.source);
+        let mut content = std::fs::read_to_string(&path).unwrap();
+
+        let template_args: std::collections::HashMap<String, String> =
+            [("user".to_string(), "Bob".to_string())].into_iter().collect();
+        for (key, value) in &template_args {
+            let placeholder = format!("{{{{{}}}}}", key);
+            content = content.replace(&placeholder, value);
+        }
+
+        assert_eq!(content, "Hello Bob, how are you?");
+
+        // Verify MCP format output
+        let result = serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": content
+            }]
+        });
+        assert_eq!(result["content"][0]["text"], "Hello Bob, how are you?");
+    }
+
+    #[test]
+    fn test_plugin_prompt_file_not_found() {
+        // When the prompt source file doesn't exist on disk, reading should fail.
+        let (state, _dir) = test_app_state();
+
+        let mut manifest = test_manifest("missing-file-plugin");
+        manifest.prompt_definitions.push(mcpviews_shared::PromptDef {
+            name: "missing".to_string(),
+            description: "Missing prompt".to_string(),
+            arguments: vec![],
+            source: "prompts/does-not-exist.md".to_string(),
+        });
+
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry.add_plugin(manifest).unwrap();
+        }
+
+        let registry = state.plugin_registry.lock().unwrap();
+        let (_, found_manifest) = registry.find_plugin_by_name("missing-file-plugin").unwrap();
+        let prompt_def = found_manifest
+            .prompt_definitions
+            .iter()
+            .find(|p| p.name == "missing")
+            .unwrap();
+
+        let plugins_dir = state.plugins_dir();
+        let path = plugins_dir.join("missing-file-plugin").join(&prompt_def.source);
+        let result = std::fs::read_to_string(&path);
+        assert!(result.is_err());
+    }
 }

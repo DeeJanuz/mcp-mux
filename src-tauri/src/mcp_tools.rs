@@ -442,7 +442,7 @@ pub(crate) fn collect_rules(
         "name": "renderer_selection",
         "category": "system",
         "source": "built-in",
-        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, plugin citations. Default choice. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document."
+        "rule": RENDERER_SELECTION_RULE
     }));
 
     rules.push(serde_json::json!({
@@ -534,7 +534,7 @@ pub(crate) fn collect_builtin_rules(all_renderers: &[RendererDef]) -> Vec<Value>
         "name": "renderer_selection",
         "category": "system",
         "source": "built-in",
-        "rule": "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, plugin citations. Default choice. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document."
+        "rule": RENDERER_SELECTION_RULE
     }));
 
     rules.push(serde_json::json!({
@@ -1344,6 +1344,8 @@ async fn proxy_plugin_tool_call(
 }
 
 // ─── Renderer definitions ───
+
+const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, plugin citations. Default choice. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document.";
 
 const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call push_content, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
 

@@ -491,6 +491,28 @@
 
   // --- Decision ---
 
+  var DECISION_HANDLERS = {
+    review_decision: function (decision) {
+      return { decisionStr: decision.decision };
+    },
+    operation_decisions: function (decision) {
+      return {
+        decisionStr: 'partial',
+        operationDecisions: decision.decisions,
+        comments: decision.comments || null,
+        modifications: decision.modifications || null,
+        additions: decision.additions || null,
+      };
+    },
+    rich_content_decisions: function (decision) {
+      return {
+        decisionStr: 'partial',
+        suggestionDecisions: decision.suggestion_decisions || null,
+        tableDecisions: decision.table_decisions || null,
+      };
+    },
+  };
+
   function onDecision(sessionId, decision) {
     // Build the decision payload for Tauri IPC
     var decisionStr = '';
@@ -504,19 +526,18 @@
     if (typeof decision === 'string') {
       decisionStr = decision;
     } else if (typeof decision === 'object') {
-      if (decision.type === 'review_decision') {
-        decisionStr = decision.decision;
-      } else if (decision.type === 'operation_decisions') {
-        decisionStr = 'partial';
-        operationDecisions = decision.decisions;
-        if (decision.comments) comments = decision.comments;
-        if (decision.modifications) modifications = decision.modifications;
-        if (decision.additions) additions = decision.additions;
-      } else if (decision.type === 'rich_content_decisions') {
-        decisionStr = 'partial';
-        suggestionDecisions = decision.suggestion_decisions || null;
-        tableDecisions = decision.table_decisions || null;
+      var handler = DECISION_HANDLERS[decision.type];
+      if (handler) {
+        var result = handler(decision);
+        decisionStr = result.decisionStr || '';
+        operationDecisions = result.operationDecisions || null;
+        comments = result.comments || null;
+        modifications = result.modifications || null;
+        additions = result.additions || null;
+        suggestionDecisions = result.suggestionDecisions || null;
+        tableDecisions = result.tableDecisions || null;
       } else {
+        // Fallback: plain object without a known type
         decisionStr = 'partial';
         operationDecisions = decision;
       }

@@ -535,6 +535,18 @@
     kdex: renderKdexDetail
   };
 
+  // ── Plugin type → tool name lookup ──
+  var PLUGIN_TYPE_TO_TOOL = {
+    code_unit: 'get_code_units',
+    code_units: 'get_code_units',
+    data_table: 'get_data_schema',
+    data_schema: 'get_data_schema',
+    column_context: 'get_column_context',
+    dependencies: 'get_dependencies',
+    file_content: 'get_file_content',
+    search_results: 'search_codebase',
+  };
+
   // ── Plugin detail renderer ──
   DETAIL_RENDERERS['plugin'] = function renderPluginDetail(body, data) {
     // data = { source: 'ludflow', type: 'code_unit', id: 'abc123', label: '...' }
@@ -553,9 +565,7 @@
 
       // Otherwise, lazy-fetch via proxy
       if (utils.companionFetch) {
-        var toolName = 'get_' + data.type;
-        if (data.type === 'code_unit') toolName = 'get_code_units';
-        if (data.type === 'data_table') toolName = 'get_data_schema';
+        var toolName = PLUGIN_TYPE_TO_TOOL[data.type] || ('get_' + data.type);
 
         var statusEl = document.createElement('div');
         statusEl.style.cssText = 'padding: 16px; color: var(--text-secondary); text-align: center;';

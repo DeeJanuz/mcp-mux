@@ -558,13 +558,19 @@ pub fn get_plugin_update_policy(
     Ok(prefs.update_policy)
 }
 
-#[tauri::command]
-pub fn set_native_theme(theme: String, window: tauri::Window) -> Result<(), String> {
-    let native_theme = match theme.as_str() {
+/// Parse a theme string into a Tauri theme option.
+/// Returns Some(Dark) for "dark", Some(Light) for "light", None for anything else (system default).
+pub(crate) fn parse_theme(theme: &str) -> Option<tauri::Theme> {
+    match theme {
         "dark" => Some(tauri::Theme::Dark),
         "light" => Some(tauri::Theme::Light),
         _ => None,
-    };
+    }
+}
+
+#[tauri::command]
+pub fn set_native_theme(theme: String, window: tauri::Window) -> Result<(), String> {
+    let native_theme = parse_theme(&theme);
     window.set_theme(native_theme).map_err(|e| e.to_string())
 }
 
@@ -920,5 +926,25 @@ mod tests {
         let auth_dir = dir.path().join("auth");
         let header = auth.resolve_header_with_auth_dir("apikey-plugin", &auth_dir);
         assert!(header.is_none());
+    }
+
+    #[test]
+    fn test_parse_theme_dark() {
+        let result = parse_theme("dark");
+        assert_eq!(result, Some(tauri::Theme::Dark));
+    }
+
+    #[test]
+    fn test_parse_theme_light() {
+        let result = parse_theme("light");
+        assert_eq!(result, Some(tauri::Theme::Light));
+    }
+
+    #[test]
+    fn test_parse_theme_unrecognized_returns_none() {
+        assert_eq!(parse_theme("auto"), None);
+        assert_eq!(parse_theme(""), None);
+        assert_eq!(parse_theme("Dark"), None);
+        assert_eq!(parse_theme("system"), None);
     }
 }

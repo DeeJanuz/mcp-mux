@@ -58,21 +58,100 @@ Once MCPViews is running, follow these steps in order.
 
 ### 1. Connect your AI agent
 
-Add MCPViews as an MCP server in your agent's configuration. MCPViews runs a Streamable HTTP server on `http://localhost:4200/mcp`.
+The canonical, copy-paste install flow lives in **[install-prompt.md](./install-prompt.md)**. Open that file, copy the entire prompt block, and paste it into your agent (Claude Code, Codex CLI, Cursor, Windsurf, OpenCode, or Antigravity). The agent will detect which tool it is running inside and write the correct user-level MCP config for you.
 
-**Claude Code** — add to your global or project `.claude/settings.json`:
+<details>
+<summary>Show the install prompt inline</summary>
+
+# MCPViews Agent Install Prompt
+
+Copy this entire block and paste it into **Claude Code**, **Codex CLI**, **Cursor**, **Windsurf**, **OpenCode**, or **Antigravity**. The agent will register the MCPViews MCP server in your user-level (global) config for that tool.
+
+> **Prerequisite:** MCPViews must already be installed and running. Check that it is in your system tray and that `curl -sSf http://localhost:4200/health` returns OK. If not, launch MCPViews first.
+
+> **Claude Desktop users:** See the Claude Desktop section at the end — you can either run this prompt inside Claude Code (which will write the Desktop config for you) or follow the manual JSON copy-paste instructions.
+
+---
+
+## Paste everything below this line
+
+Register the MCPViews MCP server for me at **user / global scope** so it is
+available in every project I work on.
+
+### Prerequisite check
+
+Before doing anything, verify MCPViews is running:
+
+```bash
+curl -sSf http://localhost:4200/health
+```
+
+If that command fails or times out, stop and tell me to launch MCPViews from
+my Applications folder (macOS), Start Menu (Windows), or by running the dev
+build (Linux). Do not proceed until the health check returns successfully.
+
+### Step 1 — Detect which agent tool you are running inside
+
+Look at your environment, available tools, and shell config paths to determine
+whether you are one of:
+
+- Claude Code
+- Codex CLI
+- Cursor
+- Windsurf
+- OpenCode
+- Antigravity
+- Claude Desktop (unusual: you would typically only be able to install Desktop
+  from a **different** agent tool, since Desktop cannot self-install)
+
+If you cannot determine the tool with confidence, stop and ask me.
+
+### Step 2 — Register MCPViews using the canonical config for the detected tool
+
+Before writing anything: **read the target config file first** and check
+whether an `mcpviews` entry already exists. If it does, **stop and ask me**
+whether to **overwrite**, **skip**, or **merge** — do not decide on my behalf.
+
+Scope boundaries:
+- Only modify the `mcpviews` entry. Preserve all other MCP server entries and
+  unrelated keys in the file exactly as they are.
+- Only modify user/global config. Do not touch any project-level MCP config.
+- If the config file does not exist yet, create it with only the `mcpviews`
+  entry.
+
+#### Claude Code
+
+Use the native CLI. Do not edit config files directly.
+
+```bash
+claude mcp add \
+  --transport http \
+  --scope user \
+  mcpviews \
+  http://localhost:4200/mcp
+```
+
+To check for existing: `claude mcp list | grep mcpviews`
+
+#### Cursor
+
+Edit `~/.cursor/mcp.json` (the **user-level** file in your home directory, NOT
+`.cursor/mcp.json` in any project). Add under `mcpServers`:
+
 ```json
 {
   "mcpServers": {
     "mcpviews": {
-      "type": "url",
       "url": "http://localhost:4200/mcp"
     }
   }
 }
 ```
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
+#### Windsurf
+
+Edit `~/.codeium/windsurf/mcp_config.json`. Add under `mcpServers`:
+
 ```json
 {
   "mcpServers": {
@@ -83,7 +162,116 @@ Add MCPViews as an MCP server in your agent's configuration. MCPViews runs a Str
 }
 ```
 
-**Cursor / Windsurf / other MCP clients** — point to `http://localhost:4200/mcp` as a Streamable HTTP MCP server.
+#### Codex CLI
+
+Edit `~/.codex/config.toml`. Append this block:
+
+```toml
+[mcp_servers.mcpviews]
+type = "http"
+url = "http://localhost:4200/mcp"
+```
+
+#### OpenCode
+
+Edit `~/.config/opencode/opencode.json`. Add under the top-level `mcp` key
+(note: **`mcp`**, not `mcpServers`):
+
+```json
+{
+  "mcp": {
+    "mcpviews": {
+      "url": "http://localhost:4200/mcp"
+    }
+  }
+}
+```
+
+#### Antigravity
+
+Edit `~/.gemini/antigravity/mcp_config.json`. Add under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "mcpviews": {
+      "url": "http://localhost:4200/mcp"
+    }
+  }
+}
+```
+
+#### Claude Desktop (special case — stdio bridge required)
+
+Claude Desktop **cannot speak Streamable HTTP** to MCP servers. It requires a
+stdio bridge via the `mcp-remote` proxy.
+
+Edit:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+Add under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "mcpviews": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:4200/mcp"]
+    }
+  }
+}
+```
+
+This requires Node.js / npx to be available on the user's PATH. If it is not,
+tell me to install Node.js first.
+
+### Step 3 — Verify the config was written
+
+After writing, re-read the target config file and confirm the `mcpviews` entry
+is present with the correct shape. Report:
+
+1. The exact file path you modified (or the `claude mcp add` command that
+   succeeded)
+2. The resulting entry, verbatim
+3. Confirmation that no other entries in the file were changed
+
+### Step 4 — Tell me what to do next
+
+Explain that MCP servers are only loaded at tool startup, so I need to:
+
+1. **Fully quit and relaunch** the agent tool (not just open a new session /
+   new tab / new window — the entire process must restart)
+2. After restart, paste the **verification prompt** into the agent to confirm
+   the server is reachable
+
+Do not restart the tool yourself — ask me to do it.
+
+</details>
+
+#### Claude Desktop (manual fallback)
+
+Claude Desktop cannot speak Streamable HTTP and must use the `mcp-remote` stdio bridge. If you'd rather edit JSON by hand than run the agent prompt, edit:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux:** `~/.config/Claude/claude_desktop_config.json`
+
+And add under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "mcpviews": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:4200/mcp"]
+    }
+  }
+}
+```
+
+Requires Node.js / `npx` on your PATH.
 
 ### 2. Run setup
 
@@ -101,13 +289,9 @@ This does two things:
 
 ### 3. Verify it works
 
-Ask your agent to push something to the companion window:
+After restarting your agent tool, ask it to call the `init_session` tool from the `mcpviews` server. The agent should report that the server is listed in its tools and that `init_session` returned successfully. See the verification prompt in [install-prompt.md](./install-prompt.md#verification-prompt--paste-after-restarting-your-tool) for the exact wording.
 
-```
-Push a rich_content display with the title "Hello MCPViews" and a short welcome message.
-```
-
-You should see the content appear in the MCPViews companion window.
+As a bonus check, you can also ask the agent to push a `rich_content` display with a short welcome message — it should appear in the MCPViews companion window.
 
 ### 4. Install plugins
 
@@ -126,6 +310,9 @@ Call mcpviews_install_plugin with trigger_auth: true to install [plugin name].
 Or use the **GUI**: click the MCPViews system tray icon and select **Manage Plugins**.
 
 ---
+
+> **Legacy:** The bundled `setup-integrations.sh` / `.ps1` script in `src-tauri/scripts/` is deprecated and will be removed in the next release. New installs should use the agent install prompt above.
+
 
 ## After Updating MCPViews
 

@@ -261,6 +261,27 @@ function Install-ClaudeCode {
 # ---------------------------------------------------------------------------
 
 Write-Host ""
+Write-Host "############################################################" -ForegroundColor Yellow
+Write-Host "#                                                          #" -ForegroundColor Yellow
+Write-Host "#  DEPRECATION WARNING                                     #" -ForegroundColor Yellow
+Write-Host "#                                                          #" -ForegroundColor Yellow
+Write-Host "#  This setup script is DEPRECATED and will be removed in  #" -ForegroundColor Yellow
+Write-Host "#  the next release of MCPViews.                           #" -ForegroundColor Yellow
+Write-Host "#                                                          #" -ForegroundColor Yellow
+Write-Host "#  Recommended replacement: paste the agent install prompt #" -ForegroundColor Yellow
+Write-Host "#  into your AI tool. It auto-detects which agent you are  #" -ForegroundColor Yellow
+Write-Host "#  running and writes the correct user-level MCP config.   #" -ForegroundColor Yellow
+Write-Host "#                                                          #" -ForegroundColor Yellow
+Write-Host "#  https://github.com/DeeJanuz/mcpviews/blob/main/docs/install-prompt.md" -ForegroundColor Yellow
+Write-Host "#                                                          #" -ForegroundColor Yellow
+Write-Host "#  Press Ctrl+C now to abort, or wait 5 seconds to         #" -ForegroundColor Yellow
+Write-Host "#  continue with the legacy flow...                        #" -ForegroundColor Yellow
+Write-Host "#                                                          #" -ForegroundColor Yellow
+Write-Host "############################################################" -ForegroundColor Yellow
+Write-Host ""
+Start-Sleep -Seconds 5
+
+Write-Host ""
 Write-Host "MCPViews - Agent Integration Setup" -ForegroundColor Cyan
 Write-Host "===================================" -ForegroundColor Cyan
 Write-Host ""

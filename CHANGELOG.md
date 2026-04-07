@@ -7,11 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-04-06
+
+### Added
+- `docs/install-prompt.md` — canonical agent-driven install prompt. Users paste it into Claude Code, Codex CLI, Cursor, Windsurf, OpenCode, or Antigravity, and the agent registers MCPViews in the tool's user-level MCP config (reading first, asking on existing entries, preserving unrelated keys).
+- Claude Desktop manual fallback using the `npx -y mcp-remote http://localhost:4200/mcp` stdio bridge, documented in both `docs/install.md` and `README.md`.
+
 ### Changed
+- `docs/install.md` "Next Steps" section now leads with the agent install prompt (embedded inline via `<details>`) and reorders verification to call `init_session` from the `mcpviews` server. The legacy bare-URL Claude Desktop JSON is replaced with the correct `mcp-remote` bridge config.
+- `src-tauri/scripts/setup-integrations.{sh,ps1}` now print a deprecation banner pointing at `install-prompt.md` and wait 5 seconds before continuing. Scripts remain functional for one release and will be removed next.
 - Re-tiered the `styles.css` z-index scale with a new semantic `--z-app-chrome` (2000) token for the persistent app shell, and bumped `--z-modal` from 200 to 5000 so true modal dialogs sit above plugin renderer content (observed up to ~1001). Layering tiers are now documented inline: `base`/`raised`/`sticky` → `overlay` (100) → plugin (~1000) → `app-chrome` (2000) → `modal` (5000) → `dropdown` (9999).
+- `src-tauri/tauri.conf.json`: `beforeBuildCommand` now touches `src-tauri/build.rs` after the frontend build so Tauri always re-runs the build script and picks up fresh frontend assets.
 
 ### Fixed
 - `#main-header` now uses `--z-app-chrome` (2000) instead of the overloaded `--z-dropdown` tier, so the persistent app shell correctly layers above plugin renderer slideouts (e.g. decidr-list panels at z-index ~1001) while leaving `--z-dropdown` reserved for popouts within a stacking context (apps menu).
+- `README.md` and `docs/install.md` Claude Desktop config examples previously showed `{"url": "..."}` which cannot work — Claude Desktop only speaks stdio to MCP servers. Replaced with the `mcp-remote` bridge config.
+
+### Removed
+- `.github/workflows/build-release.yml`: removed the macOS and Windows "Cache build artifacts" steps. The cache was masking source changes and producing stale binaries; registry and Node caches are retained.
 
 ## [0.2.1] - 2026-04-05
 

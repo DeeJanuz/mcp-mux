@@ -128,17 +128,6 @@ jobs:
           key: macos-cargo-registry-${{ hashFiles('Cargo.lock') }}
           restore-keys: macos-cargo-registry-
 
-      - name: Cache build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            target/aarch64-apple-darwin/release/deps
-            target/aarch64-apple-darwin/release/build
-            target/aarch64-apple-darwin/release/.fingerprint
-            target/aarch64-apple-darwin/release/incremental
-          key: macos-build-${{ hashFiles('Cargo.lock', 'src-tauri/src/**', 'shared/src/**') }}
-          restore-keys: macos-build-
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -239,17 +228,6 @@ jobs:
             ~/.cargo/bin/cargo-tauri.exe
           key: windows-cargo-registry-${{ hashFiles('Cargo.lock') }}
           restore-keys: windows-cargo-registry-
-
-      - name: Cache build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            target/release/deps
-            target/release/build
-            target/release/.fingerprint
-            target/release/incremental
-          key: windows-build-${{ hashFiles('Cargo.lock', 'src-tauri/src/**', 'shared/src/**') }}
-          restore-keys: windows-build-
 
       - name: Install Node.js
         uses: actions/setup-node@v4

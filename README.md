@@ -45,12 +45,13 @@ Add MCPViews as an MCP server in your agent's configuration. MCPViews runs a Str
 }
 ```
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
+**Claude Desktop** — Claude Desktop cannot speak Streamable HTTP and requires the `mcp-remote` stdio bridge. Add to `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
     "mcpviews": {
-      "url": "http://localhost:4200/mcp"
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:4200/mcp"]
     }
   }
 }

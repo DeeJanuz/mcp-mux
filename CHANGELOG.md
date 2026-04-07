@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-04-07
+
+### Fixed
+- **Windows plugin OAuth flows are now functional.** `auth::open_browser` on Windows previously invoked `cmd /C start "" "{url}"`, which was broken in two ways: Rust's `Command` arg escaping re-quoted the `start "" "..."` string and mangled its tokenization, and `cmd.exe` treated the `&` query-param separators in OAuth URLs as command terminators — truncating the launch and producing the dialog *"Windows cannot find '\\'. Make sure you typed the name correctly, and then try again."* Every plugin OAuth flow was affected. Replaced with `rundll32 url.dll,FileProtocolHandler <url>`, which receives the URL as a single argument with no shell parsing. (`src-tauri/src/auth.rs`)
+
 ## [0.2.3] - 2026-04-06
 
 ### Added

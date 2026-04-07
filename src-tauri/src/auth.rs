@@ -203,10 +203,14 @@ fn open_browser(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let result = std::process::Command::new("open").arg(url).spawn();
 
+    // rundll32 takes the URL as a single argument (no shell parsing), so `&`, `%`,
+    // spaces, and other OAuth query-param characters are passed through verbatim.
+    // The previous `cmd /C start "" "{url}"` approach was double-quoted by Rust's
+    // Windows arg escaping AND truncated by cmd.exe at the first `&`, which made
+    // every plugin OAuth flow fail with "Windows cannot find '\\'".
     #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("cmd")
-        .arg("/C")
-        .arg(format!("start \"\" \"{}\"", url))
+    let result = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
         .spawn();
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

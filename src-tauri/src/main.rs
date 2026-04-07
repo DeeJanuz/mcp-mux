@@ -31,7 +31,11 @@ use tauri::{
 };
 use tauri_plugin_autostart::MacosLauncher;
 
-const BASE_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net plugin://localhost; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com plugin://localhost; font-src 'self' https://fonts.gstatic.com plugin://localhost; connect-src 'self' http://localhost:4200; img-src 'self' data: blob: plugin://localhost";
+// Tauri custom URI schemes are served at `plugin://localhost/...` on macOS, iOS,
+// and Linux, but at `https://plugin.localhost/...` on Windows. CSP must whitelist
+// both forms so the same renderer fetches succeed cross-platform.
+// See https://github.com/orgs/tauri-apps/discussions/5597
+const BASE_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net plugin://localhost https://plugin.localhost; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com plugin://localhost https://plugin.localhost; font-src 'self' https://fonts.gstatic.com plugin://localhost https://plugin.localhost; connect-src 'self' http://localhost:4200; img-src 'self' data: blob: plugin://localhost https://plugin.localhost";
 
 fn build_csp(extra_origins: &[String]) -> String {
     if extra_origins.is_empty() {
@@ -85,10 +89,14 @@ fn main() {
         ))
         .register_uri_scheme_protocol("plugin", |_ctx, request| {
             let uri = request.uri().to_string();
-            // URI format: plugin://localhost/{plugin_name}/{path...}
+            // URI format on macOS/iOS/Linux: plugin://localhost/{plugin_name}/{path...}
+            // URI format on Windows:        https://plugin.localhost/{plugin_name}/{path...}
+            // Both forms route to this same handler — strip whichever prefix matches.
             let path = uri
                 .strip_prefix("plugin://localhost/")
                 .or_else(|| uri.strip_prefix("plugin://localhost"))
+                .or_else(|| uri.strip_prefix("https://plugin.localhost/"))
+                .or_else(|| uri.strip_prefix("https://plugin.localhost"))
                 .unwrap_or("");
 
             // Strip query string (e.g., ?v=123 cache-busting param)

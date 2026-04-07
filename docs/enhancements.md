@@ -1,8 +1,8 @@
 # Technical Debt & Enhancement Log
 
-**Last Updated:** 2026-04-05
+**Last Updated:** 2026-04-06
 **Total Active Issues:** 0
-**Resolved This Month:** 72
+**Resolved This Month:** 73
 
 ---
 
@@ -27,6 +27,10 @@ _None_
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-04-06 (commit e524b21)
+
+- **M-040 (resolved):** `#main-header` semantically overloaded onto `--z-dropdown` — introduced dedicated `--z-app-chrome` (2000) tier, re-tiered `--z-modal` from 200 → 5000 so modals correctly sit above plugin renderer content (observed up to ~1001), and documented the full layering hierarchy inline in the z-index scale block. `#main-header` now references `var(--z-app-chrome)` instead of the abused dropdown token. _(Commit e524b21, resolves debt from a301a74)_
 
 ### Resolved 2026-04-05
 
@@ -161,6 +165,8 @@ _None_
 
 | Commit | Date | Score | Rating |
 |--------|------|-------|--------|
+| e524b21 | 2026-04-06 | 94/100 | Excellent |
+| a301a74 | 2026-04-06 | 75/100 | Good |
 | 23d09ac | 2026-04-05 | 62/100 | Acceptable |
 | 94311bd | 2026-04-05 | 92/100 | Excellent |
 | 3f5c856 | 2026-04-05 | 58/100 | Acceptable |

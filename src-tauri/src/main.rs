@@ -212,6 +212,7 @@ fn main() {
                 .inner_size(1200.0, 800.0)
                 .resizable(true)
                 .theme(Some(tauri::Theme::Light))
+                .use_https_scheme(true)
                 .on_web_resource_request(csp_request_hook(app_state.clone()))
                 .build()?;
 
@@ -265,6 +266,7 @@ fn main() {
                             )
                             .title("MCPViews - Plugin Manager")
                             .inner_size(800.0, 600.0)
+                            .use_https_scheme(true)
                             .on_web_resource_request(csp_request_hook(state.inner().clone()))
                             .build();
                         }

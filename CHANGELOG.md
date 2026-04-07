@@ -5,6 +5,14 @@ All notable changes to MCPViews will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Re-tiered the `styles.css` z-index scale with a new semantic `--z-app-chrome` (2000) token for the persistent app shell, and bumped `--z-modal` from 200 to 5000 so true modal dialogs sit above plugin renderer content (observed up to ~1001). Layering tiers are now documented inline: `base`/`raised`/`sticky` → `overlay` (100) → plugin (~1000) → `app-chrome` (2000) → `modal` (5000) → `dropdown` (9999).
+
+### Fixed
+- `#main-header` now uses `--z-app-chrome` (2000) instead of the overloaded `--z-dropdown` tier, so the persistent app shell correctly layers above plugin renderer slideouts (e.g. decidr-list panels at z-index ~1001) while leaving `--z-dropdown` reserved for popouts within a stacking context (apps menu).
+
 ## [0.2.1] - 2026-04-05
 
 ### Added

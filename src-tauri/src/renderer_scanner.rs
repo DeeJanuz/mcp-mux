@@ -47,13 +47,27 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                             .and_then(|m| m.modified())
                             .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                             .unwrap_or(0);
+                        // Tauri custom URI schemes resolve to different URL forms
+                        // per platform: macOS/iOS/Linux use scheme://localhost/path,
+                        // Windows uses https://scheme.localhost/path. The same
+                        // register_uri_scheme_protocol("plugin", ...) handler fires
+                        // in both cases — only the URL the webview must request differs.
+                        // See https://github.com/orgs/tauri-apps/discussions/5597
+                        let url = if cfg!(target_os = "windows") {
+                            format!(
+                                "https://plugin.localhost/{}/renderers/{}?v={}",
+                                plugin_name, file_name, mtime
+                            )
+                        } else {
+                            format!(
+                                "plugin://localhost/{}/renderers/{}?v={}",
+                                plugin_name, file_name, mtime
+                            )
+                        };
                         renderers.push(RendererInfo {
                             plugin_name: plugin_name.clone(),
                             file_name: file_name.clone(),
-                            url: format!(
-                                "plugin://localhost/{}/renderers/{}?v={}",
-                                plugin_name, file_name, mtime
-                            ),
+                            url,
                             mcp_url: mcp_url.clone(),
                         });
                     }

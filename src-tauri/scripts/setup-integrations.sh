@@ -370,6 +370,27 @@ configure_platform() {
 
 main() {
   echo ""
+  echo "############################################################"
+  echo "#                                                          #"
+  echo "#  DEPRECATION WARNING                                     #"
+  echo "#                                                          #"
+  echo "#  This setup script is DEPRECATED and will be removed in  #"
+  echo "#  the next release of MCPViews.                           #"
+  echo "#                                                          #"
+  echo "#  Recommended replacement: paste the agent install prompt #"
+  echo "#  into your AI tool. It auto-detects which agent you are  #"
+  echo "#  running and writes the correct user-level MCP config.   #"
+  echo "#                                                          #"
+  echo "#  https://github.com/DeeJanuz/mcpviews/blob/main/docs/install-prompt.md"
+  echo "#                                                          #"
+  echo "#  Press Ctrl+C now to abort, or wait 5 seconds to         #"
+  echo "#  continue with the legacy flow...                        #"
+  echo "#                                                          #"
+  echo "############################################################"
+  echo ""
+  sleep 5
+
+  echo ""
   echo "MCPViews — Agent Integration Setup"
   echo "==================================="
   echo ""

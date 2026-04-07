@@ -116,12 +116,23 @@
   --space-6: 24px;
   --space-8: 32px;
 
-  /* === Z-Index Scale === */
+  /* === Z-Index Scale ===
+   * Coherent layering tiers (low → high). Plugin renderers are uncontrolled
+   * and observed up to ~1001, so app chrome and modals must sit above that.
+   *
+   *   base/raised/sticky  — in-flow content & sticky bars
+   *   overlay  (100)      — light slideouts (citation panels, drawer-stack)
+   *   plugin   (~1000)    — uncontrolled plugin renderer panels (decidr, etc)
+   *   app-chrome (2000)   — persistent app shell (#main-header) — above plugin content
+   *   modal    (5000)     — true modal dialogs — above chrome
+   *   dropdown (9999)     — popouts within a stacking context (apps menu)
+   */
   --z-base: 0;
   --z-raised: 1;
   --z-sticky: 10;
   --z-overlay: 100;
-  --z-modal: 200;
+  --z-app-chrome: 2000;
+  --z-modal: 5000;
   --z-dropdown: 9999;
 
   /* === Scrollbar === */
@@ -463,8 +474,7 @@ body {
 
 #main-header {
   position: relative;
-  /* Must sit above plugin renderer content (decidr slideouts use z-index up to 1001) */
-  z-index: var(--z-dropdown);
+  z-index: var(--z-app-chrome);
   padding: 12px 20px;
   border-bottom: 1px solid var(--glass-border);
   background: var(--glass-bg-heavy);

@@ -6,6 +6,38 @@
 
   var activeSession = null;
 
+  function captureFocusState(shell) {
+    var active = document.activeElement;
+    if (!shell || !active || !shell.contains(active) || typeof active.getAttribute !== 'function') {
+      return null;
+    }
+
+    var focusKey = active.getAttribute('data-focus-key');
+    if (!focusKey) return null;
+
+    return {
+      key: focusKey,
+      selectionStart: typeof active.selectionStart === 'number' ? active.selectionStart : null,
+      selectionEnd: typeof active.selectionEnd === 'number' ? active.selectionEnd : null,
+    };
+  }
+
+  function restoreFocusState(shell, focusState) {
+    if (!shell || !focusState || !focusState.key) return;
+    var selector = '[data-focus-key="' + focusState.key + '"]';
+    var target = shell.querySelector(selector);
+    if (!target || typeof target.focus !== 'function') return;
+
+    target.focus({ preventScroll: true });
+    if (
+      typeof target.setSelectionRange === 'function' &&
+      typeof focusState.selectionStart === 'number' &&
+      typeof focusState.selectionEnd === 'number'
+    ) {
+      target.setSelectionRange(focusState.selectionStart, focusState.selectionEnd);
+    }
+  }
+
   function clearShell() {
     var shell = document.getElementById('ai-shell');
     var mainBody = document.getElementById('main-body');
@@ -55,6 +87,7 @@
 
       var emailInput = document.createElement('input');
       emailInput.className = 'ai-nav-search-input';
+      emailInput.setAttribute('data-focus-key', 'auth-email');
       emailInput.type = 'email';
       emailInput.placeholder = 'you@company.com';
       emailInput.value = snapshot.integration.authEmail || '';
@@ -81,6 +114,7 @@
 
       var verifyInput = document.createElement('input');
       verifyInput.className = 'ai-nav-search-input';
+      verifyInput.setAttribute('data-focus-key', 'verification-input');
       verifyInput.type = 'text';
       verifyInput.placeholder = 'Paste magic link URL or token';
       verifyInput.value = snapshot.integration.verificationInput || '';
@@ -143,7 +177,7 @@
     newChat.className = 'ai-nav-primary-btn';
     newChat.type = 'button';
     newChat.textContent = 'New chat';
-    newChat.disabled = !snapshot.projectGroups.length;
+    newChat.disabled = snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator;
     newChat.addEventListener('click', function () {
       aiState.createThread();
     });
@@ -186,6 +220,7 @@
 
     var input = document.createElement('input');
     input.className = 'ai-nav-search-input';
+    input.setAttribute('data-focus-key', 'thread-search');
     input.type = 'search';
     input.placeholder = 'Search threads';
     input.value = snapshot.searchTerm || '';
@@ -204,7 +239,17 @@
     if (!snapshot.projectGroups.length) {
       var empty = document.createElement('section');
       empty.className = 'ai-nav-card';
-      empty.innerHTML = '<strong>No threads yet</strong><p>Create the first thread once the selected organization has an active project.</p>';
+      if (snapshot.hasProjects) {
+        empty.innerHTML = '<strong>No threads yet</strong><p>Create the first thread for this organization with New chat.</p>';
+      } else {
+        empty.innerHTML = '<strong>No threads yet</strong><p>New chat will create the first project and thread for this organization.</p>';
+      }
+      if (snapshot.integration && snapshot.integration.error) {
+        var error = document.createElement('p');
+        error.className = 'ai-nav-error';
+        error.textContent = snapshot.integration.error;
+        empty.appendChild(error);
+      }
       list.appendChild(empty);
       shell.appendChild(list);
       return;
@@ -280,7 +325,7 @@
     newChat.type = 'button';
     newChat.title = 'New chat';
     newChat.textContent = '+';
-    newChat.disabled = !snapshot.projectGroups.length;
+    newChat.disabled = snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator;
     newChat.addEventListener('click', function () {
       aiState.createThread();
     });
@@ -314,6 +359,7 @@
     }
 
     var snapshot = aiState.getSnapshot();
+    var focusState = captureFocusState(shell);
     syncChrome(snapshot);
 
     if (!snapshot.navigatorVisible) {
@@ -327,6 +373,7 @@
 
     if (snapshot.navigatorCollapsed) {
       renderCollapsed(shell, snapshot, aiState);
+      restoreFocusState(shell, focusState);
       return;
     }
 
@@ -341,6 +388,8 @@
     } else {
       renderIntegrationState(shell, snapshot, aiState);
     }
+
+    restoreFocusState(shell, focusState);
   }
 
   function setActiveSession(sessionId, session) {

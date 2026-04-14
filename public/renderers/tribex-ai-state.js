@@ -8,6 +8,7 @@
   var streamListenerBound = false;
   var navigatorLoad = null;
   var activeSession = null;
+  var projectBootstrap = null;
 
   var state = {
     ui: {
@@ -86,6 +87,51 @@
     if (activeSession && activeSession.projectId) return activeSession.projectId;
     if (state.activeProjectId) return state.activeProjectId;
     return state.projects[0] ? state.projects[0].id : null;
+  }
+
+  function resolvePreferredWorkspace() {
+    var activeProjectId = resolveActiveProjectId();
+    var activeProject = activeProjectId ? getProject(activeProjectId) : null;
+    if (activeProject && activeProject.workspaceId && state.workspacesById[activeProject.workspaceId]) {
+      return state.workspacesById[activeProject.workspaceId];
+    }
+
+    var selectedOrganization = getSelectedOrganization();
+    var workspaceIds = Object.keys(state.workspacesById);
+    for (var i = 0; i < workspaceIds.length; i++) {
+      var workspace = state.workspacesById[workspaceIds[i]];
+      if (!selectedOrganization || workspace.organizationId === selectedOrganization.id) {
+        return workspace;
+      }
+    }
+
+    return workspaceIds[0] ? state.workspacesById[workspaceIds[0]] : null;
+  }
+
+  function ensureProjectForNewThread() {
+    var existingProjectId = resolveActiveProjectId();
+    if (existingProjectId) return Promise.resolve(existingProjectId);
+
+    var workspace = resolvePreferredWorkspace();
+    if (!workspace || !window.__tribexAiClient || typeof window.__tribexAiClient.createProject !== 'function') {
+      return Promise.resolve(null);
+    }
+
+    if (projectBootstrap) return projectBootstrap;
+
+    projectBootstrap = window.__tribexAiClient.createProject(workspace, 'General')
+      .then(function (project) {
+        if (!project || !project.id) return null;
+        state.projects.push(project);
+        state.activeProjectId = project.id;
+        notify();
+        return project.id;
+      })
+      .finally(function () {
+        projectBootstrap = null;
+      });
+
+    return projectBootstrap;
   }
 
   function isThreadSession(session) {
@@ -419,6 +465,7 @@
         resolveActiveProjectId(),
         state.ui.searchTerm,
       )),
+      hasProjects: state.projects.length > 0,
       activeProjectId: resolveActiveProjectId(),
       activeThreadId: activeSession && activeSession.threadId ? activeSession.threadId : null,
       streamStatuses: clone(state.streamStatuses),
@@ -490,21 +537,32 @@
   }
 
   function createThread() {
-    var targetProjectId = resolveActiveProjectId();
-    if (!targetProjectId) return Promise.resolve(null);
-
-    return window.__tribexAiClient.createThread(targetProjectId)
-      .then(function (thread) {
-        var project = getProject(targetProjectId);
-        thread.projectId = thread.projectId || targetProjectId;
-        thread.workspaceId = thread.workspaceId || (project && project.workspaceId) || null;
-        thread.projectName = thread.projectName || (project && project.name) || null;
-        thread.workspaceName = thread.workspaceName || (project && project.workspaceName) || null;
-        mergeThreadSummary(thread);
+    return ensureProjectForNewThread().then(function (targetProjectId) {
+      if (!targetProjectId) {
+        state.integration.error = 'No workspace project is available yet for this organization.';
         notify();
-        openThread(thread.id);
-        return thread.id;
-      });
+        return null;
+      }
+
+      state.integration.error = null;
+      return window.__tribexAiClient.createThread(targetProjectId)
+        .then(function (thread) {
+          var project = getProject(targetProjectId);
+          thread.projectId = thread.projectId || targetProjectId;
+          thread.workspaceId = thread.workspaceId || (project && project.workspaceId) || null;
+          thread.projectName = thread.projectName || (project && project.name) || null;
+          thread.workspaceName = thread.workspaceName || (project && project.workspaceName) || null;
+          mergeThreadSummary(thread);
+          notify();
+          openThread(thread.id);
+          return thread.id;
+        })
+        .catch(function (error) {
+          state.integration.error = error && error.message ? error.message : String(error);
+          notify();
+          throw error;
+        });
+    });
   }
 
   function submitPrompt(threadId, prompt) {

@@ -141,7 +141,9 @@ impl AppState {
                 .iter()
                 .any(|m| m.name == entry.manifest.name)
             {
-                let _ = registry.remove_plugin(&entry.manifest.name);
+                // Only clear in-memory state — preserve on-disk renderer files
+                // and other assets. add_plugin will rewrite manifest.json.
+                let _ = registry.remove_plugin_in_memory(&entry.manifest.name);
             }
             registry.add_plugin(entry.manifest.clone())?;
         }

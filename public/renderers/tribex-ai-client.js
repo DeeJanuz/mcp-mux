@@ -342,10 +342,7 @@
 
   function fetchOrganizations() {
     return requestCandidates('GET', [
-      '/api/organizations',
       '/organizations',
-      '/api/me/organizations',
-      '/me/organizations',
     ]).then(function (raw) {
       return extractArray(raw, ['organizations', 'items', 'results']).map(function (item, index) {
         return normalizeOrganization(item, index);
@@ -355,7 +352,6 @@
 
   function fetchWorkspaces(organizationId) {
     return requestCandidates('GET', [
-      '/api/organizations/' + encodeURIComponent(organizationId) + '/workspaces',
       '/organizations/' + encodeURIComponent(organizationId) + '/workspaces',
     ]).then(function (raw) {
       return extractArray(raw, ['workspaces', 'items', 'results']).map(function (item, index) {
@@ -367,7 +363,6 @@
   function fetchProjects(workspace) {
     return requestCandidates('GET', [
       '/workspaces/' + encodeURIComponent(workspace.id) + '/projects',
-      '/api/workspaces/' + encodeURIComponent(workspace.id) + '/projects',
     ]).then(function (raw) {
       return extractArray(raw, ['projects', 'items', 'results']).map(function (item, index) {
         return normalizeProject(item, workspace, index);
@@ -381,10 +376,6 @@
         path: '/workspaces/' + encodeURIComponent(workspace.id) + '/projects',
         body: { name: name || 'General' },
       },
-      {
-        path: '/api/workspaces/' + encodeURIComponent(workspace.id) + '/projects',
-        body: { name: name || 'General' },
-      },
     ]).then(function (raw) {
       return normalizeProject(raw.project || raw, workspace, 0);
     });
@@ -393,7 +384,6 @@
   function fetchThreads(project) {
     return requestCandidates('GET', [
       '/projects/' + encodeURIComponent(project.id) + '/threads',
-      '/api/projects/' + encodeURIComponent(project.id) + '/threads',
     ]).then(function (raw) {
       return extractArray(raw, ['threads', 'items', 'results']).map(function (item, index) {
         return normalizeThreadSummary(item, project, index);
@@ -404,7 +394,6 @@
   function fetchThread(threadId) {
     return requestCandidates('GET', [
       '/threads/' + encodeURIComponent(threadId),
-      '/api/threads/' + encodeURIComponent(threadId),
     ]).then(normalizeThreadDetail);
   }
 
@@ -412,10 +401,6 @@
     return requestVariants('POST', [
       {
         path: '/projects/' + encodeURIComponent(projectId) + '/threads',
-        body: { title: 'New chat' },
-      },
-      {
-        path: '/api/projects/' + encodeURIComponent(projectId) + '/threads',
         body: { title: 'New chat' },
       },
     ]).then(function (raw) {
@@ -431,10 +416,6 @@
         path: '/threads/' + encodeURIComponent(threadId) + '/messages',
         body: { content: prompt },
       },
-      {
-        path: '/api/threads/' + encodeURIComponent(threadId) + '/messages',
-        body: { content: prompt },
-      },
     ]);
   }
 
@@ -442,10 +423,6 @@
     return requestVariants('POST', [
       {
         path: '/workspaces/' + encodeURIComponent(workspaceId) + '/companion-sessions',
-        body: { metadata: threadId ? { threadId: threadId } : {} },
-      },
-      {
-        path: '/api/workspaces/' + encodeURIComponent(workspaceId) + '/companion-sessions',
         body: { metadata: threadId ? { threadId: threadId } : {} },
       },
     ]).then(normalizeCompanionSession);

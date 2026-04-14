@@ -375,6 +375,21 @@
     });
   }
 
+  function createProject(workspace, name) {
+    return requestVariants('POST', [
+      {
+        path: '/workspaces/' + encodeURIComponent(workspace.id) + '/projects',
+        body: { name: name || 'General' },
+      },
+      {
+        path: '/api/workspaces/' + encodeURIComponent(workspace.id) + '/projects',
+        body: { name: name || 'General' },
+      },
+    ]).then(function (raw) {
+      return normalizeProject(raw.project || raw, workspace, 0);
+    });
+  }
+
   function fetchThreads(project) {
     return requestCandidates('GET', [
       '/projects/' + encodeURIComponent(project.id) + '/threads',
@@ -461,6 +476,7 @@
   window.__tribexAiClient = {
     clearAuth: clearAuth,
     createCompanionSession: createCompanionSession,
+    createProject: createProject,
     createThread: createThread,
     fetchSession: fetchSession,
     fetchOrganizations: fetchOrganizations,

@@ -71,10 +71,6 @@ impl SessionStore {
         self.entries.remove(id).map(|e| e.session)
     }
 
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-
     /// Remove sessions older than TTL, return count removed
     pub fn gc(&mut self) -> usize {
         let before = self.entries.len();

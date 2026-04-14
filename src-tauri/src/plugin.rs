@@ -22,7 +22,6 @@ pub(crate) struct PluginToolResult {
     pub auth_header: Option<String>,
     pub unprefixed_name: String,
     pub oauth_info: Option<OAuthRefreshInfo>,
-    pub org_id: Option<String>,
 }
 
 /// Attempt OAuth token refresh, returning "Bearer {token}" on success.
@@ -167,28 +166,6 @@ impl PluginRegistry {
         self.tool_cache.all_tools()
     }
 
-    /// Find which plugin handles a prefixed tool name.
-    pub fn find_plugin_for_tool(
-        &self,
-        prefixed_name: &str,
-    ) -> Option<PluginToolResult> {
-        let idx = self.tool_cache.tool_index.get(prefixed_name)?;
-        let manifest = self.manifests.get(*idx)?;
-        let mcp = manifest.mcp.as_ref()?;
-        let unprefixed = prefixed_name.strip_prefix(&mcp.tool_prefix)?;
-        let auth = resolve_auth_header(&manifest.name, &mcp.auth);
-        let oauth_info = extract_oauth_refresh_info(&manifest.name, &mcp.auth);
-
-        Some(PluginToolResult {
-            plugin_name: manifest.name.clone(),
-            mcp_url: mcp.url.clone(),
-            auth_header: auth,
-            unprefixed_name: unprefixed.to_string(),
-            oauth_info,
-            org_id: None,
-        })
-    }
-
     /// Find which plugin handles a tool, using organization_id from arguments for org-aware auth.
     pub fn find_plugin_for_tool_with_args(
         &self,
@@ -226,7 +203,6 @@ impl PluginRegistry {
             auth_header: auth,
             unprefixed_name: unprefixed.to_string(),
             oauth_info,
-            org_id,
         })
     }
 
@@ -562,4 +538,3 @@ mod tests {
         }
     }
 }
-

@@ -440,6 +440,9 @@
     }
 
     var session = sessions.get(sessionId);
+    if (window.__tribexAiShell && typeof window.__tribexAiShell.setActiveSession === 'function') {
+      window.__tribexAiShell.setActiveSession(sessionId, session);
+    }
     if (session && session.reviewRequired) {
       startHeartbeat(sessionId);
     } else {
@@ -473,7 +476,7 @@
       return;
     }
 
-    mainTitle.textContent = session.toolName + ' \u2014 ' + session.contentType;
+    mainTitle.textContent = (session.meta && session.meta.headerTitle) || getTabLabel(session);
     if (refreshButton) refreshButton.style.display = '';
 
     // Deactivate all cached containers
@@ -515,6 +518,9 @@
   function renderEmpty() {
     mainTitle.textContent = 'MCPViews';
     if (refreshButton) refreshButton.style.display = 'none';
+    if (window.__tribexAiShell && typeof window.__tribexAiShell.hide === 'function') {
+      window.__tribexAiShell.hide();
+    }
     // Deactivate all cached containers
     contentCache.forEach(function (container) {
       container.classList.remove('active');
@@ -524,8 +530,27 @@
     if (!emptyState) {
       emptyState = document.createElement('div');
       emptyState.className = 'empty-state';
-      emptyState.textContent = 'Waiting for preview data...';
       contentArea.appendChild(emptyState);
+    }
+    emptyState.innerHTML = '';
+
+    var title = document.createElement('strong');
+    title.textContent = 'Waiting for preview data…';
+    emptyState.appendChild(title);
+
+    var subtitle = document.createElement('p');
+    subtitle.textContent = 'Open the bundled AI home to explore the new MCPViews workspace scaffold.';
+    emptyState.appendChild(subtitle);
+
+    if (window.__tribexAiState && typeof window.__tribexAiState.openHome === 'function') {
+      var button = document.createElement('button');
+      button.className = 'ai-primary-btn';
+      button.type = 'button';
+      button.textContent = 'Open AI home';
+      button.addEventListener('click', function () {
+        window.__tribexAiState.openHome();
+      });
+      emptyState.appendChild(button);
     }
     emptyState.style.display = '';
   }
@@ -544,6 +569,7 @@
 
   window.__companionUtils = window.__companionUtils || {};
   window.__companionUtils.openSession = openSyntheticSession;
+  window.__companionUtils.refreshActiveSession = refreshCurrentSession;
 
   // --- Decision ---
 
@@ -705,6 +731,17 @@
     });
   }
 
+  function initAiButton() {
+    var aiBtn = document.getElementById('ai-home-button');
+    if (!aiBtn) return;
+
+    aiBtn.addEventListener('click', function () {
+      if (window.__tribexAiState && typeof window.__tribexAiState.openHome === 'function') {
+        window.__tribexAiState.openHome();
+      }
+    });
+  }
+
   function populateAppsDropdown(dropdown) {
     if (!window.__TAURI__) {
       dropdown.innerHTML = '<div class="apps-empty">Not available in browser mode</div>';
@@ -807,6 +844,7 @@
   // --- Init ---
 
   renderEmpty();
+  initAiButton();
   initAppsButton();
   initTauri();
 })();

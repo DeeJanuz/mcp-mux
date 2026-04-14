@@ -28,6 +28,10 @@
             <span id="connection-dot" class="dot connected"></span>
             <span id="connection-text">Ready</span>
           </div>
+          <button id="ai-home-button" class="header-chip-btn" aria-label="Open AI home" title="Open AI home">
+            <span class="header-chip-dot"></span>
+            <span>AI</span>
+          </button>
           <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">
             <span class="theme-icon-light">☀</span>
             <span class="theme-icon-dark">☾</span>
@@ -44,7 +48,10 @@
         </div>
       </div>
       <div id="tab-bar"></div>
-      <div id="content-area"></div>
+      <div id="main-body">
+        <aside id="ai-shell" class="hidden" aria-label="AI workspace navigation"></aside>
+        <div id="content-area"></div>
+      </div>
     </div>
   </div>
 
@@ -119,6 +126,13 @@
   <script src="./renderers/citation-panel.js"></script>
   <script src="./renderers/drawer-stack.js"></script>
   <script src="./renderers/invocation-registry.js"></script>
+  <script src="./renderers/tribex-ai-utils.js"></script>
+  <script src="./renderers/tribex-ai-state.js"></script>
+  <script src="./renderers/tribex-ai-shell.js"></script>
+  <script src="./renderers/tribex-ai-home.js"></script>
+  <script src="./renderers/tribex-ai-setup.js"></script>
+  <script src="./renderers/tribex-ai-tool-catalog.js"></script>
+  <script src="./renderers/tribex-ai-thread.js"></script>
 
   <script src="./main.js"></script>
 </body>

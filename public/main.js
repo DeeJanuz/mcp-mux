@@ -350,6 +350,59 @@
     selectSession(session.sessionId);
   }
 
+  function openSyntheticSession(config) {
+    config = config || {};
+    var sessionKey = config.sessionKey || null;
+    var existingSessionId = null;
+
+    if (sessionKey) {
+      sessions.forEach(function (session, sessionId) {
+        if (existingSessionId) return;
+        if (session.meta && session.meta.syntheticKey === sessionKey) {
+          existingSessionId = sessionId;
+        }
+      });
+    }
+
+    if (existingSessionId) {
+      var existing = sessions.get(existingSessionId);
+      if (existing) {
+        if (config.data !== undefined) existing.data = config.data;
+        if (config.meta) existing.meta = Object.assign({}, existing.meta || {}, config.meta);
+        if (config.toolArgs) existing.toolArgs = config.toolArgs;
+        if (config.toolName) existing.toolName = config.toolName;
+        if (config.contentType) existing.contentType = config.contentType;
+        existing.timestamp = Date.now();
+      }
+
+      var cached = contentCache.get(existingSessionId);
+      if (cached && cached.parentNode) {
+        cached.parentNode.removeChild(cached);
+      }
+      contentCache.delete(existingSessionId);
+      selectSession(existingSessionId);
+      return existingSessionId;
+    }
+
+    var sessionId = config.sessionId || ('synthetic-' + (config.toolName || config.contentType || 'session') + '-' + Date.now());
+    var meta = Object.assign({}, config.meta || {});
+    if (sessionKey) meta.syntheticKey = sessionKey;
+
+    sessions.set(sessionId, {
+      toolName: config.toolName || 'synthetic_session',
+      contentType: config.contentType || 'rich_content',
+      data: config.data || {},
+      meta: meta,
+      toolArgs: config.toolArgs || {},
+      reviewRequired: !!config.reviewRequired,
+      timeoutSecs: config.timeoutSecs || null,
+      timestamp: Date.now(),
+    });
+
+    selectSession(sessionId);
+    return sessionId;
+  }
+
   function getTabLabel(session) {
     // Try to extract a meaningful label from the data
     if (session.data && typeof session.data === 'object') {
@@ -488,6 +541,9 @@
         '<p style="color:var(--text-secondary);">This tool needs a renderer added to the UI.</p></div>';
     };
   }
+
+  window.__companionUtils = window.__companionUtils || {};
+  window.__companionUtils.openSession = openSyntheticSession;
 
   // --- Decision ---
 

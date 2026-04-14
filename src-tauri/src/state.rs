@@ -5,7 +5,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::time::Instant;
 
 use mcpviews_shared::plugin_store::PluginStore;
-use mcpviews_shared::RegistryEntry;
+use mcpviews_shared::{PluginManifest, RegistryEntry};
 
 use crate::mcp_session::McpSessionManager;
 use crate::plugin::PluginRegistry;
@@ -27,6 +27,7 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         let store = PluginStore::new();
+        ensure_bundled_plugins(&store);
         Self::new_with_store(store)
     }
 
@@ -164,6 +165,34 @@ impl AppState {
     }
 }
 
+fn ensure_bundled_plugins(store: &PluginStore) {
+    const BUNDLED_MANIFESTS: [&str; 1] = [include_str!("../../bundled-plugins/tribex-ai/manifest.json")];
+
+    for manifest_json in BUNDLED_MANIFESTS {
+        let manifest = match serde_json::from_str::<PluginManifest>(manifest_json) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                eprintln!("[mcpviews] Failed to parse bundled plugin manifest: {}", error);
+                continue;
+            }
+        };
+
+        let needs_write = match store.load(&manifest.name) {
+            Ok(existing) => existing.version != manifest.version,
+            Err(_) => true,
+        };
+
+        if needs_write {
+            if let Err(error) = store.save(&manifest) {
+                eprintln!(
+                    "[mcpviews] Failed to persist bundled plugin '{}': {}",
+                    manifest.name, error
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +289,17 @@ mod tests {
             assert_eq!(registry.manifests.len(), 1);
             assert_eq!(registry.manifests[0].name, "reload-test");
         }
+    }
+
+    #[test]
+    fn test_ensure_bundled_plugins_installs_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().to_path_buf());
+
+        ensure_bundled_plugins(&store);
+
+        let manifest = store.load("tribex_ai").unwrap();
+        assert_eq!(manifest.name, "tribex_ai");
+        assert_eq!(manifest.version, "0.1.0");
     }
 }

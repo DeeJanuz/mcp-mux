@@ -35,6 +35,12 @@ globalThis.document = {
       parentNode: null,
     };
   },
+  getElementById: function() {
+    return null;
+  },
+  querySelector: function() {
+    return null;
+  },
   body: {
     _children: bodyChildren,
     appendChild: function(el) {
@@ -55,3 +61,5 @@ globalThis.setTimeout = function(cb) { cb(); };
 var code = readFileSync(join(__dirname_resolved, '../public/renderers/drawer-stack.js'), 'utf8');
 var fn = new Function(code);
 fn.call(globalThis);
+
+globalThis.window.__companionUtils.setActiveSession('test-session');

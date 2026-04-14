@@ -7,11 +7,23 @@ var __dirname_resolved = dirname(fileURLToPath(import.meta.url));
 // Minimal marked mock that just calls the renderer.link function
 globalThis.window = globalThis;
 globalThis.document = {
+  documentElement: {
+    getAttribute: function() {
+      return 'light';
+    },
+  },
   createElement: function(tag) {
     var _textContent = '';
+    var attrs = {};
     return {
       className: '',
       innerHTML: '',
+      setAttribute: function(key, value) {
+        attrs[key] = value;
+      },
+      getAttribute: function(key) {
+        return attrs[key] || null;
+      },
       get textContent() { return _textContent; },
       set textContent(val) {
         _textContent = val;

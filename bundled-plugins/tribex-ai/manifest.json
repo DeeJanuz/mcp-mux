@@ -1,22 +1,8 @@
 {
   "name": "tribex_ai",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "renderers": {},
   "renderer_definitions": [
-    {
-      "name": "tribex_ai_home",
-      "description": "First-party AI home surface for workspace status, recent projects, recent threads, and recovery actions.",
-      "scope": "universal",
-      "data_hint": "{ workspace_id?: string }",
-      "display_mode": "replace"
-    },
-    {
-      "name": "tribex_ai_setup",
-      "description": "First-party in-app setup flow for organization readiness, billing, provisioning, and local tool handoff.",
-      "scope": "universal",
-      "data_hint": "{ workspace_id?: string }",
-      "display_mode": "replace"
-    },
     {
       "name": "tribex_ai_thread",
       "description": "Chat-first hosted thread surface with transcript, composer, tool activity, and reconnect context.",
@@ -24,34 +10,22 @@
       "data_hint": "{ thread_id: string }",
       "display_mode": "replace",
       "invoke_schema": "{ thread_id: string }"
-    },
-    {
-      "name": "tribex_ai_tool_catalog",
-      "description": "Workspace-scoped tool catalog with per-device readiness and relay approval state.",
-      "scope": "universal",
-      "data_hint": "{ workspace_id?: string }",
-      "display_mode": "replace",
-      "invoke_schema": "{ workspace_id?: string }"
     }
   ],
   "registry_index": {
-    "summary": "Bundled first-party AI shell surfaces for MCPViews.",
+    "summary": "Bundled first-party AI thread surface for MCPViews.",
     "tags": [
       "ai",
       "workspace",
       "threads",
-      "relay",
       "first-party"
     ],
     "tool_groups": [],
     "renderer_names": [
-      "tribex_ai_home",
-      "tribex_ai_setup",
-      "tribex_ai_thread",
-      "tribex_ai_tool_catalog"
+      "tribex_ai_thread"
     ]
   },
   "plugin_rules": [
-    "The bundled TribeX AI surfaces are first-party shell companions for workspace setup, discovery, thread work, and tool readiness."
+    "The bundled TribeX AI surface is a first-party chat thread renderer that works with the built-in navigator shell."
   ]
 }

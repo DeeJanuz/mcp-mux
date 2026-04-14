@@ -5,60 +5,54 @@ describe('tribex-ai-utils', function () {
   var utils = window.__tribexAiUtils;
 
   it('detects AI content types', function () {
-    expect(utils.isAiContentType('tribex_ai_home')).toBe(true);
+    expect(utils.isAiContentType('tribex_ai_thread')).toBe(true);
     expect(utils.isAiContentType('rich_content')).toBe(false);
   });
 
-  it('sorts pinned and current projects ahead of older items', function () {
+  it('sorts the active project ahead of newer inactive items', function () {
     var sorted = utils.sortProjects(
       [
-        { id: 'older', pinned: false, lastActivityAt: '2026-04-13T10:00:00Z' },
-        { id: 'pinned', pinned: true, lastActivityAt: '2026-04-12T10:00:00Z' },
-        { id: 'current', pinned: false, lastActivityAt: '2026-04-13T09:00:00Z' },
+        { id: 'older', lastActivityAt: '2026-04-13T10:00:00Z' },
+        { id: 'newer', lastActivityAt: '2026-04-14T10:00:00Z' },
+        { id: 'current', lastActivityAt: '2026-04-13T09:00:00Z' },
       ],
       'current',
     );
 
     expect(sorted.map(function (project) { return project.id; })).toEqual([
-      'pinned',
       'current',
+      'newer',
       'older',
     ]);
   });
 
-  it('summarizes ready vs blocked bindings', function () {
-    var summary = utils.summarizeReadiness([
-      { required: true, readiness: 'ready' },
-      { required: true, readiness: 'permission_required' },
-      { required: false, readiness: 'not_authenticated' },
-    ]);
+  it('matches search terms across project, workspace, thread title, and preview', function () {
+    var project = { name: 'Alpha Project', workspaceName: 'Ops Workspace' };
+    var thread = { title: 'Incident follow-up', preview: 'Need Cloudflare logs', workspaceName: 'Ops Workspace' };
 
-    expect(summary.total).toBe(3);
-    expect(summary.ready).toBe(1);
-    expect(summary.required).toBe(2);
-    expect(summary.needsAttention).toBe(2);
-    expect(summary.blocked).toBe(1);
+    expect(utils.matchesSearch(project, thread, 'incident')).toBe(true);
+    expect(utils.matchesSearch(project, thread, 'cloudflare')).toBe(true);
+    expect(utils.matchesSearch(project, thread, 'ops workspace')).toBe(true);
+    expect(utils.matchesSearch(project, thread, 'missing')).toBe(false);
   });
 
-  it('builds setup stages with current tool handoff when required bindings are blocked', function () {
-    var stages = utils.buildSetupStages(
-      {
-        organizationReady: true,
-        package: { name: 'Operator Studio' },
-        billing: { status: 'ACTIVE' },
-        provisioning: { state: 'ACTIVE' },
-      },
+  it('builds project groups with sorted threads and search filtering', function () {
+    var groups = utils.buildProjectGroups(
       [
-        { required: true, readiness: 'permission_required' },
+        { id: 'project-b', name: 'Project B', lastActivityAt: '2026-04-13T09:00:00Z' },
+        { id: 'project-a', name: 'Project A', workspaceName: 'Workspace A', lastActivityAt: '2026-04-14T09:00:00Z' },
       ],
+      [
+        { id: 'thread-1', projectId: 'project-a', title: 'Deploy prep', preview: 'Cloudflare rollout', lastActivityAt: '2026-04-14T08:00:00Z' },
+        { id: 'thread-2', projectId: 'project-a', title: 'Bug bash', preview: 'Regression sweep', lastActivityAt: '2026-04-14T10:00:00Z' },
+        { id: 'thread-3', projectId: 'project-b', title: 'Retrospective', preview: 'Weekly recap', lastActivityAt: '2026-04-13T08:00:00Z' },
+      ],
+      'project-a',
+      'cloudflare',
     );
 
-    expect(stages.map(function (stage) { return stage.status; })).toEqual([
-      'complete',
-      'complete',
-      'complete',
-      'complete',
-      'current',
-    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].project.id).toBe('project-a');
+    expect(groups[0].threads.map(function (thread) { return thread.id; })).toEqual(['thread-1']);
   });
 });

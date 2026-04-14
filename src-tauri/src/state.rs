@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use mcpviews_shared::plugin_store::PluginStore;
@@ -21,6 +22,7 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     pub latest_registry: Mutex<Vec<RegistryEntry>>,
     pub mcp_sessions: Mutex<McpSessionManager>,
+    pub first_party_ai_streams: Mutex<HashMap<String, JoinHandle<()>>>,
     plugin_store: PluginStore,
 }
 
@@ -34,14 +36,19 @@ impl AppState {
     /// Create an AppState with a custom PluginStore (useful for testing without touching the real filesystem).
     pub fn new_with_store(store: PluginStore) -> Self {
         let registry = PluginRegistry::load_plugins_with_store(store.clone());
+        let http_client = reqwest::Client::builder()
+            .cookie_store(true)
+            .build()
+            .expect("failed to build shared HTTP client");
         Self {
             sessions: Mutex::new(SessionStore::new()),
             reviews: Mutex::new(ReviewState::new()),
             review_deadlines: Mutex::new(HashMap::new()),
             plugin_registry: Mutex::new(registry),
-            http_client: reqwest::Client::new(),
+            http_client,
             latest_registry: Mutex::new(Vec::new()),
             mcp_sessions: Mutex::new(McpSessionManager::new()),
+            first_party_ai_streams: Mutex::new(HashMap::new()),
             plugin_store: store,
         }
     }
@@ -300,6 +307,6 @@ mod tests {
 
         let manifest = store.load("tribex_ai").unwrap();
         assert_eq!(manifest.name, "tribex_ai");
-        assert_eq!(manifest.version, "0.1.0");
+        assert_eq!(manifest.version, "0.2.0");
     }
 }

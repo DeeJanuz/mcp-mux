@@ -393,6 +393,91 @@ pub fn list_plugin_orgs(plugin_name: String) -> Vec<String> {
 }
 
 #[tauri::command]
+pub fn get_first_party_ai_config() -> serde_json::Value {
+    crate::first_party_ai::config_summary()
+}
+
+#[tauri::command]
+pub async fn start_first_party_ai_auth(
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    crate::first_party_ai::start_auth(state.inner()).await
+}
+
+#[tauri::command]
+pub async fn get_first_party_ai_auth_header(
+    state: State<'_, Arc<AppState>>,
+) -> Result<String, String> {
+    crate::first_party_ai::get_auth_header(state.inner()).await
+}
+
+#[tauri::command]
+pub async fn get_first_party_ai_session(
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::first_party_ai::get_session(state.inner()).await
+}
+
+#[tauri::command]
+pub async fn send_first_party_ai_magic_link(
+    email: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::first_party_ai::send_magic_link(state.inner(), &email).await
+}
+
+#[tauri::command]
+pub async fn verify_first_party_ai_magic_link(
+    verification_url_or_token: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::first_party_ai::verify_magic_link(state.inner(), &verification_url_or_token).await
+}
+
+#[tauri::command]
+pub async fn clear_first_party_ai_auth(
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    crate::first_party_ai::clear_auth(state.inner()).await
+}
+
+#[tauri::command]
+pub async fn first_party_ai_request(
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+    query: Option<HashMap<String, String>>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::first_party_ai::proxy_request(state.inner(), &method, &path, body, query).await
+}
+
+#[tauri::command]
+pub async fn start_first_party_ai_companion_stream(
+    thread_id: String,
+    companion_key: String,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    crate::first_party_ai::start_companion_stream(
+        state.inner().clone(),
+        app_handle,
+        thread_id,
+        companion_key,
+    )
+    .await
+}
+
+#[tauri::command]
+pub fn stop_first_party_ai_companion_stream(
+    thread_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    crate::first_party_ai::stop_companion_stream(state.inner(), &thread_id);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_settings() -> Result<mcpviews_shared::settings::Settings, String> {
     Ok(mcpviews_shared::settings::Settings::load())
 }

@@ -21,6 +21,7 @@
               <path d="M13.65 2.35A7.96 7.96 0 0 0 8 0C3.58 0 0 3.58 0 8s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 8 14 6 6 0 1 1 8 2c1.66 0 3.14.69 4.22 1.78L9 7h7V0l-2.35 2.35z" fill="currentColor"/>
             </svg>
           </button>
+          <button id="ai-shell-toggle-button" aria-label="Collapse AI navigator" title="Collapse AI navigator" class="header-icon-btn" style="display:none;">&lt;</button>
           <span id="main-title" class="title">MCPViews</span>
         </div>
         <div id="header-actions">
@@ -28,7 +29,7 @@
             <span id="connection-dot" class="dot connected"></span>
             <span id="connection-text">Ready</span>
           </div>
-          <button id="ai-home-button" class="header-chip-btn" aria-label="Open AI home" title="Open AI home">
+          <button id="ai-home-button" class="header-chip-btn" aria-label="Toggle AI navigator" title="Toggle AI navigator">
             <span class="header-chip-dot"></span>
             <span>AI</span>
           </button>
@@ -127,11 +128,9 @@
   <script src="./renderers/drawer-stack.js"></script>
   <script src="./renderers/invocation-registry.js"></script>
   <script src="./renderers/tribex-ai-utils.js"></script>
+  <script src="./renderers/tribex-ai-client.js"></script>
   <script src="./renderers/tribex-ai-state.js"></script>
   <script src="./renderers/tribex-ai-shell.js"></script>
-  <script src="./renderers/tribex-ai-home.js"></script>
-  <script src="./renderers/tribex-ai-setup.js"></script>
-  <script src="./renderers/tribex-ai-tool-catalog.js"></script>
   <script src="./renderers/tribex-ai-thread.js"></script>
 
   <script src="./main.js"></script>

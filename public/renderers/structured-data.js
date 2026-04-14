@@ -76,6 +76,8 @@
       '.sd-sort-indicator { margin-left: var(--space-1); font-size: var(--text-xs); color: var(--text-tertiary); }',
       '.sd-decision-toggle { display: inline-flex; gap: 2px; margin-left: var(--space-2); }',
       '.sd-decision-toggle button { font-size: var(--text-xs); padding: 2px 6px; border: 1px solid var(--border-default); border-radius: var(--border-radius-sm); cursor: pointer; background: var(--bg-surface); color: var(--text-secondary); }',
+      '.sd-decision-toggle[data-decision-state="undecided"] button { background: var(--bg-surface-subtle); color: var(--text-tertiary); border-color: var(--border-subtle); }',
+      '.sd-decision-toggle[data-decision-state="undecided"] button:hover { color: var(--text-secondary); border-color: var(--border-default); }',
       '.sd-decision-accept { background: var(--color-success-bg) !important; color: var(--color-success-text) !important; border-color: var(--color-success) !important; }',
       '.sd-decision-reject { background: var(--color-error-bg) !important; color: var(--color-error-text) !important; border-color: var(--color-error) !important; }',
       '.sd-submit-bar { position: sticky; bottom: 0; background: var(--glass-bg-heavy); backdrop-filter: blur(var(--glass-blur)); border-top: 1px solid var(--glass-border); padding: var(--space-3) var(--space-4); display: flex; gap: var(--space-2); justify-content: flex-end; align-items: center; margin-top: var(--space-4); border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg); }',
@@ -131,28 +133,46 @@
     return btn;
   }
 
+  function getDecisionState(decision) {
+    if (decision === 'accept' || decision === 'reject') return decision;
+    return 'undecided';
+  }
+
+  function toggleDecisionState(state, key, decision) {
+    if (getDecisionState(state.decisions[key]) === decision) {
+      delete state.decisions[key];
+      return;
+    }
+    state.decisions[key] = decision;
+  }
+
   function buildDecisionToggle(key, state, rerenderFn, opts) {
     var wrapper = document.createElement('span');
     wrapper.className = 'sd-decision-toggle';
-    var currentDecision = state.decisions[key] || 'accept';
+    var currentDecision = getDecisionState(state.decisions[key]);
+    wrapper.setAttribute('data-decision-state', currentDecision);
 
     var acceptBtn = document.createElement('button');
+    acceptBtn.type = 'button';
     acceptBtn.textContent = '\u2713';
     acceptBtn.title = opts.acceptTitle || 'Accept';
+    acceptBtn.setAttribute('aria-pressed', currentDecision === 'accept' ? 'true' : 'false');
     if (currentDecision === 'accept') acceptBtn.classList.add('sd-decision-accept');
     acceptBtn.addEventListener('click', function (e) {
       e.stopPropagation();
-      state.decisions[key] = 'accept';
+      toggleDecisionState(state, key, 'accept');
       rerenderFn();
     });
 
     var rejectBtn = document.createElement('button');
+    rejectBtn.type = 'button';
     rejectBtn.textContent = '\u2717';
     rejectBtn.title = opts.rejectTitle || 'Reject';
+    rejectBtn.setAttribute('aria-pressed', currentDecision === 'reject' ? 'true' : 'false');
     if (currentDecision === 'reject') rejectBtn.classList.add('sd-decision-reject');
     rejectBtn.addEventListener('click', function (e) {
       e.stopPropagation();
-      state.decisions[key] = 'reject';
+      toggleDecisionState(state, key, 'reject');
       rerenderFn();
     });
 

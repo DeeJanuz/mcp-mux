@@ -1,166 +1,306 @@
 // @ts-nocheck
-/* TribeX AI shell — workspace/project/thread navigation frame owned by the app shell */
+/* TribeX AI shell — persistent slideout navigator */
 
 (function () {
   'use strict';
 
   var activeSession = null;
 
-  function renderBadge(text, tone) {
-    var badge = document.createElement('span');
-    badge.className = 'ai-pill ai-pill-' + (tone || 'neutral');
-    badge.textContent = text;
-    return badge;
-  }
-
   function clearShell() {
     var shell = document.getElementById('ai-shell');
     var mainBody = document.getElementById('main-body');
     if (!shell || !mainBody) return;
     shell.innerHTML = '';
-    shell.classList.add('hidden');
+    shell.className = 'hidden';
     mainBody.classList.remove('ai-shell-visible');
+    syncChrome(null);
   }
 
-  function renderActionBar(shell, aiState) {
-    var buttonRow = document.createElement('div');
-    buttonRow.className = 'ai-shell-actions';
+  function syncChrome(snapshot) {
+    var aiButton = document.getElementById('ai-home-button');
+    var collapseButton = document.getElementById('ai-shell-toggle-button');
 
-    [
-      { label: 'Home', onClick: function () { aiState.openHome(activeSession && activeSession.projectId); } },
-      { label: 'Setup', onClick: function () { aiState.openSetup(); } },
-      { label: 'Tools', onClick: function () { aiState.openToolCatalog(); } },
-    ].forEach(function (action) {
-      var button = document.createElement('button');
-      button.className = 'ai-shell-action-btn';
-      button.textContent = action.label;
-      button.addEventListener('click', action.onClick);
-      buttonRow.appendChild(button);
-    });
+    if (aiButton) {
+      if (snapshot && snapshot.navigatorVisible) aiButton.classList.add('active');
+      else aiButton.classList.remove('active');
+    }
 
-    shell.appendChild(buttonRow);
+    if (collapseButton) {
+      var visible = !!(snapshot && snapshot.navigatorVisible);
+      collapseButton.style.display = visible ? '' : 'none';
+      collapseButton.setAttribute('title', snapshot && snapshot.navigatorCollapsed ? 'Expand AI navigator' : 'Collapse AI navigator');
+      collapseButton.setAttribute('aria-label', snapshot && snapshot.navigatorCollapsed ? 'Expand AI navigator' : 'Collapse AI navigator');
+      collapseButton.textContent = snapshot && snapshot.navigatorCollapsed ? '>' : '<';
+    }
   }
 
-  function renderWorkspaceCard(shell, snapshot) {
-    var workspace = snapshot.workspace;
-    var toolSummary = snapshot.toolSummary;
-    var card = document.createElement('section');
-    card.className = 'ai-shell-card';
-
-    var eyebrow = document.createElement('p');
-    eyebrow.className = 'ai-shell-eyebrow';
-    eyebrow.textContent = snapshot.organization.name;
-    card.appendChild(eyebrow);
-
-    var title = document.createElement('h2');
-    title.className = 'ai-shell-title';
-    title.textContent = workspace.name;
-    card.appendChild(title);
-
-    var subline = document.createElement('p');
-    subline.className = 'ai-shell-subline';
-    subline.textContent = workspace.package.name + ' · ' + workspace.package.persona + ' · ' + workspace.package.version;
-    card.appendChild(subline);
-
-    var badges = document.createElement('div');
-    badges.className = 'ai-shell-pill-row';
-    badges.appendChild(renderBadge(workspace.provisioning.state === 'ACTIVE' ? 'Workspace ready' : 'Needs setup', workspace.provisioning.state === 'ACTIVE' ? 'success' : 'warning'));
-    badges.appendChild(renderBadge(toolSummary.blocked === 0 ? 'Device ready' : toolSummary.blocked + ' tool blocked', toolSummary.blocked === 0 ? 'success' : 'warning'));
-    card.appendChild(badges);
-
-    shell.appendChild(card);
-  }
-
-  function renderProjects(shell, snapshot, aiState) {
+  function renderIntegrationState(shell, snapshot, aiState) {
     var section = document.createElement('section');
-    section.className = 'ai-shell-section';
+    section.className = 'ai-nav-card';
 
-    var header = document.createElement('div');
-    header.className = 'ai-shell-section-header';
-    header.innerHTML = '<span>Projects</span><span>' + snapshot.projects.length + '</span>';
-    section.appendChild(header);
+    var title = document.createElement('strong');
+    section.appendChild(title);
 
-    var list = document.createElement('div');
-    list.className = 'ai-shell-list';
+    var body = document.createElement('p');
+    section.appendChild(body);
 
-    snapshot.projects.forEach(function (project) {
-      var item = document.createElement('div');
-      item.className = 'ai-shell-item' + (activeSession && activeSession.projectId === project.id ? ' active' : '');
+    if (!snapshot.integration.config || !snapshot.integration.config.configured) {
+      title.textContent = 'ProPaasAI is not configured';
+      body.textContent = 'Set `first_party_ai.base_url` in `~/.mcpviews/config.json` to load organizations, projects, and threads.';
+    } else if (snapshot.integration.status === 'unauthenticated' || snapshot.integration.status === 'awaiting_verification') {
+      title.textContent = 'Connect to ProPaasAI';
+      body.textContent = snapshot.integration.magicLinkSentTo
+        ? 'Paste the magic link URL or token after opening the email.'
+        : 'Send yourself a magic link to establish a desktop session with the brokered workspace.';
 
-      var projectButton = document.createElement('button');
-      projectButton.className = 'ai-shell-project-btn';
-      projectButton.type = 'button';
-      projectButton.addEventListener('click', function () {
-        aiState.openProject(project.id);
+      var emailInput = document.createElement('input');
+      emailInput.className = 'ai-nav-search-input';
+      emailInput.type = 'email';
+      emailInput.placeholder = 'you@company.com';
+      emailInput.value = snapshot.integration.authEmail || '';
+      emailInput.addEventListener('input', function (event) {
+        aiState.setAuthEmail(event.target.value);
       });
+      section.appendChild(emailInput);
 
-      var projectName = document.createElement('strong');
-      projectName.textContent = project.name;
-      projectButton.appendChild(projectName);
+      var sendButton = document.createElement('button');
+      sendButton.className = 'ai-nav-primary-btn';
+      sendButton.type = 'button';
+      sendButton.textContent = snapshot.integration.sendingMagicLink ? 'Sending…' : 'Send magic link';
+      sendButton.disabled = !!snapshot.integration.sendingMagicLink;
+      sendButton.addEventListener('click', function () {
+        aiState.sendMagicLink().catch(function () {});
+      });
+      section.appendChild(sendButton);
 
-      var projectMeta = document.createElement('span');
-      projectMeta.textContent = project.status + ' · ' + window.__tribexAiUtils.formatRelativeTime(project.lastActivityAt);
-      projectButton.appendChild(projectMeta);
-
-      item.appendChild(projectButton);
-
-      var threads = aiState.getThreadsForProject(project.id).slice(0, 2);
-      if (threads.length > 0) {
-        var threadList = document.createElement('div');
-        threadList.className = 'ai-shell-thread-list';
-
-        threads.forEach(function (thread) {
-          var threadButton = document.createElement('button');
-          threadButton.className = 'ai-shell-thread-btn' + (activeSession && activeSession.threadId === thread.id ? ' active' : '');
-          threadButton.type = 'button';
-          threadButton.addEventListener('click', function () {
-            aiState.openThread(thread.id);
-          });
-
-          var title = document.createElement('span');
-          title.textContent = thread.title;
-          threadButton.appendChild(title);
-
-          var meta = document.createElement('small');
-          meta.textContent = window.__tribexAiUtils.formatRelativeTime(thread.lastActivityAt);
-          threadButton.appendChild(meta);
-
-          threadList.appendChild(threadButton);
-        });
-
-        item.appendChild(threadList);
+      if (snapshot.integration.magicLinkSentTo) {
+        var sent = document.createElement('p');
+        sent.textContent = 'Magic link sent to ' + snapshot.integration.magicLinkSentTo + '.';
+        section.appendChild(sent);
       }
 
-      list.appendChild(item);
-    });
+      var verifyInput = document.createElement('input');
+      verifyInput.className = 'ai-nav-search-input';
+      verifyInput.type = 'text';
+      verifyInput.placeholder = 'Paste magic link URL or token';
+      verifyInput.value = snapshot.integration.verificationInput || '';
+      verifyInput.addEventListener('input', function (event) {
+        aiState.setVerificationInput(event.target.value);
+      });
+      section.appendChild(verifyInput);
 
-    section.appendChild(list);
+      var verifyButton = document.createElement('button');
+      verifyButton.className = 'ai-nav-secondary-btn';
+      verifyButton.type = 'button';
+      verifyButton.textContent = snapshot.integration.verifyingMagicLink ? 'Verifying…' : 'Verify link';
+      verifyButton.disabled = !!snapshot.integration.verifyingMagicLink;
+      verifyButton.addEventListener('click', function () {
+        aiState.verifyMagicLink().catch(function () {});
+      });
+      section.appendChild(verifyButton);
+
+      if (snapshot.integration.error) {
+        var authError = document.createElement('p');
+        authError.textContent = snapshot.integration.error;
+        section.appendChild(authError);
+      }
+    } else if (snapshot.integration.status === 'error') {
+      title.textContent = 'Unable to load the AI workspace';
+      body.textContent = snapshot.integration.error || 'The hosted AI workspace could not be loaded.';
+      var retry = document.createElement('button');
+      retry.className = 'ai-nav-secondary-btn';
+      retry.type = 'button';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', function () {
+        aiState.refreshNavigator(true);
+      });
+      section.appendChild(retry);
+    } else {
+      title.textContent = 'Loading AI workspace';
+      body.textContent = 'Fetching organizations, projects, and threads from ProPaasAI…';
+    }
+
     shell.appendChild(section);
   }
 
-  function renderRecovery(shell, snapshot) {
-    if (!snapshot.alert) return;
-    var card = document.createElement('section');
-    card.className = 'ai-shell-recovery ai-shell-recovery-' + (snapshot.alert.tone || 'warning');
+  function renderOrgHeader(shell, snapshot, aiState) {
+    var section = document.createElement('section');
+    section.className = 'ai-nav-header-card';
 
-    var title = document.createElement('strong');
-    title.textContent = snapshot.alert.title;
-    card.appendChild(title);
+    var org = snapshot.selectedOrganization;
+    var header = document.createElement('div');
+    header.className = 'ai-nav-org-row';
+    header.innerHTML =
+      '<div class="ai-nav-org-badge">' + window.__tribexAiUtils.initials(org && org.name) + '</div>' +
+      '<div class="ai-nav-org-copy"><strong>' + ((org && org.name) || 'AI workspace') + '</strong><span>' +
+      (snapshot.loadingNavigator ? 'Syncing hosted data' : 'Live thread navigator') + '</span></div>';
+    section.appendChild(header);
 
-    var body = document.createElement('p');
-    body.textContent = snapshot.alert.body;
-    card.appendChild(body);
+    var actions = document.createElement('div');
+    actions.className = 'ai-nav-actions';
 
-    var button = document.createElement('button');
-    button.className = 'ai-shell-recovery-btn';
-    button.type = 'button';
-    button.textContent = snapshot.alert.actionLabel;
-    button.addEventListener('click', function () {
-      if (snapshot.alert.action) snapshot.alert.action();
+    var newChat = document.createElement('button');
+    newChat.className = 'ai-nav-primary-btn';
+    newChat.type = 'button';
+    newChat.textContent = 'New chat';
+    newChat.disabled = !snapshot.projectGroups.length;
+    newChat.addEventListener('click', function () {
+      aiState.createThread();
     });
-    card.appendChild(button);
+    actions.appendChild(newChat);
 
-    shell.appendChild(card);
+    var switchOrg = document.createElement('button');
+    switchOrg.className = 'ai-nav-secondary-btn';
+    switchOrg.type = 'button';
+    switchOrg.textContent = 'Switch organization';
+    switchOrg.disabled = snapshot.organizations.length <= 1;
+    switchOrg.addEventListener('click', function () {
+      aiState.toggleOrganizationMenu();
+    });
+    actions.appendChild(switchOrg);
+
+    section.appendChild(actions);
+
+    if (snapshot.organizationMenuOpen && snapshot.organizations.length > 1) {
+      var orgList = document.createElement('div');
+      orgList.className = 'ai-nav-org-list';
+      snapshot.organizations.forEach(function (organization) {
+        var button = document.createElement('button');
+        button.className = 'ai-nav-org-item' + (snapshot.selectedOrganization && snapshot.selectedOrganization.id === organization.id ? ' active' : '');
+        button.type = 'button';
+        button.textContent = organization.name;
+        button.addEventListener('click', function () {
+          aiState.selectOrganization(organization.id);
+        });
+        orgList.appendChild(button);
+      });
+      section.appendChild(orgList);
+    }
+
+    shell.appendChild(section);
+  }
+
+  function renderSearch(shell, snapshot, aiState) {
+    var section = document.createElement('section');
+    section.className = 'ai-nav-search';
+
+    var input = document.createElement('input');
+    input.className = 'ai-nav-search-input';
+    input.type = 'search';
+    input.placeholder = 'Search threads';
+    input.value = snapshot.searchTerm || '';
+    input.addEventListener('input', function (event) {
+      aiState.setSearchTerm(event.target.value);
+    });
+
+    section.appendChild(input);
+    shell.appendChild(section);
+  }
+
+  function renderProjectGroups(shell, snapshot, aiState) {
+    var list = document.createElement('div');
+    list.className = 'ai-nav-project-groups';
+
+    if (!snapshot.projectGroups.length) {
+      var empty = document.createElement('section');
+      empty.className = 'ai-nav-card';
+      empty.innerHTML = '<strong>No threads yet</strong><p>Create the first thread once the selected organization has an active project.</p>';
+      list.appendChild(empty);
+      shell.appendChild(list);
+      return;
+    }
+
+    snapshot.projectGroups.forEach(function (group) {
+      var section = document.createElement('section');
+      section.className = 'ai-nav-project-group' + (snapshot.activeProjectId === group.project.id ? ' active' : '');
+
+      var heading = document.createElement('div');
+      heading.className = 'ai-nav-project-heading';
+      heading.innerHTML =
+        '<strong>' + group.project.name + '</strong>' +
+        '<span>' + group.threads.length + '</span>';
+      section.appendChild(heading);
+
+      if (group.project.workspaceName) {
+        var meta = document.createElement('p');
+        meta.className = 'ai-nav-project-meta';
+        meta.textContent = group.project.workspaceName;
+        section.appendChild(meta);
+      }
+
+      var threads = document.createElement('div');
+      threads.className = 'ai-nav-thread-list';
+      group.threads.forEach(function (thread) {
+        var button = document.createElement('button');
+        button.className = 'ai-nav-thread-item' + (snapshot.activeThreadId === thread.id ? ' active' : '');
+        button.type = 'button';
+        button.addEventListener('click', function () {
+          aiState.openThread(thread.id);
+        });
+
+        var title = document.createElement('span');
+        title.className = 'ai-nav-thread-title';
+        title.textContent = thread.title;
+        button.appendChild(title);
+
+        var meta = document.createElement('small');
+        meta.className = 'ai-nav-thread-meta';
+        meta.textContent = thread.lastActivityAt
+          ? window.__tribexAiUtils.formatRelativeTime(thread.lastActivityAt)
+          : 'Open thread';
+        button.appendChild(meta);
+
+        threads.appendChild(button);
+      });
+      section.appendChild(threads);
+      list.appendChild(section);
+    });
+
+    shell.appendChild(list);
+  }
+
+  function renderCollapsed(shell, snapshot, aiState) {
+    var org = snapshot.selectedOrganization;
+
+    var top = document.createElement('div');
+    top.className = 'ai-nav-collapsed-top';
+
+    var orgButton = document.createElement('button');
+    orgButton.className = 'ai-nav-collapsed-icon';
+    orgButton.type = 'button';
+    orgButton.title = (org && org.name) || 'AI workspace';
+    orgButton.textContent = window.__tribexAiUtils.initials(org && org.name);
+    orgButton.addEventListener('click', function () {
+      aiState.toggleOrganizationMenu();
+    });
+    top.appendChild(orgButton);
+
+    var newChat = document.createElement('button');
+    newChat.className = 'ai-nav-collapsed-icon';
+    newChat.type = 'button';
+    newChat.title = 'New chat';
+    newChat.textContent = '+';
+    newChat.disabled = !snapshot.projectGroups.length;
+    newChat.addEventListener('click', function () {
+      aiState.createThread();
+    });
+    top.appendChild(newChat);
+    shell.appendChild(top);
+
+    var groups = document.createElement('div');
+    groups.className = 'ai-nav-collapsed-groups';
+    snapshot.projectGroups.forEach(function (group) {
+      var button = document.createElement('button');
+      button.className = 'ai-nav-collapsed-project' + (snapshot.activeProjectId === group.project.id ? ' active' : '');
+      button.type = 'button';
+      button.title = group.project.name;
+      button.textContent = window.__tribexAiUtils.initials(group.project.name);
+      button.addEventListener('click', function () {
+        if (group.threads[0]) aiState.openThread(group.threads[0].id);
+      });
+      groups.appendChild(button);
+    });
+    shell.appendChild(groups);
   }
 
   function renderShell() {
@@ -168,35 +308,51 @@
     var mainBody = document.getElementById('main-body');
     var aiState = window.__tribexAiState;
 
-    if (!shell || !mainBody || !activeSession || !aiState) {
+    if (!shell || !mainBody || !aiState) {
       clearShell();
       return;
     }
 
     var snapshot = aiState.getSnapshot();
-    shell.innerHTML = '';
-    shell.classList.remove('hidden');
-    mainBody.classList.add('ai-shell-visible');
+    syncChrome(snapshot);
 
-    renderWorkspaceCard(shell, snapshot);
-    renderActionBar(shell, aiState);
-    renderProjects(shell, snapshot, aiState);
-    renderRecovery(shell, snapshot);
-  }
-
-  function setActiveSession(sessionId, session) {
-    if (!session || !window.__tribexAiUtils || !window.__tribexAiUtils.isAiContentType(session.contentType)) {
-      activeSession = null;
+    if (!snapshot.navigatorVisible) {
       clearShell();
       return;
     }
 
+    shell.innerHTML = '';
+    shell.className = snapshot.navigatorCollapsed ? 'collapsed' : '';
+    mainBody.classList.add('ai-shell-visible');
+
+    if (snapshot.navigatorCollapsed) {
+      renderCollapsed(shell, snapshot, aiState);
+      return;
+    }
+
+    renderOrgHeader(shell, snapshot, aiState);
+
+    if (snapshot.integration.status === 'authenticated' || snapshot.loadingNavigator) {
+      renderSearch(shell, snapshot, aiState);
+    }
+
+    if (snapshot.integration.status === 'authenticated') {
+      renderProjectGroups(shell, snapshot, aiState);
+    } else {
+      renderIntegrationState(shell, snapshot, aiState);
+    }
+  }
+
+  function setActiveSession(sessionId, session) {
     activeSession = {
       sessionId: sessionId,
-      projectId: session.meta && session.meta.projectId ? session.meta.projectId : (session.toolArgs && session.toolArgs.projectId) || null,
-      threadId: session.meta && session.meta.threadId ? session.meta.threadId : (session.toolArgs && session.toolArgs.threadId) || null,
+      projectId: session && session.meta ? session.meta.projectId || null : null,
+      threadId: session && session.meta ? session.meta.threadId || null : null,
     };
 
+    if (window.__tribexAiState && typeof window.__tribexAiState.setActiveSession === 'function') {
+      window.__tribexAiState.setActiveSession(sessionId, session);
+    }
     renderShell();
   }
 
@@ -204,11 +360,12 @@
     hide: clearShell,
     render: renderShell,
     setActiveSession: setActiveSession,
+    syncChrome: syncChrome,
   };
 
   if (window.__tribexAiState && typeof window.__tribexAiState.subscribe === 'function') {
     window.__tribexAiState.subscribe(function () {
-      if (activeSession) renderShell();
+      renderShell();
     });
   }
 })();

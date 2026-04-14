@@ -3,6 +3,7 @@
 
 mod auth;
 mod commands;
+mod first_party_ai;
 mod http_server;
 mod installer;
 mod mcp;
@@ -158,6 +159,16 @@ fn main() {
             commands::start_plugin_auth,
             commands::get_plugin_auth_header,
             commands::store_plugin_token,
+            commands::get_first_party_ai_config,
+            commands::start_first_party_ai_auth,
+            commands::get_first_party_ai_auth_header,
+            commands::get_first_party_ai_session,
+            commands::send_first_party_ai_magic_link,
+            commands::verify_first_party_ai_magic_link,
+            commands::clear_first_party_ai_auth,
+            commands::first_party_ai_request,
+            commands::start_first_party_ai_companion_stream,
+            commands::stop_first_party_ai_companion_stream,
             commands::get_settings,
             commands::save_settings,
             commands::get_plugin_renderers,

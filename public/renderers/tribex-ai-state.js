@@ -1,308 +1,49 @@
 // @ts-nocheck
-/* TribeX AI state — local scaffold mirroring the hosted Organization -> Workspace -> Project -> Thread model */
+/* TribeX AI state — live first-party navigator and thread state */
 
 (function () {
   'use strict';
 
   var listeners = [];
+  var streamListenerBound = false;
+  var navigatorLoad = null;
+  var activeSession = null;
 
   var state = {
-    organization: {
-      id: 'org-tribe-x',
-      name: 'Tribe-X',
-      slug: 'tribe-x',
+    ui: {
+      navigatorVisible: false,
+      navigatorCollapsed: false,
+      searchTerm: '',
+      organizationMenuOpen: false,
     },
-    currentWorkspaceId: 'ws-creator-studio',
-    currentProjectId: 'proj-first-party-plugin',
-    workspaces: [
-      {
-        id: 'ws-creator-studio',
-        name: 'Creator Studio',
-        slug: 'creator-studio',
-        package: {
-          name: 'Operator Studio',
-          persona: 'Operator',
-          version: 'v1',
-        },
-        organizationReady: true,
-        billing: {
-          status: 'ACTIVE',
-          plan: 'Founding',
-        },
-        provisioning: {
-          state: 'ACTIVE',
-          lastUpdatedAt: '2026-04-13T19:40:00Z',
-          summary: 'Hosted workspace is provisioned and accepting project/thread work.',
-        },
-      },
-    ],
-    projects: [
-      {
-        id: 'proj-first-party-plugin',
-        workspaceId: 'ws-creator-studio',
-        name: 'MCPViews first-class AI plugin',
-        status: 'ACTIVE',
-        pinned: true,
-        summary: 'Shell entrypoint, AI home, and chat-first thread surfaces for MCPViews.',
-        memorySummary: 'Bundled first-party plugin, shell AI entrypoint, and thread-as-tab model.',
-        lastActivityAt: '2026-04-13T19:43:00Z',
-      },
-      {
-        id: 'proj-runtime-hydration',
-        workspaceId: 'ws-creator-studio',
-        name: 'Runtime hydration and relay recovery',
-        status: 'ACTIVE',
-        pinned: false,
-        summary: 'Cached-shell-first reopen behavior, relay grants, and device-local readiness.',
-        memorySummary: 'Hosted transcript is authoritative, device readiness remains local.',
-        lastActivityAt: '2026-04-13T19:28:00Z',
-      },
-      {
-        id: 'proj-onboarding',
-        workspaceId: 'ws-creator-studio',
-        name: 'Workspace onboarding and readiness',
-        status: 'PLANNING',
-        pinned: false,
-        summary: 'Resumable setup, billing gates, package selection, and provisioning handoff.',
-        memorySummary: 'Prerequisites stay visible, resumable, and in-app.',
-        lastActivityAt: '2026-04-13T18:55:00Z',
-      },
-    ],
-    threads: [
-      {
-        id: 'thread-home-nav',
-        projectId: 'proj-first-party-plugin',
-        title: 'AI home and shell framing',
-        preview: 'Pinned the shell entrypoint, workspace framing, and recovery-oriented navigation.',
-        hydrateState: 'HYDRATED',
-        blockedByTool: null,
-        lastActivityAt: '2026-04-13T19:43:00Z',
-        messages: [
-          {
-            id: 'msg-home-1',
-            role: 'assistant',
-            content: 'The shell owns the permanent AI entrypoint and navigation frame so the workflow feels native before a workspace is fully ready.',
-          },
-          {
-            id: 'msg-home-2',
-            role: 'tool',
-            toolName: 'design_check',
-            status: 'success',
-            summary: 'Reused existing tab, drawer, and modal primitives.',
-            detail: 'No second windowing model was introduced for the AI surfaces.',
-          },
-          {
-            id: 'msg-home-3',
-            role: 'assistant',
-            content: 'Next, the client needs the AI home, setup handoff, and recent-thread recovery flow anchored to the workspace state model.',
-          },
-        ],
-      },
-      {
-        id: 'thread-relay',
-        projectId: 'proj-runtime-hydration',
-        title: 'Relay approvals and thread recovery',
-        preview: 'Hydrate hosted truth after reopen and separate local relay failures from hosted continuity.',
-        hydrateState: 'REHYDRATING',
-        blockedByTool: 'github',
-        lastActivityAt: '2026-04-13T19:28:00Z',
-        messages: [
-          {
-            id: 'msg-relay-1',
-            role: 'assistant',
-            content: 'This thread restored from cached shell state immediately, and the hosted transcript is hydrating in the background.',
-          },
-          {
-            id: 'msg-relay-2',
-            role: 'tool',
-            toolName: 'github_relay',
-            status: 'blocked',
-            summary: 'GitHub relay access still needs explicit approval on this device.',
-            detail: 'Hosted execution can continue, but local GitHub actions stay blocked until the relay grant is approved.',
-          },
-          {
-            id: 'msg-relay-3',
-            role: 'assistant',
-            content: 'Open the tool catalog to grant the scoped relay permission, then the composer can resume normal thread work.',
-          },
-        ],
-      },
-      {
-        id: 'thread-setup',
-        projectId: 'proj-onboarding',
-        title: 'Setup handoff from provisioning to tools',
-        preview: 'Connect package selection, provisioning, and device readiness in one resumable flow.',
-        hydrateState: 'HYDRATED',
-        blockedByTool: null,
-        lastActivityAt: '2026-04-13T18:55:00Z',
-        messages: [
-          {
-            id: 'msg-setup-1',
-            role: 'assistant',
-            content: 'Provisioning completed successfully, so the setup flow now hands off into required tool readiness instead of dropping the user into a blank success state.',
-          },
-        ],
-      },
-    ],
-    toolBindings: [
-      {
-        key: 'notion',
-        name: 'Notion',
-        category: 'Documentation',
-        required: true,
-        readiness: 'ready',
-        relayStatus: 'granted',
-        nextAction: 'Open docs',
-        detail: 'Installed, authenticated, and approved for relay on this device.',
-      },
-      {
-        key: 'github',
-        name: 'GitHub',
-        category: 'Source control',
-        required: true,
-        readiness: 'permission_required',
-        relayStatus: 'pending',
-        nextAction: 'Approve relay',
-        detail: 'Account is connected, but scoped relay approval is still required for hosted thread actions.',
-      },
-      {
-        key: 'stripe',
-        name: 'Stripe',
-        category: 'Payments',
-        required: false,
-        readiness: 'not_authenticated',
-        relayStatus: 'blocked',
-        nextAction: 'Connect account',
-        detail: 'The local Stripe app is installed, but this device has not authenticated it yet.',
-      },
-      {
-        key: 'localhost_tools',
-        name: 'Localhost tools',
-        category: 'Development',
-        required: false,
-        readiness: 'unreachable',
-        relayStatus: 'blocked',
-        nextAction: 'Retry reachability',
-        detail: 'The outbound relay cannot currently reach the expected localhost capability endpoint.',
-      },
-    ],
+    integration: {
+      config: null,
+      status: 'idle',
+      error: null,
+      session: null,
+      authEmail: '',
+      verificationInput: '',
+      magicLinkSentTo: null,
+      sendingMagicLink: false,
+      verifyingMagicLink: false,
+    },
+    organizations: [],
+    selectedOrganizationId: null,
+    workspacesById: {},
+    projects: [],
+    threads: [],
+    threadDetails: {},
+    threadErrors: {},
+    loadingNavigator: false,
+    loadingThreadIds: {},
+    pendingThreadIds: {},
+    companionKeys: {},
+    streamStatuses: {},
+    activeProjectId: null,
   };
 
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
-  }
-
-  function getWorkspace() {
-    return state.workspaces.find(function (workspace) {
-      return workspace.id === state.currentWorkspaceId;
-    }) || state.workspaces[0];
-  }
-
-  function getProject(projectId) {
-    var targetId = projectId || state.currentProjectId;
-    return state.projects.find(function (project) {
-      return project.id === targetId;
-    }) || state.projects[0];
-  }
-
-  function getThread(threadId) {
-    return state.threads.find(function (thread) {
-      return thread.id === threadId;
-    }) || null;
-  }
-
-  function getThreadsForProject(projectId) {
-    return window.__tribexAiUtils.sortThreads(
-      state.threads.filter(function (thread) {
-        return thread.projectId === projectId;
-      }),
-    );
-  }
-
-  function getRecentThreads() {
-    return window.__tribexAiUtils.sortThreads(state.threads).slice(0, 6);
-  }
-
-  function getToolBinding(toolKey) {
-    return state.toolBindings.find(function (binding) {
-      return binding.key === toolKey;
-    }) || null;
-  }
-
-  function getWorkspaceAlert(workspace, toolBindings) {
-    if (!workspace) return null;
-
-    if (workspace.provisioning.state === 'FAILED') {
-      return {
-        tone: 'warning',
-        title: 'Provisioning needs attention',
-        body: 'Hosted workspace provisioning failed previously. Resume from setup to recover without losing context.',
-        actionLabel: 'Resume setup',
-        action: function () {
-          openSetup();
-        },
-      };
-    }
-
-    var readinessSummary = window.__tribexAiUtils.summarizeReadiness(toolBindings);
-    if (readinessSummary.blocked > 0) {
-      return {
-        tone: 'warning',
-        title: 'Required local tools still need attention',
-        body: readinessSummary.blocked + ' required tool(s) are blocking full workspace readiness on this device.',
-        actionLabel: 'Open tool catalog',
-        action: function () {
-          openToolCatalog();
-        },
-      };
-    }
-
-    return {
-      tone: 'success',
-      title: 'Workspace is ready for hosted work',
-      body: 'Provisioning is complete and required local bindings are currently ready.',
-      actionLabel: 'Open AI home',
-      action: function () {
-        openHome();
-      },
-    };
-  }
-
-  function getSnapshot() {
-    var workspace = getWorkspace();
-    var projects = window.__tribexAiUtils.sortProjects(
-      state.projects.filter(function (project) {
-        return project.workspaceId === workspace.id;
-      }),
-      state.currentProjectId,
-    );
-    var toolBindings = clone(state.toolBindings);
-
-    return {
-      organization: clone(state.organization),
-      workspace: clone(workspace),
-      projects: clone(projects),
-      recentThreads: clone(getRecentThreads()),
-      toolBindings: toolBindings,
-      toolSummary: window.__tribexAiUtils.summarizeReadiness(toolBindings),
-      alert: getWorkspaceAlert(workspace, toolBindings),
-    };
-  }
-
-  function getThreadContext(threadId) {
-    var thread = getThread(threadId);
-    if (!thread) return null;
-    var project = getProject(thread.projectId);
-    var workspace = getWorkspace();
-    var blockedBinding = thread.blockedByTool ? getToolBinding(thread.blockedByTool) : null;
-
-    return {
-      workspace: clone(workspace),
-      project: clone(project),
-      thread: clone(thread),
-      blockedBinding: clone(blockedBinding),
-      toolSummary: window.__tribexAiUtils.summarizeReadiness(state.toolBindings),
-    };
   }
 
   function notify() {
@@ -323,6 +64,385 @@
     };
   }
 
+  function getSelectedOrganization() {
+    return state.organizations.find(function (organization) {
+      return organization.id === state.selectedOrganizationId;
+    }) || state.organizations[0] || null;
+  }
+
+  function getProject(projectId) {
+    return state.projects.find(function (project) {
+      return project.id === projectId;
+    }) || null;
+  }
+
+  function getThread(threadId) {
+    return state.threads.find(function (thread) {
+      return thread.id === threadId;
+    }) || null;
+  }
+
+  function resolveActiveProjectId() {
+    if (activeSession && activeSession.projectId) return activeSession.projectId;
+    if (state.activeProjectId) return state.activeProjectId;
+    return state.projects[0] ? state.projects[0].id : null;
+  }
+
+  function isThreadSession(session) {
+    return !!(session && session.meta && session.meta.aiView === 'thread');
+  }
+
+  function bindStreamListener() {
+    if (streamListenerBound || !window.__tribexAiClient || typeof window.__tribexAiClient.listenToStreamEvents !== 'function') {
+      return;
+    }
+    streamListenerBound = true;
+    window.__tribexAiClient.listenToStreamEvents(handleStreamEvent).catch(function () {
+      streamListenerBound = false;
+    });
+  }
+
+  function mergeThreadSummary(summary) {
+    var next = Object.assign({}, getThread(summary.id) || {}, summary);
+    var replaced = false;
+    state.threads = state.threads.map(function (thread) {
+      if (thread.id !== next.id) return thread;
+      replaced = true;
+      return next;
+    });
+    if (!replaced) state.threads.push(next);
+    return next;
+  }
+
+  function mergeThreadDetail(detail) {
+    if (!detail || !detail.id) return null;
+    var summary = mergeThreadSummary({
+      id: detail.id,
+      projectId: detail.projectId,
+      workspaceId: detail.workspaceId,
+      title: detail.title,
+      preview: detail.preview,
+      hydrateState: detail.hydrateState || detail.status,
+      lastActivityAt: detail.lastActivityAt,
+    });
+    state.threadDetails[detail.id] = Object.assign({}, summary, state.threadDetails[detail.id] || {}, detail);
+    return state.threadDetails[detail.id];
+  }
+
+  function addOptimisticUserMessage(threadId, prompt) {
+    var detail = state.threadDetails[threadId] || mergeThreadDetail({
+      id: threadId,
+      title: getThread(threadId) && getThread(threadId).title,
+      messages: [],
+    });
+    detail.messages = detail.messages || [];
+    detail.messages.push({
+      id: 'local-user-' + Date.now(),
+      role: 'user',
+      content: prompt,
+      createdAt: new Date().toISOString(),
+    });
+    detail.lastActivityAt = new Date().toISOString();
+    mergeThreadSummary({
+      id: threadId,
+      title: detail.title,
+      projectId: detail.projectId,
+      workspaceId: detail.workspaceId,
+      preview: prompt,
+      lastActivityAt: detail.lastActivityAt,
+    });
+  }
+
+  function addSystemMessage(threadId, message) {
+    var detail = state.threadDetails[threadId] || mergeThreadDetail({
+      id: threadId,
+      title: getThread(threadId) && getThread(threadId).title,
+      messages: [],
+    });
+    detail.messages = detail.messages || [];
+    detail.messages.push({
+      id: 'local-system-' + Date.now(),
+      role: 'tool',
+      toolName: 'companion',
+      status: 'blocked',
+      summary: message,
+      detail: '',
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  function postPushPreview(payload) {
+    return fetch('http://localhost:4200/api/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).catch(function () {});
+  }
+
+  function handleStreamEvent(event) {
+    if (!event || !event.threadId) return;
+
+    if (event.type === 'status') {
+      state.streamStatuses[event.threadId] = event.status || 'idle';
+      notify();
+      return;
+    }
+
+    if (event.type === 'error') {
+      state.streamStatuses[event.threadId] = 'error';
+      state.threadErrors[event.threadId] = event.message || 'Companion stream failed.';
+      notify();
+      return;
+    }
+
+    var payload = event.payload || {};
+    if (
+      payload.toolName &&
+      payload.result &&
+      window.__tribexAiClient &&
+      typeof window.__tribexAiClient.shouldPreviewCompanionPayload === 'function' &&
+      window.__tribexAiClient.shouldPreviewCompanionPayload(payload)
+    ) {
+      postPushPreview(payload);
+    }
+
+    if (payload.thread || payload.messages || payload.events || payload.transcript) {
+      var detail = window.__tribexAiClient.normalizeThreadDetail(payload);
+      if (detail && detail.id) {
+        mergeThreadDetail(detail);
+        state.threadErrors[event.threadId] = null;
+        notify();
+        return;
+      }
+    }
+
+    if (payload.message || payload.content || payload.delta || payload.toolName) {
+      var detailForAppend = state.threadDetails[event.threadId] || mergeThreadDetail({
+        id: event.threadId,
+        title: getThread(event.threadId) && getThread(event.threadId).title,
+        messages: [],
+      });
+      var normalizedMessage = window.__tribexAiClient.normalizeMessage(payload, detailForAppend.messages.length);
+      if (!normalizedMessage) {
+        return;
+      }
+      detailForAppend.messages = detailForAppend.messages || [];
+      detailForAppend.messages.push(normalizedMessage);
+      detailForAppend.lastActivityAt = new Date().toISOString();
+      notify();
+      return;
+    }
+
+    refreshThread(event.threadId, false);
+  }
+
+  function refreshNavigator(force) {
+    if (navigatorLoad && !force) return navigatorLoad;
+    bindStreamListener();
+
+    state.loadingNavigator = true;
+    state.integration.error = null;
+    notify();
+
+    navigatorLoad = window.__tribexAiClient.getConfig()
+      .then(function (config) {
+        state.integration.config = config;
+        if (!config || !config.configured) {
+          state.integration.status = 'misconfigured';
+          state.integration.session = null;
+          state.organizations = [];
+          state.projects = [];
+          state.threads = [];
+          return null;
+        }
+        return window.__tribexAiClient.fetchSession();
+      })
+      .then(function (session) {
+        if (session === null) {
+          state.integration.session = null;
+          state.integration.status = 'unauthenticated';
+          state.organizations = [];
+          state.projects = [];
+          state.threads = [];
+          return null;
+        }
+
+        if (session) {
+          state.integration.session = session;
+          state.integration.status = 'authenticated';
+        }
+
+        return window.__tribexAiClient.fetchOrganizations();
+      })
+      .then(function (organizations) {
+        if (!organizations) return null;
+        state.organizations = organizations;
+        state.selectedOrganizationId = state.selectedOrganizationId && organizations.some(function (organization) {
+          return organization.id === state.selectedOrganizationId;
+        }) ? state.selectedOrganizationId : (organizations[0] && organizations[0].id) || null;
+
+        if (!state.selectedOrganizationId) {
+          state.projects = [];
+          state.threads = [];
+          return null;
+        }
+
+        return window.__tribexAiClient.fetchWorkspaces(state.selectedOrganizationId);
+      })
+      .then(function (workspaces) {
+        if (!workspaces) return null;
+        state.workspacesById = {};
+        workspaces.forEach(function (workspace) {
+          state.workspacesById[workspace.id] = workspace;
+        });
+
+        return Promise.all(workspaces.map(function (workspace) {
+          return window.__tribexAiClient.fetchProjects(workspace);
+        }));
+      })
+      .then(function (projectLists) {
+        if (!projectLists) return null;
+        state.projects = [].concat.apply([], projectLists || []);
+        state.activeProjectId = resolveActiveProjectId();
+
+        return Promise.all(state.projects.map(function (project) {
+          return window.__tribexAiClient.fetchThreads(project).catch(function () {
+            return [];
+          });
+        }));
+      })
+      .then(function (threadLists) {
+        if (!threadLists) return null;
+        state.threads = [].concat.apply([], threadLists || []);
+        if (!state.activeProjectId && state.projects[0]) state.activeProjectId = state.projects[0].id;
+        return true;
+      })
+      .catch(function (error) {
+        var message = error && error.message ? error.message : String(error);
+        state.integration.error = message;
+        if (/token|unauth|auth|signed in/i.test(message)) {
+          state.integration.status = 'unauthenticated';
+          state.integration.session = null;
+        } else {
+          state.integration.status = 'error';
+        }
+      })
+      .finally(function () {
+        state.loadingNavigator = false;
+        navigatorLoad = null;
+        notify();
+      });
+
+    return navigatorLoad;
+  }
+
+  function ensureCompanion(threadId) {
+    var thread = getThread(threadId);
+    if (!thread || !thread.workspaceId) return Promise.resolve(null);
+    if (state.companionKeys[threadId] || state.streamStatuses[threadId] === 'connected' || state.streamStatuses[threadId] === 'connecting') {
+      return Promise.resolve(state.companionKeys[threadId] || null);
+    }
+
+    return window.__tribexAiClient.createCompanionSession(thread.workspaceId, threadId)
+      .then(function (session) {
+        if (!session || !session.companionKey) return null;
+        state.companionKeys[threadId] = session.companionKey;
+        state.streamStatuses[threadId] = 'connecting';
+        notify();
+        return window.__tribexAiClient.startCompanionStream(threadId, session.companionKey).then(function () {
+          return session.companionKey;
+        });
+      })
+      .catch(function () {
+        state.streamStatuses[threadId] = 'unavailable';
+        notify();
+        return null;
+      });
+  }
+
+  function refreshThread(threadId, connectStream) {
+    if (!threadId) return Promise.resolve(null);
+    state.loadingThreadIds[threadId] = true;
+    notify();
+
+    return window.__tribexAiClient.fetchThread(threadId)
+      .then(function (detail) {
+        if (detail && detail.id) {
+          var summary = getThread(threadId);
+          if (summary) {
+            detail.projectId = detail.projectId || summary.projectId;
+            detail.workspaceId = detail.workspaceId || summary.workspaceId;
+          }
+          mergeThreadDetail(detail);
+          state.threadErrors[threadId] = null;
+          if (connectStream !== false) return ensureCompanion(threadId).then(function () { return detail; });
+          return detail;
+        }
+        return null;
+      })
+      .catch(function (error) {
+        state.threadErrors[threadId] = error && error.message ? error.message : String(error);
+        notify();
+        return null;
+      })
+      .finally(function () {
+        delete state.loadingThreadIds[threadId];
+        notify();
+      });
+  }
+
+  function pollThread(threadId, attempts) {
+    if (attempts <= 0) return Promise.resolve(null);
+    return new Promise(function (resolve) {
+      window.setTimeout(function () {
+        refreshThread(threadId, false).finally(function () {
+          resolve(pollThread(threadId, attempts - 1));
+        });
+      }, 1200);
+    });
+  }
+
+  function getSnapshot() {
+    var selectedOrganization = getSelectedOrganization();
+    return {
+      integration: clone(state.integration),
+      loadingNavigator: state.loadingNavigator,
+      navigatorVisible: state.ui.navigatorVisible,
+      navigatorCollapsed: state.ui.navigatorCollapsed,
+      organizationMenuOpen: state.ui.organizationMenuOpen,
+      searchTerm: state.ui.searchTerm,
+      organizations: clone(state.organizations),
+      selectedOrganization: clone(selectedOrganization),
+      projectGroups: clone(window.__tribexAiUtils.buildProjectGroups(
+        state.projects,
+        state.threads,
+        resolveActiveProjectId(),
+        state.ui.searchTerm,
+      )),
+      activeProjectId: resolveActiveProjectId(),
+      activeThreadId: activeSession && activeSession.threadId ? activeSession.threadId : null,
+      streamStatuses: clone(state.streamStatuses),
+    };
+  }
+
+  function getThreadContext(threadId) {
+    var summary = getThread(threadId);
+    var detail = state.threadDetails[threadId] || null;
+    var project = summary && summary.projectId ? getProject(summary.projectId) : null;
+    var workspace = project && project.workspaceId ? state.workspacesById[project.workspaceId] : null;
+
+    return {
+      organization: clone(getSelectedOrganization()),
+      workspace: clone(workspace),
+      project: clone(project),
+      thread: clone(detail || summary),
+      loading: !!state.loadingThreadIds[threadId],
+      pending: !!state.pendingThreadIds[threadId],
+      error: state.threadErrors[threadId] || null,
+      streamStatus: state.streamStatuses[threadId] || null,
+    };
+  }
+
   function openSession(config) {
     if (!window.__companionUtils || typeof window.__companionUtils.openSession !== 'function') {
       return null;
@@ -330,59 +450,21 @@
     return window.__companionUtils.openSession(config);
   }
 
-  function openHome(projectId) {
-    return openSession({
-      sessionKey: 'tribex-ai-home',
-      toolName: 'TribeX AI',
-      contentType: 'tribex_ai_home',
-      data: { title: 'AI Home' },
-      meta: {
-        aiView: 'home',
-        headerTitle: 'AI Home',
-        projectId: projectId || null,
-      },
-      toolArgs: {
-        projectId: projectId || null,
-      },
-    });
-  }
-
-  function openProject(projectId) {
-    state.currentProjectId = projectId;
-    return openHome(projectId);
-  }
-
-  function openSetup() {
-    return openSession({
-      sessionKey: 'tribex-ai-setup',
-      toolName: 'TribeX AI',
-      contentType: 'tribex_ai_setup',
-      data: { title: 'Workspace Setup' },
-      meta: {
-        aiView: 'setup',
-        headerTitle: 'Workspace Setup',
-      },
-    });
-  }
-
-  function openToolCatalog() {
-    return openSession({
-      sessionKey: 'tribex-ai-tool-catalog',
-      toolName: 'TribeX AI',
-      contentType: 'tribex_ai_tool_catalog',
-      data: { title: 'Tool Catalog' },
-      meta: {
-        aiView: 'tool_catalog',
-        headerTitle: 'Tool Catalog',
-      },
-    });
+  function replaceSession(sessionId, config) {
+    if (!window.__companionUtils || typeof window.__companionUtils.replaceSession !== 'function') {
+      return openSession(config);
+    }
+    return window.__companionUtils.replaceSession(sessionId, config);
   }
 
   function openThread(threadId) {
     var thread = getThread(threadId);
     if (!thread) return null;
-    state.currentProjectId = thread.projectId;
-    return openSession({
+    state.activeProjectId = thread.projectId || state.activeProjectId;
+    state.ui.navigatorVisible = true;
+    state.ui.organizationMenuOpen = false;
+
+    var config = {
       sessionKey: 'tribex-ai-thread-' + threadId,
       toolName: 'TribeX AI',
       contentType: 'tribex_ai_thread',
@@ -396,120 +478,244 @@
       toolArgs: {
         threadId: threadId,
       },
-    });
-  }
+    };
 
-  function resolveBinding(toolKey) {
-    var binding = getToolBinding(toolKey);
-    if (!binding) return;
+    var sessionId = activeSession && activeSession.isThread
+      ? replaceSession(activeSession.sessionId, config)
+      : openSession(config);
 
-    if (binding.readiness === 'permission_required') {
-      binding.readiness = 'ready';
-      binding.relayStatus = 'granted';
-      binding.detail = 'Relay permission approved for the current workspace scope on this device.';
-      binding.nextAction = 'Approved';
-    } else if (binding.readiness === 'not_authenticated') {
-      binding.readiness = 'ready';
-      binding.relayStatus = 'granted';
-      binding.detail = 'Authentication completed and the tool is now available to hosted work.';
-      binding.nextAction = 'Connected';
-    } else if (binding.readiness === 'unreachable' || binding.readiness === 'not_installed') {
-      binding.readiness = 'ready';
-      binding.relayStatus = 'granted';
-      binding.detail = 'Device reachability recovered and the binding is healthy again.';
-      binding.nextAction = 'Ready';
-    }
-
-    if (toolKey === 'github') {
-      var relayThread = getThread('thread-relay');
-      if (relayThread) {
-        relayThread.blockedByTool = null;
-        relayThread.hydrateState = 'HYDRATED';
-      }
-    }
-
+    refreshThread(threadId, true);
     notify();
+    return sessionId;
   }
 
-  function createAssistantReply() {
-    return 'Captured. This scaffold keeps the thread chat-first while routing setup, tool catalog, and recovery into dedicated shell surfaces around the conversation.';
+  function createThread() {
+    var targetProjectId = resolveActiveProjectId();
+    if (!targetProjectId) return Promise.resolve(null);
+
+    return window.__tribexAiClient.createThread(targetProjectId)
+      .then(function (thread) {
+        var project = getProject(targetProjectId);
+        thread.projectId = thread.projectId || targetProjectId;
+        thread.workspaceId = thread.workspaceId || (project && project.workspaceId) || null;
+        thread.projectName = thread.projectName || (project && project.name) || null;
+        thread.workspaceName = thread.workspaceName || (project && project.workspaceName) || null;
+        mergeThreadSummary(thread);
+        notify();
+        openThread(thread.id);
+        return thread.id;
+      });
   }
 
   function submitPrompt(threadId, prompt) {
-    var thread = getThread(threadId);
-    if (!thread) return false;
-
-    var blockedBinding = thread.blockedByTool ? getToolBinding(thread.blockedByTool) : null;
-    if (blockedBinding && blockedBinding.readiness !== 'ready') {
-      return false;
-    }
-
     var trimmed = String(prompt || '').trim();
-    if (!trimmed) return false;
+    if (!trimmed) return Promise.resolve(false);
 
-    var now = new Date().toISOString();
-    thread.lastActivityAt = now;
-    thread.preview = trimmed;
-
-    thread.messages.push({
-      id: 'msg-user-' + Date.now(),
-      role: 'user',
-      content: trimmed,
-    });
-
-    var toolMessageId = 'msg-tool-' + Date.now();
-    thread.messages.push({
-      id: toolMessageId,
-      role: 'tool',
-      toolName: 'hosted_runtime',
-      status: 'pending',
-      summary: 'Queued prompt for hosted execution.',
-      detail: 'The hosted runtime is reconciling thread state and local relay policy.',
-    });
-
+    state.pendingThreadIds[threadId] = true;
+    state.threadErrors[threadId] = null;
+    addOptimisticUserMessage(threadId, trimmed);
     notify();
 
-    window.setTimeout(function () {
-      thread.messages = thread.messages.map(function (message) {
-        if (message.id !== toolMessageId) return message;
-        return {
-          id: toolMessageId,
-          role: 'tool',
-          toolName: 'hosted_runtime',
-          status: 'success',
-          summary: 'Hosted thread responded successfully.',
-          detail: 'Cached shell state and hosted truth are now aligned again.',
-        };
+    return ensureCompanion(threadId)
+      .then(function () {
+        return window.__tribexAiClient.sendMessage(threadId, trimmed);
+      })
+      .then(function (raw) {
+        if (raw && (raw.thread || raw.messages || raw.events || raw.transcript || raw.id)) {
+          mergeThreadDetail(window.__tribexAiClient.normalizeThreadDetail(raw));
+        }
+        return pollThread(threadId, 3).then(function () {
+          return true;
+        });
+      })
+      .catch(function (error) {
+        state.threadErrors[threadId] = error && error.message ? error.message : String(error);
+        addSystemMessage(threadId, state.threadErrors[threadId]);
+        return false;
+      })
+      .finally(function () {
+        delete state.pendingThreadIds[threadId];
+        notify();
       });
+  }
 
-      thread.messages.push({
-        id: 'msg-assistant-' + Date.now(),
-        role: 'assistant',
-        content: createAssistantReply(trimmed),
-      });
+  function setActiveSession(sessionId, session) {
+    activeSession = {
+      sessionId: sessionId,
+      isThread: isThreadSession(session),
+      projectId: session && session.meta ? session.meta.projectId || null : null,
+      threadId: session && session.meta ? session.meta.threadId || null : null,
+    };
+    if (activeSession.projectId) state.activeProjectId = activeSession.projectId;
+    notify();
+  }
 
+  function onSessionClosed(sessionId, session) {
+    if (!sessionId || !session || !isThreadSession(session)) return;
+    var threadId = session.meta && session.meta.threadId;
+    if (threadId) {
+      window.__tribexAiClient.stopCompanionStream(threadId).catch(function () {});
+      delete state.companionKeys[threadId];
+      delete state.streamStatuses[threadId];
+    }
+  }
+
+  function toggleNavigator() {
+    state.ui.navigatorVisible = !state.ui.navigatorVisible;
+    if (state.ui.navigatorVisible) {
+      refreshNavigator(false);
+    } else {
+      state.ui.organizationMenuOpen = false;
+    }
+    notify();
+  }
+
+  function hideNavigator() {
+    if (!state.ui.navigatorVisible) return;
+    state.ui.navigatorVisible = false;
+    state.ui.organizationMenuOpen = false;
+    notify();
+  }
+
+  function toggleNavigatorCollapsed() {
+    if (!state.ui.navigatorVisible) return;
+    state.ui.navigatorCollapsed = !state.ui.navigatorCollapsed;
+    state.ui.organizationMenuOpen = false;
+    notify();
+  }
+
+  function setSearchTerm(value) {
+    state.ui.searchTerm = value || '';
+    notify();
+  }
+
+  function toggleOrganizationMenu() {
+    if (!state.ui.navigatorVisible) return;
+    state.ui.organizationMenuOpen = !state.ui.organizationMenuOpen;
+    notify();
+  }
+
+  function selectOrganization(organizationId) {
+    if (!organizationId || organizationId === state.selectedOrganizationId) {
+      state.ui.organizationMenuOpen = false;
       notify();
-    }, 650);
+      return Promise.resolve();
+    }
+    state.selectedOrganizationId = organizationId;
+    state.ui.organizationMenuOpen = false;
+    notify();
+    return refreshNavigator(true);
+  }
 
-    return true;
+  function connect() {
+    return sendMagicLink().then(function () {
+      return true;
+    });
+  }
+
+  function sendMagicLink() {
+    var email = String(state.integration.authEmail || '').trim();
+    if (!email) return Promise.reject(new Error('Enter your work email to send a magic link.'));
+
+    state.integration.error = null;
+    state.integration.sendingMagicLink = true;
+    notify();
+
+    return window.__tribexAiClient.sendMagicLink(email).then(function () {
+      state.integration.status = 'awaiting_verification';
+      state.integration.magicLinkSentTo = email;
+      state.integration.verificationInput = '';
+      state.integration.error = null;
+    }).catch(function (error) {
+      state.integration.error = error && error.message ? error.message : String(error);
+      throw error;
+    }).finally(function () {
+      state.integration.sendingMagicLink = false;
+      notify();
+    });
+  }
+
+  function verifyMagicLink() {
+    var verificationInput = String(state.integration.verificationInput || '').trim();
+    if (!verificationInput) return Promise.reject(new Error('Paste the magic link URL or token to finish sign-in.'));
+
+    state.integration.error = null;
+    state.integration.verifyingMagicLink = true;
+    notify();
+
+    return window.__tribexAiClient.verifyMagicLink(verificationInput).then(function (session) {
+      state.integration.session = session;
+      state.integration.status = session ? 'authenticated' : 'unauthenticated';
+      state.integration.verificationInput = '';
+      state.integration.error = null;
+      return refreshNavigator(true);
+    }).catch(function (error) {
+      state.integration.error = error && error.message ? error.message : String(error);
+      throw error;
+    }).finally(function () {
+      state.integration.verifyingMagicLink = false;
+      notify();
+    });
+  }
+
+  function clearConnection() {
+    return window.__tribexAiClient.clearAuth().then(function () {
+      state.integration.session = null;
+      state.integration.status = 'unauthenticated';
+      state.integration.error = null;
+      state.integration.authEmail = '';
+      state.integration.verificationInput = '';
+      state.integration.magicLinkSentTo = null;
+      state.organizations = [];
+      state.projects = [];
+      state.threads = [];
+      notify();
+    });
+  }
+
+  function setAuthEmail(value) {
+    state.integration.authEmail = value || '';
+    notify();
+  }
+
+  function setVerificationInput(value) {
+    state.integration.verificationInput = value || '';
+    notify();
+  }
+
+  function refreshActiveThread() {
+    if (!activeSession || !activeSession.threadId) return Promise.resolve(null);
+    return refreshThread(activeSession.threadId, true);
   }
 
   window.__tribexAiState = {
+    clearConnection: clearConnection,
+    connect: connect,
+    createThread: createThread,
     getSnapshot: getSnapshot,
+    getThread: function (threadId) { return clone(getThread(threadId)); },
     getThreadContext: getThreadContext,
     getThreadsForProject: function (projectId) {
-      return clone(getThreadsForProject(projectId));
+      return clone(window.__tribexAiUtils.sortThreads(state.threads.filter(function (thread) {
+        return thread.projectId === projectId;
+      })));
     },
-    getToolBinding: function (toolKey) {
-      return clone(getToolBinding(toolKey));
-    },
-    openHome: openHome,
-    openProject: openProject,
-    openSetup: openSetup,
+    hideNavigator: hideNavigator,
+    onSessionClosed: onSessionClosed,
     openThread: openThread,
-    openToolCatalog: openToolCatalog,
-    resolveBinding: resolveBinding,
+    refreshActiveThread: refreshActiveThread,
+    refreshNavigator: refreshNavigator,
+    sendMagicLink: sendMagicLink,
+    selectOrganization: selectOrganization,
+    setActiveSession: setActiveSession,
+    setAuthEmail: setAuthEmail,
+    setSearchTerm: setSearchTerm,
+    setVerificationInput: setVerificationInput,
     submitPrompt: submitPrompt,
     subscribe: subscribe,
+    toggleNavigator: toggleNavigator,
+    toggleNavigatorCollapsed: toggleNavigatorCollapsed,
+    toggleOrganizationMenu: toggleOrganizationMenu,
+    verifyMagicLink: verifyMagicLink,
   };
 })();

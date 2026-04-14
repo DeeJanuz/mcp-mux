@@ -18,6 +18,7 @@
   const connectionText = document.getElementById('connection-text');
   const tabBar = document.getElementById('tab-bar');
   const refreshButton = document.getElementById('refresh-button');
+  const aiShellToggleButton = document.getElementById('ai-shell-toggle-button');
 
   /** @type {Map<string, HTMLElement>} Cached content containers per session */
   const contentCache = new Map();
@@ -144,6 +145,7 @@
   }
 
   function removeSession(sessionId) {
+    var removedSession = sessions.get(sessionId) || null;
     // Close drawers and citation panel scoped to this session
     var utils = window.__companionUtils;
     if (utils) {
@@ -160,6 +162,10 @@
       cached.parentNode.removeChild(cached);
     }
     contentCache.delete(sessionId);
+
+    if (removedSession && window.__tribexAiState && typeof window.__tribexAiState.onSessionClosed === 'function') {
+      window.__tribexAiState.onSessionClosed(sessionId, removedSession);
+    }
 
     if (sessionId === activeSessionId) {
       activeSessionId = null;
@@ -403,6 +409,36 @@
     return sessionId;
   }
 
+  function replaceSyntheticSession(sessionId, config) {
+    var existing = sessions.get(sessionId);
+    if (!existing) return openSyntheticSession(config);
+
+    var meta = Object.assign({}, config.meta || {});
+    if (existing.meta && existing.meta.syntheticKey && !meta.syntheticKey) {
+      meta.syntheticKey = existing.meta.syntheticKey;
+    }
+
+    sessions.set(sessionId, {
+      toolName: config.toolName || existing.toolName,
+      contentType: config.contentType || existing.contentType,
+      data: config.data || existing.data,
+      meta: meta,
+      toolArgs: config.toolArgs || existing.toolArgs,
+      reviewRequired: !!config.reviewRequired,
+      timeoutSecs: config.timeoutSecs || null,
+      timestamp: Date.now(),
+    });
+
+    var cached = contentCache.get(sessionId);
+    if (cached && cached.parentNode) {
+      cached.parentNode.removeChild(cached);
+    }
+    contentCache.delete(sessionId);
+
+    selectSession(sessionId);
+    return sessionId;
+  }
+
   function getTabLabel(session) {
     // Try to extract a meaningful label from the data
     if (session.data && typeof session.data === 'object') {
@@ -456,6 +492,10 @@
     if (!activeSessionId) return;
     var session = sessions.get(activeSessionId);
     if (!session) return;
+    if (session.meta && session.meta.aiView === 'thread' &&
+        window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
+      window.__tribexAiState.refreshActiveThread();
+    }
     // Remove cached container to force re-render
     var cached = contentCache.get(activeSessionId);
     if (cached && cached.parentNode) {
@@ -518,9 +558,6 @@
   function renderEmpty() {
     mainTitle.textContent = 'MCPViews';
     if (refreshButton) refreshButton.style.display = 'none';
-    if (window.__tribexAiShell && typeof window.__tribexAiShell.hide === 'function') {
-      window.__tribexAiShell.hide();
-    }
     // Deactivate all cached containers
     contentCache.forEach(function (container) {
       container.classList.remove('active');
@@ -539,16 +576,16 @@
     emptyState.appendChild(title);
 
     var subtitle = document.createElement('p');
-    subtitle.textContent = 'Open the bundled AI home to explore the new MCPViews workspace scaffold.';
+    subtitle.textContent = 'Open the AI navigator to browse live projects, threads, and companion activity.';
     emptyState.appendChild(subtitle);
 
-    if (window.__tribexAiState && typeof window.__tribexAiState.openHome === 'function') {
+    if (window.__tribexAiState && typeof window.__tribexAiState.toggleNavigator === 'function') {
       var button = document.createElement('button');
       button.className = 'ai-primary-btn';
       button.type = 'button';
-      button.textContent = 'Open AI home';
+      button.textContent = 'Open AI navigator';
       button.addEventListener('click', function () {
-        window.__tribexAiState.openHome();
+        window.__tribexAiState.toggleNavigator();
       });
       emptyState.appendChild(button);
     }
@@ -569,7 +606,14 @@
 
   window.__companionUtils = window.__companionUtils || {};
   window.__companionUtils.openSession = openSyntheticSession;
+  window.__companionUtils.replaceSession = replaceSyntheticSession;
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
+  window.__companionUtils.getActiveSession = function () {
+    return activeSessionId ? {
+      sessionId: activeSessionId,
+      session: sessions.get(activeSessionId) || null,
+    } : null;
+  };
 
   // --- Decision ---
 
@@ -736,10 +780,18 @@
     if (!aiBtn) return;
 
     aiBtn.addEventListener('click', function () {
-      if (window.__tribexAiState && typeof window.__tribexAiState.openHome === 'function') {
-        window.__tribexAiState.openHome();
+      if (window.__tribexAiState && typeof window.__tribexAiState.toggleNavigator === 'function') {
+        window.__tribexAiState.toggleNavigator();
       }
     });
+
+    if (aiShellToggleButton) {
+      aiShellToggleButton.addEventListener('click', function () {
+        if (window.__tribexAiState && typeof window.__tribexAiState.toggleNavigatorCollapsed === 'function') {
+          window.__tribexAiState.toggleNavigatorCollapsed();
+        }
+      });
+    }
   }
 
   function populateAppsDropdown(dropdown) {

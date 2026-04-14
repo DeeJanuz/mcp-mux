@@ -2,6 +2,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::{config_path, RegistrySource};
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FirstPartyAiSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_url: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_url: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+}
+
 /// Typed representation of ~/.mcpviews/config.json
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Settings {
@@ -12,6 +27,10 @@ pub struct Settings {
     /// Configured registry sources
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub registry_sources: Vec<RegistrySource>,
+
+    /// First-party ProPaasAI integration config
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_party_ai: Option<FirstPartyAiSettings>,
 }
 
 impl Settings {
@@ -52,6 +71,7 @@ mod tests {
         let settings = Settings::default();
         assert!(settings.registry_url.is_none());
         assert!(settings.registry_sources.is_empty());
+        assert!(settings.first_party_ai.is_none());
     }
 
     #[test]
@@ -63,11 +83,24 @@ mod tests {
                 url: "https://example.com/registry.json".to_string(),
                 enabled: true,
             }],
+            first_party_ai: Some(FirstPartyAiSettings {
+                base_url: Some("https://ai.example.com".to_string()),
+                auth_url: None,
+                token_url: None,
+                client_id: None,
+            }),
         };
         let json = serde_json::to_string(&settings).unwrap();
         let parsed: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.registry_sources.len(), 1);
         assert_eq!(parsed.registry_sources[0].name, "Test");
+        assert_eq!(
+            parsed
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.base_url.as_deref()),
+            Some("https://ai.example.com")
+        );
     }
 
     #[test]
@@ -75,6 +108,7 @@ mod tests {
         let parsed: Settings = serde_json::from_str("{}").unwrap();
         assert!(parsed.registry_url.is_none());
         assert!(parsed.registry_sources.is_empty());
+        assert!(parsed.first_party_ai.is_none());
     }
 
     #[test]
@@ -86,6 +120,7 @@ mod tests {
             Some("https://example.com/reg.json".to_string())
         );
         assert!(parsed.registry_sources.is_empty());
+        assert!(parsed.first_party_ai.is_none());
     }
 
     #[test]
@@ -99,6 +134,12 @@ mod tests {
                 url: "https://saved.example.com".to_string(),
                 enabled: false,
             }],
+            first_party_ai: Some(FirstPartyAiSettings {
+                base_url: Some("https://ai.saved.example.com".to_string()),
+                auth_url: Some("https://auth.saved.example.com/authorize".to_string()),
+                token_url: Some("https://auth.saved.example.com/token".to_string()),
+                client_id: Some("saved-client".to_string()),
+            }),
         };
         let json = serde_json::to_string_pretty(&settings).unwrap();
         std::fs::write(&path, &json).unwrap();
@@ -107,14 +148,22 @@ mod tests {
         assert_eq!(loaded.registry_sources.len(), 1);
         assert_eq!(loaded.registry_sources[0].name, "Saved");
         assert!(!loaded.registry_sources[0].enabled);
+        assert_eq!(
+            loaded
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.client_id.as_deref()),
+            Some("saved-client")
+        );
     }
 
     #[test]
     fn test_skip_serializing_empty_fields() {
         let settings = Settings::default();
         let json = serde_json::to_string(&settings).unwrap();
-        // Should not contain registry_url or registry_sources when empty/None
+        // Should not contain registry_url, registry_sources, or first_party_ai when empty/None
         assert!(!json.contains("registry_url"));
         assert!(!json.contains("registry_sources"));
+        assert!(!json.contains("first_party_ai"));
     }
 }

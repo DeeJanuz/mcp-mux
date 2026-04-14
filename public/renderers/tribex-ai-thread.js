@@ -8,11 +8,11 @@
     var row = document.createElement('article');
 
     if (message.role === 'tool') {
-      row.className = 'ai-tool-event ai-tool-event-' + message.status;
+      row.className = 'ai-tool-event ai-tool-event-' + (message.status || 'pending');
       row.innerHTML =
-        '<div class="ai-tool-event-header"><strong>' + (message.toolName || 'tool') + '</strong><span>' + window.__tribexAiUtils.titleCase(message.status) + '</span></div>' +
-        '<p>' + message.summary + '</p>' +
-        '<small>' + message.detail + '</small>';
+        '<div class="ai-tool-event-header"><strong>' + (message.toolName || 'tool') + '</strong><span>' + window.__tribexAiUtils.titleCase(message.status || 'pending') + '</span></div>' +
+        '<p>' + (message.summary || '') + '</p>' +
+        '<small>' + (message.detail || '') + '</small>';
       return row;
     }
 
@@ -24,82 +24,79 @@
     row.appendChild(meta);
 
     var body = document.createElement('p');
-    body.textContent = message.content;
+    body.textContent = message.content || '';
     row.appendChild(body);
 
     return row;
   }
 
-  function renderThreadBanner(view, threadContext) {
-    var thread = threadContext.thread;
-    var banner = document.createElement('section');
-    banner.className = 'ai-thread-banner';
-    banner.innerHTML =
-      '<div><p class="ai-kicker">' + threadContext.workspace.name + ' · ' + threadContext.project.name + '</p>' +
-      '<h1>' + thread.title + '</h1>' +
-      '<p class="ai-lede">Threads open as tabs, recover cached shell state immediately, and then hydrate hosted truth without losing local readiness context.</p></div>';
+  function renderThreadHeader(view, threadContext) {
+    var header = document.createElement('section');
+    header.className = 'ai-thread-header';
+
+    var copy = document.createElement('div');
+    copy.className = 'ai-thread-header-copy';
+    copy.innerHTML =
+      '<p class="ai-kicker">' + ((threadContext.organization && threadContext.organization.name) || 'AI workspace') + '</p>' +
+      '<h1>' + ((threadContext.thread && threadContext.thread.title) || 'Thread') + '</h1>' +
+      '<p class="ai-lede">' + [
+        threadContext.workspace && threadContext.workspace.name,
+        threadContext.project && threadContext.project.name,
+      ].filter(Boolean).join(' · ') + '</p>';
+    header.appendChild(copy);
 
     var pills = document.createElement('div');
     pills.className = 'ai-thread-pill-row';
 
-    var hydratePill = document.createElement('span');
-    hydratePill.className = 'ai-pill ai-pill-neutral';
-    hydratePill.textContent = window.__tribexAiUtils.titleCase(thread.hydrateState);
-    pills.appendChild(hydratePill);
-
-    var timePill = document.createElement('span');
-    timePill.className = 'ai-pill ai-pill-neutral';
-    timePill.textContent = window.__tribexAiUtils.formatRelativeTime(thread.lastActivityAt);
-    pills.appendChild(timePill);
-
-    banner.appendChild(pills);
-    view.appendChild(banner);
-
-    if (thread.hydrateState === 'REHYDRATING') {
-      var hydrate = document.createElement('section');
-      hydrate.className = 'ai-inline-alert ai-inline-alert-info';
-      hydrate.innerHTML = '<div><strong>Hydrating hosted truth</strong><p>Cached shell state is already visible while transcript history and long-running hosted work reconcile in the background.</p></div>';
-      view.appendChild(hydrate);
+    if (threadContext.streamStatus) {
+      var streamPill = document.createElement('span');
+      streamPill.className = 'ai-pill ai-pill-neutral';
+      streamPill.textContent = 'Stream: ' + window.__tribexAiUtils.titleCase(threadContext.streamStatus);
+      pills.appendChild(streamPill);
     }
 
-    if (threadContext.blockedBinding && threadContext.blockedBinding.readiness !== 'ready') {
-      var blocked = document.createElement('section');
-      blocked.className = 'ai-inline-alert ai-inline-alert-warning';
-      blocked.innerHTML =
-        '<div><strong>' + threadContext.blockedBinding.name + ' needs attention</strong>' +
-        '<p>This thread is open and recoverable, but local ' + threadContext.blockedBinding.name + ' access is still blocked on this device.</p></div>';
+    if (threadContext.thread && threadContext.thread.lastActivityAt) {
+      var timePill = document.createElement('span');
+      timePill.className = 'ai-pill ai-pill-neutral';
+      timePill.textContent = window.__tribexAiUtils.formatRelativeTime(threadContext.thread.lastActivityAt);
+      pills.appendChild(timePill);
+    }
 
-      var button = document.createElement('button');
-      button.className = 'ai-inline-alert-btn';
-      button.type = 'button';
-      button.textContent = 'Open tool catalog';
-      button.addEventListener('click', function () {
-        window.__tribexAiState.openToolCatalog();
-      });
-      blocked.appendChild(button);
-      view.appendChild(blocked);
+    header.appendChild(pills);
+    view.appendChild(header);
+
+    if (threadContext.loading) {
+      var loading = document.createElement('section');
+      loading.className = 'ai-inline-alert ai-inline-alert-info';
+      loading.innerHTML = '<div><strong>Hydrating thread</strong><p>Refreshing transcript and hosted activity for this thread.</p></div>';
+      view.appendChild(loading);
+    }
+
+    if (threadContext.error) {
+      var error = document.createElement('section');
+      error.className = 'ai-inline-alert ai-inline-alert-warning';
+      error.innerHTML = '<div><strong>Thread needs attention</strong><p>' + threadContext.error + '</p></div>';
+      view.appendChild(error);
     }
   }
 
   function renderTranscript(view, threadContext) {
-    var section = document.createElement('section');
-    section.className = 'ai-thread-layout';
+    var transcript = document.createElement('section');
+    transcript.className = 'ai-chat-log ai-chat-log-standalone';
 
-    var transcript = document.createElement('div');
-    transcript.className = 'ai-chat-log';
-    threadContext.thread.messages.forEach(function (message) {
-      transcript.appendChild(createMessage(message));
-    });
-    section.appendChild(transcript);
+    var messages = (threadContext.thread && threadContext.thread.messages) || [];
+    if (!messages.length) {
+      var empty = document.createElement('div');
+      empty.className = 'ai-thread-empty';
+      empty.innerHTML = '<strong>No messages yet</strong><p>Start the conversation and the hosted thread will appear here.</p>';
+      transcript.appendChild(empty);
+    } else {
+      messages.forEach(function (message) {
+        transcript.appendChild(createMessage(message));
+      });
+    }
 
-    var rail = document.createElement('aside');
-    rail.className = 'ai-thread-rail';
-    rail.innerHTML =
-      '<div class="ai-rail-card"><strong>Project memory</strong><p>' + threadContext.project.memorySummary + '</p></div>' +
-      '<div class="ai-rail-card"><strong>Workspace policy</strong><p>Hosted transcript is authoritative. Device-local readiness and relay access remain local to MCPViews.</p></div>';
-    section.appendChild(rail);
-
-    view.appendChild(section);
+    view.appendChild(transcript);
   }
 
   function renderComposer(view, threadContext) {
@@ -108,40 +105,40 @@
 
     var textarea = document.createElement('textarea');
     textarea.className = 'ai-composer-input';
-    textarea.placeholder = 'Ask the hosted thread to keep building the MCPViews client…';
-
-    var blocked = threadContext.blockedBinding && threadContext.blockedBinding.readiness !== 'ready';
-    if (blocked) {
-      textarea.disabled = true;
-      textarea.placeholder = 'Composer is blocked until ' + threadContext.blockedBinding.name + ' is ready on this device.';
-    }
-
+    textarea.placeholder = 'Send a message to the hosted thread…';
+    textarea.disabled = !!threadContext.pending;
     section.appendChild(textarea);
 
     var footer = document.createElement('div');
     footer.className = 'ai-actions-row';
 
-    var secondary = document.createElement('button');
-    secondary.className = 'ai-secondary-btn';
-    secondary.type = 'button';
-    secondary.textContent = 'Tool catalog';
-    secondary.addEventListener('click', function () {
-      window.__tribexAiState.openToolCatalog();
+    var refresh = document.createElement('button');
+    refresh.className = 'ai-secondary-btn';
+    refresh.type = 'button';
+    refresh.textContent = 'Refresh thread';
+    refresh.addEventListener('click', function () {
+      window.__tribexAiState.refreshActiveThread();
     });
-    footer.appendChild(secondary);
+    footer.appendChild(refresh);
 
     var primary = document.createElement('button');
     primary.className = 'ai-primary-btn';
     primary.type = 'button';
-    primary.textContent = blocked ? 'Blocked by readiness' : 'Send prompt';
-    primary.disabled = blocked;
+    primary.textContent = threadContext.pending ? 'Sending…' : 'Send';
+    primary.disabled = !!threadContext.pending;
     primary.addEventListener('click', function () {
-      var submitted = window.__tribexAiState.submitPrompt(threadContext.thread.id, textarea.value);
-      if (submitted) {
-        textarea.value = '';
-      }
+      var prompt = textarea.value;
+      window.__tribexAiState.submitPrompt(threadContext.thread.id, prompt).then(function (submitted) {
+        if (submitted) textarea.value = '';
+      });
     });
     footer.appendChild(primary);
+
+    textarea.addEventListener('keydown', function (event) {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !primary.disabled) {
+        primary.click();
+      }
+    });
 
     section.appendChild(footer);
     view.appendChild(section);
@@ -157,7 +154,7 @@
     }
 
     var threadContext = aiState.getThreadContext(threadId);
-    if (!threadContext) {
+    if (!threadContext || !threadContext.thread) {
       container.textContent = 'Unable to load the selected thread.';
       return;
     }
@@ -165,7 +162,7 @@
     var view = document.createElement('div');
     view.className = 'ai-view';
 
-    renderThreadBanner(view, threadContext);
+    renderThreadHeader(view, threadContext);
     renderTranscript(view, threadContext);
     renderComposer(view, threadContext);
 

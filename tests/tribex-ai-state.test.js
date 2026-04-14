@@ -23,6 +23,7 @@ beforeEach(function () {
     openSession: vi.fn(function () { return 'session-1'; }),
     replaceSession: vi.fn(function () { return 'session-1'; }),
     refreshActiveSession: vi.fn(),
+    rerenderActiveSession: vi.fn(),
   };
 
   loadUtils();
@@ -102,5 +103,19 @@ describe('tribex-ai-state', function () {
     );
     expect(client.createThread).toHaveBeenCalledWith('project-1');
     expect(window.__companionUtils.openSession).toHaveBeenCalled();
+  });
+
+  it('rerenders the active session without triggering a fetch refresh loop', function () {
+    window.__tribexAiClient = {
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+    };
+    loadState();
+
+    window.__tribexAiState.setSearchTerm('finance');
+
+    expect(window.__companionUtils.rerenderActiveSession).toHaveBeenCalled();
+    expect(window.__companionUtils.refreshActiveSession).not.toHaveBeenCalled();
   });
 });

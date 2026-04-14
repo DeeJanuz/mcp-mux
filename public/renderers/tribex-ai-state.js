@@ -51,7 +51,9 @@
     listeners.slice().forEach(function (listener) {
       listener(getSnapshot());
     });
-    if (window.__companionUtils && typeof window.__companionUtils.refreshActiveSession === 'function') {
+    if (window.__companionUtils && typeof window.__companionUtils.rerenderActiveSession === 'function') {
+      window.__companionUtils.rerenderActiveSession();
+    } else if (window.__companionUtils && typeof window.__companionUtils.refreshActiveSession === 'function') {
       window.__companionUtils.refreshActiveSession();
     }
   }

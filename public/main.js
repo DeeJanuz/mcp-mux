@@ -505,6 +505,18 @@
     renderContent(activeSessionId);
   }
 
+  function rerenderActiveSession() {
+    if (!activeSessionId) return;
+    var session = sessions.get(activeSessionId);
+    if (!session) return;
+    var cached = contentCache.get(activeSessionId);
+    if (cached && cached.parentNode) {
+      cached.parentNode.removeChild(cached);
+    }
+    contentCache.delete(activeSessionId);
+    renderContent(activeSessionId);
+  }
+
   if (refreshButton) {
     refreshButton.addEventListener('click', refreshCurrentSession);
   }
@@ -608,6 +620,7 @@
   window.__companionUtils.openSession = openSyntheticSession;
   window.__companionUtils.replaceSession = replaceSyntheticSession;
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
+  window.__companionUtils.rerenderActiveSession = rerenderActiveSession;
   window.__companionUtils.getActiveSession = function () {
     return activeSessionId ? {
       sessionId: activeSessionId,

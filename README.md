@@ -97,7 +97,7 @@ For the full manifest schema and auth reference, see [Plugin System Reference](d
 ## Architecture
 
 - **Rust backend** (axum): HTTP server on `:4200` for push API + review workflow
-- **WebView frontend**: Vanilla JS renderers for core content types (rich content, document preview, citations); domain-specific renderers delivered via plugins
+- **WebView frontend**: Vanilla JS renderers for core content types plus a built-in AI workspace shell (home, setup, tool catalog, thread); domain-specific renderers delivered via plugins
 - **Node.js sidecar**: SSE bridge for remote server connections
 - **System tray**: Hide-to-tray, click to show, auto-start on login
 
@@ -177,6 +177,8 @@ node sidecar/dist/sse-bridge.mjs --app-host https://app.example.com --key lf_com
 
 ```
 mcpviews/
+├── bundled-plugins/        # Bundled first-party plugin manifests
+│   └── tribex-ai/          # TribeX AI shell scaffold manifest
 ├── src-tauri/              # Rust backend
 │   ├── src/
 │   │   ├── main.rs         # Tauri entry, tray, plugin setup
@@ -188,11 +190,11 @@ mcpviews/
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                    # Frontend (Vite entry)
-│   └── index.html          # HTML shell
+│   ├── index.html          # HTML shell + AI navigation frame
+│   └── styles.css          # Shared app styles and AI shell layout
 ├── public/                 # Static assets (copied to dist)
 │   ├── main.js             # App bootstrap (Tauri IPC)
-│   ├── styles.css          # All styles
-│   └── renderers/          # Built-in content renderers
+│   └── renderers/          # Built-in content renderers + TribeX AI surfaces
 ├── sidecar/                # Node.js SSE bridge
 │   ├── sse-bridge.ts
 │   └── build.sh
@@ -209,6 +211,8 @@ mcpviews/
 ## Plugin System
 
 MCPViews supports plugins that extend the app with tools from third-party MCP servers. Each plugin is a JSON manifest that declares renderer mappings, MCP server configuration, and authentication. Plugins are stored as individual JSON files in `~/.mcpviews/plugins/`.
+
+Bundled first-party manifests can also ship with the app under `bundled-plugins/`; MCPViews seeds them into the local plugin store during startup so built-in experiences like the TribeX AI scaffold are available immediately.
 
 For full documentation, see [docs/plugins.md](docs/plugins.md). For a step-by-step guide to creating your own plugin, see [docs/plugin-development.md](docs/plugin-development.md).
 

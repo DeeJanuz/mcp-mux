@@ -23,5 +23,6 @@ pub fn test_manifest(name: &str) -> mcpviews_shared::PluginManifest {
 pub fn test_app_state() -> (Arc<AppState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = PluginStore::with_dir(dir.path().to_path_buf());
-    (Arc::new(AppState::new_with_store(store)), dir)
+    let auth_dir = dir.path().join("auth");
+    (Arc::new(AppState::new_with_store_and_auth_dir(store, auth_dir)), dir)
 }

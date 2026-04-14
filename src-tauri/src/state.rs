@@ -1,9 +1,14 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::Mutex as TokioMutex;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 
 use mcpviews_shared::plugin_store::PluginStore;
 use mcpviews_shared::{PluginManifest, RegistryEntry};
@@ -23,6 +28,8 @@ pub struct AppState {
     pub latest_registry: Mutex<Vec<RegistryEntry>>,
     pub mcp_sessions: Mutex<McpSessionManager>,
     pub first_party_ai_streams: Mutex<HashMap<String, JoinHandle<()>>>,
+    pub auth_dir: PathBuf,
+    pub first_party_ai_cookie_store: Arc<CookieStoreMutex>,
     plugin_store: PluginStore,
 }
 
@@ -30,14 +37,16 @@ impl AppState {
     pub fn new() -> Self {
         let store = PluginStore::new();
         ensure_bundled_plugins(&store);
-        Self::new_with_store(store)
+        Self::new_with_store_and_auth_dir(store, mcpviews_shared::auth_dir())
     }
 
-    /// Create an AppState with a custom PluginStore (useful for testing without touching the real filesystem).
-    pub fn new_with_store(store: PluginStore) -> Self {
+    /// Create an AppState with a custom PluginStore and auth dir (useful for tests).
+    pub fn new_with_store_and_auth_dir(store: PluginStore, auth_dir: PathBuf) -> Self {
         let registry = PluginRegistry::load_plugins_with_store(store.clone());
+        let first_party_ai_cookie_store =
+            load_first_party_ai_cookie_store(&auth_dir.join("first_party_ai.cookies.json"));
         let http_client = reqwest::Client::builder()
-            .cookie_store(true)
+            .cookie_provider(Arc::clone(&first_party_ai_cookie_store))
             .build()
             .expect("failed to build shared HTTP client");
         Self {
@@ -49,8 +58,32 @@ impl AppState {
             latest_registry: Mutex::new(Vec::new()),
             mcp_sessions: Mutex::new(McpSessionManager::new()),
             first_party_ai_streams: Mutex::new(HashMap::new()),
+            auth_dir,
+            first_party_ai_cookie_store,
             plugin_store: store,
         }
+    }
+
+    pub fn first_party_ai_cookie_path(&self) -> PathBuf {
+        self.auth_dir.join("first_party_ai.cookies.json")
+    }
+
+    pub fn persist_first_party_ai_cookies(&self) -> Result<(), String> {
+        persist_first_party_ai_cookie_store(
+            &self.first_party_ai_cookie_store,
+            &self.first_party_ai_cookie_path(),
+        )
+    }
+
+    pub fn clear_first_party_ai_cookies(&self) -> Result<(), String> {
+        {
+            let mut store = self
+                .first_party_ai_cookie_store
+                .lock()
+                .map_err(|err| format!("Failed to lock first-party AI cookie store: {}", err))?;
+            store.clear();
+        }
+        self.persist_first_party_ai_cookies()
     }
 
     /// Broadcast a tools/list_changed notification to all connected MCP SSE sessions.
@@ -170,6 +203,35 @@ impl AppState {
         }
         self.notify_tools_changed();
     }
+}
+
+fn load_first_party_ai_cookie_store(path: &Path) -> Arc<CookieStoreMutex> {
+    let store = File::open(path)
+        .map(BufReader::new)
+        .ok()
+        .and_then(|reader| cookie_store::serde::json::load(reader).ok())
+        .unwrap_or_else(CookieStore::new);
+    Arc::new(CookieStoreMutex::new(store))
+}
+
+fn persist_first_party_ai_cookie_store(
+    store: &Arc<CookieStoreMutex>,
+    path: &Path,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create auth dir for first-party AI cookies: {}", err))?;
+    }
+
+    let file = File::create(path)
+        .map_err(|err| format!("Failed to create first-party AI cookie file: {}", err))?;
+    let mut writer = BufWriter::new(file);
+    let store = store
+        .lock()
+        .map_err(|err| format!("Failed to lock first-party AI cookie store: {}", err))?;
+    cookie_store::serde::json::save_incl_expired_and_nonpersistent(&store, &mut writer)
+        .map_err(|err| format!("Failed to persist first-party AI cookies: {}", err))?;
+    Ok(())
 }
 
 fn ensure_bundled_plugins(store: &PluginStore) {
@@ -308,5 +370,34 @@ mod tests {
         let manifest = store.load("tribex_ai").unwrap();
         assert_eq!(manifest.name, "tribex_ai");
         assert_eq!(manifest.version, "0.2.0");
+    }
+
+    #[test]
+    fn test_first_party_ai_cookie_store_persists_across_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().join("plugins"));
+        let auth_dir = dir.path().join("auth");
+        let state = AppState::new_with_store_and_auth_dir(store.clone(), auth_dir.clone());
+        let request_url = url::Url::parse("https://ai.daenonjanis.com").unwrap();
+        let cookie = cookie_store::RawCookie::parse(
+            "tribex.session_token=test-session; Domain=ai.daenonjanis.com; Path=/; HttpOnly",
+        )
+        .unwrap()
+        .into_owned();
+
+        {
+            let mut jar = state.first_party_ai_cookie_store.lock().unwrap();
+            jar.insert_raw(&cookie, &request_url).unwrap();
+        }
+
+        state.persist_first_party_ai_cookies().unwrap();
+
+        let reloaded = AppState::new_with_store_and_auth_dir(store, auth_dir);
+        let jar = reloaded.first_party_ai_cookie_store.lock().unwrap();
+        let cookies = jar
+            .get_request_values(&request_url)
+            .map(|(name, value)| format!("{}={}", name, value))
+            .collect::<Vec<_>>();
+        assert!(cookies.iter().any(|cookie| cookie == "tribex.session_token=test-session"));
     }
 }

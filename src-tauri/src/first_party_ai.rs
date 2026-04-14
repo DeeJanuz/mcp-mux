@@ -8,6 +8,10 @@ use crate::state::AppState;
 
 const AUTH_NAMESPACE: &str = "first_party_ai";
 
+fn has_persisted_session(auth_dir: &std::path::Path) -> bool {
+    auth_dir.join("first_party_ai.cookies.json").exists()
+}
+
 fn env_override(keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| std::env::var(key).ok())
@@ -76,7 +80,8 @@ pub fn config_summary() -> Value {
         "tokenUrl": cfg.token_url,
         "clientId": cfg.client_id,
         "authMode": "brokered_magic_link",
-        "authConfigured": mcpviews_shared::token_store::has_stored_token(&mcpviews_shared::auth_dir(), AUTH_NAMESPACE),
+        "authConfigured": has_persisted_session(&mcpviews_shared::auth_dir())
+            || mcpviews_shared::token_store::has_stored_token(&mcpviews_shared::auth_dir(), AUTH_NAMESPACE),
     })
 }
 
@@ -88,9 +93,9 @@ pub fn build_request_url(path: &str) -> Result<String, String> {
     Ok(join_url(&base_url, path))
 }
 
-pub async fn get_auth_header(_state: &Arc<AppState>) -> Result<String, String> {
+pub async fn get_auth_header(state: &Arc<AppState>) -> Result<String, String> {
     if let Some(stored) =
-        mcpviews_shared::token_store::load_stored_token(&mcpviews_shared::auth_dir(), AUTH_NAMESPACE)
+        mcpviews_shared::token_store::load_stored_token(&state.auth_dir, AUTH_NAMESPACE)
     {
         return Ok(format!("Bearer {}", stored.access_token));
     }
@@ -136,6 +141,7 @@ pub async fn proxy_request(
         .text()
         .await
         .map_err(|err| format!("Failed to read response from '{}': {}", url, err))?;
+    state.persist_first_party_ai_cookies()?;
 
     if !status.is_success() {
         return Err(format!(
@@ -174,6 +180,7 @@ pub async fn get_session(state: &Arc<AppState>) -> Result<Value, String> {
         .text()
         .await
         .map_err(|err| format!("Failed to read response from '{}': {}", url, err))?;
+    state.persist_first_party_ai_cookies()?;
 
     if !status.is_success() {
         return Err(format!(
@@ -211,6 +218,7 @@ pub async fn send_magic_link(state: &Arc<AppState>, email: &str) -> Result<Value
         .text()
         .await
         .map_err(|err| format!("Failed to read response from '{}': {}", url, err))?;
+    state.persist_first_party_ai_cookies()?;
 
     if !status.is_success() {
         return Err(format!(
@@ -255,6 +263,7 @@ pub async fn verify_magic_link(
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
+        state.persist_first_party_ai_cookies()?;
         return Err(format!(
             "HTTP {} from '{}': {}",
             status.as_u16(),
@@ -263,6 +272,7 @@ pub async fn verify_magic_link(
         ));
     }
 
+    state.persist_first_party_ai_cookies()?;
     get_session(state).await
 }
 
@@ -275,7 +285,8 @@ pub async fn clear_auth(state: &Arc<AppState>) -> Result<(), String> {
         .send()
         .await;
 
-    let _ = mcpviews_shared::token_store::remove_token(&mcpviews_shared::auth_dir(), AUTH_NAMESPACE);
+    let _ = state.clear_first_party_ai_cookies();
+    let _ = mcpviews_shared::token_store::remove_token(&state.auth_dir, AUTH_NAMESPACE);
     Ok(())
 }
 

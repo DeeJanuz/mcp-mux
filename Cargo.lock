@@ -2338,9 +2338,11 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "cookie_store",
  "dirs 5.0.1",
  "mcpviews-shared",
  "reqwest 0.12.28",
+ "reqwest_cookie_store",
  "semver",
  "serde",
  "serde_json",
@@ -3448,6 +3450,18 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
+]
+
+[[package]]
+name = "reqwest_cookie_store"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e75bc88d954b228850d19e3685cedb38c030a17da34aa01c307f95d6e33de34"
+dependencies = [
+ "bytes",
+ "cookie_store",
+ "reqwest 0.12.28",
+ "url",
 ]
 
 [[package]]

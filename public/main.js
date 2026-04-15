@@ -568,6 +568,9 @@
   }
 
   function renderEmpty() {
+    if (window.__tribexAiShell && typeof window.__tribexAiShell.setActiveSession === 'function') {
+      window.__tribexAiShell.setActiveSession(null, null);
+    }
     mainTitle.textContent = 'MCPViews';
     if (refreshButton) refreshButton.style.display = 'none';
     // Deactivate all cached containers

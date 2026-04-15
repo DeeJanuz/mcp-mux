@@ -28,6 +28,8 @@ pub struct AppState {
     pub latest_registry: Mutex<Vec<RegistryEntry>>,
     pub mcp_sessions: Mutex<McpSessionManager>,
     pub first_party_ai_streams: Mutex<HashMap<String, JoinHandle<()>>>,
+    pub first_party_ai_desktop_relay_streams: Mutex<HashMap<String, JoinHandle<()>>>,
+    pub first_party_ai_desktop_presence_heartbeats: Mutex<HashMap<String, JoinHandle<()>>>,
     pub auth_dir: PathBuf,
     pub first_party_ai_cookie_store: Arc<CookieStoreMutex>,
     plugin_store: PluginStore,
@@ -58,6 +60,8 @@ impl AppState {
             latest_registry: Mutex::new(Vec::new()),
             mcp_sessions: Mutex::new(McpSessionManager::new()),
             first_party_ai_streams: Mutex::new(HashMap::new()),
+            first_party_ai_desktop_relay_streams: Mutex::new(HashMap::new()),
+            first_party_ai_desktop_presence_heartbeats: Mutex::new(HashMap::new()),
             auth_dir,
             first_party_ai_cookie_store,
             plugin_store: store,
@@ -399,5 +403,16 @@ mod tests {
             .map(|(name, value)| format!("{}={}", name, value))
             .collect::<Vec<_>>();
         assert!(cookies.iter().any(|cookie| cookie == "tribex.session_token=test-session"));
+    }
+
+    #[test]
+    fn test_relay_handles_start_empty() {
+        let (state, _dir) = test_app_state();
+        assert!(state.first_party_ai_desktop_relay_streams.lock().unwrap().is_empty());
+        assert!(state
+            .first_party_ai_desktop_presence_heartbeats
+            .lock()
+            .unwrap()
+            .is_empty());
     }
 }

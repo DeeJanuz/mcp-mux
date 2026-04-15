@@ -6,6 +6,8 @@
 
   var listeners = [];
   var streamListenerBound = false;
+  var desktopRelayListenerBound = false;
+  var desktopPresenceListenerBound = false;
   var navigatorLoad = null;
   var activeSession = null;
   var projectBootstrap = null;
@@ -39,7 +41,9 @@
     loadingThreadIds: {},
     pendingThreadIds: {},
     companionKeys: {},
+    lastCompanionSequences: {},
     streamStatuses: {},
+    relayStates: {},
     activeProjectId: null,
   };
 
@@ -150,6 +154,112 @@
     });
   }
 
+  function resolveRelayUiStatus(relayState) {
+    if (!relayState) return null;
+    if (relayState.error) return 'error';
+    if (relayState.streamStatus === 'connected' && relayState.presenceStatus === 'running') {
+      return 'online';
+    }
+    if (
+      relayState.streamStatus === 'connecting' ||
+      relayState.streamStatus === 'connected' ||
+      relayState.presenceStatus === 'connecting' ||
+      relayState.presenceStatus === 'running'
+    ) {
+      return 'connecting';
+    }
+    return relayState.status || null;
+  }
+
+  function updateRelayState(threadId, patch) {
+    if (!threadId) return null;
+    var next = Object.assign({}, state.relayStates[threadId] || {}, patch || {});
+    next.status = resolveRelayUiStatus(next);
+    state.relayStates[threadId] = next;
+    return next;
+  }
+
+  function bindDesktopRelayListener() {
+    if (
+      desktopRelayListenerBound ||
+      !window.__tribexAiClient ||
+      typeof window.__tribexAiClient.listenToDesktopRelayEvents !== 'function'
+    ) {
+      return;
+    }
+    desktopRelayListenerBound = true;
+    window.__tribexAiClient.listenToDesktopRelayEvents(handleDesktopRelayEvent).catch(function () {
+      desktopRelayListenerBound = false;
+    });
+  }
+
+  function bindDesktopPresenceListener() {
+    if (
+      desktopPresenceListenerBound ||
+      !window.__tribexAiClient ||
+      typeof window.__tribexAiClient.listenToDesktopPresenceEvents !== 'function'
+    ) {
+      return;
+    }
+    desktopPresenceListenerBound = true;
+    window.__tribexAiClient.listenToDesktopPresenceEvents(handleDesktopPresenceEvent).catch(function () {
+      desktopPresenceListenerBound = false;
+    });
+  }
+
+  function handleDesktopRelayEvent(event) {
+    if (!event || !event.relayId) return;
+
+    if (event.type === 'status') {
+      updateRelayState(event.relayId, {
+        streamStatus: event.status || 'idle',
+        error: null,
+      });
+      notify();
+      return;
+    }
+
+    if (event.type === 'error') {
+      updateRelayState(event.relayId, {
+        streamStatus: 'error',
+        error: event.message || 'Desktop relay stream failed.',
+      });
+      notify();
+      return;
+    }
+
+    if (event.type === 'data' && event.payload && typeof event.payload === 'object') {
+      updateRelayState(event.relayId, {
+        relaySessionId: event.payload.relaySessionId || null,
+        relayDeviceId: event.payload.deviceId || null,
+        lastRelayEventType: event.payload.type || null,
+        error: null,
+      });
+      notify();
+    }
+  }
+
+  function handleDesktopPresenceEvent(event) {
+    if (!event || !event.heartbeatId) return;
+
+    if (event.type === 'status') {
+      updateRelayState(event.heartbeatId, {
+        presenceStatus: event.status || 'idle',
+        error: null,
+      });
+      notify();
+      return;
+    }
+
+    if (event.type === 'error') {
+      updateRelayState(event.heartbeatId, {
+        presenceStatus: 'error',
+        error: event.message || 'Desktop relay presence heartbeat failed.',
+      });
+      notify();
+    }
+  }
+
   function mergeThreadSummary(summary) {
     var next = Object.assign({}, getThread(summary.id) || {}, summary);
     var replaced = false;
@@ -227,6 +337,19 @@
     }).catch(function () {});
   }
 
+  function shouldSkipReplayEvent(threadId, payload) {
+    if (!threadId || !payload || typeof payload !== 'object') return false;
+    if (typeof payload.sequence !== 'number' || !Number.isFinite(payload.sequence)) return false;
+
+    var lastSequence = state.lastCompanionSequences[threadId];
+    if (typeof lastSequence === 'number' && payload.sequence <= lastSequence) {
+      return true;
+    }
+
+    state.lastCompanionSequences[threadId] = payload.sequence;
+    return false;
+  }
+
   function handleStreamEvent(event) {
     if (!event || !event.threadId) return;
 
@@ -244,6 +367,10 @@
     }
 
     var payload = event.payload || {};
+    if (shouldSkipReplayEvent(event.threadId, payload)) {
+      return;
+    }
+
     if (
       payload.toolName &&
       payload.result &&
@@ -287,6 +414,8 @@
   function refreshNavigator(force) {
     if (navigatorLoad && !force) return navigatorLoad;
     bindStreamListener();
+    bindDesktopRelayListener();
+    bindDesktopPresenceListener();
 
     state.loadingNavigator = true;
     state.integration.error = null;
@@ -408,6 +537,83 @@
       });
   }
 
+  function buildSmokeThreadTitle() {
+    return 'Smoke Test ' + new Date().toISOString().slice(0, 16).replace('T', ' ');
+  }
+
+  function ensureDesktopRelay(threadId) {
+    var thread = getThread(threadId);
+    if (!thread || !thread.workspaceId || !window.__tribexAiClient) {
+      return Promise.resolve(null);
+    }
+
+    bindDesktopRelayListener();
+    bindDesktopPresenceListener();
+
+    var existing = state.relayStates[threadId];
+    if (existing && (existing.status === 'online' || existing.status === 'connecting')) {
+      return Promise.resolve(existing);
+    }
+
+    updateRelayState(threadId, {
+      status: 'connecting',
+      error: null,
+    });
+    notify();
+
+    return window.__tribexAiClient.registerDesktopRelay({
+      workspaceId: thread.workspaceId,
+      threadId: threadId,
+      deviceKey: 'mcpviews-' + thread.workspaceId,
+      label: 'MCPViews Desktop',
+      platform: 'tauri-desktop',
+      purpose: 'mcp-proxy',
+      metadata: {
+        client: 'mcpviews',
+        source: 'smoke-test',
+      },
+    })
+      .then(function (relay) {
+        var next = updateRelayState(threadId, {
+          registration: relay || null,
+          relaySessionId: relay && relay.relaySession ? relay.relaySession.id || null : null,
+          relayDeviceId: relay && relay.relayDeviceId ? relay.relayDeviceId : null,
+          error: null,
+        });
+        notify();
+
+        return Promise.all([
+          window.__tribexAiClient.startDesktopRelayStream(
+            threadId,
+            '/api/desktop-relay/stream',
+            { threadId: threadId },
+          ),
+          window.__tribexAiClient.startDesktopPresenceHeartbeat(
+            threadId,
+            30,
+            {
+              relaySessionId: next && next.relaySessionId ? next.relaySessionId : undefined,
+              status: 'ONLINE',
+              metadata: {
+                source: 'smoke-test',
+                threadId: threadId,
+              },
+            },
+            '/api/desktop-relay/presence',
+          ),
+        ]).then(function () {
+          return next;
+        });
+      })
+      .catch(function (error) {
+        updateRelayState(threadId, {
+          error: error && error.message ? error.message : String(error),
+        });
+        notify();
+        throw error;
+      });
+  }
+
   function refreshThread(threadId, connectStream) {
     if (!threadId) return Promise.resolve(null);
     state.loadingThreadIds[threadId] = true;
@@ -452,6 +658,7 @@
 
   function getSnapshot() {
     var selectedOrganization = getSelectedOrganization();
+    var preferredWorkspace = resolvePreferredWorkspace();
     return {
       integration: clone(state.integration),
       loadingNavigator: state.loadingNavigator,
@@ -461,6 +668,7 @@
       searchTerm: state.ui.searchTerm,
       organizations: clone(state.organizations),
       selectedOrganization: clone(selectedOrganization),
+      preferredWorkspace: clone(preferredWorkspace),
       projectGroups: clone(window.__tribexAiUtils.buildProjectGroups(
         state.projects,
         state.threads,
@@ -468,9 +676,11 @@
         state.ui.searchTerm,
       )),
       hasProjects: state.projects.length > 0,
+      canRunSmokeTest: !!(preferredWorkspace && preferredWorkspace.packageKey === 'smoke'),
       activeProjectId: resolveActiveProjectId(),
       activeThreadId: activeSession && activeSession.threadId ? activeSession.threadId : null,
       streamStatuses: clone(state.streamStatuses),
+      relayStatuses: clone(state.relayStates),
     };
   }
 
@@ -489,6 +699,7 @@
       pending: !!state.pendingThreadIds[threadId],
       error: state.threadErrors[threadId] || null,
       streamStatus: state.streamStatuses[threadId] || null,
+      relayStatus: state.relayStates[threadId] ? state.relayStates[threadId].status || null : null,
     };
   }
 
@@ -506,9 +717,10 @@
     return window.__companionUtils.replaceSession(sessionId, config);
   }
 
-  function openThread(threadId) {
+  function openThread(threadId, options) {
     var thread = getThread(threadId);
     if (!thread) return null;
+    var connectStream = !(options && options.connectStream === false);
     state.activeProjectId = thread.projectId || state.activeProjectId;
     state.ui.navigatorVisible = true;
     state.ui.organizationMenuOpen = false;
@@ -533,12 +745,13 @@
       ? replaceSession(activeSession.sessionId, config)
       : openSession(config);
 
-    refreshThread(threadId, true);
+    refreshThread(threadId, connectStream);
     notify();
     return sessionId;
   }
 
-  function createThread() {
+  function createThread(title) {
+    var threadTitle = String(title || 'New chat').trim() || 'New chat';
     return ensureProjectForNewThread().then(function (targetProjectId) {
       if (!targetProjectId) {
         state.integration.error = 'No workspace project is available yet for this organization.';
@@ -547,7 +760,7 @@
       }
 
       state.integration.error = null;
-      return window.__tribexAiClient.createThread(targetProjectId)
+      return window.__tribexAiClient.createThread(targetProjectId, threadTitle)
         .then(function (thread) {
           var project = getProject(targetProjectId);
           thread.projectId = thread.projectId || targetProjectId;
@@ -558,6 +771,56 @@
           notify();
           openThread(thread.id);
           return thread.id;
+        })
+        .catch(function (error) {
+          state.integration.error = error && error.message ? error.message : String(error);
+          notify();
+          throw error;
+        });
+    });
+  }
+
+  function runSmokeTest() {
+    return ensureProjectForNewThread().then(function (targetProjectId) {
+      if (!targetProjectId) {
+        state.integration.error = 'No workspace project is available yet for this organization.';
+        notify();
+        return null;
+      }
+
+      var project = getProject(targetProjectId);
+      var workspace = project && project.workspaceId ? state.workspacesById[project.workspaceId] : resolvePreferredWorkspace();
+      if (!workspace || workspace.packageKey !== 'smoke') {
+        state.integration.error = 'Smoke tests are only available in smoke validation workspaces.';
+        notify();
+        return null;
+      }
+
+      state.integration.error = null;
+      return window.__tribexAiClient.createThread(targetProjectId, buildSmokeThreadTitle())
+        .then(function (thread) {
+          thread.projectId = thread.projectId || targetProjectId;
+          thread.workspaceId = thread.workspaceId || workspace.id;
+          thread.projectName = thread.projectName || (project && project.name) || null;
+          thread.workspaceName = thread.workspaceName || workspace.name || null;
+          mergeThreadSummary(thread);
+          openThread(thread.id, { connectStream: false });
+          notify();
+          return ensureCompanion(thread.id)
+            .then(function () {
+              return ensureDesktopRelay(thread.id);
+            })
+            .then(function () {
+              return window.__tribexAiClient.runSmokeTest(thread.id, 'rule-skill-echo');
+            })
+            .then(function (raw) {
+              if (raw && (raw.thread || raw.messages || raw.events || raw.transcript || raw.id)) {
+                mergeThreadDetail(window.__tribexAiClient.normalizeThreadDetail(raw));
+              }
+              return pollThread(thread.id, 3).then(function () {
+                return thread.id;
+              });
+            });
         })
         .catch(function (error) {
           state.integration.error = error && error.message ? error.message : String(error);
@@ -614,9 +877,19 @@
     if (!sessionId || !session || !isThreadSession(session)) return;
     var threadId = session.meta && session.meta.threadId;
     if (threadId) {
-      window.__tribexAiClient.stopCompanionStream(threadId).catch(function () {});
+      if (window.__tribexAiClient && typeof window.__tribexAiClient.stopCompanionStream === 'function') {
+        window.__tribexAiClient.stopCompanionStream(threadId).catch(function () {});
+      }
+      if (window.__tribexAiClient && typeof window.__tribexAiClient.stopDesktopRelayStream === 'function') {
+        window.__tribexAiClient.stopDesktopRelayStream(threadId).catch(function () {});
+      }
+      if (window.__tribexAiClient && typeof window.__tribexAiClient.stopDesktopPresenceHeartbeat === 'function') {
+        window.__tribexAiClient.stopDesktopPresenceHeartbeat(threadId).catch(function () {});
+      }
       delete state.companionKeys[threadId];
+      delete state.lastCompanionSequences[threadId];
       delete state.streamStatuses[threadId];
+      delete state.relayStates[threadId];
     }
   }
 
@@ -729,6 +1002,10 @@
       state.organizations = [];
       state.projects = [];
       state.threads = [];
+      state.relayStates = {};
+      state.companionKeys = {};
+      state.lastCompanionSequences = {};
+      state.streamStatuses = {};
       notify();
     });
   }
@@ -765,6 +1042,7 @@
     openThread: openThread,
     refreshActiveThread: refreshActiveThread,
     refreshNavigator: refreshNavigator,
+    runSmokeTest: runSmokeTest,
     sendMagicLink: sendMagicLink,
     selectOrganization: selectOrganization,
     setActiveSession: setActiveSession,

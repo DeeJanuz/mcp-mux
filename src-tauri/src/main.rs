@@ -3,6 +3,7 @@
 
 mod auth;
 mod commands;
+mod desktop_relay;
 mod first_party_ai;
 mod http_server;
 mod installer;
@@ -167,8 +168,15 @@ fn main() {
             commands::verify_first_party_ai_magic_link,
             commands::clear_first_party_ai_auth,
             commands::first_party_ai_request,
+            commands::first_party_ai_relay_request,
+            commands::register_first_party_ai_desktop_relay,
+            commands::refresh_first_party_ai_desktop_relay,
             commands::start_first_party_ai_companion_stream,
             commands::stop_first_party_ai_companion_stream,
+            commands::start_first_party_ai_desktop_relay_stream,
+            commands::stop_first_party_ai_desktop_relay_stream,
+            commands::start_first_party_ai_desktop_presence_heartbeat,
+            commands::stop_first_party_ai_desktop_presence_heartbeat,
             commands::get_settings,
             commands::save_settings,
             commands::get_plugin_renderers,

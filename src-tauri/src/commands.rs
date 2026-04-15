@@ -453,6 +453,33 @@ pub async fn first_party_ai_request(
 }
 
 #[tauri::command]
+pub async fn first_party_ai_relay_request(
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+    query: Option<HashMap<String, String>>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::desktop_relay::relay_request(state.inner(), &method, &path, body, query).await
+}
+
+#[tauri::command]
+pub async fn register_first_party_ai_desktop_relay(
+    body: Option<serde_json::Value>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::desktop_relay::register_desktop_relay(state.inner(), body).await
+}
+
+#[tauri::command]
+pub async fn refresh_first_party_ai_desktop_relay(
+    body: Option<serde_json::Value>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::desktop_relay::refresh_desktop_relay(state.inner(), body).await
+}
+
+#[tauri::command]
 pub async fn start_first_party_ai_companion_stream(
     thread_id: String,
     companion_key: String,
@@ -474,6 +501,62 @@ pub fn stop_first_party_ai_companion_stream(
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     crate::first_party_ai::stop_companion_stream(state.inner(), &thread_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_first_party_ai_desktop_relay_stream(
+    stream_id: String,
+    path: Option<String>,
+    query: Option<HashMap<String, String>>,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    crate::desktop_relay::start_desktop_relay_stream(
+        state.inner().clone(),
+        app_handle,
+        stream_id,
+        path,
+        query,
+    )
+    .await
+}
+
+#[tauri::command]
+pub fn stop_first_party_ai_desktop_relay_stream(
+    stream_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    crate::desktop_relay::stop_desktop_relay_stream(state.inner(), &stream_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_first_party_ai_desktop_presence_heartbeat(
+    heartbeat_id: String,
+    path: Option<String>,
+    interval_secs: u64,
+    body: Option<serde_json::Value>,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    crate::desktop_relay::start_desktop_presence_heartbeat(
+        state.inner().clone(),
+        app_handle,
+        heartbeat_id,
+        path,
+        interval_secs,
+        body,
+    )
+    .await
+}
+
+#[tauri::command]
+pub fn stop_first_party_ai_desktop_presence_heartbeat(
+    heartbeat_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    crate::desktop_relay::stop_desktop_presence_heartbeat(state.inner(), &heartbeat_id);
     Ok(())
 }
 

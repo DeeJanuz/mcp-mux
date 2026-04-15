@@ -146,6 +146,8 @@
       organizationId: pickFirst([raw.organizationId, raw.orgId], organizationId),
       name: pickFirst([raw.name, raw.title, raw.slug], 'Workspace'),
       slug: pickFirst([raw.slug, raw.name && String(raw.name).toLowerCase().replace(/\s+/g, '-')], id),
+      packageKey: pickFirst([raw.packageKey, raw.package && raw.package.key], null),
+      packageVersion: pickFirst([raw.packageVersion, raw.package && raw.package.version], null),
       packageName: pickFirst([raw.packageName, raw.package && raw.package.name, raw.persona], null),
       status: pickFirst([raw.status, raw.provisioningState, raw.state], null),
     };
@@ -211,6 +213,10 @@
         status: pickFirst([raw.status, raw.state], 'success'),
         summary: deriveToolSummary(raw),
         detail: deriveToolDetail(raw),
+        toolArgs: raw.toolArgs || raw.tool_args || null,
+        resultData: getNestedValue(raw, ['result', 'data']),
+        resultMeta: getNestedValue(raw, ['result', 'meta']),
+        sequence: typeof raw.sequence === 'number' ? raw.sequence : null,
         createdAt: normalizeTimestamp(pickFirst([raw.createdAt, raw.timestamp], null)),
       };
     }
@@ -271,6 +277,15 @@
 
   function request(method, path, body, query) {
     return invoke('first_party_ai_request', {
+      method: method,
+      path: path,
+      body: body || null,
+      query: query || null,
+    });
+  }
+
+  function relayRequest(method, path, body, query) {
+    return invoke('first_party_ai_relay_request', {
       method: method,
       path: path,
       body: body || null,
@@ -397,15 +412,16 @@
     ]).then(normalizeThreadDetail);
   }
 
-  function createThread(projectId) {
+  function createThread(projectId, title) {
+    var threadTitle = String(title || 'New chat').trim() || 'New chat';
     return requestVariants('POST', [
       {
         path: '/projects/' + encodeURIComponent(projectId) + '/threads',
-        body: { title: 'New chat' },
+        body: { title: threadTitle },
       },
     ]).then(function (raw) {
       var summary = normalizeThreadSummary(raw.thread || raw, { id: projectId }, 0);
-      if (!summary.title || summary.title === 'Untitled thread') summary.title = 'New chat';
+      if (!summary.title || summary.title === 'Untitled thread') summary.title = threadTitle;
       return summary;
     });
   }
@@ -419,11 +435,25 @@
     ]);
   }
 
+  function runSmokeTest(threadId, smokeKey) {
+    return requestVariants('POST', [
+      {
+        path: '/threads/' + encodeURIComponent(threadId) + '/smoke',
+        body: {
+          smokeKey: smokeKey || 'rule-skill-echo',
+        },
+      },
+    ]);
+  }
+
   function createCompanionSession(workspaceId, threadId) {
     return requestVariants('POST', [
       {
         path: '/workspaces/' + encodeURIComponent(workspaceId) + '/companion-sessions',
-        body: { metadata: threadId ? { threadId: threadId } : {} },
+        body: {
+          threadId: threadId || undefined,
+          metadata: {},
+        },
       },
     ]).then(normalizeCompanionSession);
   }
@@ -441,11 +471,70 @@
     });
   }
 
+  function registerDesktopRelay(body) {
+    return invoke('register_first_party_ai_desktop_relay', {
+      body: body || {},
+    });
+  }
+
+  function refreshDesktopRelay(body) {
+    return invoke('refresh_first_party_ai_desktop_relay', {
+      body: body || {},
+    });
+  }
+
+  function startDesktopRelayStream(streamId, path, query) {
+    return invoke('start_first_party_ai_desktop_relay_stream', {
+      streamId: streamId,
+      path: path || null,
+      query: query || null,
+    });
+  }
+
+  function stopDesktopRelayStream(streamId) {
+    return invoke('stop_first_party_ai_desktop_relay_stream', {
+      streamId: streamId,
+    });
+  }
+
+  function startDesktopPresenceHeartbeat(heartbeatId, intervalSecs, body, path) {
+    return invoke('start_first_party_ai_desktop_presence_heartbeat', {
+      heartbeatId: heartbeatId,
+      path: path || null,
+      intervalSecs: intervalSecs,
+      body: body || {},
+    });
+  }
+
+  function stopDesktopPresenceHeartbeat(heartbeatId) {
+    return invoke('stop_first_party_ai_desktop_presence_heartbeat', {
+      heartbeatId: heartbeatId,
+    });
+  }
+
   function listenToStreamEvents(handler) {
     if (!window.__TAURI__ || !window.__TAURI__.event || typeof window.__TAURI__.event.listen !== 'function') {
       return Promise.resolve(function () {});
     }
     return window.__TAURI__.event.listen('first_party_ai_stream_event', function (event) {
+      handler(event.payload || {});
+    });
+  }
+
+  function listenToDesktopRelayEvents(handler) {
+    if (!window.__TAURI__ || !window.__TAURI__.event || typeof window.__TAURI__.event.listen !== 'function') {
+      return Promise.resolve(function () {});
+    }
+    return window.__TAURI__.event.listen('first_party_ai_desktop_relay_event', function (event) {
+      handler(event.payload || {});
+    });
+  }
+
+  function listenToDesktopPresenceEvents(handler) {
+    if (!window.__TAURI__ || !window.__TAURI__.event || typeof window.__TAURI__.event.listen !== 'function') {
+      return Promise.resolve(function () {});
+    }
+    return window.__TAURI__.event.listen('first_party_ai_desktop_presence_event', function (event) {
       handler(event.payload || {});
     });
   }
@@ -462,18 +551,28 @@
     fetchThreads: fetchThreads,
     fetchWorkspaces: fetchWorkspaces,
     getConfig: getConfig,
+    listenToDesktopPresenceEvents: listenToDesktopPresenceEvents,
+    listenToDesktopRelayEvents: listenToDesktopRelayEvents,
     listenToStreamEvents: listenToStreamEvents,
     normalizeThreadDetail: normalizeThreadDetail,
     normalizeThreadSummary: normalizeThreadSummary,
     normalizeMessage: normalizeMessage,
     request: request,
+    relayRequest: relayRequest,
     requestCandidates: requestCandidates,
+    refreshDesktopRelay: refreshDesktopRelay,
+    registerDesktopRelay: registerDesktopRelay,
+    runSmokeTest: runSmokeTest,
     sendMessage: sendMessage,
     sendMagicLink: sendMagicLink,
     shouldPreviewCompanionPayload: shouldPreviewCompanionPayload,
     startAuth: startAuth,
     startCompanionStream: startCompanionStream,
+    startDesktopPresenceHeartbeat: startDesktopPresenceHeartbeat,
+    startDesktopRelayStream: startDesktopRelayStream,
     stopCompanionStream: stopCompanionStream,
+    stopDesktopPresenceHeartbeat: stopDesktopPresenceHeartbeat,
+    stopDesktopRelayStream: stopDesktopRelayStream,
     verifyMagicLink: verifyMagicLink,
   };
 })();

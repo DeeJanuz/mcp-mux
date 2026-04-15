@@ -33,6 +33,8 @@ function createState(snapshot) {
     },
     createThread: vi.fn(),
     refreshNavigator: vi.fn(),
+    runSmokeTest: vi.fn(),
+    openThread: vi.fn(),
     selectOrganization: vi.fn(),
     setAuthEmail: vi.fn(function (value) {
       current.integration.authEmail = value;
@@ -54,9 +56,13 @@ function createState(snapshot) {
 }
 
 beforeEach(function () {
+  document.body.className = '';
   document.body.innerHTML = [
+    '<div id="app"></div>',
     '<button id="ai-home-button"></button>',
     '<button id="ai-shell-toggle-button"></button>',
+    '<div id="main-header"></div>',
+    '<div id="tab-bar"></div>',
     '<div id="main-body"></div>',
     '<div id="ai-shell"></div>',
   ].join('');
@@ -78,6 +84,7 @@ describe('tribex-ai-shell', function () {
       searchTerm: '',
       organizations: [],
       selectedOrganization: null,
+      preferredWorkspace: null,
       projectGroups: [],
       hasProjects: false,
       activeProjectId: null,
@@ -107,9 +114,10 @@ describe('tribex-ai-shell', function () {
     var rerendered = document.querySelector('[data-focus-key="auth-email"]');
     expect(document.activeElement).toBe(rerendered);
     expect(rerendered.value).toBe('da');
+    expect(document.body.classList.contains('ai-mode-active')).toBe(true);
   });
 
-  it('keeps New chat enabled for authenticated orgs with no projects yet', function () {
+  it('renders a Codex-style left rail with smoke actions and thread rows', function () {
     var snapshot = {
       navigatorVisible: true,
       navigatorCollapsed: false,
@@ -118,9 +126,24 @@ describe('tribex-ai-shell', function () {
       searchTerm: '',
       organizations: [{ id: 'org-1', name: 'Org 1' }],
       selectedOrganization: { id: 'org-1', name: 'Org 1' },
-      projectGroups: [],
-      hasProjects: false,
-      activeProjectId: null,
+      preferredWorkspace: { id: 'workspace-smoke', name: 'Smoke Workspace', packageKey: 'smoke' },
+      projectGroups: [{
+        project: {
+          id: 'project-1',
+          name: 'Smoke Project',
+          workspaceName: 'Smoke Workspace',
+        },
+        threads: [{
+          id: 'thread-1',
+          title: 'Smoke Test 2026-04-14 20:11',
+          preview: 'Smoke Test Passed',
+          lastActivityAt: '2026-04-14T20:11:00.000Z',
+        }],
+      }],
+      hasProjects: true,
+      canRunSmokeTest: true,
+      activeProjectId: 'project-1',
+      activeThreadId: 'thread-1',
       integration: {
         config: { configured: true },
         status: 'authenticated',
@@ -139,6 +162,12 @@ describe('tribex-ai-shell', function () {
 
     window.__tribexAiShell.render();
 
-    expect(document.querySelector('.ai-nav-primary-btn').disabled).toBe(false);
+    expect(document.querySelector('.ai-nav-brand-panel').textContent).toContain('Smoke Workspace');
+    expect(document.querySelector('.ai-nav-action-primary').disabled).toBe(false);
+    expect(document.querySelector('.ai-nav-action-grid').textContent).toContain('Run smoke test');
+    expect(document.querySelector('.ai-nav-group-icon')).not.toBeNull();
+    expect(document.querySelector('.ai-nav-thread-tree-row.active').textContent).toContain('Smoke Test 2026-04-14 20:11');
+    expect(document.querySelector('.ai-nav-thread-tree-row .ai-nav-thread-row-time').textContent.length).toBeGreaterThan(0);
+    expect(document.body.classList.contains('ai-mode-active')).toBe(true);
   });
 });

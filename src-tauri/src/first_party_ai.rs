@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
@@ -7,6 +8,7 @@ use tauri::{AppHandle, Emitter};
 use crate::state::AppState;
 
 const AUTH_NAMESPACE: &str = "first_party_ai";
+const RELAY_AUTH_NAMESPACE: &str = "first_party_ai_relay";
 
 fn has_persisted_session(auth_dir: &std::path::Path) -> bool {
     auth_dir.join("first_party_ai.cookies.json").exists()
@@ -17,6 +19,10 @@ fn env_override(keys: &[&str]) -> Option<String> {
         .find_map(|key| std::env::var(key).ok())
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn env_override_i64(keys: &[&str]) -> Option<i64> {
+    env_override(keys).and_then(|value| value.parse::<i64>().ok())
 }
 
 fn trim_trailing_slash(value: &str) -> String {
@@ -47,7 +53,14 @@ fn shorten_error_body(body: &str) -> String {
     }
 }
 
-pub fn load_settings() -> mcpviews_shared::settings::FirstPartyAiSettings {
+fn current_unix_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+pub(crate) fn load_settings() -> mcpviews_shared::settings::FirstPartyAiSettings {
     let mut cfg = mcpviews_shared::settings::Settings::load()
         .first_party_ai
         .unwrap_or_default();
@@ -67,29 +80,92 @@ pub fn load_settings() -> mcpviews_shared::settings::FirstPartyAiSettings {
     if let Some(value) = env_override(&["MCPVIEWS_FIRST_PARTY_AI_CLIENT_ID", "PROPAASAI_CLIENT_ID"]) {
         cfg.client_id = Some(value);
     }
+    if let Some(value) = env_override(&[
+        "MCPVIEWS_FIRST_PARTY_AI_RELAY_BASE_URL",
+        "PROPAASAI_RELAY_BASE_URL",
+    ]) {
+        cfg.relay_base_url = Some(trim_trailing_slash(&value));
+    } else if let Some(value) = cfg.relay_base_url.clone() {
+        cfg.relay_base_url = Some(trim_trailing_slash(&value));
+    }
+    if let Some(value) = env_override(&[
+        "MCPVIEWS_FIRST_PARTY_AI_DEVICE_BASE_URL",
+        "PROPAASAI_DEVICE_BASE_URL",
+    ]) {
+        cfg.device_base_url = Some(trim_trailing_slash(&value));
+    } else if let Some(value) = cfg.device_base_url.clone() {
+        cfg.device_base_url = Some(trim_trailing_slash(&value));
+    }
+    if let Some(value) = env_override(&[
+        "MCPVIEWS_FIRST_PARTY_AI_RELAY_TOKEN",
+        "PROPAASAI_RELAY_TOKEN",
+    ]) {
+        cfg.relay_token = Some(value);
+    }
+    if let Some(value) = env_override_i64(&[
+        "MCPVIEWS_FIRST_PARTY_AI_RELAY_TOKEN_EXPIRES_AT",
+        "PROPAASAI_RELAY_TOKEN_EXPIRES_AT",
+    ]) {
+        cfg.relay_token_expires_at = Some(value);
+    }
+    if let Some(value) = env_override(&[
+        "MCPVIEWS_FIRST_PARTY_AI_RELAY_DEVICE_ID",
+        "PROPAASAI_RELAY_DEVICE_ID",
+    ]) {
+        cfg.relay_device_id = Some(value);
+    }
 
     cfg
 }
 
 pub fn config_summary() -> Value {
     let cfg = load_settings();
+    let relay_token_configured = cfg.relay_token.is_some()
+        || mcpviews_shared::token_store::has_stored_token(
+            &mcpviews_shared::auth_dir(),
+            RELAY_AUTH_NAMESPACE,
+        );
     json!({
         "configured": cfg.base_url.is_some(),
         "baseUrl": cfg.base_url,
         "authUrl": cfg.auth_url,
         "tokenUrl": cfg.token_url,
         "clientId": cfg.client_id,
+        "relayBaseUrl": cfg.relay_base_url,
+        "deviceBaseUrl": cfg.device_base_url,
+        "relayTokenConfigured": relay_token_configured,
+        "relayTokenExpiresAt": cfg.relay_token_expires_at,
+        "relayDeviceId": cfg.relay_device_id,
         "authMode": "brokered_magic_link",
         "authConfigured": has_persisted_session(&mcpviews_shared::auth_dir())
             || mcpviews_shared::token_store::has_stored_token(&mcpviews_shared::auth_dir(), AUTH_NAMESPACE),
     })
 }
 
-pub fn build_request_url(path: &str) -> Result<String, String> {
+pub(crate) fn build_request_url(path: &str) -> Result<String, String> {
     let cfg = load_settings();
     let base_url = cfg
         .base_url
         .ok_or_else(|| "First-party AI base URL is not configured".to_string())?;
+    Ok(join_url(&base_url, path))
+}
+
+pub(crate) fn build_relay_request_url(path: &str) -> Result<String, String> {
+    let cfg = load_settings();
+    let base_url = cfg
+        .relay_base_url
+        .or(cfg.base_url)
+        .ok_or_else(|| "First-party AI relay base URL is not configured".to_string())?;
+    Ok(join_url(&base_url, path))
+}
+
+pub(crate) fn build_device_request_url(path: &str) -> Result<String, String> {
+    let cfg = load_settings();
+    let base_url = cfg
+        .device_base_url
+        .or(cfg.relay_base_url)
+        .or(cfg.base_url)
+        .ok_or_else(|| "First-party AI device base URL is not configured".to_string())?;
     Ok(join_url(&base_url, path))
 }
 
@@ -101,6 +177,192 @@ pub async fn get_auth_header(state: &Arc<AppState>) -> Result<String, String> {
     }
 
     Err("First-party AI uses the session cookie established by magic-link sign-in.".to_string())
+}
+
+pub(crate) async fn get_relay_auth_header(state: &Arc<AppState>) -> Result<String, String> {
+    if let Some(stored) =
+        mcpviews_shared::token_store::load_stored_token(&state.auth_dir, RELAY_AUTH_NAMESPACE)
+    {
+        return Ok(format!("Bearer {}", stored.access_token));
+    }
+
+    let cfg = load_settings();
+    if let Some(token) = cfg.relay_token {
+        if let Some(expires_at) = cfg.relay_token_expires_at {
+            if current_unix_timestamp() >= expires_at {
+                return Err("First-party AI relay token has expired. Refresh the desktop relay session.".to_string());
+            }
+        }
+        return Ok(format!("Bearer {}", token));
+    }
+
+    if let Ok(header) = get_auth_header(state).await {
+        return Ok(header);
+    }
+
+    Err("First-party AI relay token is not configured.".to_string())
+}
+
+pub(crate) fn persist_relay_auth_with_paths(
+    auth_dir: &std::path::Path,
+    settings_path: &std::path::Path,
+    token: &str,
+    expires_at: Option<i64>,
+    relay_base_url: Option<&str>,
+    device_base_url: Option<&str>,
+    relay_device_id: Option<&str>,
+) -> Result<(), String> {
+    persist_relay_session_with_paths(
+        auth_dir,
+        settings_path,
+        Some(token),
+        expires_at,
+        relay_base_url,
+        device_base_url,
+        relay_device_id,
+    )
+}
+
+pub(crate) fn persist_relay_session_with_paths(
+    auth_dir: &std::path::Path,
+    settings_path: &std::path::Path,
+    token: Option<&str>,
+    expires_at: Option<i64>,
+    relay_base_url: Option<&str>,
+    device_base_url: Option<&str>,
+    relay_device_id: Option<&str>,
+) -> Result<(), String> {
+    let should_persist_settings =
+        token.is_some() || relay_base_url.is_some() || device_base_url.is_some() || relay_device_id.is_some();
+    if let Some(token) = token {
+        mcpviews_shared::token_store::store_token(
+            &auth_dir,
+            RELAY_AUTH_NAMESPACE,
+            &mcpviews_shared::token_store::StoredToken {
+                access_token: token.to_string(),
+                refresh_token: None,
+                expires_at,
+            },
+        )?;
+    }
+
+    if should_persist_settings {
+        let mut settings = mcpviews_shared::settings::Settings::load_from_path(settings_path);
+        let relay_settings = settings.first_party_ai.get_or_insert_with(Default::default);
+        if let Some(token) = token {
+            relay_settings.relay_token = Some(token.to_string());
+            relay_settings.relay_token_expires_at = expires_at;
+        }
+        if let Some(url) = relay_base_url {
+            relay_settings.relay_base_url = Some(trim_trailing_slash(url));
+        }
+        if let Some(url) = device_base_url {
+            relay_settings.device_base_url = Some(trim_trailing_slash(url));
+        }
+        if let Some(device_id) = relay_device_id {
+            relay_settings.relay_device_id = Some(device_id.to_string());
+        }
+        settings.save_to_path(settings_path)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn clear_relay_auth() -> Result<(), String> {
+    let auth_dir = mcpviews_shared::auth_dir();
+    let _ = mcpviews_shared::token_store::remove_token(&auth_dir, RELAY_AUTH_NAMESPACE);
+
+    let mut settings = mcpviews_shared::settings::Settings::load();
+    let mut changed = false;
+    if let Some(relay_settings) = settings.first_party_ai.as_mut() {
+        if relay_settings.relay_token.is_some() || relay_settings.relay_token_expires_at.is_some() {
+            changed = true;
+        }
+        relay_settings.relay_token = None;
+        relay_settings.relay_token_expires_at = None;
+    }
+    if changed {
+        settings.save()
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn apply_relay_session_response(
+    response: &Value,
+    fallback_relay_base_url: Option<&str>,
+    fallback_device_base_url: Option<&str>,
+) -> Result<Value, String> {
+    let token = response
+        .get("relayToken")
+        .or_else(|| response.get("relay_token"))
+        .or_else(|| response.get("accessToken"))
+        .or_else(|| response.get("access_token"))
+        .or_else(|| response.get("token"))
+        .or_else(|| response.get("relayAccessToken"))
+        .and_then(|value| value.as_str());
+
+    if let Some(token) = token {
+        let expires_at = response
+            .get("relayTokenExpiresAt")
+            .or_else(|| response.get("relay_token_expires_at"))
+            .or_else(|| response.get("expiresAt"))
+            .or_else(|| response.get("expires_at"))
+            .and_then(|value| value.as_i64());
+        let relay_base_url = response
+            .get("relayBaseUrl")
+            .or_else(|| response.get("relay_base_url"))
+            .and_then(|value| value.as_str())
+            .or(fallback_relay_base_url);
+        let device_base_url = response
+            .get("deviceBaseUrl")
+            .or_else(|| response.get("device_base_url"))
+            .and_then(|value| value.as_str())
+            .or(fallback_device_base_url);
+        let relay_device_id = response
+            .get("relayDeviceId")
+            .or_else(|| response.get("relay_device_id"))
+            .or_else(|| response.get("deviceId"))
+            .or_else(|| response.get("device_id"))
+            .and_then(|value| value.as_str());
+
+        persist_relay_session_with_paths(
+            &mcpviews_shared::auth_dir(),
+            &mcpviews_shared::config_path(),
+            Some(token),
+            expires_at,
+            relay_base_url,
+            device_base_url,
+            relay_device_id,
+        )?;
+    } else {
+        let relay_base_url = response
+            .get("relayBaseUrl")
+            .or_else(|| response.get("relay_base_url"))
+            .and_then(|value| value.as_str())
+            .or(fallback_relay_base_url);
+        let device_base_url = response
+            .get("deviceBaseUrl")
+            .or_else(|| response.get("device_base_url"))
+            .and_then(|value| value.as_str())
+            .or(fallback_device_base_url);
+        let relay_device_id = response
+            .get("relayDeviceId")
+            .or_else(|| response.get("relay_device_id"))
+            .or_else(|| response.get("deviceId"))
+            .or_else(|| response.get("device_id"))
+            .and_then(|value| value.as_str());
+        persist_relay_session_with_paths(
+            &mcpviews_shared::auth_dir(),
+            &mcpviews_shared::config_path(),
+            None,
+            None,
+            relay_base_url,
+            device_base_url,
+            relay_device_id,
+        )?;
+    }
+
+    Ok(response.clone())
 }
 
 pub async fn proxy_request(
@@ -287,6 +549,7 @@ pub async fn clear_auth(state: &Arc<AppState>) -> Result<(), String> {
 
     let _ = state.clear_first_party_ai_cookies();
     let _ = mcpviews_shared::token_store::remove_token(&state.auth_dir, AUTH_NAMESPACE);
+    let _ = clear_relay_auth();
     Ok(())
 }
 
@@ -374,6 +637,7 @@ pub async fn start_companion_stream(
         .await;
 
         let mut buffer = String::new();
+        let mut pending_sequence: Option<i64> = None;
 
         loop {
             let chunk = match response.chunk().await {
@@ -399,6 +663,11 @@ pub async fn start_companion_stream(
                 let line = buffer[..idx].trim().to_string();
                 buffer = buffer[idx + 1..].to_string();
 
+                if let Some(id) = line.strip_prefix("id: ") {
+                    pending_sequence = id.trim().parse::<i64>().ok();
+                    continue;
+                }
+
                 if let Some(data) = line.strip_prefix("data: ") {
                     let payload = serde_json::from_str::<Value>(data).unwrap_or_else(|_| {
                         json!({
@@ -406,13 +675,23 @@ pub async fn start_companion_stream(
                         })
                     });
 
+                    let mut envelope = json!({
+                        "threadId": thread_id_clone,
+                        "type": "data",
+                        "payload": payload,
+                    });
+
+                    if let Some(sequence) = pending_sequence.take() {
+                        if let Some(payload_value) = envelope.get_mut("payload") {
+                            if let Some(payload_object) = payload_value.as_object_mut() {
+                                payload_object.insert("sequence".to_string(), json!(sequence));
+                            }
+                        }
+                    }
+
                     emit_stream_event(
                         &app_handle_clone,
-                        json!({
-                            "threadId": thread_id_clone,
-                            "type": "data",
-                            "payload": payload,
-                        }),
+                        envelope,
                     )
                     .await;
                 }

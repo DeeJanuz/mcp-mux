@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use crate::{config_path, RegistrySource};
 
@@ -15,6 +16,21 @@ pub struct FirstPartyAiSettings {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_base_url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_base_url: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_token: Option<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_token_expires_at: Option<i64>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_device_id: Option<String>,
 }
 
 /// Typed representation of ~/.mcpviews/config.json
@@ -37,7 +53,12 @@ impl Settings {
     /// Load settings from ~/.mcpviews/config.json, returning defaults if the file
     /// does not exist or cannot be parsed.
     pub fn load() -> Self {
-        let path = config_path();
+        Self::load_from_path(&config_path())
+    }
+
+    /// Load settings from a specific path, returning defaults if the file does
+    /// not exist or cannot be parsed.
+    pub fn load_from_path(path: &Path) -> Self {
         if !path.exists() {
             return Self::default();
         }
@@ -49,7 +70,11 @@ impl Settings {
 
     /// Persist settings to ~/.mcpviews/config.json.
     pub fn save(&self) -> Result<(), String> {
-        let path = config_path();
+        self.save_to_path(&config_path())
+    }
+
+    /// Persist settings to a specific path.
+    pub fn save_to_path(&self, path: &Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create config directory: {}", e))?;
@@ -88,6 +113,11 @@ mod tests {
                 auth_url: None,
                 token_url: None,
                 client_id: None,
+                relay_base_url: Some("https://relay.example.com".to_string()),
+                device_base_url: Some("https://device.example.com".to_string()),
+                relay_token: Some("relay-token".to_string()),
+                relay_token_expires_at: Some(1_700_000_000),
+                relay_device_id: Some("device-123".to_string()),
             }),
         };
         let json = serde_json::to_string(&settings).unwrap();
@@ -100,6 +130,41 @@ mod tests {
                 .as_ref()
                 .and_then(|cfg| cfg.base_url.as_deref()),
             Some("https://ai.example.com")
+        );
+        assert_eq!(
+            parsed
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.relay_base_url.as_deref()),
+            Some("https://relay.example.com")
+        );
+        assert_eq!(
+            parsed
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.device_base_url.as_deref()),
+            Some("https://device.example.com")
+        );
+        assert_eq!(
+            parsed
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.relay_token.as_deref()),
+            Some("relay-token")
+        );
+        assert_eq!(
+            parsed
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.relay_token_expires_at),
+            Some(1_700_000_000)
+        );
+        assert_eq!(
+            parsed
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.relay_device_id.as_deref()),
+            Some("device-123")
         );
     }
 
@@ -139,6 +204,11 @@ mod tests {
                 auth_url: Some("https://auth.saved.example.com/authorize".to_string()),
                 token_url: Some("https://auth.saved.example.com/token".to_string()),
                 client_id: Some("saved-client".to_string()),
+                relay_base_url: None,
+                device_base_url: None,
+                relay_token: None,
+                relay_token_expires_at: None,
+                relay_device_id: None,
             }),
         };
         let json = serde_json::to_string_pretty(&settings).unwrap();
@@ -155,6 +225,13 @@ mod tests {
                 .and_then(|cfg| cfg.client_id.as_deref()),
             Some("saved-client")
         );
+        assert_eq!(
+            loaded
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.relay_base_url.as_deref()),
+            None
+        );
     }
 
     #[test]
@@ -165,5 +242,43 @@ mod tests {
         assert!(!json.contains("registry_url"));
         assert!(!json.contains("registry_sources"));
         assert!(!json.contains("first_party_ai"));
+    }
+
+    #[test]
+    fn test_settings_save_and_load_from_custom_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let settings = Settings {
+            registry_url: None,
+            registry_sources: vec![],
+            first_party_ai: Some(FirstPartyAiSettings {
+                base_url: Some("https://ai.example.com".to_string()),
+                auth_url: None,
+                token_url: None,
+                client_id: None,
+                relay_base_url: Some("https://relay.example.com".to_string()),
+                device_base_url: Some("https://device.example.com".to_string()),
+                relay_token: Some("relay-token".to_string()),
+                relay_token_expires_at: Some(1_700_000_000),
+                relay_device_id: Some("device-123".to_string()),
+            }),
+        };
+
+        settings.save_to_path(&path).unwrap();
+        let loaded = Settings::load_from_path(&path);
+        assert_eq!(
+            loaded
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.relay_base_url.as_deref()),
+            Some("https://relay.example.com")
+        );
+        assert_eq!(
+            loaded
+                .first_party_ai
+                .as_ref()
+                .and_then(|cfg| cfg.relay_token.as_deref()),
+            Some("relay-token")
+        );
     }
 }

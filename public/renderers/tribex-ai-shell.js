@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* TribeX AI shell — Codex-style left rail for hosted chat threads */
+/* TribeX AI shell — project-first navigator for hosted chat threads */
 
 (function () {
   'use strict';
@@ -112,12 +112,20 @@
     return icon;
   }
 
-  function buildGroupSubtitle(group) {
-    if (!group || !group.project) return '';
-    if (group.project.workspaceName && group.project.workspaceName !== group.project.name) {
-      return group.project.workspaceName;
-    }
-    return '';
+  function createChevron(expanded) {
+    var toggle = document.createElement('span');
+    toggle.className = 'ai-nav-project-chevron' + (expanded ? ' expanded' : '');
+    toggle.innerHTML =
+      '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+      '<path d="M5.5 3.75 10 8l-4.5 4.25" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>';
+    return toggle;
+  }
+
+  function getWorkspaceMenuLabel(snapshot) {
+    var workspace = snapshot.selectedWorkspace || snapshot.preferredWorkspace;
+    if (!workspace) return 'Workspace';
+    return workspace.name;
   }
 
   function renderAuthPanel(root, snapshot, aiState) {
@@ -134,7 +142,7 @@
 
     if (!snapshot.integration.config || !snapshot.integration.config.configured) {
       title.textContent = 'Connect MCPViews to ProPaasAI';
-      copy.textContent = 'Set `first_party_ai.base_url` in `~/.mcpviews/config.json` to enable organizations, workspaces, and hosted threads.';
+      copy.textContent = 'Set `first_party_ai.base_url` in `~/.mcpviews/config.json` to enable organizations, workspaces, projects, and hosted threads.';
       root.appendChild(panel);
       return;
     }
@@ -219,8 +227,8 @@
     root.appendChild(panel);
   }
 
-  function renderBrandPanel(root, snapshot, aiState) {
-    var workspace = snapshot.preferredWorkspace;
+  function renderHeaderPanel(root, snapshot, aiState) {
+    var workspace = snapshot.selectedWorkspace || snapshot.preferredWorkspace;
     var organization = snapshot.selectedOrganization;
     var panel = document.createElement('section');
     panel.className = 'ai-nav-brand-panel';
@@ -230,7 +238,7 @@
 
     var mark = document.createElement('div');
     mark.className = 'ai-nav-brand-mark';
-    mark.textContent = window.__tribexAiUtils.initials((organization && organization.name) || (workspace && workspace.name) || 'AI');
+    mark.textContent = window.__tribexAiUtils.initials((workspace && workspace.name) || (organization && organization.name) || 'AI');
     header.appendChild(mark);
 
     var copy = document.createElement('div');
@@ -243,19 +251,19 @@
 
     var title = document.createElement('strong');
     title.className = 'ai-nav-title';
-    title.textContent = (workspace && workspace.name) || (organization && organization.name) || 'Hosted workspace';
+    title.textContent = (workspace && workspace.name) || 'Select a workspace';
     copy.appendChild(title);
 
     var subtitle = document.createElement('span');
     subtitle.className = 'ai-nav-subtitle';
-    subtitle.textContent = (organization && organization.name)
+    subtitle.textContent = organization && organization.name
       ? organization.name + (workspace && workspace.packageKey ? ' · ' + workspace.packageKey : '')
       : 'Hosted companion and sandbox threads';
     copy.appendChild(subtitle);
     header.appendChild(copy);
 
     var switchButton = createButton('ai-nav-org-switch', 'Switch', {
-      disabled: snapshot.organizations.length <= 1,
+      disabled: (snapshot.workspaces || []).length <= 1,
       onClick: function () {
         aiState.toggleOrganizationMenu();
       },
@@ -270,18 +278,18 @@
       snapshot.activeThreadId ? { label: 'Thread active' } : null,
     ]));
 
-    if (snapshot.organizationMenuOpen && snapshot.organizations.length > 1) {
+    if (snapshot.organizationMenuOpen && (snapshot.workspaces || []).length > 1) {
       var menu = document.createElement('div');
       menu.className = 'ai-nav-org-menu';
-      snapshot.organizations.forEach(function (organizationItem) {
+      (snapshot.workspaces || []).forEach(function (workspaceItem) {
         var button = createButton(
           'ai-nav-action ai-nav-action-secondary ai-nav-org-item' + (
-            snapshot.selectedOrganization && snapshot.selectedOrganization.id === organizationItem.id ? ' active' : ''
+            snapshot.selectedWorkspace && snapshot.selectedWorkspace.id === workspaceItem.id ? ' active' : ''
           ),
-          organizationItem.name,
+          workspaceItem.name,
           {
             onClick: function () {
-              aiState.selectOrganization(organizationItem.id);
+              aiState.selectWorkspace(workspaceItem.id);
             },
           }
         );
@@ -293,9 +301,31 @@
     root.appendChild(panel);
   }
 
-  function renderControls(root, snapshot, aiState) {
+  function renderProjectControls(root, snapshot, aiState) {
+    var workspace = snapshot.selectedWorkspace || snapshot.preferredWorkspace;
+    var selectedProject = snapshot.selectedProject;
     var controls = document.createElement('section');
     controls.className = 'ai-nav-tools';
+
+    var heading = document.createElement('div');
+    heading.className = 'ai-nav-section-heading';
+
+    var copy = document.createElement('div');
+    copy.className = 'ai-nav-section-copy';
+
+    var title = document.createElement('strong');
+    title.textContent = 'Projects';
+    copy.appendChild(title);
+
+    var subtitle = document.createElement('span');
+    subtitle.textContent = selectedProject
+      ? 'New chats open in ' + selectedProject.name + '.'
+      : workspace
+        ? 'Choose a project to organize chats in this workspace.'
+        : 'Select a workspace to start working.';
+    copy.appendChild(subtitle);
+    heading.appendChild(copy);
+    controls.appendChild(heading);
 
     var search = document.createElement('div');
     search.className = 'ai-nav-search-shell';
@@ -303,7 +333,7 @@
     input.className = 'ai-nav-search-input';
     input.setAttribute('data-focus-key', 'thread-search');
     input.type = 'search';
-    input.placeholder = 'Search conversations';
+    input.placeholder = 'Search chats in this workspace';
     input.value = snapshot.searchTerm || '';
     input.addEventListener('input', function (event) {
       aiState.setSearchTerm(event.target.value);
@@ -315,15 +345,22 @@
     actions.className = 'ai-nav-action-grid';
 
     actions.appendChild(createButton('ai-nav-action ai-nav-action-primary', 'New chat', {
-      disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator,
+      disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator || !selectedProject,
       onClick: function () {
-        aiState.createThread();
+        aiState.createThread(null, { projectId: selectedProject && selectedProject.id });
+      },
+    }));
+
+    actions.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Create project', {
+      disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator || !workspace,
+      onClick: function () {
+        aiState.openProjectComposer();
       },
     }));
 
     if (snapshot.canRunSmokeTest) {
       actions.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Run smoke test', {
-        disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator,
+        disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator || !workspace,
         onClick: function () {
           aiState.runSmokeTest();
         },
@@ -341,64 +378,108 @@
     root.appendChild(controls);
   }
 
-  function renderThreadSections(root, snapshot, aiState) {
-    var groups = snapshot.projectGroups || [];
+  function renderEmptyState(root, snapshot, aiState) {
     var panel = document.createElement('section');
     panel.className = 'ai-nav-thread-panel';
 
-    if (!groups.length) {
-      var empty = document.createElement('div');
-      empty.className = 'ai-nav-empty-state';
+    var empty = document.createElement('div');
+    empty.className = 'ai-nav-empty-state';
 
-      var title = document.createElement('strong');
-      title.textContent = snapshot.loadingNavigator
-        ? 'Syncing conversations'
-        : String(snapshot.searchTerm || '').trim()
-          ? 'No conversations match this search'
-          : 'No hosted threads yet';
-      empty.appendChild(title);
+    var title = document.createElement('strong');
+    title.textContent = snapshot.loadingNavigator
+      ? 'Syncing projects'
+      : String(snapshot.searchTerm || '').trim()
+        ? 'No chats match this search'
+        : !snapshot.hasWorkspaces
+          ? 'No workspaces available'
+          : !snapshot.hasProjects
+            ? 'No projects in this workspace'
+            : 'No hosted threads yet';
+    empty.appendChild(title);
 
-      var copy = document.createElement('p');
-      copy.textContent = snapshot.loadingNavigator
-        ? 'Fetching projects, workspaces, and hosted thread history from ProPaasAI.'
+    var copy = document.createElement('p');
+    copy.textContent = snapshot.loadingNavigator
+      ? 'Fetching projects and hosted thread history from ProPaasAI.'
+      : !snapshot.hasWorkspaces
+        ? 'Workspaces are provisioned for you. Switch environments when one becomes available, or refresh if something was just provisioned.'
         : snapshot.hasProjects
-          ? 'Create a chat to start a new hosted sandbox thread.'
-          : 'Create a chat and MCPViews will bootstrap the first project for this organization.';
-      empty.appendChild(copy);
+          ? 'Create a chat in the selected project or expand a different project to keep working.'
+          : 'Create the first project in this workspace, or start a chat and MCPViews will bootstrap General once.';
+    empty.appendChild(copy);
 
-      if (!String(snapshot.searchTerm || '').trim() && !snapshot.loadingNavigator) {
-        var actionRow = document.createElement('div');
-        actionRow.className = 'ai-nav-empty-actions';
-        actionRow.appendChild(createButton('ai-nav-action ai-nav-action-primary', 'Create first chat', {
-          disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator,
+    if (!String(snapshot.searchTerm || '').trim() && !snapshot.loadingNavigator) {
+      var actionRow = document.createElement('div');
+      actionRow.className = 'ai-nav-empty-actions';
+
+      if (!snapshot.hasWorkspaces) {
+        actionRow.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Refresh', {
+          disabled: snapshot.integration.status !== 'authenticated',
+          onClick: function () {
+            aiState.refreshNavigator(true);
+          },
+        }));
+      } else if (!snapshot.hasProjects) {
+        actionRow.appendChild(createButton('ai-nav-action ai-nav-action-primary', 'Create first project', {
+          disabled: snapshot.integration.status !== 'authenticated',
+          onClick: function () {
+            aiState.openProjectComposer();
+          },
+        }));
+        actionRow.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Create first chat', {
+          disabled: snapshot.integration.status !== 'authenticated',
           onClick: function () {
             aiState.createThread();
           },
         }));
-        empty.appendChild(actionRow);
+      } else {
+        actionRow.appendChild(createButton('ai-nav-action ai-nav-action-primary', 'Create first chat', {
+          disabled: snapshot.integration.status !== 'authenticated' || !snapshot.selectedProject,
+          onClick: function () {
+            aiState.createThread(null, { projectId: snapshot.selectedProject && snapshot.selectedProject.id });
+          },
+        }));
       }
+      empty.appendChild(actionRow);
+    }
 
-      if (snapshot.integration && snapshot.integration.error) {
-        var error = document.createElement('p');
-        error.className = 'ai-nav-helper ai-nav-helper-error';
-        error.textContent = snapshot.integration.error;
-        empty.appendChild(error);
-      }
+    if (snapshot.integration && snapshot.integration.error) {
+      var error = document.createElement('p');
+      error.className = 'ai-nav-helper ai-nav-helper-error';
+      error.textContent = snapshot.integration.error;
+      empty.appendChild(error);
+    }
 
-      panel.appendChild(empty);
-      root.appendChild(panel);
+    panel.appendChild(empty);
+    root.appendChild(panel);
+  }
+
+  function renderProjectSections(root, snapshot, aiState) {
+    var groups = snapshot.projectGroups || [];
+    if (!groups.length) {
+      renderEmptyState(root, snapshot, aiState);
       return;
     }
 
+    var panel = document.createElement('section');
+    panel.className = 'ai-nav-thread-panel';
+
     groups.forEach(function (group) {
+      var expanded = !!(snapshot.projectExpansion && snapshot.projectExpansion[group.project.id] !== false && (
+        snapshot.projectExpansion[group.project.id] === true || snapshot.activeProjectId === group.project.id
+      ));
+
       var section = document.createElement('div');
-      section.className = 'ai-nav-section';
+      section.className = 'ai-nav-section ai-nav-project-section' + (snapshot.activeProjectId === group.project.id ? ' active' : '');
 
       var heading = document.createElement('div');
-      heading.className = 'ai-nav-section-heading';
+      heading.className = 'ai-nav-section-heading ai-nav-project-heading';
+      heading.addEventListener('click', function () {
+        aiState.selectProject(group.project.id, { expand: true });
+      });
 
       var row = document.createElement('div');
       row.className = 'ai-nav-group-row';
+      row.appendChild(createChevron(expanded));
       row.appendChild(createFolderIcon());
 
       var copy = document.createElement('div');
@@ -408,77 +489,153 @@
       label.textContent = group.project.name;
       copy.appendChild(label);
 
-      var subtitleText = buildGroupSubtitle(group);
-      if (subtitleText) {
-        var meta = document.createElement('span');
-        meta.textContent = subtitleText;
-        copy.appendChild(meta);
-      }
+      var subtitle = document.createElement('span');
+      subtitle.textContent = expanded
+        ? (group.threads.length ? group.threads.length + ' chat' + (group.threads.length === 1 ? '' : 's') : 'No chats yet')
+        : 'Expand to browse chats';
+      copy.appendChild(subtitle);
       row.appendChild(copy);
       heading.appendChild(row);
 
-      var count = document.createElement('span');
-      count.className = 'ai-nav-section-count';
-      count.textContent = String(group.threads.length);
-      heading.appendChild(count);
+      var actions = document.createElement('div');
+      actions.className = 'ai-nav-project-actions';
+
+      var newChatButton = createButton('ai-nav-action ai-nav-action-secondary', 'New chat', {
+        disabled: snapshot.integration.status !== 'authenticated',
+        onClick: function (event) {
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          aiState.createThread(null, { projectId: group.project.id });
+        },
+      });
+      actions.appendChild(newChatButton);
+
+      var toggleButton = createButton('ai-nav-action ai-nav-action-secondary', expanded ? 'Collapse' : 'Expand', {
+        onClick: function (event) {
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          aiState.toggleProjectExpanded(group.project.id);
+        },
+      });
+      actions.appendChild(toggleButton);
+
+      heading.appendChild(actions);
       section.appendChild(heading);
 
-      var list = document.createElement('div');
-      list.className = 'ai-nav-section-list ai-nav-thread-tree-list';
-      group.threads.forEach(function (thread) {
-        var button = document.createElement('button');
-        button.className = 'ai-nav-thread-row ai-nav-thread-tree-row' + (snapshot.activeThreadId === thread.id ? ' active' : '');
-        button.type = 'button';
-        button.title = thread.title;
-        button.addEventListener('click', function () {
-          aiState.openThread(thread.id);
+      if (expanded) {
+        var list = document.createElement('div');
+        list.className = 'ai-nav-section-list ai-nav-thread-tree-list';
+        group.threads.forEach(function (thread) {
+          var button = document.createElement('button');
+          button.className = 'ai-nav-thread-row ai-nav-thread-tree-row' + (snapshot.activeThreadId === thread.id ? ' active' : '');
+          button.type = 'button';
+          button.title = thread.title;
+          button.addEventListener('click', function () {
+            aiState.openThread(thread.id);
+          });
+
+          var main = document.createElement('div');
+          main.className = 'ai-nav-thread-row-main';
+
+          var threadTitle = document.createElement('span');
+          threadTitle.className = 'ai-nav-thread-row-title';
+          threadTitle.textContent = thread.title;
+          main.appendChild(threadTitle);
+
+          var time = document.createElement('span');
+          time.className = 'ai-nav-thread-row-time';
+          time.textContent = thread.lastActivityAt
+            ? window.__tribexAiUtils.formatRelativeTime(thread.lastActivityAt)
+            : 'Open';
+          main.appendChild(time);
+          button.appendChild(main);
+
+          list.appendChild(button);
         });
+        section.appendChild(list);
+      }
 
-        var main = document.createElement('div');
-        main.className = 'ai-nav-thread-row-main';
-
-        var title = document.createElement('span');
-        title.className = 'ai-nav-thread-row-title';
-        title.textContent = thread.title;
-        main.appendChild(title);
-
-        var time = document.createElement('span');
-        time.className = 'ai-nav-thread-row-time';
-        time.textContent = thread.lastActivityAt
-          ? window.__tribexAiUtils.formatRelativeTime(thread.lastActivityAt)
-          : 'Open';
-        main.appendChild(time);
-        button.appendChild(main);
-
-        list.appendChild(button);
-      });
-      section.appendChild(list);
       panel.appendChild(section);
     });
 
     root.appendChild(panel);
   }
 
+  function renderComposerModal(shell, snapshot, aiState) {
+    if (!snapshot.projectComposerOpen) return;
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'ai-nav-modal-backdrop';
+
+    var modal = document.createElement('section');
+    modal.className = 'ai-nav-modal';
+
+    var header = document.createElement('div');
+    header.className = 'ai-nav-modal-header';
+
+    var title = document.createElement('strong');
+    title.textContent = 'Create project';
+    header.appendChild(title);
+    header.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Cancel', {
+      onClick: function () {
+        aiState.closeProjectComposer();
+      },
+    }));
+    modal.appendChild(header);
+
+    var form = document.createElement('div');
+    form.className = 'ai-nav-auth-form';
+
+    var nameInput = document.createElement('input');
+    nameInput.className = 'ai-nav-auth-input';
+    nameInput.type = 'text';
+    nameInput.setAttribute('data-focus-key', 'project-name');
+    nameInput.placeholder = 'Project name';
+    nameInput.value = snapshot.composer.projectName || '';
+    nameInput.addEventListener('input', function (event) {
+      aiState.setProjectDraftName(event.target.value);
+    });
+    form.appendChild(nameInput);
+
+    if (snapshot.integration && snapshot.integration.error) {
+      var error = document.createElement('p');
+      error.className = 'ai-nav-helper ai-nav-helper-error';
+      error.textContent = snapshot.integration.error;
+      form.appendChild(error);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'ai-nav-auth-actions';
+    actions.appendChild(createButton(
+      'ai-nav-action ai-nav-action-primary',
+      snapshot.composer.creatingProject ? 'Creating...' : 'Create project',
+      {
+        disabled: !!snapshot.composer.creatingProject,
+        onClick: function () {
+          aiState.createProject().catch(function () {});
+        },
+      }
+    ));
+    form.appendChild(actions);
+    modal.appendChild(form);
+    backdrop.appendChild(modal);
+    shell.appendChild(backdrop);
+  }
+
   function renderCollapsed(shell, snapshot, aiState) {
     var stack = document.createElement('div');
     stack.className = 'ai-nav-collapsed-stack';
 
-    stack.appendChild(createButton('ai-nav-collapsed-button', window.__tribexAiUtils.initials(
-      (snapshot.selectedOrganization && snapshot.selectedOrganization.name) ||
-      (snapshot.preferredWorkspace && snapshot.preferredWorkspace.name) ||
-      'AI'
-    ), {
-      title: (snapshot.selectedOrganization && snapshot.selectedOrganization.name) || 'AI workspace',
+    stack.appendChild(createButton('ai-nav-collapsed-button', window.__tribexAiUtils.initials(getWorkspaceMenuLabel(snapshot)), {
+      title: getWorkspaceMenuLabel(snapshot),
       onClick: function () {
         aiState.toggleOrganizationMenu();
       },
     }));
 
     stack.appendChild(createButton('ai-nav-collapsed-button', '+', {
-      title: 'New chat',
-      disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator,
+      title: 'New chat in selected project',
+      disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator || !snapshot.selectedProject,
       onClick: function () {
-        aiState.createThread();
+        aiState.createThread(null, { projectId: snapshot.selectedProject && snapshot.selectedProject.id });
       },
     }));
 
@@ -493,18 +650,16 @@
     }
 
     (snapshot.projectGroups || []).slice(0, 5).forEach(function (group) {
-      group.threads.slice(0, 1).forEach(function (thread) {
-        stack.appendChild(createButton(
-          'ai-nav-collapsed-button ai-nav-collapsed-thread' + (snapshot.activeThreadId === thread.id ? ' active' : ''),
-          window.__tribexAiUtils.initials(thread.title),
-          {
-            title: thread.title,
-            onClick: function () {
-              aiState.openThread(thread.id);
-            },
-          }
-        ));
-      });
+      stack.appendChild(createButton(
+        'ai-nav-collapsed-button ai-nav-collapsed-project' + (snapshot.activeProjectId === group.project.id ? ' active' : ''),
+        window.__tribexAiUtils.initials(group.project.name),
+        {
+          title: group.project.name,
+          onClick: function () {
+            aiState.selectProject(group.project.id, { expand: true });
+          },
+        }
+      ));
     });
 
     shell.appendChild(stack);
@@ -535,6 +690,7 @@
 
     if (snapshot.navigatorCollapsed) {
       renderCollapsed(shell, snapshot, aiState);
+      renderComposerModal(shell, snapshot, aiState);
       restoreFocusState(shell, focusState);
       return;
     }
@@ -542,16 +698,17 @@
     var frame = document.createElement('div');
     frame.className = 'ai-nav-frame';
 
-    renderBrandPanel(frame, snapshot, aiState);
+    renderHeaderPanel(frame, snapshot, aiState);
 
     if (snapshot.integration.status === 'authenticated' || snapshot.loadingNavigator) {
-      renderControls(frame, snapshot, aiState);
-      renderThreadSections(frame, snapshot, aiState);
+      renderProjectControls(frame, snapshot, aiState);
+      renderProjectSections(frame, snapshot, aiState);
     } else {
       renderAuthPanel(frame, snapshot, aiState);
     }
 
     shell.appendChild(frame);
+    renderComposerModal(shell, snapshot, aiState);
     restoreFocusState(shell, focusState);
   }
 

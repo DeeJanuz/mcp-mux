@@ -1,5 +1,6 @@
 use mcpviews_shared::RendererDef;
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
@@ -60,10 +61,15 @@ pub async fn call_tool(
 ) -> Result<Value, String> {
     // Check built-in tools first
     match name {
+        "rich_content" => call_direct_renderer_content("rich_content", arguments, state).await,
+        "structured_data" => call_direct_renderer_content("structured_data", arguments, state).await,
         "push_content" => call_push_content(arguments, state).await,
         "push_review" => call_push_review(arguments, state).await,
         "await_review" => call_await_review(arguments, state).await,
         "push_check" => call_push_check(arguments, state).await,
+        "describe_connector" => call_describe_connector(arguments, state).await,
+        "describe_tool_group" => call_describe_tool_group(arguments, state).await,
+        "describe_tool" => call_describe_tool(arguments, state).await,
         "init_session" => call_init_session(arguments, state).await,
         "mcpviews_setup" => call_mcpviews_setup(arguments, state).await,
         "mcpviews_install_plugin" => call_install_plugin(arguments, state).await,
@@ -257,6 +263,59 @@ async fn call_push_content(
     call_push_impl(arguments, state, false).await
 }
 
+async fn call_direct_renderer_content(
+    renderer_name: &str,
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let mut data = arguments;
+    let meta = data.get("meta").cloned();
+    let tool_args = data
+        .get("toolArgs")
+        .cloned()
+        .or_else(|| data.get("tool_args").cloned());
+    if let Some(object) = data.as_object_mut() {
+        object.remove("meta");
+        object.remove("toolArgs");
+        object.remove("tool_args");
+    }
+    strip_change_fields(&mut data);
+    validate_push_payload(renderer_name, &data)?;
+
+    let result = execute_push(
+        state,
+        renderer_name.to_string(),
+        tool_args,
+        data,
+        meta,
+        false,
+        120,
+        None, // session_id
+    )
+    .await;
+
+    match result {
+        ExecutePushResult::Stored { session_id } => Ok(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&serde_json::json!({
+                    "session_id": session_id,
+                    "status": "stored"
+                })).unwrap()
+            }]
+        })),
+        ExecutePushResult::Decision(resp) => Ok(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&resp).unwrap()
+            }]
+        })),
+        ExecutePushResult::Pending { .. } => {
+            unreachable!("execute_push never returns Pending directly")
+        }
+    }
+}
+
 async fn call_push_review(
     arguments: Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
@@ -312,6 +371,338 @@ fn normalize_data_param(raw: &Value) -> Value {
     }
 }
 
+fn infer_embedded_push_data(arguments: &Value) -> Option<Value> {
+    let object = arguments.as_object()?;
+    let mut inferred = serde_json::Map::new();
+
+    for (key, value) in object {
+        if matches!(key.as_str(), "tool_name" | "meta" | "timeout" | "data") {
+            continue;
+        }
+        inferred.insert(key.clone(), value.clone());
+    }
+
+    if inferred.is_empty() {
+        None
+    } else {
+        Some(Value::Object(inferred))
+    }
+}
+
+fn infer_renderer_tool_name(data: &Value) -> Option<&'static str> {
+    let object = data.as_object()?;
+
+    if object.contains_key("body")
+        || object.contains_key("title")
+        || object.contains_key("suggestions")
+        || object.contains_key("citations")
+    {
+        return Some("rich_content");
+    }
+
+    if object.contains_key("tables") {
+        return Some("structured_data");
+    }
+
+    None
+}
+
+const MERMAID_DIAGRAM_STARTERS: &[&str] = &[
+    "graph",
+    "flowchart",
+    "sequenceDiagram",
+    "classDiagram",
+    "stateDiagram",
+    "erDiagram",
+    "journey",
+    "gantt",
+    "pie",
+    "mindmap",
+    "timeline",
+    "gitGraph",
+    "quadrantChart",
+    "requirementDiagram",
+    "C4Context",
+    "C4Container",
+    "C4Component",
+    "C4Dynamic",
+    "C4Deployment",
+    "xychart",
+    "block-beta",
+    "packet-beta",
+    "kanban",
+    "architecture-beta",
+];
+
+#[derive(Debug, Clone)]
+enum RichContentFenceKind {
+    Mermaid,
+    StructuredData(String),
+}
+
+#[derive(Debug, Clone)]
+struct RichContentFence {
+    kind: RichContentFenceKind,
+    start_line: usize,
+    lines: Vec<String>,
+}
+
+fn validate_push_payload(tool_name: &str, data: &Value) -> Result<(), String> {
+    match tool_name {
+        "rich_content" => validate_rich_content_payload(data),
+        "structured_data" => validate_structured_data_payload(data),
+        _ => Ok(()),
+    }
+}
+
+fn validate_rich_content_payload(data: &Value) -> Result<(), String> {
+    let object = data
+        .as_object()
+        .ok_or("rich_content data must be a JSON object.".to_string())?;
+    let table_ids = match object.get("tables") {
+        Some(tables) => validate_tables_value(tables, "rich_content.data.tables")?,
+        None => Vec::new(),
+    };
+
+    if let Some(body) = object.get("body") {
+        let body = body
+            .as_str()
+            .ok_or("rich_content.data.body must be a string.".to_string())?;
+        validate_rich_content_body(body, &table_ids)?;
+    }
+
+    Ok(())
+}
+
+fn validate_structured_data_payload(data: &Value) -> Result<(), String> {
+    let object = data
+        .as_object()
+        .ok_or("structured_data data must be a JSON object.".to_string())?;
+    let tables = object
+        .get("tables")
+        .ok_or("structured_data.data.tables is required.".to_string())?;
+    validate_tables_value(tables, "structured_data.data.tables")?;
+    Ok(())
+}
+
+fn validate_tables_value(tables: &Value, context: &str) -> Result<Vec<String>, String> {
+    let tables = tables
+        .as_array()
+        .ok_or(format!("{} must be an array.", context))?;
+    let mut table_ids = Vec::new();
+
+    for (table_index, table) in tables.iter().enumerate() {
+        let table_context = format!("{}[{}]", context, table_index);
+        let table = table
+            .as_object()
+            .ok_or(format!("{} must be an object.", table_context))?;
+        let table_id = table
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.id must be a non-empty string.", table_context))?
+            .to_string();
+
+        if table_ids.iter().any(|existing| existing == &table_id) {
+            return Err(format!("{} contains duplicate table id `{}`.", context, table_id));
+        }
+
+        let columns = table
+            .get("columns")
+            .and_then(|value| value.as_array())
+            .ok_or(format!("{}.columns must be an array.", table_context))?;
+        for (column_index, column) in columns.iter().enumerate() {
+            let column_context = format!("{}.columns[{}]", table_context, column_index);
+            let column = column
+                .as_object()
+                .ok_or(format!("{} must be an object.", column_context))?;
+            column
+                .get("id")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or(format!("{}.id must be a non-empty string.", column_context))?;
+            column
+                .get("name")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or(format!("{}.name must be a non-empty string.", column_context))?;
+        }
+
+        let rows = table
+            .get("rows")
+            .and_then(|value| value.as_array())
+            .ok_or(format!("{}.rows must be an array.", table_context))?;
+        validate_table_rows(rows, &format!("{}.rows", table_context))?;
+        table_ids.push(table_id);
+    }
+
+    Ok(table_ids)
+}
+
+fn validate_table_rows(rows: &[Value], context: &str) -> Result<(), String> {
+    for (row_index, row) in rows.iter().enumerate() {
+        let row_context = format!("{}[{}]", context, row_index);
+        let row = row
+            .as_object()
+            .ok_or(format!("{} must be an object.", row_context))?;
+        row.get("id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.id must be a non-empty string.", row_context))?;
+
+        if let Some(cells) = row.get("cells") {
+            cells
+                .as_object()
+                .ok_or(format!("{}.cells must be an object when provided.", row_context))?;
+        }
+
+        if let Some(children) = row.get("children") {
+            let children = children
+                .as_array()
+                .ok_or(format!("{}.children must be an array when provided.", row_context))?;
+            validate_table_rows(children, &format!("{}.children", row_context))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_rich_content_body(body: &str, table_ids: &[String]) -> Result<(), String> {
+    let mut active_fence: Option<RichContentFence> = None;
+
+    for (line_index, line) in body.lines().enumerate() {
+        let line_number = line_index + 1;
+        let trimmed = line.trim();
+
+        if let Some(fence) = active_fence.as_mut() {
+            if trimmed == "```" {
+                validate_rich_content_fence(fence, table_ids)?;
+                active_fence = None;
+            } else {
+                fence.lines.push(line.to_string());
+            }
+            continue;
+        }
+
+        if trimmed == "mermaid" {
+            return Err(format!(
+                "Invalid Mermaid block at line {}: Mermaid content must be wrapped in fenced code blocks using ```mermaid.",
+                line_number
+            ));
+        }
+
+        if let Some(info_string) = trimmed.strip_prefix("```") {
+            let info_string = info_string.trim();
+            if info_string.eq_ignore_ascii_case("mermaid") {
+                active_fence = Some(RichContentFence {
+                    kind: RichContentFenceKind::Mermaid,
+                    start_line: line_number,
+                    lines: Vec::new(),
+                });
+                continue;
+            }
+
+            if let Some(table_id) = info_string.strip_prefix("structured_data:") {
+                let table_id = table_id.trim();
+                if table_id.is_empty() {
+                    return Err(format!(
+                        "Invalid embedded structured_data block at line {}: expected ```structured_data:<table-id>.",
+                        line_number
+                    ));
+                }
+                active_fence = Some(RichContentFence {
+                    kind: RichContentFenceKind::StructuredData(table_id.to_string()),
+                    start_line: line_number,
+                    lines: Vec::new(),
+                });
+                continue;
+            }
+
+            if info_string.starts_with("structured_data") {
+                return Err(format!(
+                    "Invalid embedded structured_data block at line {}: expected ```structured_data:<table-id>.",
+                    line_number
+                ));
+            }
+        }
+    }
+
+    if let Some(fence) = active_fence {
+        return Err(match fence.kind {
+            RichContentFenceKind::Mermaid => format!(
+                "Invalid Mermaid block: missing closing ``` for block starting at line {}.",
+                fence.start_line
+            ),
+            RichContentFenceKind::StructuredData(table_id) => format!(
+                "Invalid embedded structured_data block for table `{}`: missing closing ``` for block starting at line {}.",
+                table_id, fence.start_line
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_rich_content_fence(fence: &RichContentFence, table_ids: &[String]) -> Result<(), String> {
+    match &fence.kind {
+        RichContentFenceKind::Mermaid => validate_mermaid_fence(fence),
+        RichContentFenceKind::StructuredData(table_id) => {
+            validate_embedded_structured_data_fence(fence, table_id, table_ids)
+        }
+    }
+}
+
+fn validate_mermaid_fence(fence: &RichContentFence) -> Result<(), String> {
+    let first_meaningful_line = fence
+        .lines
+        .iter()
+        .map(|line| line.trim())
+        .find(|line| !line.is_empty() && !line.starts_with("%%"));
+
+    let first_meaningful_line = first_meaningful_line.ok_or(format!(
+        "Invalid Mermaid block starting at line {}: the block is empty.",
+        fence.start_line
+    ))?;
+
+    if !MERMAID_DIAGRAM_STARTERS
+        .iter()
+        .any(|starter| first_meaningful_line.starts_with(starter))
+    {
+        return Err(format!(
+            "Invalid Mermaid block starting at line {}: expected a Mermaid diagram declaration like `flowchart TD` or `sequenceDiagram`, found `{}`.",
+            fence.start_line, first_meaningful_line
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_embedded_structured_data_fence(
+    fence: &RichContentFence,
+    table_id: &str,
+    table_ids: &[String],
+) -> Result<(), String> {
+    if fence.lines.iter().any(|line| !line.trim().is_empty()) {
+        return Err(format!(
+            "Embedded structured_data block for table `{}` should be empty. Define the table in data.tables and keep the fence body empty.",
+            table_id
+        ));
+    }
+
+    if !table_ids.iter().any(|candidate| candidate == table_id) {
+        return Err(format!(
+            "Embedded structured_data block references table `{}`, but no matching entry exists in data.tables.",
+            table_id
+        ));
+    }
+
+    Ok(())
+}
+
 /// Common parameters extracted from push_content / push_review arguments.
 #[derive(Debug)]
 struct PushParams {
@@ -324,17 +715,17 @@ struct PushParams {
 /// Extract the common parameters shared by `call_push_review` and `call_push_impl`.
 /// When `review` is true, timeout defaults to 120; when false, timeout is always 120.
 fn extract_push_params(arguments: &Value, review: bool) -> Result<PushParams, String> {
+    let data = arguments
+        .get("data")
+        .map(normalize_data_param)
+        .or_else(|| infer_embedded_push_data(arguments))
+        .ok_or("Missing required parameter: data")?;
     let tool_name = arguments
         .get("tool_name")
         .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: tool_name")?
-        .to_string();
-    let data = {
-        let raw = arguments
-            .get("data")
-            .ok_or("Missing required parameter: data")?;
-        normalize_data_param(raw)
-    };
+        .map(|value| value.to_string())
+        .or_else(|| infer_renderer_tool_name(&data).map(|value| value.to_string()))
+        .ok_or("Missing required parameter: tool_name")?;
     let meta = arguments.get("meta").cloned();
     let timeout = if review {
         arguments
@@ -344,6 +735,7 @@ fn extract_push_params(arguments: &Value, review: bool) -> Result<PushParams, St
     } else {
         120
     };
+    validate_push_payload(&tool_name, &data)?;
     Ok(PushParams { tool_name, data, meta, timeout })
 }
 
@@ -758,6 +1150,370 @@ fn extract_tool_summaries(tools: &[Value]) -> Vec<Value> {
             }))
         })
         .collect()
+}
+
+fn extract_tool_summaries_with_schema(tools: &[Value]) -> Vec<Value> {
+    tools
+        .iter()
+        .filter_map(|t| {
+            let name = t.get("name")?.as_str()?;
+            Some(serde_json::json!({
+                "name": name,
+                "description": t
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or(""),
+                "inputSchema": t.get("inputSchema").cloned().unwrap_or(Value::Null),
+            }))
+        })
+        .collect()
+}
+
+fn find_tool_summary<'a>(tools: &'a [Value], name: &str) -> Option<&'a Value> {
+    tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(|value| value.as_str()) == Some(name))
+}
+
+fn title_case_words(value: &str) -> String {
+    value
+        .split(|c: char| c == '_' || c == '-' || c == '.')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn capability_key(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn plugin_auth_state_map(plugin_status: &[Value]) -> HashMap<String, String> {
+    plugin_status
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.get("plugin").and_then(|value| value.as_str())?;
+            let auth_configured = entry
+                .get("auth_configured")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            Some((
+                name.to_string(),
+                if auth_configured {
+                    "authenticated".to_string()
+                } else {
+                    "needs_auth".to_string()
+                },
+            ))
+        })
+        .collect()
+}
+
+fn build_core_hosted_connector(available_tools: &[Value]) -> Option<Value> {
+    let core_tool_names = [
+        "rich_content",
+        "structured_data",
+        "push_review",
+        "await_review",
+        "push_check",
+        "describe_connector",
+        "describe_tool_group",
+        "describe_tool",
+    ];
+
+    let tools: Vec<Value> = core_tool_names
+        .iter()
+        .filter_map(|name| find_tool_summary(available_tools, name).cloned())
+        .collect();
+
+    if tools.is_empty() {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "key": "mcpviews-core",
+        "label": "MCPViews Core",
+        "description": "Local renderers, review surfaces, and hosted discovery helpers available in MCPViews.",
+        "namespaces": ["mcpviews", "renderers", "reviews"],
+        "capabilities": ["rich-content", "structured-data", "review", "discovery"],
+        "authState": "available",
+        "discoveryState": "breadcrumb",
+        "toolCount": tools.len(),
+        "tools": tools.iter().take(3).cloned().collect::<Vec<Value>>(),
+        "toolGroups": [
+            {
+                "name": "Presentation",
+                "hint": "Open or review renderer-backed MCPViews content.",
+                "tools": tools
+                    .iter()
+                    .filter(|tool| {
+                        matches!(
+                            tool.get("name").and_then(|value| value.as_str()),
+                            Some("rich_content" | "structured_data" | "push_review" | "await_review" | "push_check")
+                        )
+                    })
+                    .cloned()
+                    .collect::<Vec<Value>>(),
+            },
+            {
+                "name": "Discovery",
+                "hint": "Describe connectors, tool groups, and individual tools before acting.",
+                "tools": tools
+                    .iter()
+                    .filter(|tool| {
+                        matches!(
+                            tool.get("name").and_then(|value| value.as_str()),
+                            Some("describe_connector" | "describe_tool_group" | "describe_tool")
+                        )
+                    })
+                    .cloned()
+                    .collect::<Vec<Value>>(),
+            }
+        ],
+    }))
+}
+
+fn filter_hosted_model_facing_tools(tools: Vec<Value>) -> Vec<Value> {
+    tools
+        .into_iter()
+        .filter(|tool| {
+            tool.get("name")
+                .and_then(|value| value.as_str())
+                != Some("push_content")
+        })
+        .collect()
+}
+
+fn build_plugin_hosted_connectors(
+    manifests: &[mcpviews_shared::PluginManifest],
+    tool_cache: &crate::tool_cache::ToolCache,
+    available_tools: &[Value],
+    plugin_status: &[Value],
+) -> Vec<Value> {
+    let auth_states = plugin_auth_state_map(plugin_status);
+
+    manifests
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, manifest)| {
+            let index = manifest
+                .registry_index
+                .clone()
+                .unwrap_or_else(|| auto_derive_registry_index(manifest, tool_cache.plugin_tools(idx)));
+            let prefix = manifest
+                .mcp
+                .as_ref()
+                .map(|mcp| mcp.tool_prefix.as_str())
+                .unwrap_or("");
+
+            let mut tool_names = Vec::new();
+            let mut representative_tools = Vec::new();
+            let mut seen = HashSet::new();
+            let tool_groups = index
+                .tool_groups
+                .iter()
+                .map(|group| {
+                    let group_tools = group
+                        .tools
+                        .iter()
+                        .filter_map(|tool_name| {
+                            let actual_name = if prefix.is_empty() {
+                                tool_name.clone()
+                            } else {
+                                format!("{}{}", prefix, tool_name)
+                            };
+                            let summary = find_tool_summary(available_tools, &actual_name)?.clone();
+                            if seen.insert(actual_name.clone()) {
+                                tool_names.push(actual_name);
+                                if representative_tools.len() < 4 {
+                                    representative_tools.push(summary.clone());
+                                }
+                            }
+                            Some(summary)
+                        })
+                        .collect::<Vec<Value>>();
+
+                    serde_json::json!({
+                        "name": group.name,
+                        "hint": group.hint,
+                        "tools": group_tools,
+                    })
+                })
+                .collect::<Vec<Value>>();
+
+            if tool_names.is_empty() {
+                return None;
+            }
+
+            let namespaces = if index.tags.is_empty() {
+                vec![manifest.name.clone()]
+            } else {
+                index.tags.clone()
+            };
+            let capabilities = if index.tool_groups.is_empty() {
+                vec![capability_key(&manifest.name)]
+            } else {
+                index
+                    .tool_groups
+                    .iter()
+                    .map(|group| capability_key(&group.name))
+                    .filter(|value| !value.is_empty())
+                    .collect::<Vec<String>>()
+            };
+
+            Some(serde_json::json!({
+                "key": manifest.name,
+                "label": title_case_words(&manifest.name),
+                "description": index.summary,
+                "namespaces": namespaces,
+                "capabilities": capabilities,
+                "authState": auth_states
+                    .get(&manifest.name)
+                    .cloned()
+                    .unwrap_or_else(|| "available".to_string()),
+                "discoveryState": "breadcrumb",
+                "toolCount": tool_names.len(),
+                "tools": representative_tools,
+                "toolGroups": tool_groups,
+            }))
+        })
+        .collect()
+}
+
+pub(crate) async fn build_hosted_discovery_catalog(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Value {
+    ensure_registry_fresh(state).await;
+
+    let all_tools = list_tools(state).await;
+    let available_tools = filter_hosted_model_facing_tools(extract_tool_summaries_with_schema(&all_tools));
+
+    let state_guard = state.lock().await;
+    let registry = state_guard.inner.plugin_registry.lock().unwrap();
+    let plugin_status = collect_plugin_auth_status(&registry.manifests);
+
+    let mut connectors = Vec::new();
+    if let Some(core_connector) = build_core_hosted_connector(&available_tools) {
+        connectors.push(core_connector);
+    }
+    connectors.extend(build_plugin_hosted_connectors(
+        &registry.manifests,
+        &registry.tool_cache,
+        &available_tools,
+        &plugin_status,
+    ));
+
+    serde_json::json!({
+        "tools": available_tools,
+        "connectors": connectors,
+    })
+}
+
+async fn call_describe_connector(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let key = arguments
+        .get("key")
+        .and_then(|value| value.as_str())
+        .ok_or("Missing required parameter: key")?;
+    let catalog = build_hosted_discovery_catalog(state).await;
+    let connector = catalog
+        .get("connectors")
+        .and_then(|value| value.as_array())
+        .and_then(|connectors| {
+            connectors.iter().find(|entry| {
+                entry.get("key").and_then(|value| value.as_str()) == Some(key)
+            })
+        })
+        .cloned()
+        .ok_or_else(|| format!("Unknown connector: {}", key))?;
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&connector).unwrap()
+        }]
+    }))
+}
+
+async fn call_describe_tool_group(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let connector_key = arguments
+        .get("connector_key")
+        .and_then(|value| value.as_str())
+        .ok_or("Missing required parameter: connector_key")?;
+    let group_name = arguments
+        .get("name")
+        .and_then(|value| value.as_str())
+        .ok_or("Missing required parameter: name")?;
+    let catalog = build_hosted_discovery_catalog(state).await;
+    let group = catalog
+        .get("connectors")
+        .and_then(|value| value.as_array())
+        .and_then(|connectors| {
+            connectors.iter().find(|entry| {
+                entry.get("key").and_then(|value| value.as_str()) == Some(connector_key)
+            })
+        })
+        .and_then(|connector| connector.get("toolGroups").and_then(|value| value.as_array()))
+        .and_then(|groups| {
+            groups.iter().find(|entry| {
+                entry.get("name").and_then(|value| value.as_str()) == Some(group_name)
+            })
+        })
+        .cloned()
+        .ok_or_else(|| format!("Unknown tool group '{}' for connector '{}'", group_name, connector_key))?;
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&group).unwrap()
+        }]
+    }))
+}
+
+async fn call_describe_tool(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let name = arguments
+        .get("name")
+        .and_then(|value| value.as_str())
+        .ok_or("Missing required parameter: name")?;
+    let catalog = build_hosted_discovery_catalog(state).await;
+    let tool = catalog
+        .get("tools")
+        .and_then(|value| value.as_array())
+        .and_then(|tools| {
+            tools.iter().find(|entry| {
+                entry.get("name").and_then(|value| value.as_str()) == Some(name)
+            })
+        })
+        .cloned()
+        .ok_or_else(|| format!("Unknown tool: {}", name))?;
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&tool).unwrap()
+        }]
+    }))
 }
 
 /// Gather rules, plugin auth status, and available tool summaries from the current state.
@@ -1347,9 +2103,9 @@ async fn proxy_plugin_tool_call(
 
 const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, plugin citations. Default choice. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document.";
 
-const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call push_content, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
+const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call rich_content, structured_data, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
 
-When to push: detailed explanations, plans, architecture/data-flow diagrams, API designs, database schemas. Keep chat concise; rich detail goes to push_content.
+When to call rich_content: detailed explanations, plans, architecture/data-flow diagrams, API designs, database schemas. Keep chat concise; rich detail goes to rich_content.
 
 ## `data` parameter
 
@@ -1393,9 +2149,9 @@ When proposing text changes for user review, use `suggestions` + `{{suggest:id=X
 }
 ```
 
-Suggestion types: **replace** (default, has `old` + `new`), **insert** (`type: "insert"`, has `new`), **delete** (`type: "delete"`, has `old`). Multiline old/new values render as block-level diffs. Each suggestion gets accept/reject toggles and a comment button. Push via `push_review`, not `push_content`.
+Suggestion types: **replace** (default, has `old` + `new`), **insert** (`type: "insert"`, has `new`), **delete** (`type: "delete"`, has `old`). Multiline old/new values render as block-level diffs. Each suggestion gets accept/reject toggles and a comment button. Push via `push_review`, not `rich_content`.
 
-## Embedded structured_data tables (push_review or push_content)
+## Embedded structured_data tables (push_review or rich_content)
 
 Embed interactive tables within markdown using fenced code blocks:
 
@@ -1524,37 +2280,34 @@ This renders as a collapsible tree: clicking "Architecture" expands to show its 
 
 **When to nest**: Any time you would otherwise add a "Parent" or "Folder" column to describe containment, or group items by category in a flat list — nest them instead.
 
-## push_content (read-only display)
+## rich_content / structured_data (read-only display)
 
 Display-only mode. Change markers are automatically stripped by the server and ignored by the renderer. Set all `change` fields to null.
 
 Example:
 ```json
 {
-  "tool_name": "structured_data",
-  "data": {
-    "title": "Server Inventory",
-    "tables": [{
-      "id": "t1",
-      "name": "Production Servers",
-      "columns": [
-        { "id": "name", "name": "Name", "change": null },
-        { "id": "type", "name": "Type", "change": null },
-        { "id": "status", "name": "Status", "change": null }
-      ],
-      "rows": [
-        {
-          "id": "r1",
-          "cells": {
-            "name": { "value": "api-01", "change": null },
-            "type": { "value": "m5.xlarge", "change": null },
-            "status": { "value": "Running", "change": null }
-          },
-          "children": []
-        }
-      ]
-    }]
-  }
+  "title": "Server Inventory",
+  "tables": [{
+    "id": "t1",
+    "name": "Production Servers",
+    "columns": [
+      { "id": "name", "name": "Name", "change": null },
+      { "id": "type", "name": "Type", "change": null },
+      { "id": "status", "name": "Status", "change": null }
+    ],
+    "rows": [
+      {
+        "id": "r1",
+        "cells": {
+          "name": { "value": "api-01", "change": null },
+          "type": { "value": "m5.xlarge", "change": null },
+          "status": { "value": "Running", "change": null }
+        },
+        "children": []
+      }
+    ]
+  }]
 }
 ```
 
@@ -2077,7 +2830,55 @@ fn build_data_description(renderers: &[RendererDef], prefix: &str) -> String {
     format!("{} {} For plugin renderer data shapes, call get_plugin_docs.", prefix, hints)
 }
 
+fn renderer_description(renderers: &[RendererDef], name: &str, fallback: &str) -> String {
+    renderers
+        .iter()
+        .find(|renderer| renderer.name == name)
+        .map(|renderer| renderer.description.clone())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn direct_renderer_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
+    vec![
+        serde_json::json!({
+            "name": "rich_content",
+            "description": renderer_description(
+                renderers,
+                "rich_content",
+                "Display rich markdown content, diagrams, citations, and embedded tables in MCPViews."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string", "description": "Optional heading shown above the rich content body." },
+                    "body": { "type": "string", "description": "Markdown body. Supports mermaid fences, code blocks, suggestions, and embedded structured_data table references." },
+                    "suggestions": { "type": "object", "description": "Optional inline text suggestions keyed by suggestion id." },
+                    "tables": { "type": "array", "description": "Optional embedded structured_data tables referenced from the body." },
+                    "citations": { "type": "object", "description": "Optional citation metadata keyed by source." }
+                }
+            }
+        }),
+        serde_json::json!({
+            "name": "structured_data",
+            "description": renderer_description(
+                renderers,
+                "structured_data",
+                "Display interactive tabular data with hierarchical rows in MCPViews."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string", "description": "Optional heading shown above the table." },
+                    "tables": { "type": "array", "description": "Structured table definitions with columns, rows, and optional children." }
+                },
+                "required": ["tables"]
+            }
+        }),
+    ]
+}
+
 fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
+    let mut tools = direct_renderer_tool_definitions(renderers);
     let renderer_names: Vec<String> = renderers.iter().map(|r| r.name.clone()).collect();
     let renderer_list = if renderer_names.is_empty() {
         "rich_content".to_string()
@@ -2085,7 +2886,7 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
         renderer_names.join(", ")
     };
 
-    vec![
+    tools.extend(vec![
         serde_json::json!({
             "name": "push_content",
             "description": "Display content in the MCPViews window. Supports multiple content types.",
@@ -2160,6 +2961,52 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
                     }
                 },
                 "required": ["session_id"]
+            }
+        }),
+        serde_json::json!({
+            "name": "describe_connector",
+            "description": "Describe a hosted breadcrumb connector, including representative tools and discovery metadata for the current MCPViews session.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Connector key from the hosted discovery catalog."
+                    }
+                },
+                "required": ["key"]
+            }
+        }),
+        serde_json::json!({
+            "name": "describe_tool_group",
+            "description": "Describe a hosted discovery tool group for a connector, including the tools in that group.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "connector_key": {
+                        "type": "string",
+                        "description": "Connector key from the hosted discovery catalog."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Tool group name to expand."
+                    }
+                },
+                "required": ["connector_key", "name"]
+            }
+        }),
+        serde_json::json!({
+            "name": "describe_tool",
+            "description": "Describe one hosted MCPViews tool, including its schema and usage summary.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Literal tool name from the hosted catalog."
+                    }
+                },
+                "required": ["name"]
             }
         }),
         serde_json::json!({
@@ -2318,7 +3165,9 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
                 "required": ["plugin", "policy", "version"]
             }
         }),
-    ]
+    ]);
+
+    tools
 }
 
 #[cfg(test)]
@@ -2764,8 +3613,8 @@ mod tests {
     fn test_extract_tool_summaries_extracts_name_and_description() {
         let tools = vec![
             serde_json::json!({
-                "name": "push_content",
-                "description": "Display content in the MCPViews window.",
+                "name": "rich_content",
+                "description": "Display rich markdown content in the MCPViews window.",
                 "inputSchema": { "type": "object" }
             }),
             serde_json::json!({
@@ -2776,11 +3625,61 @@ mod tests {
         ];
         let summaries = extract_tool_summaries(&tools);
         assert_eq!(summaries.len(), 2);
-        assert_eq!(summaries[0]["name"], "push_content");
-        assert_eq!(summaries[0]["description"], "Display content in the MCPViews window.");
+        assert_eq!(summaries[0]["name"], "rich_content");
+        assert_eq!(summaries[0]["description"], "Display rich markdown content in the MCPViews window.");
         // Should NOT include inputSchema
         assert!(summaries[0].get("inputSchema").is_none());
         assert_eq!(summaries[1]["name"], "push_review");
+    }
+
+    #[test]
+    fn test_builtin_tool_definitions_include_direct_renderer_tools() {
+        let renderers = builtin_renderer_definitions();
+        let tools = builtin_tool_definitions(&renderers);
+        let rich_content = tools.iter().find(|t| t["name"] == "rich_content").expect("rich_content tool should exist");
+        let structured_data = tools.iter().find(|t| t["name"] == "structured_data").expect("structured_data tool should exist");
+        assert_eq!(rich_content["inputSchema"]["type"], "object");
+        assert_eq!(structured_data["inputSchema"]["required"], serde_json::json!(["tables"]));
+        assert!(tools.iter().any(|tool| tool["name"] == "push_content"), "push_content compatibility alias should remain available locally");
+    }
+
+    #[test]
+    fn test_filter_hosted_model_facing_tools_hides_push_content_alias() {
+        let filtered = filter_hosted_model_facing_tools(vec![
+            serde_json::json!({ "name": "rich_content" }),
+            serde_json::json!({ "name": "structured_data" }),
+            serde_json::json!({ "name": "push_content" }),
+            serde_json::json!({ "name": "push_review" }),
+        ]);
+        let tool_names = filtered
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+        assert!(tool_names.contains(&"rich_content"));
+        assert!(tool_names.contains(&"structured_data"));
+        assert!(tool_names.contains(&"push_review"));
+        assert!(!tool_names.contains(&"push_content"));
+    }
+
+    #[test]
+    fn test_build_core_hosted_connector_prefers_direct_renderer_tools() {
+        let connector = build_core_hosted_connector(&[
+            serde_json::json!({ "name": "rich_content" }),
+            serde_json::json!({ "name": "structured_data" }),
+            serde_json::json!({ "name": "push_review" }),
+            serde_json::json!({ "name": "describe_connector" }),
+        ]).expect("core connector should exist");
+
+        let presentation_tools = connector["toolGroups"][0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+
+        assert!(presentation_tools.contains(&"rich_content"));
+        assert!(presentation_tools.contains(&"structured_data"));
+        assert!(!presentation_tools.contains(&"push_content"));
     }
 
     #[test]
@@ -3545,7 +4444,7 @@ mod tests {
     #[test]
     fn test_extract_push_params_missing_tool_name() {
         let args = serde_json::json!({
-            "data": {"body": "text"}
+            "data": {"plain": true}
         });
         let err = extract_push_params(&args, false).unwrap_err();
         assert!(err.contains("tool_name"));
@@ -3561,6 +4460,66 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_push_params_wraps_top_level_rich_content_fields_into_data() {
+        let args = serde_json::json!({
+            "tool_name": "rich_content",
+            "title": "Example Architecture Document",
+            "body": "# Overview"
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "rich_content");
+        assert_eq!(
+            params.data,
+            serde_json::json!({
+                "title": "Example Architecture Document",
+                "body": "# Overview"
+            })
+        );
+    }
+
+    #[test]
+    fn test_extract_push_params_infers_data_and_tool_name_from_top_level_renderer_payload() {
+        let args = serde_json::json!({
+            "title": "Web App Architecture",
+            "body": "```mermaid\ngraph TD\n  A[Browser] --> B[API]\n```"
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "rich_content");
+        assert_eq!(
+            params.data,
+            serde_json::json!({
+                "title": "Web App Architecture",
+                "body": "```mermaid\ngraph TD\n  A[Browser] --> B[API]\n```"
+            })
+        );
+    }
+
+    #[test]
+    fn test_extract_push_params_infers_structured_data_from_top_level_tables_payload() {
+        let args = serde_json::json!({
+            "tables": [{
+                "id": "t1",
+                "name": "Rows",
+                "columns": [{ "id": "status", "name": "Status" }],
+                "rows": [{ "id": "r1", "cells": { "status": { "value": "Ready" } }, "children": [] }]
+            }]
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "structured_data");
+        assert_eq!(
+            params.data,
+            serde_json::json!({
+                "tables": [{
+                    "id": "t1",
+                    "name": "Rows",
+                    "columns": [{ "id": "status", "name": "Status" }],
+                    "rows": [{ "id": "r1", "cells": { "status": { "value": "Ready" } }, "children": [] }]
+                }]
+            })
+        );
+    }
+
+    #[test]
     fn test_extract_push_params_string_data_normalized() {
         let args = serde_json::json!({
             "tool_name": "rich_content",
@@ -3568,5 +4527,119 @@ mod tests {
         });
         let params = extract_push_params(&args, false).unwrap();
         assert_eq!(params.data, serde_json::json!({"title": "parsed"}));
+    }
+
+    #[test]
+    fn test_extract_push_params_infers_rich_content_when_tool_name_is_missing() {
+        let args = serde_json::json!({
+            "data": {
+                "title": "Web App Architecture",
+                "body": "# Overview"
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "rich_content");
+    }
+
+    #[test]
+    fn test_extract_push_params_infers_structured_data_when_tool_name_is_missing() {
+        let args = serde_json::json!({
+            "data": {
+                "tables": [{
+                    "id": "t1",
+                    "name": "Rows",
+                    "columns": [{ "id": "status", "name": "Status" }],
+                    "rows": [{ "id": "r1", "cells": { "status": { "value": "Ready" } }, "children": [] }]
+                }]
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "structured_data");
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_mermaid_blocks() {
+        let args = serde_json::json!({
+            "tool_name": "rich_content",
+            "data": {
+                "title": "Broken Mermaid",
+                "body": "mermaid\nflowchart TD\n  A[Start] --> B[End]"
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("Mermaid"));
+        assert!(err.contains("```mermaid"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_missing_embedded_structured_data_tables() {
+        let args = serde_json::json!({
+            "tool_name": "rich_content",
+            "data": {
+                "title": "Missing table",
+                "body": "Context\n\n```structured_data:t1\n```"
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("t1"));
+        assert!(err.contains("data.tables"));
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_valid_rich_content_renderer_payload() {
+        let args = serde_json::json!({
+            "tool_name": "rich_content",
+            "data": {
+                "title": "Architecture",
+                "body": "```mermaid\nflowchart TD\n  A[Start] --> B[End]\n```\n\n```structured_data:t1\n```",
+                "tables": [{
+                    "id": "t1",
+                    "name": "Changes",
+                    "columns": [{ "id": "status", "name": "Status" }],
+                    "rows": [{ "id": "r1", "cells": { "status": { "value": "Ready" } }, "children": [] }]
+                }]
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "rich_content");
+    }
+
+    #[test]
+    fn test_validate_direct_renderer_payload_ignores_reserved_meta_fields() {
+        let mut args = serde_json::json!({
+            "title": "Architecture",
+            "body": "```mermaid\nflowchart TD\n  A[Browser] --> B[API]\n```",
+            "meta": {
+                "threadId": "thread-1",
+                "artifactSource": "tribex-ai-thread-result",
+                "drawerOnly": true
+            },
+            "toolArgs": {
+                "threadId": "thread-1"
+            }
+        });
+
+        if let Some(object) = args.as_object_mut() {
+            object.remove("meta");
+            object.remove("toolArgs");
+        }
+
+        validate_push_payload("rich_content", &args).unwrap();
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_structured_data_tables() {
+        let args = serde_json::json!({
+            "tool_name": "structured_data",
+            "data": {
+                "tables": [{
+                    "id": "t1",
+                    "columns": [{ "id": "status" }],
+                    "rows": []
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("columns[0].name"));
     }
 }

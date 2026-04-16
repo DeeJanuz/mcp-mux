@@ -94,6 +94,9 @@ class SSEBridge {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let pendingSequence: number | null = null;
+      let pendingEventName: string | null = null;
+      let pendingDataLines: string[] = [];
 
       while (this.running) {
         const { done, value } = await reader.read();
@@ -106,15 +109,56 @@ class SSEBridge {
         buffer = lines.pop() ?? '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const jsonStr = line.slice(6);
-            try {
-              const event = JSON.parse(jsonStr);
-              await this.forwardToLocal(event);
-            } catch (err) {
-              console.error('[sse-bridge] Failed to parse SSE event:', err);
+          const normalizedLine = line.replace(/\r$/, '');
+
+          if (normalizedLine === '') {
+            if (pendingDataLines.length > 0) {
+              const rawData = pendingDataLines.join('\n');
+              try {
+                const event = this.parseSsePayload(rawData, pendingSequence, pendingEventName);
+                await this.forwardToLocal(event);
+              } catch (err) {
+                console.error('[sse-bridge] Failed to parse SSE event:', err);
+              }
+              pendingDataLines = [];
             }
+            pendingSequence = null;
+            pendingEventName = null;
+            continue;
           }
+
+          if (normalizedLine.startsWith(':')) {
+            continue;
+          }
+
+          if (normalizedLine.startsWith('id:')) {
+            const value = Number.parseInt(normalizedLine.slice(3).trim(), 10);
+            pendingSequence = Number.isFinite(value) ? value : null;
+            continue;
+          }
+
+          if (normalizedLine.startsWith('event:')) {
+            const value = normalizedLine.slice(6).trim();
+            pendingEventName = value || null;
+            continue;
+          }
+
+          if (normalizedLine.startsWith('data:')) {
+            pendingDataLines.push(normalizedLine.slice(5).replace(/^\s/, ''));
+          }
+        }
+      }
+
+      if (pendingDataLines.length > 0) {
+        try {
+          const event = this.parseSsePayload(
+            pendingDataLines.join('\n'),
+            pendingSequence,
+            pendingEventName,
+          );
+          await this.forwardToLocal(event);
+        } catch (err) {
+          console.error('[sse-bridge] Failed to parse trailing SSE event:', err);
         }
       }
     } catch (error: unknown) {
@@ -134,6 +178,23 @@ class SSEBridge {
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
       this.connect();
     }
+  }
+
+  private parseSsePayload(rawData: string, sequence: number | null, eventName: string | null): Record<string, unknown> {
+    const parsed = (() => {
+      try {
+        return JSON.parse(rawData) as Record<string, unknown>;
+      } catch {
+        return { raw: rawData } as Record<string, unknown>;
+      }
+    })();
+    if (sequence !== null && parsed.sequence === undefined) {
+      parsed.sequence = sequence;
+    }
+    if (eventName && parsed.sseEvent === undefined) {
+      parsed.sseEvent = eventName;
+    }
+    return parsed;
   }
 
   private async forwardToLocal(pushReq: unknown): Promise<void> {

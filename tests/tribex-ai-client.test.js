@@ -2,8 +2,228 @@ import './tribex-ai-client-setup.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(function () {
+  if (globalThis.window && globalThis.window.__tribexAiCloudflareBridge) {
+    globalThis.window.__tribexAiCloudflareBridge.disconnect('thread-123');
+    globalThis.window.__tribexAiCloudflareBridge.disconnect('thread-smoke-1');
+  }
+  if (globalThis.window) {
+    delete globalThis.window.__TAURI__;
+    delete globalThis.window.__tribexAiAgentClientCtor;
+  }
   vi.restoreAllMocks();
 });
+
+function createRuntimeSessionEnvelope(threadId) {
+  return {
+    runtimeSession: {
+      provider: 'CLOUDFLARE_AGENTS',
+      transport: 'DIRECT_CLIENT',
+      connection: {
+        transport: 'websocket',
+        host: 'https://agents.dev.example.workers.dev',
+        agent: 'FinanceAgent',
+        name: 'thread_' + threadId,
+        path: null,
+        query: {
+          token: 'runtime-token',
+        },
+      },
+      expiresAt: '2099-04-15T00:00:00.000Z',
+      instanceId: 'thread_' + threadId,
+      metadata: {},
+    },
+    relay: {
+      bridge: {
+        relaySessionId: 'relay-session-1',
+        requestUrl: 'http://127.0.0.1:3000/api/desktop-relay/tool-request',
+        requestToken: 'relay-token',
+        timeoutMs: 120000,
+      },
+      catalog: null,
+    },
+  };
+}
+
+function createLocalCatalogResponse(extra) {
+  return Object.assign({
+    connectors: [
+      {
+        key: 'mcpviews-core',
+        label: 'MCPViews Core',
+        namespaces: ['mcpviews', 'renderers'],
+        capabilities: ['rich-content', 'discovery'],
+        authState: 'available',
+        discoveryState: 'breadcrumb',
+        toolCount: 4,
+        tools: [
+          {
+            name: 'rich_content',
+            description: 'Display rich markdown content in MCPViews.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string' },
+                body: { type: 'string' },
+              },
+            },
+          },
+          {
+            name: 'describe_connector',
+            description: 'Describe a hosted breadcrumb connector.',
+            inputSchema: {
+              type: 'object',
+              required: ['key'],
+            },
+          },
+        ],
+        toolGroups: [
+          {
+            name: 'Presentation',
+            hint: 'Render content in MCPViews.',
+            tools: [
+              {
+                name: 'rich_content',
+                description: 'Display rich markdown content in MCPViews.',
+                inputSchema: {
+                  type: 'object',
+                  properties: {
+                    title: { type: 'string' },
+                    body: { type: 'string' },
+                  },
+                },
+              },
+              {
+                name: 'structured_data',
+                description: 'Display interactive structured data in MCPViews.',
+                inputSchema: {
+                  type: 'object',
+                  required: ['tables'],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    tools: [
+      {
+        name: 'init_session',
+        description: 'Initializes MCPViews tool rules.',
+        inputSchema: { type: 'object' },
+      },
+      {
+        name: 'rule-skill-echo',
+        description: 'Validates the loaded rule and skill bundle.',
+        inputSchema: { type: 'object' },
+      },
+      {
+        name: 'rich_content',
+        description: 'Display rich markdown content in MCPViews.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            body: { type: 'string' },
+          },
+        },
+      },
+      {
+        name: 'structured_data',
+        description: 'Display interactive structured data in MCPViews.',
+        inputSchema: {
+          type: 'object',
+          required: ['tables'],
+        },
+      },
+      {
+        name: 'describe_connector',
+        description: 'Describe a hosted breadcrumb connector.',
+        inputSchema: {
+          type: 'object',
+          required: ['key'],
+        },
+      },
+    ],
+  }, extra || {});
+}
+
+function createAgentClientCtor(handlers) {
+  var instances = [];
+
+  function FakeAgentClient(options) {
+    this.options = options;
+    this.readyState = 1;
+    this.listeners = {
+      message: new Set(),
+      close: new Set(),
+    };
+    this.sentPayloads = [];
+    this.addEventListener = vi.fn(function (type, listener) {
+      if (!this.listeners[type]) {
+        this.listeners[type] = new Set();
+      }
+      this.listeners[type].add(listener);
+    }.bind(this));
+    this.removeEventListener = vi.fn(function (type, listener) {
+      if (!this.listeners[type]) return;
+      this.listeners[type].delete(listener);
+    }.bind(this));
+    this.emit = function (type, payload) {
+      if (!this.listeners[type]) return;
+      this.listeners[type].forEach(function (listener) {
+        listener(payload);
+      });
+    }.bind(this);
+    this.send = vi.fn(function (raw) {
+      this.sentPayloads.push(raw);
+      var payload = JSON.parse(raw);
+      if (handlers && typeof handlers.onChatRequest === 'function') {
+        handlers.onChatRequest(payload, this);
+      }
+      if (payload && payload.type === 'cf_agent_use_chat_request') {
+        this.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: true,
+            body: '',
+          }),
+        });
+      }
+    }.bind(this));
+    this.close = vi.fn(function () {
+      this.readyState = 3;
+      this.emit('close', {});
+      if (typeof options.onClose === 'function') {
+        options.onClose();
+      }
+    }.bind(this));
+    this.stub = {
+      getMessages: vi.fn(handlers && handlers.getMessages
+        ? handlers.getMessages
+        : function () {
+          return Promise.resolve([]);
+        }),
+      submitUserMessage: vi.fn(handlers && handlers.submitUserMessage
+        ? handlers.submitUserMessage
+        : function () {
+          return Promise.resolve({ messages: [] });
+        }),
+    };
+    this.ready = Promise.resolve().then(function () {
+      if (typeof options.onOpen === 'function') {
+        options.onOpen();
+      }
+      if (typeof options.onIdentity === 'function') {
+        options.onIdentity(options.name, options.agent);
+      }
+    });
+    instances.push(this);
+  }
+
+  FakeAgentClient.instances = instances;
+  return FakeAgentClient;
+}
 
 describe('tribex-ai-client', function () {
   it('suppresses preview panes for dotted lifecycle companion events', function () {
@@ -21,6 +241,25 @@ describe('tribex-ai-client', function () {
       toolName: 'rich_content',
       result: {
         data: { title: 'Ready', body: 'Sandbox is ready.' },
+      },
+    })).toBe(true);
+  });
+
+  it('keeps thread-scoped rich content inline unless it explicitly asks for a preview pane', function () {
+    expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
+      toolName: 'rich_content',
+      toolArgs: { threadId: 'thread-1' },
+      result: {
+        data: { title: 'Smoke Test Passed', body: 'All checks passed.' },
+      },
+    })).toBe(false);
+
+    expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
+      toolName: 'rich_content',
+      toolArgs: { threadId: 'thread-1' },
+      result: {
+        data: { title: 'Review Needed', body: 'Open this separately.' },
+        meta: { previewPane: true },
       },
     })).toBe(true);
   });
@@ -90,19 +329,128 @@ describe('tribex-ai-client', function () {
     });
   });
 
-  it('uses the deployed root routes for thread detail and message requests', async function () {
-    var invoke = vi.fn(function (_command, args) {
-      if (args.path === '/threads/thread-123') {
+  it('normalizes assistant delta payloads as streaming assistant messages', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      type: 'assistant_delta',
+      messageId: 'assistant-1',
+      delta: 'Hello',
+      createdAt: '2026-04-15T00:00:00.000Z',
+    }, 0)).toMatchObject({
+      role: 'assistant',
+      content: 'Hello',
+      messageId: 'assistant-1',
+      isStreaming: true,
+    });
+  });
+
+  it('treats assistant_delta companion events as streaming assistant messages and not previews', function () {
+    expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
+      toolName: 'assistant_delta',
+      result: {
+        data: {
+          type: 'assistant_delta',
+          delta: 'Hello',
+          messageId: 'assistant-1',
+        },
+      },
+    })).toBe(false);
+
+    expect(window.__tribexAiClient.normalizeMessage({
+      toolName: 'assistant_delta',
+      result: {
+        data: {
+          type: 'assistant_delta',
+          delta: 'Hello',
+          messageId: 'assistant-1',
+        },
+      },
+      createdAt: '2026-04-15T00:00:00.000Z',
+    }, 0)).toMatchObject({
+      role: 'assistant',
+      content: 'Hello',
+      messageId: 'assistant-1',
+      isStreaming: true,
+    });
+  });
+
+  it('normalizes assistant messages containing serialized companion payloads as tool events', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      role: 'assistant',
+      content: JSON.stringify({
+        toolName: 'rule-skill-echo',
+        toolArgs: { threadId: 'thread-1' },
+        result: {
+          data: {
+            summary: 'Rule + skill echo',
+            detail: 'mcpviews.md, smoke-validation.md, rule-skill-echo.md',
+          },
+        },
+        reviewRequired: false,
+        timeout: 120000,
+      }, null, 2),
+      createdAt: '2026-04-15T00:00:00.000Z',
+    }, 0)).toMatchObject({
+      role: 'tool',
+      toolName: 'rule-skill-echo',
+      toolArgs: { threadId: 'thread-1' },
+      summary: 'Rule + skill echo',
+      detail: 'mcpviews.md, smoke-validation.md, rule-skill-echo.md',
+    });
+  });
+
+  it('uses structured result payloads as fallback tool detail when no explicit detail is present', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      toolName: 'rule-skill-echo',
+      result: ['mcpviews.md', 'smoke-validation.md', 'rule-skill-echo.md'],
+      createdAt: '2026-04-15T00:00:00.000Z',
+    }, 0)).toMatchObject({
+      role: 'tool',
+      toolName: 'rule-skill-echo',
+      detail: 'mcpviews.md\nsmoke-validation.md\nrule-skill-echo.md',
+      resultData: ['mcpviews.md', 'smoke-validation.md', 'rule-skill-echo.md'],
+    });
+  });
+
+  it('uses the deployed root routes for thread detail and runtime session bootstrap', async function () {
+    var runtimeMessages = [
+      {
+        id: 'user-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'hello' }],
+        createdAt: '2026-04-15T00:00:00.000Z',
+      },
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'Hello from FinanceAgent.' }],
+        createdAt: '2026-04-15T00:00:01.000Z',
+      },
+    ];
+    var getMessagesCalls = 0;
+    var FakeAgentClient = createAgentClientCtor({
+      getMessages: function () {
+        getMessagesCalls += 1;
+        return Promise.resolve(getMessagesCalls === 1 ? [] : runtimeMessages);
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123') {
         return Promise.resolve({
           id: 'thread-123',
           title: 'Finance thread',
           messages: [],
         });
       }
-      if (args.path === '/threads/thread-123/messages') {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
         return Promise.resolve({ ok: true });
       }
-      return Promise.reject(new Error('Unexpected path: ' + args.path));
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
     });
 
     globalThis.window = globalThis.window || {};
@@ -111,12 +459,36 @@ describe('tribex-ai-client', function () {
         invoke: invoke,
       },
     };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
 
     await expect(window.__tribexAiClient.fetchThread('thread-123')).resolves.toMatchObject({
       id: 'thread-123',
       title: 'Finance thread',
     });
-    await expect(window.__tribexAiClient.sendMessage('thread-123', 'hello')).resolves.toEqual({ ok: true });
+    var runtimeEvents = [];
+    var unsubscribe = window.__tribexAiClient.listenToRuntimeEvents('thread-123', function (event) {
+      runtimeEvents.push(event);
+    });
+    var turn = await window.__tribexAiClient.sendMessage('thread-123', 'hello', {
+      validationProfile: 'rule-skill-echo',
+    });
+    expect(turn.turnId).toEqual(expect.any(String));
+    expect(turn.done && typeof turn.done.then).toBe('function');
+    await turn.done;
+    await expect(window.__tribexAiCloudflareBridge.getMessages({
+      threadId: 'thread-123',
+      connection: createRuntimeSessionEnvelope('thread-123').runtimeSession.connection,
+    })).resolves.toEqual([
+        expect.objectContaining({
+          id: 'user-1',
+          role: 'user',
+        }),
+        expect.objectContaining({
+          id: 'assistant-1',
+          role: 'assistant',
+        }),
+      ]);
+    unsubscribe();
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'first_party_ai_request', expect.objectContaining({
       method: 'GET',
@@ -124,26 +496,142 @@ describe('tribex-ai-client', function () {
     }));
     expect(invoke).toHaveBeenNthCalledWith(2, 'first_party_ai_request', expect.objectContaining({
       method: 'POST',
-      path: '/threads/thread-123/messages',
-      body: { content: 'hello' },
+      path: '/threads/thread-123/runtime-session',
     }));
+    expect(invoke).toHaveBeenNthCalledWith(3, 'get_local_mcp_catalog', {});
+    expect(invoke).toHaveBeenNthCalledWith(4, 'first_party_ai_relay_request', expect.objectContaining({
+      method: 'POST',
+      path: '/api/desktop-relay/catalog',
+      body: expect.objectContaining({
+        relaySessionId: 'relay-session-1',
+        connectors: expect.arrayContaining([
+          expect.objectContaining({
+            key: 'mcpviews-core',
+          }),
+        ]),
+        tools: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'rule-skill-echo',
+          }),
+          expect.objectContaining({
+            name: 'rich_content',
+          }),
+        ]),
+      }),
+    }));
+    expect(invoke.mock.calls[3][1].body.tools).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'init_session',
+        }),
+      ]),
+    );
+
+    expect(FakeAgentClient.instances).toHaveLength(1);
+    expect(FakeAgentClient.instances[0].options).toMatchObject({
+      host: 'agents.dev.example.workers.dev',
+      agent: 'FinanceAgent',
+      name: 'thread_thread-123',
+      query: {
+        token: 'runtime-token',
+      },
+    });
+    expect(FakeAgentClient.instances[0].sentPayloads).toHaveLength(1);
+    expect(JSON.parse(FakeAgentClient.instances[0].sentPayloads[0])).toMatchObject({
+      type: 'cf_agent_use_chat_request',
+      init: {
+        method: 'POST',
+      },
+    });
+    expect(JSON.parse(JSON.parse(FakeAgentClient.instances[0].sentPayloads[0]).init.body)).toMatchObject({
+      trigger: 'submit-message',
+      validationProfile: 'rule-skill-echo',
+      relayBridge: expect.objectContaining({
+        relaySessionId: 'relay-session-1',
+      }),
+      relayCatalog: expect.objectContaining({
+        connectors: expect.arrayContaining([
+          expect.objectContaining({
+            key: 'mcpviews-core',
+          }),
+        ]),
+        tools: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'rule-skill-echo',
+          }),
+          expect.objectContaining({
+            name: 'rich_content',
+          }),
+        ]),
+      }),
+      messages: [
+        expect.objectContaining({
+          id: expect.any(String),
+          role: 'user',
+          parts: [
+            expect.objectContaining({
+              type: 'text',
+              text: 'hello',
+            }),
+          ],
+        }),
+      ],
+    });
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'status', status: 'connecting' }),
+      expect.objectContaining({ type: 'user_accepted' }),
+      expect.objectContaining({ type: 'turn_finish' }),
+    ]));
   });
 
-  it('creates titled threads and calls the dedicated smoke endpoint', async function () {
-    var invoke = vi.fn(function (_command, args) {
-      if (args.path === '/projects/project-123/threads') {
+  it('creates titled threads and sends smoke prompts through the runtime agent bridge', async function () {
+    var runtimeMessages = [
+      {
+        id: 'user-smoke-1',
+        role: 'user',
+        parts: [{ type: 'text', text: window.__tribexAiClient.buildSmokePrompt('rule-skill-echo') }],
+        createdAt: '2026-04-15T00:00:00.000Z',
+      },
+      {
+        id: 'assistant-smoke-1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'Rule and skill bundle look healthy.' }],
+        createdAt: '2026-04-15T00:00:01.000Z',
+      },
+    ];
+    var getMessagesCalls = 0;
+    var FakeAgentClient = createAgentClientCtor({
+      getMessages: function () {
+        getMessagesCalls += 1;
+        return Promise.resolve(getMessagesCalls === 1 ? [] : runtimeMessages);
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/projects/project-123/threads') {
         return Promise.resolve({
           id: 'thread-123',
           title: 'Smoke Test 2026-04-14 12:00',
         });
       }
-      if (args.path === '/threads/thread-123/smoke') {
-        return Promise.resolve({
-          assistantMessage: { id: 'assistant-1' },
-          smokeReport: { status: 'passed' },
-        });
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
       }
-      return Promise.reject(new Error('Unexpected path: ' + args.path));
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse({
+          tools: [
+            {
+              name: 'rule-skill-echo',
+              description: 'Validates the loaded rule and skill bundle.',
+              inputSchema: { type: 'object' },
+            },
+          ],
+          connectors: [],
+        }));
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
     });
 
     globalThis.window = globalThis.window || {};
@@ -152,6 +640,7 @@ describe('tribex-ai-client', function () {
         invoke: invoke,
       },
     };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
 
     await expect(
       window.__tribexAiClient.createThread('project-123', 'Smoke Test 2026-04-14 12:00'),
@@ -159,11 +648,20 @@ describe('tribex-ai-client', function () {
       id: 'thread-123',
       title: 'Smoke Test 2026-04-14 12:00',
     });
-    await expect(
-      window.__tribexAiClient.runSmokeTest('thread-123', 'rule-skill-echo'),
-    ).resolves.toMatchObject({
-      smokeReport: { status: 'passed' },
-    });
+    var turn = await window.__tribexAiClient.runSmokeTest('thread-123', 'rule-skill-echo');
+    expect(turn.turnId).toEqual(expect.any(String));
+    await turn.done;
+    await expect(window.__tribexAiCloudflareBridge.getMessages({
+      threadId: 'thread-123',
+      connection: createRuntimeSessionEnvelope('thread-123').runtimeSession.connection,
+    })).resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          id: 'assistant-smoke-1',
+        }),
+      ]));
+
+    var expectedPrompt = window.__tribexAiClient.buildSmokePrompt('rule-skill-echo');
 
     expect(invoke).toHaveBeenNthCalledWith(1, 'first_party_ai_request', expect.objectContaining({
       method: 'POST',
@@ -172,9 +670,428 @@ describe('tribex-ai-client', function () {
     }));
     expect(invoke).toHaveBeenNthCalledWith(2, 'first_party_ai_request', expect.objectContaining({
       method: 'POST',
-      path: '/threads/thread-123/smoke',
-      body: { smokeKey: 'rule-skill-echo' },
+      path: '/threads/thread-123/runtime-session',
     }));
+    expect(invoke).toHaveBeenNthCalledWith(3, 'get_local_mcp_catalog', {});
+    expect(invoke).toHaveBeenNthCalledWith(4, 'first_party_ai_relay_request', expect.objectContaining({
+      method: 'POST',
+      path: '/api/desktop-relay/catalog',
+      body: expect.objectContaining({
+        relaySessionId: 'relay-session-1',
+      }),
+    }));
+
+    expect(FakeAgentClient.instances).toHaveLength(1);
+    expect(FakeAgentClient.instances[0].sentPayloads).toHaveLength(1);
+    expect(JSON.parse(JSON.parse(FakeAgentClient.instances[0].sentPayloads[0]).init.body)).toMatchObject({
+      trigger: 'submit-message',
+      validationProfile: 'rule-skill-echo',
+      relayBridge: expect.objectContaining({
+        requestToken: 'relay-token',
+      }),
+      relayCatalog: expect.objectContaining({
+        tools: [
+          expect.objectContaining({
+            name: 'rule-skill-echo',
+          }),
+        ],
+      }),
+      messages: [
+        expect.objectContaining({
+          id: expect.any(String),
+          role: 'user',
+          parts: [
+            expect.objectContaining({
+              type: 'text',
+              text: expectedPrompt,
+            }),
+          ],
+        }),
+      ],
+    });
+  });
+
+  it('emits a settled runtime snapshot after the turn completes', async function () {
+    var staleTranscript = [
+      {
+        id: 'user-old-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'older message' }],
+        createdAt: '2026-04-15T00:00:00.000Z',
+      },
+      {
+        id: 'assistant-old-1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'older reply' }],
+        createdAt: '2026-04-15T00:00:01.000Z',
+      },
+    ];
+    var settledTranscript = staleTranscript.concat([
+      {
+        id: 'user-new-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'follow up' }],
+        createdAt: '2026-04-15T00:00:02.000Z',
+      },
+      {
+        id: 'assistant-new-1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'fresh reply' }],
+        createdAt: '2026-04-15T00:00:03.000Z',
+      },
+    ]);
+    var getMessagesCalls = 0;
+    var FakeAgentClient = createAgentClientCtor({
+      getMessages: function () {
+        getMessagesCalls += 1;
+        if (getMessagesCalls === 1) return Promise.resolve(staleTranscript);
+        if (getMessagesCalls === 2) return Promise.resolve(staleTranscript);
+        return Promise.resolve(settledTranscript);
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse({
+          tools: [],
+          connectors: [],
+        }));
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var turn = await window.__tribexAiClient.sendMessage('thread-123', 'follow up');
+    expect(turn.turnId).toEqual(expect.any(String));
+    await turn.done;
+    await expect(window.__tribexAiCloudflareBridge.getMessages({
+      threadId: 'thread-123',
+      connection: createRuntimeSessionEnvelope('thread-123').runtimeSession.connection,
+    })).resolves.toEqual([
+        expect.objectContaining({ role: 'user', parts: [expect.objectContaining({ text: 'older message' })] }),
+        expect.objectContaining({ role: 'assistant', parts: [expect.objectContaining({ text: 'older reply' })] }),
+        expect.objectContaining({ role: 'user', parts: [expect.objectContaining({ text: 'follow up' })] }),
+        expect.objectContaining({ role: 'assistant', parts: [expect.objectContaining({ text: 'fresh reply' })] }),
+      ]);
+    expect(getMessagesCalls).toBeGreaterThanOrEqual(3);
+  });
+
+  it('extracts renderer-backed rich_content activity from runtime tool input payloads', async function () {
+    var FakeAgentClient = createAgentClientCtor({
+      getMessages: function () {
+        return Promise.resolve([]);
+      },
+      onChatRequest: function (payload, client) {
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: false,
+            body: JSON.stringify({
+              type: 'tool-input-available',
+              toolCallId: 'tool-push-1',
+              toolName: 'rich_content',
+              input: {
+                title: 'Example Architecture Document',
+                body: '```mermaid\\ngraph TD;\\nA-->B;\\n```',
+              },
+            }),
+          }),
+        });
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: false,
+            body: JSON.stringify({
+              type: 'tool-output-available',
+              toolCallId: 'tool-push-1',
+              toolName: 'rich_content',
+              output: {
+                status: 'stored',
+                session_id: 'result-session-1',
+              },
+              preliminary: false,
+            }),
+          }),
+        });
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse({
+          tools: [],
+          connectors: [],
+        }));
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var runtimeEvents = [];
+    var unsubscribe = window.__tribexAiClient.listenToRuntimeEvents('thread-123', function (event) {
+      runtimeEvents.push(event);
+    });
+
+    var turn = await window.__tribexAiClient.sendMessage('thread-123', 'push a sample document');
+    await turn.done;
+    unsubscribe();
+
+    var updates = runtimeEvents.filter(function (event) {
+      return event && event.type === 'activity_update';
+    });
+    expect(updates).toHaveLength(2);
+    expect(updates[0].item).toMatchObject({
+      toolName: 'rich_content',
+      resultContentType: 'rich_content',
+      resultData: {
+        title: 'Example Architecture Document',
+        body: '```mermaid\\ngraph TD;\\nA-->B;\\n```',
+      },
+      resultMeta: null,
+    });
+    expect(updates[0].item.detail).toBe('Preparing Rich Content result: Example Architecture Document.');
+    expect(updates[1].item.detail).toBe('Prepared Rich Content result: Example Architecture Document.');
+    expect(runtimeEvents.some(function (event) {
+      return event && event.type === 'assistant_start';
+    })).toBe(false);
+  });
+
+  it('reclassifies pre-tool assistant chatter into work notes and keeps only the settled answer in the final assistant message', async function () {
+    var FakeAgentClient = createAgentClientCtor({
+      getMessages: function () {
+        return Promise.resolve([]);
+      },
+      onChatRequest: function (payload, client) {
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: false,
+            body: JSON.stringify({
+              type: 'text-delta',
+              delta: 'Looking up the right renderer. ',
+            }),
+          }),
+        });
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: false,
+            body: JSON.stringify({
+              type: 'tool-input-start',
+              toolCallId: 'tool-discovery-1',
+              toolName: 'describe_connector',
+              input: { key: 'mcpviews-core' },
+            }),
+          }),
+        });
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: false,
+            body: JSON.stringify({
+              type: 'tool-output-available',
+              toolCallId: 'tool-discovery-1',
+              toolName: 'describe_connector',
+              output: { key: 'mcpviews-core' },
+              preliminary: false,
+            }),
+          }),
+        });
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: false,
+            body: JSON.stringify({
+              type: 'text-delta',
+              delta: 'I found the right surface and opened it for you.',
+            }),
+          }),
+        });
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var runtimeEvents = [];
+    var unsubscribe = window.__tribexAiClient.listenToRuntimeEvents('thread-123', function (event) {
+      runtimeEvents.push(event);
+    });
+
+    var turn = await window.__tribexAiClient.sendMessage('thread-123', 'open the renderer');
+    await turn.done;
+    unsubscribe();
+
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'assistant_reset',
+      }),
+      expect.objectContaining({
+        type: 'work_note_update',
+        item: expect.objectContaining({
+          title: 'Work note',
+          detail: 'Looking up the right renderer. ',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'assistant_finish',
+        message: expect.objectContaining({
+          content: 'I found the right surface and opened it for you.',
+        }),
+      }),
+    ]));
+  });
+
+  it('gracefully finishes renderer-only turns when the provider errors after a successful tool result', async function () {
+    var FakeAgentClient = createAgentClientCtor({
+      getMessages: function () {
+        return Promise.resolve([]);
+      },
+      onChatRequest: function (payload, client) {
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: false,
+            body: JSON.stringify({
+              type: 'tool-input-available',
+              toolCallId: 'tool-push-1',
+              toolName: 'rich_content',
+              input: {
+                title: 'Web App Architecture',
+                body: '# Overview',
+              },
+            }),
+          }),
+        });
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            done: false,
+            body: JSON.stringify({
+              type: 'tool-output-available',
+              toolCallId: 'tool-push-1',
+              toolName: 'rich_content',
+              output: {
+                status: 'stored',
+                session_id: 'result-session-1',
+              },
+              preliminary: false,
+            }),
+          }),
+        });
+        client.emit('message', {
+          data: JSON.stringify({
+            type: 'cf_agent_use_chat_response',
+            id: payload.id,
+            error: true,
+            body: 'Provider returned error',
+          }),
+        });
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse({
+          tools: [],
+          connectors: [],
+        }));
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var runtimeEvents = [];
+    var unsubscribe = window.__tribexAiClient.listenToRuntimeEvents('thread-123', function (event) {
+      runtimeEvents.push(event);
+    });
+
+    var turn = await window.__tribexAiClient.sendMessage('thread-123', 'open the renderer');
+    await turn.done;
+    unsubscribe();
+
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'activity_update',
+        item: expect.objectContaining({
+          toolName: 'rich_content',
+          sessionId: 'result-session-1',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'assistant_finish',
+        message: expect.objectContaining({
+          content: 'I opened "Web App Architecture" in a background tab for you.',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'turn_finish',
+      }),
+    ]));
+    expect(runtimeEvents.some(function (event) {
+      return event && event.type === 'turn_error';
+    })).toBe(false);
   });
 
   it('creates thread-scoped companion sessions with the thread id in the request body', async function () {
@@ -208,6 +1125,60 @@ describe('tribex-ai-client', function () {
       body: {
         threadId: 'thread-123',
         metadata: {},
+      },
+    }));
+  });
+
+  it('lists packages and creates workspaces through the hosted organization routes', async function () {
+    var invoke = vi.fn(function (_command, args) {
+      if (args.path === '/packages') {
+        return Promise.resolve([
+          { id: 'pkg-1', key: 'smoke', displayName: 'Smoke Workspace', version: '1.1.0' },
+          { id: 'pkg-2', key: 'generic', displayName: 'General Workspace', version: '1.0.0' },
+        ]);
+      }
+      if (args.path === '/organizations/org-123/workspaces') {
+        return Promise.resolve({
+          workspace: {
+            id: 'workspace-123',
+            organizationId: 'org-123',
+            name: 'Design Ops',
+            packageKey: 'smoke',
+            packageVersion: '1.1.0',
+          },
+        });
+      }
+      return Promise.reject(new Error('Unexpected path: ' + args.path));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(window.__tribexAiClient.fetchPackages()).resolves.toMatchObject([
+      { key: 'smoke', name: 'Smoke Workspace', version: '1.1.0' },
+      { key: 'generic', name: 'General Workspace', version: '1.0.0' },
+    ]);
+    await expect(window.__tribexAiClient.createWorkspace('org-123', 'Design Ops', 'smoke')).resolves.toMatchObject({
+      id: 'workspace-123',
+      organizationId: 'org-123',
+      name: 'Design Ops',
+      packageKey: 'smoke',
+    });
+
+    expect(invoke).toHaveBeenNthCalledWith(1, 'first_party_ai_request', expect.objectContaining({
+      method: 'GET',
+      path: '/packages',
+    }));
+    expect(invoke).toHaveBeenNthCalledWith(2, 'first_party_ai_request', expect.objectContaining({
+      method: 'POST',
+      path: '/organizations/org-123/workspaces',
+      body: {
+        name: 'Design Ops',
+        packageKey: 'smoke',
       },
     }));
   });

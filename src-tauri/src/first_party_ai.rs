@@ -557,6 +557,43 @@ async fn emit_stream_event(app_handle: &AppHandle, payload: Value) {
     let _ = app_handle.emit("first_party_ai_stream_event", payload);
 }
 
+fn parse_sse_payload(raw_data: &str) -> Value {
+    serde_json::from_str::<Value>(raw_data).unwrap_or_else(|_| {
+        json!({
+            "raw": raw_data,
+        })
+    })
+}
+
+async fn emit_companion_data_event(
+    app_handle: &AppHandle,
+    thread_id: &str,
+    raw_data: &str,
+    pending_sequence: Option<i64>,
+    pending_event_name: Option<&str>,
+) {
+    let mut payload = parse_sse_payload(raw_data);
+    if let Some(sequence) = pending_sequence {
+        if let Some(payload_object) = payload.as_object_mut() {
+            payload_object.insert("sequence".to_string(), json!(sequence));
+        }
+    }
+
+    let mut envelope = json!({
+        "threadId": thread_id,
+        "type": "data",
+        "payload": payload,
+    });
+
+    if let Some(event_name) = pending_event_name {
+        if !event_name.is_empty() {
+            envelope["sseEvent"] = json!(event_name);
+        }
+    }
+
+    emit_stream_event(app_handle, envelope).await;
+}
+
 pub fn stop_companion_stream(state: &Arc<AppState>, thread_id: &str) {
     let mut streams = state.first_party_ai_streams.lock().unwrap();
     if let Some(handle) = streams.remove(thread_id) {
@@ -638,6 +675,8 @@ pub async fn start_companion_stream(
 
         let mut buffer = String::new();
         let mut pending_sequence: Option<i64> = None;
+        let mut pending_event_name: Option<String> = None;
+        let mut pending_data_lines: Vec<String> = Vec::new();
 
         loop {
             let chunk = match response.chunk().await {
@@ -660,42 +699,61 @@ pub async fn start_companion_stream(
             buffer.push_str(&String::from_utf8_lossy(&chunk));
 
             while let Some(idx) = buffer.find('\n') {
-                let line = buffer[..idx].trim().to_string();
+                let line = buffer[..idx].trim_end_matches('\r').to_string();
                 buffer = buffer[idx + 1..].to_string();
 
-                if let Some(id) = line.strip_prefix("id: ") {
+                if line.is_empty() {
+                    if !pending_data_lines.is_empty() {
+                        let raw_data = pending_data_lines.join("\n");
+                        emit_companion_data_event(
+                            &app_handle_clone,
+                            &thread_id_clone,
+                            &raw_data,
+                            pending_sequence.take(),
+                            pending_event_name.as_deref(),
+                        )
+                        .await;
+                        pending_data_lines.clear();
+                    }
+                    pending_event_name = None;
+                    continue;
+                }
+
+                if line.starts_with(':') {
+                    continue;
+                }
+
+                if let Some(id) = line.strip_prefix("id:") {
                     pending_sequence = id.trim().parse::<i64>().ok();
                     continue;
                 }
 
-                if let Some(data) = line.strip_prefix("data: ") {
-                    let payload = serde_json::from_str::<Value>(data).unwrap_or_else(|_| {
-                        json!({
-                            "raw": data,
-                        })
-                    });
+                if let Some(event_name) = line.strip_prefix("event:") {
+                    let event_name = event_name.trim();
+                    pending_event_name = if event_name.is_empty() {
+                        None
+                    } else {
+                        Some(event_name.to_string())
+                    };
+                    continue;
+                }
 
-                    let mut envelope = json!({
-                        "threadId": thread_id_clone,
-                        "type": "data",
-                        "payload": payload,
-                    });
-
-                    if let Some(sequence) = pending_sequence.take() {
-                        if let Some(payload_value) = envelope.get_mut("payload") {
-                            if let Some(payload_object) = payload_value.as_object_mut() {
-                                payload_object.insert("sequence".to_string(), json!(sequence));
-                            }
-                        }
-                    }
-
-                    emit_stream_event(
-                        &app_handle_clone,
-                        envelope,
-                    )
-                    .await;
+                if let Some(data) = line.strip_prefix("data:") {
+                    pending_data_lines.push(data.trim_start().to_string());
                 }
             }
+        }
+
+        if !pending_data_lines.is_empty() {
+            let raw_data = pending_data_lines.join("\n");
+            emit_companion_data_event(
+                &app_handle_clone,
+                &thread_id_clone,
+                &raw_data,
+                pending_sequence.take(),
+                pending_event_name.as_deref(),
+            )
+            .await;
         }
 
         emit_stream_event(

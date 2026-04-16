@@ -5,6 +5,7 @@
   'use strict';
 
   var stacks = new Map();
+  var threadArtifactDrawers = new Map();
   var currentSessionId = null;
   var BASE_Z = 150;
   var Z_INCREMENT = 2;
@@ -16,45 +17,66 @@
     return stacks.get(sessionId);
   }
 
+  function resolveHost(sessionId) {
+    return (sessionId && document.querySelector('.session-content[data-session-id="' + sessionId + '"]'))
+      || document.getElementById('content-area')
+      || document.body;
+  }
+
   function setActiveSession(sessionId) {
     currentSessionId = sessionId;
   }
 
   function hideSessionDrawers(sessionId) {
     var stack = stacks.get(sessionId);
-    if (!stack) return;
-    for (var i = 0; i < stack.length; i++) {
-      stack[i].overlay.style.display = 'none';
-      stack[i].panel.style.display = 'none';
+    if (stack) {
+      for (var i = 0; i < stack.length; i++) {
+        setDrawerDisplay(stack[i], false);
+      }
     }
+
+    var artifactEntry = threadArtifactDrawers.get(sessionId);
+    if (!artifactEntry) return;
+    setDrawerDisplay(artifactEntry, false);
   }
 
   function showSessionDrawers(sessionId) {
     var stack = stacks.get(sessionId);
-    if (!stack) return;
-    for (var i = 0; i < stack.length; i++) {
-      stack[i].overlay.style.display = '';
-      stack[i].panel.style.display = '';
+    if (stack) {
+      for (var i = 0; i < stack.length; i++) {
+        setDrawerDisplay(stack[i], true);
+      }
     }
+
+    var artifactEntry = threadArtifactDrawers.get(sessionId);
+    if (!artifactEntry) return;
+    var artifactState = getActiveThreadArtifactState(artifactEntry);
+    if (artifactState && artifactState.isOpen && artifactState.order.length) {
+      openDrawerUi(artifactEntry);
+      return;
+    }
+    setDrawerDisplay(artifactEntry, false);
   }
 
   function closeSessionDrawers(sessionId) {
     var stack = stacks.get(sessionId);
-    if (!stack) return;
-    for (var i = 0; i < stack.length; i++) {
-      if (stack[i].overlay.parentNode) stack[i].overlay.parentNode.removeChild(stack[i].overlay);
-      if (stack[i].panel.parentNode) stack[i].panel.parentNode.removeChild(stack[i].panel);
+    if (stack) {
+      for (var i = 0; i < stack.length; i++) {
+        removeDrawerEntry(stack[i]);
+      }
+      stacks.delete(sessionId);
     }
-    stacks.delete(sessionId);
+
+    var artifactEntry = threadArtifactDrawers.get(sessionId);
+    if (!artifactEntry) return;
+    removeDrawerEntry(artifactEntry);
+    threadArtifactDrawers.delete(sessionId);
   }
 
   function createOverlay(level) {
     var overlay = document.createElement('div');
     overlay.className = 'drawer-stack-overlay';
     overlay.style.zIndex = String(BASE_Z + level * Z_INCREMENT);
-    overlay.addEventListener('click', function () {
-      closeDrawer();
-    });
     return overlay;
   }
 
@@ -66,105 +88,468 @@
     return panel;
   }
 
-  function buildPanelHeader(rendererName) {
+  function buildPanelHeader(titleText) {
     var header = document.createElement('div');
     header.className = 'drawer-stack-header';
 
     var title = document.createElement('span');
     title.className = 'drawer-stack-title';
-    title.textContent = rendererName.replace(/_/g, ' ');
+    title.textContent = titleText;
     header.appendChild(title);
 
     var closeBtn = document.createElement('button');
     closeBtn.className = 'drawer-stack-close';
     closeBtn.textContent = '\u00D7';
     closeBtn.setAttribute('aria-label', 'Close drawer');
-    closeBtn.addEventListener('click', function () {
-      closeDrawer();
-    });
     header.appendChild(closeBtn);
 
-    return header;
+    return {
+      header: header,
+      title: title,
+      closeBtn: closeBtn,
+    };
   }
 
-  function invokeRenderer(rendererName, params, displayMode) {
-    var stack = getStack(currentSessionId);
-    var level = stack.length;
+  function formatRendererTitle(rendererName) {
+    return String(rendererName || 'details').replace(/_/g, ' ');
+  }
 
+  function clearElementChildren(element) {
+    if (!element) return;
+    element.textContent = '';
+    if (typeof element.replaceChildren === 'function') {
+      element.replaceChildren();
+      return;
+    }
+    if (Array.isArray(element.children)) {
+      element.children.length = 0;
+    }
+    if ('innerHTML' in element) {
+      element.innerHTML = '';
+    }
+  }
+
+  function setDrawerDisplay(entry, visible) {
+    if (!entry) return;
+    entry.overlay.style.display = visible ? '' : 'none';
+    entry.panel.style.display = visible ? '' : 'none';
+  }
+
+  function openDrawerUi(entry) {
+    if (!entry) return;
+    setDrawerDisplay(entry, true);
+    requestAnimationFrame(function () {
+      entry.overlay.classList.add('open');
+      entry.panel.classList.add('open');
+    });
+  }
+
+  function closeDrawerUi(entry) {
+    if (!entry) return;
+    entry.overlay.classList.remove('open');
+    entry.panel.classList.remove('open');
+  }
+
+  function removeDrawerEntry(entry) {
+    if (!entry) return;
+    if (entry.overlay.parentNode) entry.overlay.parentNode.removeChild(entry.overlay);
+    if (entry.panel.parentNode) entry.panel.parentNode.removeChild(entry.panel);
+  }
+
+  function createDrawerEntry(sessionId, level, options) {
+    options = options || {};
     var overlay = createOverlay(level);
     var panel = createPanel(level);
+    if (options.overlayClassName) {
+      overlay.className += ' ' + options.overlayClassName;
+    }
+    if (options.panelClassName) {
+      panel.className += ' ' + options.panelClassName;
+    }
+    if (options.width) {
+      panel.style.width = options.width;
+    }
 
-    // Build header
-    var header = buildPanelHeader(rendererName);
-    panel.appendChild(header);
+    var headerParts = buildPanelHeader(options.title || formatRendererTitle(options.rendererName));
+    if (options.headerClassName) {
+      headerParts.header.className += ' ' + options.headerClassName;
+    }
+    panel.appendChild(headerParts.header);
 
-    // Content container for the renderer
     var content = document.createElement('div');
     content.className = 'drawer-stack-content';
+    if (options.contentClassName) {
+      content.className += ' ' + options.contentClassName;
+    }
     panel.appendChild(content);
 
-    var host = (currentSessionId && document.querySelector('.session-content[data-session-id="' + currentSessionId + '"]'))
-      || document.getElementById('content-area') || document.body;
-    host.appendChild(overlay);
-    host.appendChild(panel);
+    var entry = {
+      sessionId: sessionId,
+      level: level,
+      rendererName: options.rendererName || null,
+      displayMode: options.displayMode || 'drawer',
+      overlay: overlay,
+      panel: panel,
+      header: headerParts.header,
+      titleEl: headerParts.title,
+      closeBtn: headerParts.closeBtn,
+      content: content,
+      onClose: typeof options.onClose === 'function' ? options.onClose : null,
+    };
 
-    stack.push({ overlay: overlay, panel: panel, rendererName: rendererName });
-
-    // Trigger open animation on next frame
-    requestAnimationFrame(function () {
-      overlay.classList.add('open');
-      panel.classList.add('open');
+    overlay.addEventListener('click', function () {
+      if (entry.onClose) {
+        entry.onClose();
+      }
+    });
+    headerParts.closeBtn.addEventListener('click', function (event) {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+      if (entry.onClose) {
+        entry.onClose();
+      }
     });
 
-    // Build context object for the invoked renderer
+    var host = resolveHost(sessionId);
+    host.appendChild(overlay);
+    host.appendChild(panel);
+    return entry;
+  }
+
+  function updateDrawerTitle(entry, title) {
+    if (!entry || !entry.titleEl) return;
+    entry.titleEl.textContent = title || 'Details';
+  }
+
+  function renderRendererIntoEntry(entry, rendererName, params, displayMode) {
+    if (!entry) return;
+    clearElementChildren(entry.content);
+    updateDrawerTitle(entry, formatRendererTitle(rendererName));
+
+    var renderer = window.__renderers && window.__renderers[rendererName];
+    if (typeof renderer !== 'function') {
+      entry.content.textContent = 'Renderer not found: ' + rendererName;
+      entry.content.style.padding = '24px';
+      entry.content.style.color = 'var(--text-secondary, #888)';
+      return;
+    }
+
     var context = {
       mode: displayMode || 'drawer',
       params: params || {},
-      level: level,
+      level: entry.level,
       invoke: function (name, p) {
         invokeRenderer(name, p);
       },
     };
 
-    // Look up and call the renderer
-    var renderer = window.__renderers && window.__renderers[rendererName];
-    if (renderer) {
-      try {
-        renderer(content, params || {}, {}, {}, false, function () {}, context);
-      } catch (err) {
-        console.error('[drawer-stack] Renderer error:', rendererName, err);
-        content.textContent = 'Failed to load renderer: ' + rendererName;
-      }
-    } else {
-      content.textContent = 'Renderer not found: ' + rendererName;
-      content.style.padding = '24px';
-      content.style.color = 'var(--text-secondary, #888)';
+    try {
+      renderer(entry.content, params || {}, {}, {}, false, function () {}, context);
+    } catch (err) {
+      console.error('[drawer-stack] Renderer error:', rendererName, err);
+      entry.content.textContent = 'Failed to load renderer: ' + rendererName;
     }
+  }
+
+  function invokeRenderer(rendererName, params, displayMode) {
+    var stack = getStack(currentSessionId);
+    var level = stack.length;
+    var entry = createDrawerEntry(currentSessionId, level, {
+      rendererName: rendererName,
+      title: formatRendererTitle(rendererName),
+      displayMode: displayMode || 'drawer',
+      onClose: function () {
+        closeDrawer();
+      },
+    });
+
+    stack.push(entry);
+    renderRendererIntoEntry(entry, rendererName, params, displayMode || 'drawer');
+    openDrawerUi(entry);
   }
 
   function closeDrawer() {
     var stack = getStack(currentSessionId);
-    if (stack.length === 0) return;
-    var entry = stack.pop();
+    if (stack.length > 0) {
+      var entry = stack.pop();
+      closeDrawerUi(entry);
+      setTimeout(function () {
+        removeDrawerEntry(entry);
+      }, 300);
+      return;
+    }
 
-    entry.panel.classList.remove('open');
-    entry.overlay.classList.remove('open');
-
-    // Remove after transition
-    setTimeout(function () {
-      if (entry.overlay.parentNode) entry.overlay.parentNode.removeChild(entry.overlay);
-      if (entry.panel.parentNode) entry.panel.parentNode.removeChild(entry.panel);
-    }, 300);
+    closeThreadArtifactDrawer(currentSessionId);
   }
 
   function closeAllDrawers() {
     var stack = getStack(currentSessionId);
     while (stack.length > 0) {
-      closeDrawer();
+      var entry = stack.pop();
+      removeDrawerEntry(entry);
+    }
+    closeThreadArtifactDrawer(currentSessionId);
+  }
+
+  function ensureThreadArtifactEntry(sessionId) {
+    if (sessionId == null) return null;
+    var existing = threadArtifactDrawers.get(sessionId);
+    if (existing) return existing;
+
+    var entry = createDrawerEntry(sessionId, 0, {
+      rendererName: 'thread_artifacts',
+      title: 'Artifacts',
+      displayMode: 'thread-artifact-drawer',
+      overlayClassName: 'thread-artifact-shell-overlay',
+      panelClassName: 'thread-artifact-shell-panel',
+      headerClassName: 'thread-artifact-shell-header',
+      contentClassName: 'thread-artifact-shell-content',
+      onClose: function () {
+        closeThreadArtifactDrawer(sessionId);
+      },
+    });
+
+    entry.threads = new Map();
+    entry.activeThreadId = null;
+    threadArtifactDrawers.set(sessionId, entry);
+    return entry;
+  }
+
+  function ensureThreadArtifactState(entry, threadId) {
+    if (!entry || !threadId) return null;
+    if (!entry.threads.has(threadId)) {
+      entry.threads.set(threadId, {
+        drawerId: 'tribex-ai-thread-artifacts:' + threadId,
+        artifactsByKey: {},
+        order: [],
+        selectedArtifactKey: null,
+        isOpen: false,
+      });
+    }
+    return entry.threads.get(threadId);
+  }
+
+  function getActiveThreadArtifactState(entry) {
+    if (!entry || !entry.activeThreadId) return null;
+    return entry.threads.get(entry.activeThreadId) || null;
+  }
+
+  function renderThreadArtifactContent(entry) {
+    if (!entry) return;
+    clearElementChildren(entry.content);
+
+    var threadState = getActiveThreadArtifactState(entry);
+    if (!threadState || !threadState.order.length) {
+      updateDrawerTitle(entry, 'Artifacts');
+      closeDrawerUi(entry);
+      return;
+    }
+
+    var selectedKey = threadState.selectedArtifactKey;
+    if (!selectedKey || !threadState.artifactsByKey[selectedKey]) {
+      selectedKey = threadState.order[threadState.order.length - 1];
+      threadState.selectedArtifactKey = selectedKey;
+    }
+
+    var artifact = threadState.artifactsByKey[selectedKey];
+    if (!artifact) {
+      updateDrawerTitle(entry, 'Artifacts');
+      closeDrawerUi(entry);
+      return;
+    }
+
+    updateDrawerTitle(entry, artifact.title || 'Artifact');
+
+    var body = document.createElement('div');
+    body.className = 'thread-artifact-shell';
+    entry.content.appendChild(body);
+
+    if (threadState.order.length > 1) {
+      var tabs = document.createElement('div');
+      tabs.className = 'thread-artifact-tabs';
+
+      threadState.order.forEach(function (artifactKey) {
+        var tabArtifact = threadState.artifactsByKey[artifactKey];
+        if (!tabArtifact) return;
+
+        var tab = document.createElement('button');
+        tab.type = 'button';
+        tab.className = 'thread-artifact-tab' + (artifactKey === selectedKey ? ' is-active' : '');
+        tab.addEventListener('click', function () {
+          selectThreadArtifact(entry.sessionId, entry.activeThreadId, artifactKey);
+        });
+
+        var label = document.createElement('span');
+        label.className = 'thread-artifact-tab-label';
+        label.textContent = tabArtifact.title || 'Artifact';
+        tab.appendChild(label);
+
+        var close = document.createElement('span');
+        close.className = 'thread-artifact-tab-close';
+        close.textContent = '\u00D7';
+        close.addEventListener('click', function (event) {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          closeThreadArtifact(entry.sessionId, entry.activeThreadId, artifactKey);
+        });
+        tab.appendChild(close);
+        tabs.appendChild(tab);
+      });
+
+      body.appendChild(tabs);
+    }
+
+    var content = document.createElement('div');
+    content.className = 'thread-artifact-content';
+    body.appendChild(content);
+
+    var renderer = window.__renderers && window.__renderers[artifact.contentType];
+    if (typeof renderer !== 'function') {
+      content.textContent = 'Renderer not found: ' + artifact.contentType;
+      content.style.padding = '24px';
+      content.style.color = 'var(--text-secondary, #888)';
+      return;
+    }
+
+    try {
+      renderer(
+        content,
+        artifact.data || {},
+        artifact.meta || {},
+        artifact.toolArgs || {},
+        false,
+        function () {},
+        {
+          mode: 'thread-artifact-drawer',
+          params: artifact.data || {},
+          level: 0,
+          invoke: function (name, p) {
+            invokeRenderer(name, p);
+          },
+        },
+      );
+    } catch (error) {
+      console.error('[drawer-stack] Thread artifact renderer error:', artifact.contentType, error);
+      content.textContent = 'Failed to load renderer: ' + artifact.contentType;
+      content.style.padding = '24px';
+      content.style.color = 'var(--text-secondary, #888)';
     }
   }
 
-  // Register on __companionUtils
+  function syncThreadArtifactDrawer(payload) {
+    if (!payload || !payload.sessionId || !payload.threadId) return null;
+    var entry = ensureThreadArtifactEntry(payload.sessionId);
+    if (!entry) return null;
+
+    var threadState = ensureThreadArtifactState(entry, payload.threadId);
+    entry.activeThreadId = payload.threadId;
+
+    threadState.drawerId = payload.drawerId || threadState.drawerId;
+    threadState.artifactsByKey = {};
+    threadState.order = [];
+
+    (payload.artifacts || []).forEach(function (artifact) {
+      if (!artifact || !artifact.artifactKey) return;
+      threadState.artifactsByKey[artifact.artifactKey] = Object.assign({}, artifact);
+      threadState.order.push(artifact.artifactKey);
+    });
+
+    if (!threadState.order.length) {
+      threadState.selectedArtifactKey = null;
+      threadState.isOpen = false;
+      renderThreadArtifactContent(entry);
+      return threadState.drawerId;
+    }
+
+    if (payload.selectedArtifactKey && threadState.artifactsByKey[payload.selectedArtifactKey]) {
+      threadState.selectedArtifactKey = payload.selectedArtifactKey;
+    } else if (!threadState.selectedArtifactKey || !threadState.artifactsByKey[threadState.selectedArtifactKey]) {
+      threadState.selectedArtifactKey = threadState.order[threadState.order.length - 1];
+    }
+
+    threadState.isOpen = payload.open !== false;
+    renderThreadArtifactContent(entry);
+    if (threadState.isOpen) {
+      openDrawerUi(entry);
+    } else {
+      closeDrawerUi(entry);
+    }
+    return threadState.drawerId;
+  }
+
+  function selectThreadArtifact(sessionId, threadId, artifactKey) {
+    if (!sessionId || !threadId) return null;
+    var entry = ensureThreadArtifactEntry(sessionId);
+    var threadState = ensureThreadArtifactState(entry, threadId);
+    if (!threadState || !threadState.order.length) return null;
+
+    entry.activeThreadId = threadId;
+    if (artifactKey && threadState.artifactsByKey[artifactKey]) {
+      threadState.selectedArtifactKey = artifactKey;
+    } else if (!threadState.selectedArtifactKey || !threadState.artifactsByKey[threadState.selectedArtifactKey]) {
+      threadState.selectedArtifactKey = threadState.order[threadState.order.length - 1];
+    }
+    threadState.isOpen = true;
+    renderThreadArtifactContent(entry);
+    openDrawerUi(entry);
+    return threadState.selectedArtifactKey;
+  }
+
+  function closeThreadArtifact(sessionId, threadId, artifactKey) {
+    if (!sessionId || !threadId || !artifactKey) return null;
+    var entry = threadArtifactDrawers.get(sessionId);
+    if (!entry) return null;
+    var threadState = entry.threads.get(threadId);
+    if (!threadState || !threadState.artifactsByKey[artifactKey]) return null;
+
+    delete threadState.artifactsByKey[artifactKey];
+    threadState.order = threadState.order.filter(function (candidate) {
+      return candidate !== artifactKey;
+    });
+
+    if (!threadState.order.length) {
+      threadState.selectedArtifactKey = null;
+      threadState.isOpen = false;
+    } else if (threadState.selectedArtifactKey === artifactKey) {
+      threadState.selectedArtifactKey = threadState.order[threadState.order.length - 1];
+    }
+
+    renderThreadArtifactContent(entry);
+    if (threadState.isOpen) {
+      openDrawerUi(entry);
+    } else {
+      closeDrawerUi(entry);
+    }
+    return threadState.selectedArtifactKey;
+  }
+
+  function closeThreadArtifactDrawer(sessionId, threadId) {
+    if (!sessionId) return;
+    var entry = threadArtifactDrawers.get(sessionId);
+    if (!entry) return;
+    var targetThreadId = threadId || entry.activeThreadId;
+    var threadState = targetThreadId ? entry.threads.get(targetThreadId) : null;
+    if (threadState) {
+      threadState.isOpen = false;
+    }
+    closeDrawerUi(entry);
+  }
+
+  function setThreadArtifactContext(sessionId, threadId) {
+    if (!sessionId) return;
+    var entry = threadArtifactDrawers.get(sessionId);
+    if (!entry) return;
+    entry.activeThreadId = threadId || null;
+    renderThreadArtifactContent(entry);
+
+    var threadState = getActiveThreadArtifactState(entry);
+    if (threadState && threadState.isOpen && threadState.order.length) {
+      openDrawerUi(entry);
+    } else {
+      closeDrawerUi(entry);
+    }
+  }
+
   var utils = window.__companionUtils || {};
   utils.invokeRenderer = invokeRenderer;
   utils.closeDrawer = closeDrawer;
@@ -173,5 +558,10 @@
   utils.hideSessionDrawers = hideSessionDrawers;
   utils.showSessionDrawers = showSessionDrawers;
   utils.closeSessionDrawers = closeSessionDrawers;
+  utils.syncThreadArtifactDrawer = syncThreadArtifactDrawer;
+  utils.selectThreadArtifact = selectThreadArtifact;
+  utils.closeThreadArtifact = closeThreadArtifact;
+  utils.closeThreadArtifactDrawer = closeThreadArtifactDrawer;
+  utils.setThreadArtifactContext = setThreadArtifactContext;
   window.__companionUtils = utils;
 })();

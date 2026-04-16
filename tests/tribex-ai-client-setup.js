@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 var __dirname_resolved = dirname(fileURLToPath(import.meta.url));
+await import('../src/cloudflare-agent-bridge.js');
 var code = readFileSync(join(__dirname_resolved, '../public/renderers/tribex-ai-client.js'), 'utf8');
 
 var fn = new Function(code);

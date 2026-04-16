@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex as TokioMutex;
 use tauri::{Emitter, State};
 
 use mcpviews_shared::{PluginAuth, PluginInfo, PluginManifest, RegistryEntry, RegistrySource};
 
 use crate::renderer_scanner::RendererInfo;
 
+use crate::http_server::AsyncAppState;
 use crate::review::ReviewDecision;
 use crate::session::PreviewSession;
 use crate::state::AppState;
@@ -464,19 +466,59 @@ pub async fn first_party_ai_relay_request(
 }
 
 #[tauri::command]
+pub async fn list_local_mcp_tools(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<serde_json::Value>, String> {
+    let async_state = Arc::new(TokioMutex::new(AsyncAppState {
+        inner: state.inner().clone(),
+        app_handle,
+    }));
+    Ok(crate::mcp_tools::list_tools(&async_state).await)
+}
+
+#[tauri::command]
+pub async fn get_local_mcp_catalog(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let async_state = Arc::new(TokioMutex::new(AsyncAppState {
+        inner: state.inner().clone(),
+        app_handle,
+    }));
+    Ok(crate::mcp_tools::build_hosted_discovery_catalog(&async_state).await)
+}
+
+#[tauri::command]
+pub async fn call_local_mcp_tool(
+    name: String,
+    arguments: serde_json::Value,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let async_state = Arc::new(TokioMutex::new(AsyncAppState {
+        inner: state.inner().clone(),
+        app_handle,
+    }));
+    crate::mcp_tools::call_tool(&name, arguments, &async_state).await
+}
+
+#[tauri::command]
 pub async fn register_first_party_ai_desktop_relay(
     body: Option<serde_json::Value>,
     state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    crate::desktop_relay::register_desktop_relay(state.inner(), body).await
+    crate::desktop_relay::register_desktop_relay(state.inner(), &app_handle, body).await
 }
 
 #[tauri::command]
 pub async fn refresh_first_party_ai_desktop_relay(
     body: Option<serde_json::Value>,
     state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    crate::desktop_relay::refresh_desktop_relay(state.inner(), body).await
+    crate::desktop_relay::refresh_desktop_relay(state.inner(), &app_handle, body).await
 }
 
 #[tauri::command]

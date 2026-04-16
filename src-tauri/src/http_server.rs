@@ -25,6 +25,12 @@ use crate::review::ReviewDecision;
 use crate::session::PreviewSession;
 use crate::state::AppState;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PushUpdateMode {
+    Replace,
+    AppendText,
+}
+
 /// Shared state wrapper for async axum handlers (needs tokio::Mutex, not std::Mutex)
 pub struct AsyncAppState {
     pub inner: Arc<AppState>,
@@ -76,6 +82,18 @@ pub struct PushResponse {
     pub table_decisions: Option<HashMap<String, serde_json::Value>>,
 }
 
+#[derive(Debug)]
+struct NormalizedPushRequest {
+    tool_name: String,
+    tool_args: Option<serde_json::Value>,
+    data: serde_json::Value,
+    meta: Option<serde_json::Value>,
+    review_required: bool,
+    timeout_secs: u64,
+    session_id: Option<String>,
+    update_mode: PushUpdateMode,
+}
+
 impl From<ReviewDecision> for PushResponse {
     fn from(d: ReviewDecision) -> Self {
         PushResponse {
@@ -105,6 +123,163 @@ pub enum ExecutePushResult {
     Stored { session_id: String },
     Pending { session_id: String },
     Decision(PushResponse),
+}
+
+fn get_nested_value<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    Some(current)
+}
+
+fn extract_string_candidate(value: &serde_json::Value, paths: &[&[&str]]) -> Option<String> {
+    for path in paths {
+        if let Some(candidate) = get_nested_value(value, path).and_then(|entry| entry.as_str()) {
+            let trimmed = candidate.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn merge_json_objects(
+    base: Option<serde_json::Value>,
+    overlay: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut merged = match base {
+        Some(serde_json::Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+
+    if let Some(serde_json::Value::Object(overlay_map)) = overlay {
+        for (key, value) in overlay_map {
+            merged.insert(key, value);
+        }
+    }
+
+    serde_json::Value::Object(merged)
+}
+
+fn normalize_http_push_payload(value: serde_json::Value) -> Result<NormalizedPushRequest, String> {
+    if let Ok(push_req) = serde_json::from_value::<PushRequest>(value.clone()) {
+        return Ok(NormalizedPushRequest {
+            tool_name: push_req.tool_name,
+            tool_args: push_req.tool_args,
+            data: push_req.result.data,
+            meta: push_req.result.meta,
+            review_required: push_req.review_required.unwrap_or(false),
+            timeout_secs: push_req.timeout.unwrap_or(120),
+            session_id: push_req.session_id,
+            update_mode: PushUpdateMode::Replace,
+        });
+    }
+
+    let chunk = extract_string_candidate(
+        &value,
+        &[
+            &["delta"],
+            &["token"],
+            &["textDelta"],
+            &["contentDelta"],
+            &["partialText"],
+            &["message", "delta"],
+            &["message", "token"],
+            &["result", "data", "delta"],
+            &["result", "data", "token"],
+            &["result", "data", "textDelta"],
+            &["result", "data", "contentDelta"],
+            &["result", "data", "partialText"],
+        ],
+    );
+
+    let chunk = match chunk {
+        Some(chunk) => chunk,
+        None => return Err("Unsupported push payload: expected a standard push envelope or a streaming text chunk.".to_string()),
+    };
+
+    let session_id = extract_string_candidate(
+        &value,
+        &[
+            &["sessionId"],
+            &["session_id"],
+            &["messageId"],
+            &["messageID"],
+            &["threadId"],
+            &["thread_id"],
+        ],
+    );
+    let title = extract_string_candidate(
+        &value,
+        &[
+            &["title"],
+            &["threadTitle"],
+            &["thread_title"],
+            &["message", "title"],
+            &["result", "data", "title"],
+        ],
+    )
+    .unwrap_or_else(|| "Streaming Response".to_string());
+    let thread_id = extract_string_candidate(&value, &[&["threadId"], &["thread_id"]]);
+    let meta = merge_json_objects(
+        value.get("meta").cloned().or_else(|| get_nested_value(&value, &["result", "meta"]).cloned()),
+        Some(serde_json::json!({
+            "streaming": true,
+            "sourceType": extract_string_candidate(&value, &[&["type"], &["event"], &["kind"]]),
+            "threadId": thread_id,
+            "rawPayload": value,
+        })),
+    );
+
+    let tool_args = thread_id
+        .map(|thread_id| serde_json::json!({ "threadId": thread_id }));
+
+    Ok(NormalizedPushRequest {
+        tool_name: "rich_content".to_string(),
+        tool_args,
+        data: serde_json::json!({
+            "title": title,
+            "body": chunk,
+        }),
+        meta: Some(meta),
+        review_required: false,
+        timeout_secs: 120,
+        session_id,
+        update_mode: PushUpdateMode::AppendText,
+    })
+}
+
+fn append_streaming_session_data(
+    existing: &mut PreviewSession,
+    chunk: &str,
+    incoming_data: &serde_json::Value,
+    incoming_meta: Option<serde_json::Value>,
+    incoming_tool_args: Option<serde_json::Value>,
+) {
+    let mut next_data = match existing.data.clone() {
+        serde_json::Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    let existing_body = next_data
+        .get("body")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let next_body = format!("{}{}", existing_body, chunk);
+    next_data.insert("body".to_string(), serde_json::Value::String(next_body));
+
+    if let Some(title) = incoming_data.get("title").and_then(|value| value.as_str()) {
+        if !title.trim().is_empty() && !next_data.contains_key("title") {
+            next_data.insert("title".to_string(), serde_json::Value::String(title.to_string()));
+        }
+    }
+
+    existing.data = serde_json::Value::Object(next_data);
+    existing.meta = merge_json_objects(Some(existing.meta.clone()), incoming_meta);
+    if let Some(tool_args) = incoming_tool_args {
+        existing.tool_args = merge_json_objects(Some(existing.tool_args.clone()), Some(tool_args));
+    }
 }
 
 /// Store a push session (emit to WebView, register review if needed) but do NOT block.
@@ -150,23 +325,11 @@ pub async fn store_push(
         operation_decisions: None,
     };
 
-    let state_guard = state.lock().await;
-
-    {
-        let mut sessions = state_guard.inner.sessions.lock().unwrap();
-        sessions.set(session.clone());
-    }
-
-    // Emit to WebView
-    let _ = state_guard.app_handle.emit("push_preview", &session);
-
-    // Show and focus the window
-    if let Some(window) = state_guard.app_handle.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
+    store_preview_session(state, session).await;
 
     if review_required {
+        let state_guard = state.lock().await;
+
         // Register pending review and set up deadline
         {
             let mut reviews = state_guard.inner.reviews.lock().unwrap();
@@ -184,9 +347,99 @@ pub async fn store_push(
 
         ExecutePushResult::Pending { session_id }
     } else {
-        drop(state_guard);
         ExecutePushResult::Stored { session_id }
     }
+}
+
+async fn store_preview_session(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+    session: PreviewSession,
+) {
+    let state_guard = state.lock().await;
+
+    {
+        let mut sessions = state_guard.inner.sessions.lock().unwrap();
+        sessions.set(session.clone());
+    }
+
+    // Emit to WebView
+    let _ = state_guard.app_handle.emit("push_preview", &session);
+
+    // Show and focus the window
+    if let Some(window) = state_guard.app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+async fn append_streaming_push(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+    tool_name: String,
+    tool_args: Option<serde_json::Value>,
+    data: serde_json::Value,
+    meta: Option<serde_json::Value>,
+    session_id: Option<String>,
+) -> ExecutePushResult {
+    let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let chunk = data
+        .get("body")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let title = data
+        .get("title")
+        .and_then(|value| value.as_str())
+        .unwrap_or("Streaming Response")
+        .to_string();
+
+    let content_type = {
+        let state_guard = state.lock().await;
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+        resolve_content_type(&registry, &tool_name)
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let session = {
+        let state_guard = state.lock().await;
+        let existing = {
+            let sessions = state_guard.inner.sessions.lock().unwrap();
+            sessions.get(&session_id).cloned()
+        };
+        drop(state_guard);
+
+        if let Some(mut existing) = existing {
+            append_streaming_session_data(&mut existing, &chunk, &data, meta, tool_args);
+            existing.tool_name = tool_name;
+            existing.content_type = content_type;
+            existing.created_at = now;
+            existing
+        } else {
+            PreviewSession {
+                session_id: session_id.clone(),
+                tool_name,
+                tool_args: tool_args.unwrap_or(serde_json::json!({})),
+                content_type,
+                data: serde_json::json!({
+                    "title": title,
+                    "body": chunk,
+                }),
+                meta: meta.unwrap_or(serde_json::json!({ "streaming": true })),
+                review_required: false,
+                timeout_secs: None,
+                created_at: now,
+                decided_at: None,
+                decision: None,
+                operation_decisions: None,
+            }
+        }
+    };
+
+    store_preview_session(state, session).await;
+    ExecutePushResult::Stored { session_id }
 }
 
 /// Subscribe to a watch channel and block until the user submits a decision or the deadline expires.
@@ -388,22 +641,54 @@ async fn health_handler() -> impl IntoResponse {
 
 async fn push_handler(
     Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
-    Json(push_req): Json<PushRequest>,
+    Json(push_req): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let review_required = push_req.review_required.unwrap_or(false);
-    let timeout_secs = push_req.timeout.unwrap_or(120);
+    let normalized = match normalize_http_push_payload(push_req) {
+        Ok(normalized) => normalized,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(PushResponse {
+                    session_id: String::new(),
+                    status: message,
+                    decision: None,
+                    operation_decisions: None,
+                    comments: None,
+                    modifications: None,
+                    additions: None,
+                    suggestion_decisions: None,
+                    table_decisions: None,
+                }),
+            );
+        }
+    };
 
-    let result = execute_push(
-        &state,
-        push_req.tool_name,
-        push_req.tool_args,
-        push_req.result.data,
-        push_req.result.meta,
-        review_required,
-        timeout_secs,
-        push_req.session_id,
-    )
-    .await;
+    let result = match normalized.update_mode {
+        PushUpdateMode::Replace => {
+            execute_push(
+                &state,
+                normalized.tool_name,
+                normalized.tool_args,
+                normalized.data,
+                normalized.meta,
+                normalized.review_required,
+                normalized.timeout_secs,
+                normalized.session_id,
+            )
+            .await
+        }
+        PushUpdateMode::AppendText => {
+            append_streaming_push(
+                &state,
+                normalized.tool_name,
+                normalized.tool_args,
+                normalized.data,
+                normalized.meta,
+                normalized.session_id,
+            )
+            .await
+        }
+    };
 
     match result {
         ExecutePushResult::Stored { session_id } => (
@@ -1024,5 +1309,87 @@ mod tests {
         assert!(response.comments.is_none());
         assert!(response.modifications.is_none());
         assert!(response.additions.is_none());
+    }
+
+    #[test]
+    fn test_normalize_http_push_payload_accepts_standard_envelope() {
+        let normalized = normalize_http_push_payload(serde_json::json!({
+            "toolName": "rich_content",
+            "toolArgs": { "threadId": "thread-1" },
+            "result": {
+                "data": { "title": "Ready", "body": "Sandbox ready." },
+                "meta": { "status": "ok" }
+            },
+            "sessionId": "session-1",
+            "reviewRequired": false,
+            "timeout": 60
+        }))
+        .unwrap();
+
+        assert_eq!(normalized.tool_name, "rich_content");
+        assert_eq!(normalized.session_id.as_deref(), Some("session-1"));
+        assert_eq!(normalized.timeout_secs, 60);
+        assert_eq!(normalized.update_mode, PushUpdateMode::Replace);
+        assert_eq!(normalized.data["title"], "Ready");
+    }
+
+    #[test]
+    fn test_normalize_http_push_payload_accepts_streaming_delta() {
+        let normalized = normalize_http_push_payload(serde_json::json!({
+            "type": "assistant_delta",
+            "messageId": "assistant-1",
+            "threadId": "thread-1",
+            "delta": "Hello"
+        }))
+        .unwrap();
+
+        assert_eq!(normalized.tool_name, "rich_content");
+        assert_eq!(normalized.session_id.as_deref(), Some("assistant-1"));
+        assert_eq!(normalized.update_mode, PushUpdateMode::AppendText);
+        assert_eq!(normalized.data["body"], "Hello");
+        assert_eq!(normalized.data["title"], "Streaming Response");
+        assert_eq!(normalized.tool_args.unwrap()["threadId"], "thread-1");
+    }
+
+    #[test]
+    fn test_append_streaming_session_data_appends_body_and_merges_meta() {
+        let mut session = PreviewSession {
+            session_id: "session-1".to_string(),
+            tool_name: "rich_content".to_string(),
+            tool_args: serde_json::json!({}),
+            content_type: "rich_content".to_string(),
+            data: serde_json::json!({
+                "title": "Streaming Response",
+                "body": "Hello"
+            }),
+            meta: serde_json::json!({
+                "streaming": true
+            }),
+            review_required: false,
+            timeout_secs: None,
+            created_at: 1,
+            decided_at: None,
+            decision: None,
+            operation_decisions: None,
+        };
+
+        append_streaming_session_data(
+            &mut session,
+            " world",
+            &serde_json::json!({
+                "title": "Streaming Response",
+                "body": " world"
+            }),
+            Some(serde_json::json!({
+                "sequence": 2
+            })),
+            Some(serde_json::json!({
+                "threadId": "thread-1"
+            })),
+        );
+
+        assert_eq!(session.data["body"], "Hello world");
+        assert_eq!(session.meta["sequence"], 2);
+        assert_eq!(session.tool_args["threadId"], "thread-1");
     }
 }

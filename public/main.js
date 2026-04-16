@@ -267,8 +267,14 @@
       const existingSessions = await invoke('get_sessions');
       if (existingSessions && existingSessions.length > 0) {
         existingSessions.forEach(function (session) {
-          handlePush(session);
+          handlePush(session, { autoFocus: false });
         });
+        var preferredSession = existingSessions.slice().reverse().find(function (session) {
+          return session && session.meta && session.meta.aiView === 'thread';
+        }) || existingSessions[existingSessions.length - 1];
+        if (preferredSession && preferredSession.sessionId) {
+          selectSession(preferredSession.sessionId);
+        }
       }
     } catch (e) {
       console.error('Failed to load existing sessions:', e);
@@ -335,33 +341,105 @@
 
   // --- Message Handling ---
 
-  function handlePush(session) {
+  function shouldAutoFocusPush(session, existingSession, options) {
+    if (options && Object.prototype.hasOwnProperty.call(options, 'autoFocus')) {
+      return !!options.autoFocus;
+    }
+    if (!activeSessionId) return true;
+    if (activeSessionId === session.sessionId) return true;
+    if (session.reviewRequired) return true;
+    return !!(session.meta && session.meta.autoFocus === true);
+  }
+
+  function isThreadArtifactPreviewSession(session) {
+    var meta = session && session.meta ? session.meta : {};
+    var toolArgs = session && session.toolArgs ? session.toolArgs : {};
+    return !!(
+      session &&
+      meta &&
+      meta.drawerOnly === true &&
+      meta.artifactSource === 'tribex-ai-thread-result' &&
+      (meta.threadId || toolArgs.threadId)
+    );
+  }
+
+  function handlePush(session, options) {
+    if (isThreadArtifactPreviewSession(session)) {
+      return null;
+    }
+
+    var existingSession = sessions.get(session.sessionId);
+    var mergedMeta = Object.assign({}, existingSession && existingSession.meta ? existingSession.meta : {}, session.meta || {});
+    var mergedToolArgs = Object.assign({}, existingSession && existingSession.toolArgs ? existingSession.toolArgs : {}, session.toolArgs || {});
     sessions.set(session.sessionId, {
-      toolName: session.toolName,
-      contentType: session.contentType,
-      data: session.data,
-      meta: session.meta || {},
-      toolArgs: session.toolArgs || {},
-      reviewRequired: session.reviewRequired,
-      timeoutSecs: session.timeoutSecs || null,
+      toolName: session.toolName || (existingSession && existingSession.toolName) || 'push_preview',
+      contentType: session.contentType || (existingSession && existingSession.contentType) || null,
+      data: session.data !== undefined ? session.data : (existingSession ? existingSession.data : {}),
+      meta: mergedMeta,
+      toolArgs: mergedToolArgs,
+      reviewRequired: typeof session.reviewRequired === 'boolean'
+        ? session.reviewRequired
+        : !!(existingSession && existingSession.reviewRequired),
+      timeoutSecs: session.timeoutSecs || (existingSession && existingSession.timeoutSecs) || null,
       timestamp: session.createdAt || Date.now(),
     });
+
+    if (existingSession) {
+      var cached = contentCache.get(session.sessionId);
+      if (cached && cached.parentNode) {
+        cached.parentNode.removeChild(cached);
+      }
+      contentCache.delete(session.sessionId);
+    }
 
     // Start countdown timer for review sessions
     if (session.reviewRequired && session.timeoutSecs) {
       startCountdown(session.sessionId, session.timeoutSecs);
     }
 
-    // Always auto-focus the new tab
-    selectSession(session.sessionId);
+    if (shouldAutoFocusPush(session, existingSession, options)) {
+      selectSession(session.sessionId);
+      return;
+    }
+
+    renderTabBar();
+    if (!activeSessionId) {
+      renderEmpty();
+    }
   }
 
-  function openSyntheticSession(config) {
+  function finalizeSyntheticSessionSelection(sessionId, session, options) {
+    if (!sessionId) return sessionId;
+    if (activeSessionId === sessionId) {
+      selectSession(sessionId);
+      return sessionId;
+    }
+    var shouldFocus = shouldAutoFocusPush({
+      sessionId: sessionId,
+      reviewRequired: !!(session && session.reviewRequired),
+      meta: session && session.meta ? session.meta : {},
+    }, sessions.get(sessionId) || null, options);
+
+    if (shouldFocus) {
+      selectSession(sessionId);
+      return sessionId;
+    }
+
+    renderTabBar();
+    if (!activeSessionId) {
+      selectSession(sessionId);
+    }
+    return sessionId;
+  }
+
+  function openSyntheticSession(config, options) {
     config = config || {};
     var sessionKey = config.sessionKey || null;
-    var existingSessionId = null;
+    var existingSessionId = config.sessionId && sessions.has(config.sessionId)
+      ? config.sessionId
+      : null;
 
-    if (sessionKey) {
+    if (!existingSessionId && sessionKey) {
       sessions.forEach(function (session, sessionId) {
         if (existingSessionId) return;
         if (session.meta && session.meta.syntheticKey === sessionKey) {
@@ -375,7 +453,7 @@
       if (existing) {
         if (config.data !== undefined) existing.data = config.data;
         if (config.meta) existing.meta = Object.assign({}, existing.meta || {}, config.meta);
-        if (config.toolArgs) existing.toolArgs = config.toolArgs;
+        if (config.toolArgs) existing.toolArgs = Object.assign({}, existing.toolArgs || {}, config.toolArgs);
         if (config.toolName) existing.toolName = config.toolName;
         if (config.contentType) existing.contentType = config.contentType;
         existing.timestamp = Date.now();
@@ -386,8 +464,7 @@
         cached.parentNode.removeChild(cached);
       }
       contentCache.delete(existingSessionId);
-      selectSession(existingSessionId);
-      return existingSessionId;
+      return finalizeSyntheticSessionSelection(existingSessionId, existing, options);
     }
 
     var sessionId = config.sessionId || ('synthetic-' + (config.toolName || config.contentType || 'session') + '-' + Date.now());
@@ -405,27 +482,32 @@
       timestamp: Date.now(),
     });
 
-    selectSession(sessionId);
-    return sessionId;
+    return finalizeSyntheticSessionSelection(sessionId, sessions.get(sessionId), options);
   }
 
-  function replaceSyntheticSession(sessionId, config) {
+  function replaceSyntheticSession(sessionId, config, options) {
     var existing = sessions.get(sessionId);
-    if (!existing) return openSyntheticSession(config);
+    if (!existing) return openSyntheticSession(Object.assign({}, config, { sessionId: sessionId }), options);
 
-    var meta = Object.assign({}, config.meta || {});
-    if (existing.meta && existing.meta.syntheticKey && !meta.syntheticKey) {
+    var meta = Object.assign({}, existing.meta || {}, config.meta || {});
+    if (config.sessionKey) {
+      meta.syntheticKey = config.sessionKey;
+    } else if (existing.meta && existing.meta.syntheticKey && !meta.syntheticKey) {
       meta.syntheticKey = existing.meta.syntheticKey;
     }
 
     sessions.set(sessionId, {
       toolName: config.toolName || existing.toolName,
       contentType: config.contentType || existing.contentType,
-      data: config.data || existing.data,
+      data: config.data !== undefined ? config.data : existing.data,
       meta: meta,
-      toolArgs: config.toolArgs || existing.toolArgs,
-      reviewRequired: !!config.reviewRequired,
-      timeoutSecs: config.timeoutSecs || null,
+      toolArgs: config.toolArgs
+        ? Object.assign({}, existing.toolArgs || {}, config.toolArgs)
+        : existing.toolArgs,
+      reviewRequired: typeof config.reviewRequired === 'boolean'
+        ? config.reviewRequired
+        : !!existing.reviewRequired,
+      timeoutSecs: config.timeoutSecs || existing.timeoutSecs || null,
       timestamp: Date.now(),
     });
 
@@ -435,8 +517,7 @@
     }
     contentCache.delete(sessionId);
 
-    selectSession(sessionId);
-    return sessionId;
+    return finalizeSyntheticSessionSelection(sessionId, sessions.get(sessionId), options);
   }
 
   function getTabLabel(session) {
@@ -505,11 +586,27 @@
     renderContent(activeSessionId);
   }
 
+  function updateRenderedSession(container, sessionId) {
+    var session = sessions.get(sessionId);
+    if (!session || !container) return false;
+    var scroll = container.querySelector('.session-scroll');
+    if (!scroll) return false;
+    var renderer = getRenderer(session.contentType);
+    renderer(scroll, session.data, session.meta, session.toolArgs || {}, session.reviewRequired, function (decision) {
+      onDecision(sessionId, decision);
+    });
+    return true;
+  }
+
   function rerenderActiveSession() {
     if (!activeSessionId) return;
     var session = sessions.get(activeSessionId);
     if (!session) return;
     var cached = contentCache.get(activeSessionId);
+    if (cached && session.meta && session.meta.aiView === 'thread') {
+      updateRenderedSession(cached, activeSessionId);
+      return;
+    }
     if (cached && cached.parentNode) {
       cached.parentNode.removeChild(cached);
     }
@@ -622,6 +719,7 @@
   window.__companionUtils = window.__companionUtils || {};
   window.__companionUtils.openSession = openSyntheticSession;
   window.__companionUtils.replaceSession = replaceSyntheticSession;
+  window.__companionUtils.selectSession = selectSession;
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
   window.__companionUtils.rerenderActiveSession = rerenderActiveSession;
   window.__companionUtils.getActiveSession = function () {

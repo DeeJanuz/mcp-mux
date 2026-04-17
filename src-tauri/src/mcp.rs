@@ -84,7 +84,7 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
             }
             instructions.push_str("\n");
         }
-        instructions.push_str("\n**Quick selection guide:** Use `rich_content` for prose, diagrams, and simple tables. Use `structured_data` for interactive tabular data with sort/filter, hierarchical rows, or change review workflows. **For batch MCP actions (2+ mutations), use `structured_data` with `push_review` to let the user accept/reject each action individually.** `push_review` returns immediately with a `session_id` — call `await_review(session_id)` to block until the user's decision. If your connection times out, call `await_review` again — the session persists on the server. Call `init_session` for full renderer documentation and examples.\n");
+        instructions.push_str("\n**Quick selection guide:** Use `rich_content` for prose, diagrams, and simple tables. Use `structured_data` for standalone interactive tables with explicit `tables[] -> columns[]/rows[] -> cells/children` structure. Use `push_content` with `structured_data` for read-only tables. Use `push_review` with `structured_data` when the user must approve row/column/cell changes. **For batch MCP actions (2+ mutations), use `structured_data` with `push_review` to let the user accept/reject each action individually.** `push_review` returns immediately with a `session_id` — call `await_review(session_id)` to block until the user's decision. If your connection times out, call `await_review` again — the session persists on the server. Call `init_session` for full renderer documentation and examples.\n");
     }
 
     instructions.push_str("\n## Sub-Agent Restriction\n\n");

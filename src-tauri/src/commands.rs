@@ -466,6 +466,22 @@ pub async fn first_party_ai_relay_request(
 }
 
 #[tauri::command]
+pub async fn probe_local_runtime_host(
+    url: String,
+    token: Option<String>,
+    timeout_ms: Option<u64>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    crate::first_party_ai::probe_local_runtime_host(
+        state.inner(),
+        &url,
+        token.as_deref(),
+        timeout_ms,
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn list_local_mcp_tools(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,

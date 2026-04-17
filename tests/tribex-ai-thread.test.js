@@ -106,6 +106,7 @@ describe('tribex-ai-thread', function () {
         };
       }),
       refreshActiveThread: vi.fn(),
+      openThreadArtifact: vi.fn(),
       selectThreadArtifact: vi.fn(),
       submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
     };
@@ -114,6 +115,12 @@ describe('tribex-ai-thread', function () {
     renderThread('thread-1');
 
     expect(document.querySelector('.ai-thread-rail')).toBeNull();
+    expect(document.querySelector('.ai-thread-header-minimal')).not.toBeNull();
+    expect(document.querySelector('.ai-thread-title-row')).toBeNull();
+    expect(document.querySelector('.ai-thread-lede')).toBeNull();
+    expect(document.querySelector('.ai-thread-results')).not.toBeNull();
+    expect(document.querySelector('.ai-thread-results').textContent).toContain('Stored renderer outputs');
+    expect(document.querySelector('.ai-thread-result-chip')).not.toBeNull();
     expect(document.querySelector('.ai-work-session')).not.toBeNull();
     expect(document.querySelector('.ai-work-session').open).toBe(false);
     expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Worked for');
@@ -122,11 +129,19 @@ describe('tribex-ai-thread', function () {
     var toggle = document.querySelector('.ai-work-session');
     toggle.open = true;
     toggle.dispatchEvent(new Event('toggle'));
+    renderThread('thread-1');
+    expect(document.querySelector('.ai-work-session').open).toBe(true);
+
+    document.querySelector('.ai-thread-result-chip').click();
+    expect(window.__tribexAiState.openThreadArtifact).toHaveBeenCalledWith(
+      'thread-1',
+      'tribex-ai-result:thread-1:turn-1:tool-push-1',
+    );
 
     expect(document.querySelector('.ai-work-item').textContent).toContain('Push Content');
     expect(document.querySelector('.ai-work-item-link')).not.toBeNull();
     document.querySelector('.ai-work-item-link').click();
-    expect(window.__tribexAiState.selectThreadArtifact).toHaveBeenCalledWith(
+    expect(window.__tribexAiState.openThreadArtifact).toHaveBeenCalledWith(
       'thread-1',
       'tribex-ai-result:thread-1:turn-1:tool-push-1',
     );
@@ -167,6 +182,7 @@ describe('tribex-ai-thread', function () {
     loadThread();
     renderThread('thread-1');
 
+    expect(document.querySelector('.ai-thread-results').hidden).toBe(true);
     expect(document.querySelector('.ai-work-session')).toBeNull();
     expect(document.querySelector('.ai-run-answer').textContent).toContain('Hi.');
   });
@@ -225,6 +241,7 @@ describe('tribex-ai-thread', function () {
     renderThread('thread-1');
 
     expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Working for 1s');
+    expect(document.querySelector('.ai-work-session').open).toBe(true);
 
     vi.setSystemTime(new Date('2026-04-14T20:00:13.000Z'));
     vi.advanceTimersByTime(1000);
@@ -278,14 +295,16 @@ describe('tribex-ai-thread', function () {
 
     expect(document.querySelectorAll('.ai-run-group')).toHaveLength(2);
     expect(document.querySelector('.ai-activity-drawer')).toBeNull();
-    expect(document.querySelectorAll('.ai-run-group-prompt .ai-chat-bubble-user')).toHaveLength(2);
+    expect(document.querySelectorAll('.ai-run-group-prompt .ai-turn-prompt')).toHaveLength(2);
     expect(document.querySelector('.ai-run-group').textContent).toContain('Smoke key: rule-skill-echo');
-    expect(document.querySelector('.ai-run-artifacts .ai-artifact-card').textContent).toContain('Smoke Test Passed');
+    expect(Array.from(document.querySelectorAll('.ai-work-session .ai-work-item')).some(function (item) {
+      return item.textContent.indexOf('Smoke Test Passed') >= 0;
+    })).toBe(true);
     expect(document.querySelector('.ai-run-answer').textContent).toContain('SMOKE KEY: rule-skill-echo');
-    expect(window.__renderers.rich_content).toHaveBeenCalledTimes(1);
+    expect(window.__renderers.rich_content).not.toHaveBeenCalled();
   });
 
-  it('keeps failed tasks open and collapses completed tasks once streaming finishes', function () {
+  it('keeps a legacy work session collapsed once a streaming run finishes', function () {
     var streaming = true;
     window.__tribexAiState = {
       getThreadContext: vi.fn(function () {
@@ -318,18 +337,16 @@ describe('tribex-ai-thread', function () {
     loadThread();
     renderThread('thread-1');
 
-    var tasks = document.querySelectorAll('.ai-run-task');
-    expect(tasks).toHaveLength(2);
-    expect(tasks[0].open).toBe(false);
-    expect(tasks[1].open).toBe(true);
+    var workSession = document.querySelector('.ai-work-session');
+    expect(workSession).not.toBeNull();
+    expect(workSession.open).toBe(true);
     expect(document.querySelector('.ai-run-answer-streaming')).not.toBeNull();
 
     streaming = false;
     renderThread('thread-1');
 
-    tasks = document.querySelectorAll('.ai-run-task');
-    expect(tasks[0].open).toBe(false);
-    expect(tasks[1].open).toBe(true);
+    workSession = document.querySelector('.ai-work-session');
+    expect(workSession.open).toBe(false);
     expect(document.querySelector('.ai-run-answer-streaming')).toBeNull();
   });
 
@@ -364,7 +381,8 @@ describe('tribex-ai-thread', function () {
     renderThread('thread-1');
 
     expect(document.querySelectorAll('.ai-run-group')).toHaveLength(0);
-    expect(document.querySelectorAll('.ai-chat-bubble')).toHaveLength(2);
+    expect(document.querySelectorAll('.ai-turn-prompt')).toHaveLength(1);
+    expect(document.querySelectorAll('.ai-run-answer')).toHaveLength(1);
     expect(document.querySelector('.ai-tool-note')).not.toBeNull();
   });
 
@@ -493,7 +511,7 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-jump-latest').hidden).toBe(true);
   });
 
-  it('renders non-lifecycle tool events as collapsed expandable notes', function () {
+  it('renders non-lifecycle tool events inside the work session log', function () {
     window.__tribexAiState = {
       getThreadContext: vi.fn(function () {
         return {
@@ -529,12 +547,14 @@ describe('tribex-ai-thread', function () {
     loadThread();
     renderThread('thread-1');
 
-    var note = document.querySelector('.ai-tool-note');
+    var workSession = document.querySelector('.ai-work-session');
+    expect(workSession).not.toBeNull();
+    expect(workSession.open).toBe(false);
+    workSession.open = true;
+    workSession.dispatchEvent(new Event('toggle'));
+    var note = document.querySelector('.ai-work-item');
     expect(note).not.toBeNull();
-    expect(note.tagName).toBe('DETAILS');
-    expect(note.open).toBe(false);
     expect(note.textContent).toContain('Rule Skill Echo');
-    note.open = true;
     expect(note.textContent).toContain('smoke-validation.md');
   });
 
@@ -569,9 +589,8 @@ describe('tribex-ai-thread', function () {
     renderThread('thread-1');
 
     expect(document.querySelectorAll('.ai-run-group')).toHaveLength(1);
-    expect(document.querySelectorAll('.ai-run-group-prompt .ai-chat-bubble-user')).toHaveLength(1);
-    expect(document.querySelector('.ai-chat-attempt-badge')).toBeNull();
-    expect(document.querySelector('.ai-chat-retry-note')).toBeNull();
+    expect(document.querySelectorAll('.ai-run-group-prompt .ai-turn-prompt')).toHaveLength(1);
+    expect(document.querySelector('.ai-turn-repeat')).not.toBeNull();
     expect(document.querySelector('.ai-run-group-prompt').textContent).toContain('Repeat me');
   });
 
@@ -607,8 +626,8 @@ describe('tribex-ai-thread', function () {
     loadThread();
     renderThread('thread-1');
 
-    var notes = document.querySelectorAll('.ai-tool-note');
-    expect(notes).toHaveLength(1);
-    expect(notes[0].textContent).toContain('Issued');
+    var items = document.querySelectorAll('.ai-work-item');
+    expect(items).toHaveLength(1);
+    expect(items[0].textContent).toContain('Issued');
   });
 });

@@ -191,6 +191,45 @@
     return current === undefined ? null : current;
   }
 
+  function extractCompanionThreadId(raw) {
+    return pickFirst([
+      getNestedValue(raw, ['toolArgs', 'threadId']),
+      getNestedValue(raw, ['toolArgs', 'thread_id']),
+      getNestedValue(raw, ['tool_args', 'threadId']),
+      getNestedValue(raw, ['tool_args', 'thread_id']),
+      getNestedValue(raw, ['result', 'meta', 'threadId']),
+      getNestedValue(raw, ['meta', 'threadId']),
+      raw.threadId,
+      raw.thread_id,
+    ], null);
+  }
+
+  function extractCompanionSessionId(raw) {
+    return pickFirst([
+      raw.sessionId,
+      raw.session_id,
+      getNestedValue(raw, ['result', 'data', 'session_id']),
+      getNestedValue(raw, ['result', 'data', 'sessionId']),
+      getNestedValue(raw, ['result', 'meta', 'sessionId']),
+      getNestedValue(raw, ['meta', 'sessionId']),
+    ], null);
+  }
+
+  function buildCompanionToolMessageId(raw, index) {
+    var sequence = typeof raw.sequence === 'number' && Number.isFinite(raw.sequence)
+      ? String(raw.sequence)
+      : null;
+    if (sequence) {
+      return [
+        'tool-sequence',
+        extractCompanionThreadId(raw) || 'thread',
+        extractCompanionSessionId(raw) || 'session',
+        sequence,
+      ].join(':');
+    }
+    return pickFirst([raw.id, raw.eventId], 'message-' + index);
+  }
+
   function deriveToolSummary(raw) {
     var explicit = pickFirst([
       raw.summary,
@@ -232,6 +271,102 @@
       return raw.result.meta;
     }
     return getNestedValue(raw, ['resultMeta']) || null;
+  }
+
+  function maybeParseJson(value) {
+    if (typeof value !== 'string') return value;
+    var trimmed = value.trim();
+    if (!trimmed) return value;
+    try {
+      return JSON.parse(trimmed);
+    } catch (_error) {
+      return value;
+    }
+  }
+
+  function isRendererPayloadShape(contentType, value) {
+    if (!contentType || !value || typeof value !== 'object' || Array.isArray(value)) {
+      return false;
+    }
+    if (contentType === 'structured_data') {
+      return Array.isArray(value.tables);
+    }
+    if (contentType === 'rich_content') {
+      return !!(
+        Object.prototype.hasOwnProperty.call(value, 'body') ||
+        Object.prototype.hasOwnProperty.call(value, 'title') ||
+        Object.prototype.hasOwnProperty.call(value, 'tables') ||
+        Object.prototype.hasOwnProperty.call(value, 'suggestions') ||
+        Object.prototype.hasOwnProperty.call(value, 'citations')
+      );
+    }
+    return false;
+  }
+
+  function extractRendererToolPayload(raw, toolName) {
+    if (!raw || typeof raw !== 'object' || !toolName) return null;
+
+    var normalizedToolName = String(toolName || '').trim();
+    var rawResultData = maybeParseJson(extractToolResultData(raw));
+    var rawResultMeta = maybeParseJson(extractToolResultMeta(raw));
+    var rawToolArgs = maybeParseJson(raw.toolArgs || raw.tool_args || null);
+
+    if (normalizedToolName === 'push_content' || normalizedToolName === 'push_review') {
+      var envelope = rawResultData && typeof rawResultData === 'object' && !Array.isArray(rawResultData)
+        ? rawResultData
+        : null;
+      if (!envelope) return null;
+
+      var contentType = pickFirst([
+        envelope.tool_name,
+        envelope.toolName,
+        envelope.contentType,
+        envelope.content_type,
+      ], null);
+      if (!contentType) return null;
+
+      var data = maybeParseJson(envelope.data);
+      var meta = maybeParseJson(envelope.meta);
+      var toolArgs = maybeParseJson(envelope.tool_args || envelope.toolArgs || rawToolArgs);
+      if (normalizedToolName === 'push_review') {
+        meta = Object.assign({}, (meta && typeof meta === 'object' && !Array.isArray(meta)) ? meta : {}, {
+          reviewRequired: true,
+        });
+      }
+
+      if (!isRendererPayloadShape(contentType, data) && isRendererPayloadShape(contentType, envelope)) {
+        data = envelope;
+      }
+      if (!isRendererPayloadShape(contentType, data)) return null;
+
+      return {
+        toolName: contentType,
+        resultContentType: contentType,
+        resultData: data,
+        resultMeta: meta || rawResultMeta || null,
+        toolArgs: (toolArgs && typeof toolArgs === 'object' && !Array.isArray(toolArgs)) ? toolArgs : (rawToolArgs || null),
+      };
+    }
+
+    if (normalizedToolName !== 'rich_content' && normalizedToolName !== 'structured_data') {
+      return null;
+    }
+
+    var directData = rawResultData;
+    if (!isRendererPayloadShape(normalizedToolName, directData) && isRendererPayloadShape(normalizedToolName, raw)) {
+      directData = raw;
+    }
+    if (!isRendererPayloadShape(normalizedToolName, directData)) {
+      return null;
+    }
+
+    return {
+      toolName: normalizedToolName,
+      resultContentType: normalizedToolName,
+      resultData: directData,
+      resultMeta: rawResultMeta,
+      toolArgs: (rawToolArgs && typeof rawToolArgs === 'object' && !Array.isArray(rawToolArgs)) ? rawToolArgs : null,
+    };
   }
 
   function formatStructuredDetail(value) {
@@ -287,6 +422,16 @@
     return '';
   }
 
+  function buildLegacyArtifactKey(raw, index, contentType) {
+    var threadId = extractCompanionThreadId(raw);
+    if (!threadId || !contentType) return null;
+    if (typeof raw.sequence === 'number' && Number.isFinite(raw.sequence)) {
+      return ['tribex-ai-result', threadId, 'sequence', String(raw.sequence)].join(':');
+    }
+    var itemId = pickFirst([raw.toolCallId, raw.id, raw.eventId], 'artifact-' + index);
+    return ['tribex-ai-result', threadId, 'legacy', itemId].join(':');
+  }
+
   function shouldPreviewCompanionPayload(raw) {
     if (!raw || typeof raw !== 'object') return false;
     if (raw.reviewRequired) return true;
@@ -315,10 +460,6 @@
       getNestedValue(raw, ['meta', 'threadId']) ||
       getNestedValue(raw, ['result', 'meta', 'threadId'])
     );
-
-    if (threadScoped && toolName === 'rich_content' && !explicitStandalonePreview) {
-      return false;
-    }
 
     return explicitStandalonePreview || /^[a-z0-9_]+$/i.test(toolName);
   }
@@ -378,6 +519,20 @@
     };
   }
 
+  function normalizeThreadPersona(raw) {
+    raw = raw || {};
+    var key = pickFirst([raw.key, raw.personaKey], null);
+    if (!key) return null;
+    return {
+      id: pickFirst([raw.id, raw.personaReleaseId, raw.releaseId], key),
+      key: key,
+      displayName: pickFirst([raw.displayName, raw.name, raw.title, key], key),
+      releaseVersion: pickFirst([raw.releaseVersion, raw.version], null),
+      agentClass: pickFirst([raw.agentClass], null),
+      toolPolicySummary: raw.toolPolicySummary || null,
+    };
+  }
+
   function normalizeThreadSummary(raw, project, index) {
     raw = raw || {};
     var id = pickFirst([raw.id, raw.threadId], 'thread-' + index);
@@ -392,6 +547,8 @@
       lastActivityAt: normalizeTimestamp(pickFirst([raw.lastActivityAt, raw.latestMessageAt, raw.lastRunAt, raw.updatedAt, raw.createdAt], null)),
       workspaceName: pickFirst([raw.workspaceName, project && project.workspaceName], null),
       projectName: pickFirst([raw.projectName, project && project.name], null),
+      personaReleaseId: pickFirst([raw.personaReleaseId], null),
+      persona: normalizeThreadPersona(raw.persona),
     };
   }
 
@@ -464,16 +621,31 @@
     }
 
     if (role === 'tool' || raw.toolName || raw.tool_name) {
+      var toolName = pickFirst([raw.toolName, raw.tool_name, raw.name], 'tool');
+      var rendererPayload = extractRendererToolPayload(raw, toolName);
+      var toolArgs = rendererPayload ? rendererPayload.toolArgs : (raw.toolArgs || raw.tool_args || null);
+      var resultData = rendererPayload ? rendererPayload.resultData : extractToolResultData(raw);
+      var resultContentType = rendererPayload
+        ? rendererPayload.resultContentType
+        : pickFirst([
+          raw.resultContentType,
+          raw.contentType,
+          raw.content_type,
+          toolName,
+        ], null);
       return {
-        id: pickFirst([raw.id, raw.eventId], 'message-' + index),
+        id: buildCompanionToolMessageId(raw, index),
         role: 'tool',
-        toolName: pickFirst([raw.toolName, raw.tool_name, raw.name], 'tool'),
+        toolName: rendererPayload ? rendererPayload.toolName : toolName,
         status: pickFirst([raw.status, raw.state], 'success'),
         summary: deriveToolSummary(raw),
         detail: deriveToolDetail(raw),
-        toolArgs: raw.toolArgs || raw.tool_args || null,
-        resultData: extractToolResultData(raw),
-        resultMeta: extractToolResultMeta(raw),
+        toolArgs: toolArgs,
+        resultData: resultData,
+        resultMeta: rendererPayload ? rendererPayload.resultMeta : extractToolResultMeta(raw),
+        resultContentType: resultContentType,
+        artifactKey: resultData ? buildLegacyArtifactKey(raw, index, resultContentType) : null,
+        sessionId: extractCompanionSessionId(raw),
         sequence: typeof raw.sequence === 'number' ? raw.sequence : null,
         createdAt: normalizeTimestamp(pickFirst([raw.createdAt, raw.timestamp], null)),
       };
@@ -517,12 +689,16 @@
       id: pickFirst([thread.id, thread.threadId], null),
       projectId: pickFirst([thread.projectId, raw.projectId, project.id], null),
       workspaceId: pickFirst([thread.workspaceId, raw.workspaceId, project.workspaceId, workspace.id], null),
+      organizationId: pickFirst([thread.organizationId, raw.organizationId, raw.orgId, project.organizationId, workspace.organizationId], null),
       title: pickFirst([thread.title, thread.name], 'Untitled thread'),
       status: pickFirst([thread.status, thread.state, raw.status], null),
       hydrateState: pickFirst([thread.hydrateState, raw.hydrateState], null),
       preview: pickFirst([thread.preview, thread.summary], ''),
       projectName: pickFirst([thread.projectName, project.name], null),
       workspaceName: pickFirst([thread.workspaceName, workspace.name], null),
+      personaReleaseId: pickFirst([thread.personaReleaseId], null),
+      persona: normalizeThreadPersona(raw.persona || thread.persona),
+      personaRelease: raw.personaRelease || thread.personaRelease || null,
       lastActivityAt: normalizeTimestamp(pickFirst([thread.lastActivityAt, thread.lastRunAt, thread.updatedAt, thread.createdAt], null)),
       messages: messages.map(function (message, index) {
         return normalizeMessage(message, index);
@@ -809,6 +985,7 @@
       thread: raw.thread || null,
       project: raw.project || null,
       workspace: raw.workspace || null,
+      persona: normalizeThreadPersona(raw.persona),
       packageManifest: raw.packageManifest || null,
       runtimeSession: raw.runtimeSession || null,
       companionSession: raw.companionSession || null,
@@ -1058,13 +1235,22 @@
   }
 
   function createProject(workspace, name) {
+    var projectName = String(name || '').trim() || 'General';
     return requestVariants('POST', [
       {
         path: '/workspaces/' + encodeURIComponent(workspace.id) + '/projects',
-        body: { name: name || 'General' },
+        body: {
+          name: projectName,
+          title: projectName,
+          projectName: projectName,
+        },
       },
     ]).then(function (raw) {
-      return normalizeProject(raw.project || raw, workspace, 0);
+      var project = normalizeProject(raw.project || raw, workspace, 0);
+      if (!project.name || project.name === 'Project') {
+        project.name = projectName;
+      }
+      return project;
     });
   }
 
@@ -1072,9 +1258,24 @@
     return requestCandidates('GET', [
       '/projects/' + encodeURIComponent(project.id) + '/threads',
     ]).then(function (raw) {
+      var payloadProject = raw && raw.project ? normalizeProject(raw.project, {
+        id: project.workspaceId,
+        organizationId: project.organizationId,
+        name: project.workspaceName,
+      }, 0) : project;
       return extractArray(raw, ['threads', 'items', 'results']).map(function (item, index) {
-        return normalizeThreadSummary(item, project, index);
+        return normalizeThreadSummary(item, payloadProject, index);
       });
+    });
+  }
+
+  function fetchProjectThreadPersonas(projectId) {
+    return requestCandidates('GET', [
+      '/projects/' + encodeURIComponent(projectId) + '/thread-personas',
+    ]).then(function (raw) {
+      return extractArray(raw, ['personas', 'threadPersonas', 'personaReleases', 'items', 'results']).map(function (item) {
+        return normalizeThreadPersona(item);
+      }).filter(Boolean);
     });
   }
 
@@ -1084,12 +1285,15 @@
     ]).then(normalizeThreadDetail);
   }
 
-  function createThread(projectId, title) {
+  function createThread(projectId, title, personaKey) {
     var threadTitle = String(title || 'New chat').trim() || 'New chat';
     return requestVariants('POST', [
       {
         path: '/projects/' + encodeURIComponent(projectId) + '/threads',
-        body: { title: threadTitle },
+        body: {
+          title: threadTitle,
+          personaKey: String(personaKey || '').trim(),
+        },
       },
     ]).then(function (raw) {
       var summary = normalizeThreadSummary(raw.thread || raw, { id: projectId }, 0);
@@ -1253,6 +1457,7 @@
     fetchSession: fetchSession,
     fetchOrganizations: fetchOrganizations,
     fetchProjects: fetchProjects,
+    fetchProjectThreadPersonas: fetchProjectThreadPersonas,
     fetchRuntimeSession: fetchRuntimeSession,
     fetchThread: fetchThread,
     fetchThreads: fetchThreads,

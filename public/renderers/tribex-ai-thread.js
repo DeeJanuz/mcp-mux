@@ -10,13 +10,14 @@
   }
 
   function isRenderableArtifact(message) {
+    var contentType = message && (message.resultContentType || message.contentType || message.toolName || null);
     return !!(
       message &&
       message.role === 'tool' &&
-      message.toolName === 'rich_content' &&
       message.resultData &&
+      contentType &&
       window.__renderers &&
-      typeof window.__renderers.rich_content === 'function'
+      typeof window.__renderers[contentType] === 'function'
     );
   }
 
@@ -279,28 +280,37 @@
     };
   }
 
-  function createChatMessage(message, repeatCount, latestCreatedAt) {
+  function createMetaLabel(className, value) {
+    var label = document.createElement('span');
+    label.className = className;
+    label.textContent = value;
+    return label;
+  }
+
+  function createSummaryText(value, maxLength) {
+    var text = typeof value === 'string' ? value.trim() : '';
+    if (!text) return '';
+    return text.length > maxLength ? text.slice(0, maxLength - 3) + '...' : text;
+  }
+
+  function createPromptBlock(message, repeatCount, latestCreatedAt) {
     var row = document.createElement('article');
-    row.className = 'ai-chat-bubble ai-chat-bubble-' + message.role;
+    row.className = 'ai-turn-prompt';
 
     var metaRow = document.createElement('div');
-    metaRow.className = 'ai-chat-meta-row';
+    metaRow.className = 'ai-turn-meta-row';
+    metaRow.appendChild(createMetaLabel('ai-turn-role', 'You'));
 
-    var role = document.createElement('span');
-    role.className = 'ai-chat-role';
-    role.textContent = message.role === 'assistant' ? 'Assistant' : 'You';
-    metaRow.appendChild(role);
+    if (repeatCount > 1) {
+      metaRow.appendChild(createMetaLabel('ai-turn-repeat', repeatCount + ' attempts'));
+    }
 
     if (latestCreatedAt) {
-      var time = document.createElement('span');
-      time.className = 'ai-chat-time';
-      time.textContent = window.__tribexAiUtils.formatRelativeTime(latestCreatedAt);
-      metaRow.appendChild(time);
+      metaRow.appendChild(createMetaLabel('ai-turn-time', window.__tribexAiUtils.formatRelativeTime(latestCreatedAt)));
     }
 
     row.appendChild(metaRow);
-
-    row.appendChild(createTextBody(message.content || '', 'ai-chat-body'));
+    row.appendChild(createTextBody(message.content || '', 'ai-turn-prompt-body ai-chat-body'));
     return row;
   }
 
@@ -350,47 +360,146 @@
     return row;
   }
 
-  function createArtifactMessage(message) {
+  function summarizeArtifactBody(resultData) {
+    var body = resultData && typeof resultData.body === 'string' ? resultData.body.trim() : '';
+    if (!body && resultData && Array.isArray(resultData.tables) && resultData.tables.length) {
+      return resultData.tables.length === 1
+        ? '1 table is available in a separate result tab.'
+        : resultData.tables.length + ' tables are available in a separate result tab.';
+    }
+    if (!body) return 'A renderer-backed result is available in a separate result tab.';
+    return createSummaryText(body, 140);
+  }
+
+  function collectReopenableArtifacts(thread) {
+    if (thread && Array.isArray(thread.artifacts) && thread.artifacts.length) {
+      return thread.artifacts.slice().map(function (artifact) {
+        return {
+          artifactKey: artifact.artifactKey,
+          title: artifact.title || 'Open result',
+          summary: createSummaryText(
+            (artifact.data && artifact.data.body)
+            || (artifact.meta && artifact.meta.summary)
+            || '',
+            120,
+          ),
+          contentType: artifact.contentType || null,
+          updatedAt: artifact.updatedAt || artifact.createdAt || null,
+        };
+      }).sort(function (left, right) {
+        var leftTime = getTimeValue(left.updatedAt);
+        var rightTime = getTimeValue(right.updatedAt);
+        if (leftTime !== rightTime) return rightTime - leftTime;
+        return String(left.title || '').localeCompare(String(right.title || ''));
+      });
+    }
+
+    var byKey = {};
+
+    function register(candidate) {
+      if (!candidate || !candidate.artifactKey) return;
+      byKey[candidate.artifactKey] = {
+        artifactKey: candidate.artifactKey,
+        title: candidate.title || candidate.resultTitle || 'Open result',
+        summary: createSummaryText(
+          candidate.summary
+          || candidate.detail
+          || (candidate.resultData && candidate.resultData.body)
+          || '',
+          120,
+        ),
+        contentType: candidate.contentType || candidate.resultContentType || candidate.toolName || null,
+        updatedAt: candidate.updatedAt || candidate.createdAt || null,
+      };
+    }
+
+    var runs = thread && Array.isArray(thread.runs) ? thread.runs : [];
+    runs.forEach(function (run) {
+      var items = run && run.workSession && Array.isArray(run.workSession.items)
+        ? run.workSession.items
+        : [];
+      items.forEach(function (item) {
+        register({
+          artifactKey: item.artifactKey,
+          title: item.resultTitle || item.title,
+          summary: item.detail,
+          contentType: item.resultContentType || item.toolName,
+          updatedAt: item.updatedAt || item.createdAt || null,
+        });
+      });
+    });
+
+    var activityItems = thread && Array.isArray(thread.activityItems) ? thread.activityItems : [];
+    activityItems.forEach(function (item) {
+      register({
+        artifactKey: item.artifactKey,
+        title: item.resultTitle || item.title,
+        summary: item.detail,
+        contentType: item.resultContentType || item.toolName,
+        updatedAt: item.updatedAt || item.createdAt || null,
+      });
+    });
+
+    var messages = thread && Array.isArray(thread.messages) ? thread.messages : [];
+    messages.forEach(function (message) {
+      register({
+        artifactKey: message.artifactKey,
+        title: (message.resultData && message.resultData.title) || message.title,
+        summary: message.detail || (message.resultData && message.resultData.body) || '',
+        contentType: message.contentType || message.toolName || null,
+        updatedAt: message.createdAt || null,
+      });
+    });
+
+    return Object.keys(byKey)
+      .map(function (key) {
+        return byKey[key];
+      })
+      .sort(function (left, right) {
+        var leftTime = getTimeValue(left.updatedAt);
+        var rightTime = getTimeValue(right.updatedAt);
+        if (leftTime !== rightTime) return rightTime - leftTime;
+        return String(left.title || '').localeCompare(String(right.title || ''));
+      });
+  }
+
+  function createArtifactReopenItem(message, threadId) {
     var row = document.createElement('article');
-    row.className = 'ai-artifact-card';
+    row.className = 'ai-result-reopen';
 
     var header = document.createElement('div');
-    header.className = 'ai-artifact-header';
+    header.className = 'ai-result-reopen-header';
 
     var copy = document.createElement('div');
-    copy.className = 'ai-artifact-copy';
-
-    var kicker = document.createElement('span');
-    kicker.className = 'ai-artifact-kicker';
-    kicker.textContent = 'Artifact';
-    copy.appendChild(kicker);
+    copy.className = 'ai-result-reopen-copy';
+    copy.appendChild(createMetaLabel('ai-result-reopen-kicker', 'Result ready'));
 
     var title = document.createElement('strong');
-    title.textContent = (message.resultData && message.resultData.title) || 'Streamed artifact';
+    title.textContent = (message.resultData && message.resultData.title) || 'Open result in slide-out';
     copy.appendChild(title);
     header.appendChild(copy);
 
     if (message.createdAt) {
-      var time = document.createElement('span');
-      time.className = 'ai-artifact-time';
-      time.textContent = window.__tribexAiUtils.formatRelativeTime(message.createdAt);
-      header.appendChild(time);
+      header.appendChild(createMetaLabel('ai-result-reopen-time', window.__tribexAiUtils.formatRelativeTime(message.createdAt)));
     }
 
     row.appendChild(header);
+    row.appendChild(createTextBody(summarizeArtifactBody(message.resultData), 'ai-result-reopen-body'));
 
-    var body = document.createElement('div');
-    body.className = 'ai-artifact-body';
-    row.appendChild(body);
+    if (message.artifactKey) {
+      var actions = document.createElement('div');
+      actions.className = 'ai-result-reopen-actions';
 
-    window.__renderers.rich_content(
-      body,
-      message.resultData,
-      message.resultMeta || null,
-      message.toolArgs || null,
-      false,
-      null,
-    );
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'ai-work-item-link';
+      button.textContent = 'Reopen result';
+      button.addEventListener('click', function () {
+        openResultArtifact(threadId, message.artifactKey);
+      });
+      actions.appendChild(button);
+      row.appendChild(actions);
+    }
 
     return row;
   }
@@ -423,6 +532,10 @@
 
   function openResultArtifact(threadId, artifactKey) {
     if (!threadId || !artifactKey) return;
+    if (window.__tribexAiState && typeof window.__tribexAiState.openThreadArtifact === 'function') {
+      window.__tribexAiState.openThreadArtifact(threadId, artifactKey);
+      return;
+    }
     if (window.__tribexAiState && typeof window.__tribexAiState.selectThreadArtifact === 'function') {
       window.__tribexAiState.selectThreadArtifact(threadId, artifactKey);
       return;
@@ -500,11 +613,92 @@
     return row;
   }
 
+  function createWorkItemFromTask(task) {
+    return {
+      id: task.id,
+      toolName: 'runtime_task',
+      title: task.title || 'Runtime task',
+      status: task.status || 'completed',
+      detail: task.detail || '',
+      createdAt: task.createdAt || null,
+      updatedAt: task.createdAt || null,
+      artifactKey: null,
+    };
+  }
+
+  function createWorkItemFromNote(note) {
+    return {
+      id: note.id || ('note-' + note.summary),
+      toolName: note.toolName || 'runtime_note',
+      title: note.summary || window.__tribexAiUtils.titleCase(note.toolName || 'note'),
+      status: note.status || 'completed',
+      detail: note.detail || '',
+      createdAt: note.createdAt || null,
+      updatedAt: note.createdAt || null,
+      artifactKey: note.artifactKey || null,
+    };
+  }
+
+  function createWorkItemFromArtifact(message) {
+    return {
+      id: message.id || 'result',
+      toolName: message.toolName || 'rich_content',
+      title: (message.resultData && message.resultData.title) || 'Result ready',
+      status: 'completed',
+      detail: summarizeArtifactBody(message.resultData),
+      createdAt: message.createdAt || null,
+      updatedAt: message.createdAt || null,
+      artifactKey: message.artifactKey || null,
+    };
+  }
+
+  function deriveLegacyWorkSession(group) {
+    var items = [];
+    (group.tasks || []).forEach(function (task) {
+      items.push(createWorkItemFromTask(task));
+    });
+    (group.toolNotes || []).forEach(function (note) {
+      items.push(createWorkItemFromNote(note));
+    });
+    (group.artifacts || []).forEach(function (artifact) {
+      items.push(createWorkItemFromArtifact(artifact));
+    });
+
+    if (!items.length) return null;
+
+    var isRunning = !!group.isStreaming || items.some(function (item) {
+      return item.status === 'running' || item.status === 'needs-approval';
+    });
+    var isFailed = !isRunning && items.some(function (item) {
+      return item.status === 'failed';
+    });
+    var firstCreatedAt = items.reduce(function (earliest, item) {
+      if (!item.createdAt) return earliest;
+      if (!earliest) return item.createdAt;
+      return Date.parse(item.createdAt) < Date.parse(earliest) ? item.createdAt : earliest;
+    }, group.latestCreatedAt || null);
+    var lastUpdatedAt = items.reduce(function (latest, item) {
+      var candidate = item.updatedAt || item.createdAt || null;
+      if (!candidate) return latest;
+      if (!latest) return candidate;
+      return Date.parse(candidate) > Date.parse(latest) ? candidate : latest;
+    }, (group.answer && group.answer.createdAt) || group.latestCreatedAt || null);
+
+    return {
+      id: group.id + '-work',
+      status: isRunning ? 'running' : (isFailed ? 'failed' : 'completed'),
+      startedAt: firstCreatedAt,
+      endedAt: isRunning ? null : lastUpdatedAt,
+      items: items,
+    };
+  }
+
   function createWorkSessionElement(workSession, groupId, threadState) {
     var block = document.createElement('details');
     block.className = 'ai-work-session';
     block.setAttribute('data-work-session-id', workSession.id || groupId);
-    block.open = !!threadState.workSessionOpen[groupId];
+    var remembered = threadState.workSessionOpen[groupId];
+    block.open = remembered === undefined ? workSession.status === 'running' : !!remembered;
     block.addEventListener('toggle', function () {
       threadState.workSessionOpen[groupId] = block.open;
     });
@@ -512,11 +706,20 @@
     var summary = document.createElement('summary');
     summary.className = 'ai-work-session-summary';
 
+    summary.appendChild(createMetaLabel(
+      'ai-work-session-status ai-work-session-status-' + (workSession.status || 'completed'),
+      createWorkStatusLabel(workSession.status || 'completed')
+    ));
+
     var label = document.createElement('span');
     label.className = 'ai-work-session-label';
     label.textContent = (workSession.status === 'running' ? 'Working for ' : 'Worked for ')
       + formatElapsed(workSession.startedAt, workSession.endedAt);
     summary.appendChild(label);
+
+    if (workSession.items && workSession.items.length) {
+      summary.appendChild(createMetaLabel('ai-work-session-count', workSession.items.length + ' items'));
+    }
     block.appendChild(summary);
 
     var body = document.createElement('div');
@@ -529,49 +732,6 @@
     return block;
   }
 
-  function createLegacyRunTask(task, answerStreaming) {
-    var item = document.createElement('details');
-    item.className = 'ai-run-task ai-run-task-' + task.status;
-    if (task.open || (!answerStreaming && task.status === 'failed')) {
-      item.open = true;
-    }
-
-    var summary = document.createElement('summary');
-    summary.className = 'ai-run-task-summary';
-
-    var left = document.createElement('div');
-    left.className = 'ai-run-task-copy';
-
-    var status = document.createElement('span');
-    status.className = 'ai-run-task-status ai-run-task-status-' + task.status;
-    status.textContent = task.status === 'running'
-      ? 'Running'
-      : task.status === 'failed'
-        ? 'Failed'
-        : 'Done';
-    left.appendChild(status);
-
-    var title = document.createElement('strong');
-    title.textContent = task.title;
-    left.appendChild(title);
-    summary.appendChild(left);
-
-    if (task.createdAt) {
-      var time = document.createElement('span');
-      time.className = 'ai-run-task-time';
-      time.textContent = window.__tribexAiUtils.formatRelativeTime(task.createdAt);
-      summary.appendChild(time);
-    }
-
-    item.appendChild(summary);
-
-    if (task.detail) {
-      item.appendChild(createTextBody(task.detail, 'ai-run-task-body'));
-    }
-
-    return item;
-  }
-
   function createRunAnswer(answer) {
     var section = document.createElement('section');
     section.className = 'ai-run-answer' + (answer.isStreaming ? ' ai-run-answer-streaming' : '');
@@ -579,16 +739,10 @@
     var header = document.createElement('div');
     header.className = 'ai-run-answer-header';
 
-    var role = document.createElement('span');
-    role.className = 'ai-chat-role';
-    role.textContent = answer.isStreaming ? 'Assistant streaming' : 'Assistant';
-    header.appendChild(role);
+    header.appendChild(createMetaLabel('ai-run-answer-kicker', answer.isStreaming ? 'Thinking' : 'Summary'));
 
     if (answer.createdAt) {
-      var time = document.createElement('span');
-      time.className = 'ai-chat-time';
-      time.textContent = window.__tribexAiUtils.formatRelativeTime(answer.createdAt);
-      header.appendChild(time);
+      header.appendChild(createMetaLabel('ai-run-answer-time', window.__tribexAiUtils.formatRelativeTime(answer.createdAt)));
     }
 
     section.appendChild(header);
@@ -604,41 +758,15 @@
 
     var prompt = document.createElement('div');
     prompt.className = 'ai-run-group-prompt';
-    prompt.appendChild(createChatMessage(group.user, group.repeatCount, group.latestCreatedAt));
+    prompt.appendChild(createPromptBlock(group.user, group.repeatCount, group.latestCreatedAt));
     section.appendChild(prompt);
 
     var surface = document.createElement('div');
     surface.className = 'ai-run-group-surface';
 
-    if (group.workSession && group.workSession.items && group.workSession.items.length) {
-      surface.appendChild(createWorkSessionElement(group.workSession, group.id, threadState));
-    } else {
-      if (group.tasks && group.tasks.length) {
-        var tasks = document.createElement('div');
-        tasks.className = 'ai-run-tasks';
-        group.tasks.forEach(function (task) {
-          tasks.appendChild(createLegacyRunTask(task, group.isStreaming));
-        });
-        surface.appendChild(tasks);
-      }
-
-      if (group.toolNotes && group.toolNotes.length) {
-        var notes = document.createElement('div');
-        notes.className = 'ai-run-notes';
-        group.toolNotes.forEach(function (note) {
-          notes.appendChild(createToolNote(note));
-        });
-        surface.appendChild(notes);
-      }
-
-      if (group.artifacts && group.artifacts.length) {
-        var artifacts = document.createElement('div');
-        artifacts.className = 'ai-run-artifacts';
-        group.artifacts.forEach(function (artifact) {
-          artifacts.appendChild(createArtifactMessage(artifact));
-        });
-        surface.appendChild(artifacts);
-      }
+    var workSession = group.workSession || deriveLegacyWorkSession(group);
+    if (workSession) {
+      surface.appendChild(createWorkSessionElement(workSession, group.id, threadState));
     }
 
     if (group.answer.content || group.answer.isStreaming) {
@@ -651,70 +779,160 @@
 
   function createHeaderShell() {
     var header = document.createElement('section');
-    header.className = 'ai-thread-header';
+    header.className = 'ai-thread-header ai-thread-header-minimal';
+
+    var topRow = document.createElement('div');
+    topRow.className = 'ai-thread-meta-row';
 
     var breadcrumb = document.createElement('p');
     breadcrumb.className = 'ai-thread-breadcrumb';
-    header.appendChild(breadcrumb);
-
-    var titleRow = document.createElement('div');
-    titleRow.className = 'ai-thread-title-row';
-
-    var copy = document.createElement('div');
-    copy.className = 'ai-thread-header-copy';
+    topRow.appendChild(breadcrumb);
 
     var title = document.createElement('h1');
-    copy.appendChild(title);
+    title.className = 'ai-thread-title';
+    topRow.appendChild(title);
+    header.appendChild(topRow);
 
-    var lede = document.createElement('p');
-    lede.className = 'ai-thread-lede';
-    copy.appendChild(lede);
-    titleRow.appendChild(copy);
-
-    var pills = document.createElement('div');
-    pills.className = 'ai-thread-pill-row';
-    titleRow.appendChild(pills);
-    header.appendChild(titleRow);
+    var statusRow = document.createElement('div');
+    statusRow.className = 'ai-thread-status-row';
+    header.appendChild(statusRow);
 
     return {
       root: header,
       breadcrumb: breadcrumb,
       title: title,
-      lede: lede,
-      pills: pills,
+      statusRow: statusRow,
     };
+  }
+
+  function createResultsShell() {
+    var section = document.createElement('section');
+    section.className = 'ai-thread-results';
+    section.hidden = true;
+
+    var header = document.createElement('div');
+    header.className = 'ai-thread-results-header';
+
+    var copy = document.createElement('div');
+    copy.className = 'ai-thread-results-copy';
+    copy.appendChild(createMetaLabel('ai-thread-results-kicker', 'Results'));
+
+    var title = document.createElement('strong');
+    title.className = 'ai-thread-results-title';
+    title.textContent = 'Stored renderer outputs';
+    copy.appendChild(title);
+    header.appendChild(copy);
+
+    var count = document.createElement('span');
+    count.className = 'ai-thread-results-count';
+    header.appendChild(count);
+
+    section.appendChild(header);
+
+    var list = document.createElement('div');
+    list.className = 'ai-thread-results-list';
+    section.appendChild(list);
+
+    return {
+      root: section,
+      count: count,
+      list: list,
+    };
+  }
+
+  function createResultChip(artifact, threadId, active) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ai-thread-result-chip' + (active ? ' is-active' : '');
+    button.addEventListener('click', function () {
+      openResultArtifact(threadId, artifact.artifactKey);
+    });
+
+    var title = document.createElement('strong');
+    title.className = 'ai-thread-result-chip-title';
+    title.textContent = artifact.title || 'Open result';
+    button.appendChild(title);
+
+    if (artifact.summary) {
+      var summary = document.createElement('span');
+      summary.className = 'ai-thread-result-chip-summary';
+      summary.textContent = artifact.summary;
+      button.appendChild(summary);
+    }
+
+    var meta = document.createElement('span');
+    meta.className = 'ai-thread-result-chip-meta';
+    meta.textContent = artifact.contentType
+      ? String(artifact.contentType).replace(/_/g, ' ')
+      : 'renderer result';
+    button.appendChild(meta);
+
+    return button;
+  }
+
+  function updateResultsShelf(state, threadContext) {
+    if (!state.results) return;
+    var thread = threadContext && threadContext.thread ? threadContext.thread : null;
+    var artifacts = collectReopenableArtifacts(thread);
+    state.results.root.hidden = !artifacts.length;
+    state.results.list.innerHTML = '';
+
+    if (!artifacts.length) {
+      state.results.count.textContent = '';
+      return;
+    }
+
+    state.results.count.textContent = artifacts.length === 1 ? '1 result' : artifacts.length + ' results';
+    var activeKey = thread && thread.ui && thread.ui.selectedArtifactKey
+      ? thread.ui.selectedArtifactKey
+      : (thread && thread.artifactDrawer ? thread.artifactDrawer.selectedArtifactKey || null : null);
+    artifacts.forEach(function (artifact) {
+      state.results.list.appendChild(createResultChip(artifact, state.threadId, artifact.artifactKey === activeKey));
+    });
+  }
+
+  function appendHeaderMeta(container, className, value) {
+    if (!value) return;
+    container.appendChild(createMetaLabel(className, value));
   }
 
   function updateHeader(headerState, threadContext) {
     headerState.breadcrumb.textContent = [
-      threadContext.workspace && threadContext.workspace.name,
+      threadContext.organization && threadContext.organization.name,
       threadContext.project && threadContext.project.name,
-    ].filter(Boolean).join(' / ') || ((threadContext.organization && threadContext.organization.name) || 'Hosted workspace');
+    ].filter(Boolean).join(' / ') || ((threadContext.organization && threadContext.organization.name) || 'Hosted organization');
 
-    headerState.title.textContent = ((threadContext.thread && threadContext.thread.title) || 'Thread');
-    headerState.lede.textContent = 'Hosted replies, streamed artifacts, and relay activity stay attached to this thread.';
+    headerState.title.textContent = (threadContext.thread && threadContext.thread.title) || 'Thread';
 
-    headerState.pills.innerHTML = '';
-    if (threadContext.streamStatus) {
-      var streamPill = document.createElement('span');
-      streamPill.className = 'ai-pill ai-pill-neutral';
-      streamPill.textContent = 'Stream ' + window.__tribexAiUtils.titleCase(threadContext.streamStatus);
-      headerState.pills.appendChild(streamPill);
+    headerState.statusRow.innerHTML = '';
+    if (threadContext.thread && threadContext.thread.persona) {
+      appendHeaderMeta(
+        headerState.statusRow,
+        'ai-thread-status-pill',
+        threadContext.thread.persona.displayName
+        || threadContext.thread.persona.name
+        || threadContext.thread.persona.key
+        || 'Persona'
+      );
     }
 
-    if (threadContext.relayStatus) {
-      var relayPill = document.createElement('span');
-      relayPill.className = 'ai-pill ai-pill-neutral';
-      relayPill.textContent = 'Relay ' + window.__tribexAiUtils.titleCase(threadContext.relayStatus);
-      headerState.pills.appendChild(relayPill);
-    }
-
-    if (threadContext.thread && threadContext.thread.lastActivityAt) {
-      var timePill = document.createElement('span');
-      timePill.className = 'ai-pill ai-pill-neutral';
-      timePill.textContent = window.__tribexAiUtils.formatRelativeTime(threadContext.thread.lastActivityAt);
-      headerState.pills.appendChild(timePill);
-    }
+    appendHeaderMeta(
+      headerState.statusRow,
+      'ai-thread-status-pill',
+      threadContext.streamStatus ? 'Stream ' + window.__tribexAiUtils.titleCase(threadContext.streamStatus) : null
+    );
+    appendHeaderMeta(
+      headerState.statusRow,
+      'ai-thread-status-pill',
+      threadContext.relayStatus ? 'Relay ' + window.__tribexAiUtils.titleCase(threadContext.relayStatus) : null
+    );
+    appendHeaderMeta(
+      headerState.statusRow,
+      'ai-thread-status-pill ai-thread-status-time',
+      threadContext.thread && threadContext.thread.lastActivityAt
+        ? window.__tribexAiUtils.formatRelativeTime(threadContext.thread.lastActivityAt)
+        : null
+    );
   }
 
   function getScrollHost(container) {
@@ -791,6 +1009,9 @@
     alerts.className = 'ai-thread-alerts';
     view.appendChild(alerts);
 
+    var results = createResultsShell();
+    view.appendChild(results.root);
+
     var layout = document.createElement('div');
     layout.className = 'ai-thread-layout';
     view.appendChild(layout);
@@ -860,7 +1081,27 @@
       }
     });
 
+    textarea.addEventListener('input', function (event) {
+      if (
+        state.threadId &&
+        window.__tribexAiState &&
+        typeof window.__tribexAiState.setThreadDraft === 'function'
+      ) {
+        window.__tribexAiState.setThreadDraft(state.threadId, event.target.value);
+      }
+    });
+
     scrollHost.addEventListener('scroll', function () {
+      if (
+        state.threadId &&
+        window.__tribexAiState &&
+        typeof window.__tribexAiState.rememberThreadScroll === 'function'
+      ) {
+        window.__tribexAiState.rememberThreadScroll(state.threadId, {
+          scrollTop: scrollHost.scrollTop || 0,
+          wasNearBottom: isNearBottom(scrollHost),
+        });
+      }
       if (isNearBottom(scrollHost)) {
         updateJumpButton(state, false);
       }
@@ -875,6 +1116,7 @@
       view: view,
       header: header,
       alerts: alerts,
+      results: results,
       layout: layout,
       transcript: transcript,
       jumpButton: jumpButton,
@@ -883,6 +1125,7 @@
       primary: primary,
       lastModeSignature: null,
       threadId: null,
+      lastRenderedThreadId: null,
       workSessionOpen: {},
       liveTickId: null,
     };
@@ -893,11 +1136,21 @@
 
   function updateAlerts(state, threadContext) {
     state.alerts.innerHTML = '';
+    var hasContent = !!(
+      threadContext &&
+      threadContext.thread &&
+      (
+        (threadContext.thread.runs && threadContext.thread.runs.length) ||
+        (threadContext.thread.messages && threadContext.thread.messages.length)
+      )
+    );
 
     if (threadContext.loading) {
       var loading = document.createElement('section');
       loading.className = 'ai-inline-alert ai-inline-alert-info';
-      loading.innerHTML = '<div><strong>Hydrating thread</strong><p>Refreshing transcript and hosted activity for this thread.</p></div>';
+      loading.innerHTML = hasContent
+        ? '<div><strong>Syncing thread</strong><p>Refreshing transcript and hosted activity in the background.</p></div>'
+        : '<div><strong>Hydrating thread</strong><p>Refreshing transcript and hosted activity for this thread.</p></div>';
       state.alerts.appendChild(loading);
     }
 
@@ -929,12 +1182,20 @@
     } else {
       model.blocks.forEach(function (block) {
         if (block.type === 'chat') {
-          state.transcript.appendChild(createChatMessage(block.message, 1, block.message.createdAt || null));
+          if (block.message.role === 'user') {
+            state.transcript.appendChild(createPromptBlock(block.message, 1, block.message.createdAt || null));
+          } else {
+            state.transcript.appendChild(createRunAnswer({
+              content: block.message.content || '',
+              createdAt: block.message.createdAt || null,
+              isStreaming: !!block.message.isStreaming,
+            }));
+          }
           return;
         }
 
         if (block.type === 'artifact') {
-          state.transcript.appendChild(createArtifactMessage(block.message));
+          state.transcript.appendChild(createArtifactReopenItem(block.message, state.threadId));
           return;
         }
 
@@ -1059,37 +1320,66 @@
 
   function updateComposer(state, threadContext, threadChanged) {
     var nextThreadId = threadContext.thread && threadContext.thread.id ? threadContext.thread.id : null;
-    if (threadChanged) {
-      state.textarea.value = '';
-    }
     state.threadId = nextThreadId;
+    state.textarea.value = threadContext.thread && threadContext.thread.ui
+      ? (threadContext.thread.ui.draftText || '')
+      : '';
     state.textarea.disabled = !!threadContext.pending;
     state.primary.disabled = !!threadContext.pending;
     state.primary.textContent = threadContext.pending ? 'Sending…' : 'Send';
   }
 
+  function restoreThreadScroll(state, threadContext, threadChanged) {
+    var threadUi = threadContext.thread && threadContext.thread.ui ? threadContext.thread.ui : null;
+    if (!threadChanged) return;
+
+    if (threadUi && threadUi.wasNearBottom === false && typeof threadUi.scrollTop === 'number') {
+      state.scrollHost.scrollTop = threadUi.scrollTop;
+      updateJumpButton(state, true);
+      return;
+    }
+
+    scrollToBottom(state.scrollHost);
+    updateJumpButton(state, false);
+  }
+
   function renderThread(state, threadContext) {
     var nextThreadId = threadContext.thread && threadContext.thread.id ? threadContext.thread.id : null;
     var threadChanged = state.threadId !== nextThreadId;
+    if (
+      threadChanged &&
+      state.threadId &&
+      window.__tribexAiState &&
+      typeof window.__tribexAiState.rememberThreadScroll === 'function'
+    ) {
+      window.__tribexAiState.rememberThreadScroll(state.threadId, {
+        scrollTop: state.scrollHost.scrollTop || 0,
+        wasNearBottom: isNearBottom(state.scrollHost),
+      });
+    }
     var wasNearBottom = threadChanged ? true : isNearBottom(state.scrollHost);
     var beforeHeight = state.scrollHost.scrollHeight || 0;
 
     state.threadId = nextThreadId;
     updateHeader(state.header, threadContext);
     updateAlerts(state, threadContext);
+    updateResultsShelf(state, threadContext);
     var changed = updateTranscript(state, threadContext);
     updateComposer(state, threadContext, threadChanged);
 
     var afterHeight = state.scrollHost.scrollHeight || beforeHeight;
     var contentGrew = afterHeight > beforeHeight || threadContext.pending || threadContext.loading;
 
-    if (threadChanged || wasNearBottom) {
+    if (threadChanged) {
+      restoreThreadScroll(state, threadContext, threadChanged);
+    } else if (wasNearBottom) {
       scrollToBottom(state.scrollHost);
       updateJumpButton(state, false);
     } else if (changed && (contentGrew || !wasNearBottom)) {
       updateJumpButton(state, true);
     }
 
+    state.lastRenderedThreadId = nextThreadId;
     clearLiveTick(state);
     if (hasLiveRunState(threadContext)) {
       scheduleLiveTick(state);

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -420,6 +421,126 @@ pub async fn proxy_request(
 
     serde_json::from_str(&text)
         .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))
+}
+
+fn normalize_local_runtime_probe_url(url: &str) -> Result<reqwest::Url, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("Local runtime probe URL is required.".to_string());
+    }
+
+    let candidate = if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("ws://")
+        || trimmed.starts_with("wss://")
+    {
+        trimmed.to_string()
+    } else {
+        format!("http://{}", trimmed)
+    };
+
+    let mut parsed = reqwest::Url::parse(&candidate)
+        .map_err(|err| format!("Invalid local runtime probe URL '{}': {}", trimmed, err))?;
+
+    let original_scheme = parsed.scheme().to_string();
+    let normalized_scheme = match original_scheme.as_str() {
+        "ws" => "http",
+        "wss" => "https",
+        other => other,
+    };
+    if original_scheme != normalized_scheme {
+        parsed
+            .set_scheme(normalized_scheme)
+            .map_err(|_| format!("Unsupported probe URL scheme '{}'.", original_scheme))?;
+    }
+
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    Ok(parsed)
+}
+
+async fn send_local_runtime_probe_request(
+    state: &Arc<AppState>,
+    url: reqwest::Url,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<(), String> {
+    let probe_targets = if token.map(|value| !value.trim().is_empty()).unwrap_or(false) {
+        vec![
+            ("/__runtime-session-probe", token.map(str::trim).filter(|value| !value.is_empty())),
+            ("/healthz", None),
+        ]
+    } else {
+        vec![("/healthz", None)]
+    };
+
+    let mut last_error = None;
+
+    for (path, request_token) in probe_targets {
+        let mut request_url = url.clone();
+        request_url.set_path(path);
+
+        let mut request = state
+            .http_client
+            .get(request_url.clone())
+            .header("Accept", "application/json")
+            .timeout(timeout);
+
+        if let Some(token) = request_token {
+            request = request.bearer_auth(token);
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|err| format!("Failed to reach local runtime at '{}': {}", request_url, err));
+
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                last_error = Some(error);
+                continue;
+            }
+        };
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| format!("Failed to read local runtime response from '{}': {}", request_url, err))?;
+
+        if status.is_success() {
+            return Ok(());
+        }
+
+        if status == reqwest::StatusCode::NOT_FOUND && path == "/__runtime-session-probe" {
+            last_error = Some(format!(
+                "Local runtime probe endpoint '{}' is unavailable.",
+                request_url
+            ));
+            continue;
+        }
+
+        return Err(format!(
+            "Local runtime probe failed with HTTP {} from '{}': {}",
+            status.as_u16(),
+            request_url,
+            shorten_error_body(&body)
+        ));
+    }
+
+    Err(last_error.unwrap_or_else(|| "Local runtime probe failed.".to_string()))
+}
+
+pub async fn probe_local_runtime_host(
+    state: &Arc<AppState>,
+    url: &str,
+    token: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<(), String> {
+    let parsed = normalize_local_runtime_probe_url(url)?;
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(1_000).clamp(100, 10_000));
+    send_local_runtime_probe_request(state, parsed, token, timeout).await
 }
 
 pub async fn start_auth(state: &Arc<AppState>) -> Result<String, String> {

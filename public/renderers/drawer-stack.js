@@ -129,6 +129,52 @@
     }
   }
 
+  function submitArtifactDecision(reviewSessionId, decision) {
+    if (!reviewSessionId || !window.__TAURI__ || !window.__TAURI__.core) return;
+
+    var decisionStr = '';
+    var operationDecisions = null;
+    var comments = null;
+    var modifications = null;
+    var additions = null;
+    var suggestionDecisions = null;
+    var tableDecisions = null;
+
+    if (typeof decision === 'string') {
+      decisionStr = decision;
+    } else if (decision && typeof decision === 'object') {
+      if (decision.type === 'review_decision') {
+        decisionStr = decision.decision || '';
+      } else if (decision.type === 'operation_decisions') {
+        decisionStr = 'partial';
+        operationDecisions = decision.decisions || null;
+        comments = decision.comments || null;
+        modifications = decision.modifications || null;
+        additions = decision.additions || null;
+      } else if (decision.type === 'rich_content_decisions') {
+        decisionStr = 'partial';
+        suggestionDecisions = decision.suggestion_decisions || null;
+        tableDecisions = decision.table_decisions || null;
+      } else {
+        decisionStr = 'partial';
+        operationDecisions = decision;
+      }
+    }
+
+    window.__TAURI__.core.invoke('submit_decision', {
+      sessionId: reviewSessionId,
+      decision: decisionStr,
+      operationDecisions: operationDecisions,
+      comments: comments,
+      modifications: modifications,
+      additions: additions,
+      suggestionDecisions: suggestionDecisions,
+      tableDecisions: tableDecisions,
+    }).catch(function (error) {
+      console.error('[drawer-stack] Failed to submit artifact decision:', error);
+    });
+  }
+
   function setDrawerDisplay(entry, visible) {
     if (!entry) return;
     entry.overlay.style.display = visible ? '' : 'none';
@@ -412,13 +458,19 @@
     }
 
     try {
+      var reviewRequired = !!(artifact.reviewRequired || (artifact.meta && artifact.meta.reviewRequired));
+      var reviewSessionId = artifact.reviewSessionId || (artifact.meta && artifact.meta.reviewSessionId) || null;
       renderer(
         content,
         artifact.data || {},
         artifact.meta || {},
         artifact.toolArgs || {},
-        false,
-        function () {},
+        reviewRequired,
+        reviewRequired && reviewSessionId
+          ? function (decision) {
+              submitArtifactDecision(reviewSessionId, decision);
+            }
+          : null,
         {
           mode: 'thread-artifact-drawer',
           params: artifact.data || {},

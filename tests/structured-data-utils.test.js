@@ -21,6 +21,14 @@ describe('getCellValue', function () {
   it('returns empty string when row has no cells', function () {
     expect(sdu.getCellValue({ id: 'r1' }, 'c1')).toBe('');
   });
+  it('falls back to top-level row fields when cells are omitted', function () {
+    expect(
+      sdu.getCellValue({ id: 'r1', field: 'Revenue' }, 'field', 'Field')
+    ).toBe('Revenue');
+    expect(
+      sdu.getCellValue({ id: 'r1', 'Field Name': 'Revenue' }, 'field_name', 'Field Name')
+    ).toBe('Revenue');
+  });
 });
 
 describe('getCellChange', function () {

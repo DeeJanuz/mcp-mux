@@ -220,14 +220,51 @@
       };
     }
 
+    function buildLegacyMessageArtifactConfig(threadId, message) {
+      var contentType = resolveActivityContentType(message);
+      var title = (message.resultData && message.resultData.title)
+        || message.resultTitle
+        || message.title
+        || (message.toolName && window.__tribexAiUtils.titleCase(message.toolName))
+        || 'Result';
+      var reviewSessionId = message.sessionId
+        || (message.resultMeta && (message.resultMeta.sessionId || message.resultMeta.reviewSessionId))
+        || null;
+      var reviewRequired = !!(
+        message.reviewRequired ||
+        (message.resultMeta && message.resultMeta.reviewRequired)
+      );
+
+      return {
+        artifactKey: message.artifactKey,
+        sessionKey: buildArtifactSessionKey(threadId, message.artifactKey),
+        sessionId: reviewSessionId,
+        title: title,
+        contentType: contentType || 'rich_content',
+        data: message.resultData || {},
+        meta: Object.assign({}, message.resultMeta || {}, {
+          headerTitle: title,
+          reviewRequired: reviewRequired,
+          reviewSessionId: reviewSessionId,
+          threadId: threadId || null,
+          activityId: message.id || null,
+          artifactSource: 'tribex-ai-thread-result',
+          artifactKey: message.artifactKey,
+        }),
+        toolArgs: message.toolArgs || {},
+        reviewRequired: reviewRequired,
+        reviewSessionId: reviewSessionId,
+      };
+    }
+
     function normalizeArtifactItems(record) {
       if (!record) return [];
       var byKey = {};
 
-      function register(item) {
+      function registerArtifact(config, item) {
+        if (!config || !config.artifactKey) return;
+        var artifactKey = config.artifactKey;
         if (!item) return;
-        var config = buildActivityArtifactConfig(record.id, item);
-        var artifactKey = item.artifactKey || config.artifactKey;
         byKey[artifactKey] = {
           artifactKey: artifactKey,
           sessionKey: config.sessionKey,
@@ -244,11 +281,32 @@
         };
       }
 
+      function registerActivityItem(item) {
+        if (!item) return;
+        var config = buildActivityArtifactConfig(record.id, item);
+        if (item.artifactKey) {
+          config.artifactKey = item.artifactKey;
+          config.sessionKey = buildArtifactSessionKey(record.id, item.artifactKey);
+        }
+        registerArtifact(config, item);
+      }
+
+      function registerLegacyMessage(message) {
+        if (!message || !message.artifactKey || byKey[message.artifactKey]) return;
+        registerArtifact(buildLegacyMessageArtifactConfig(record.id, message), message);
+      }
+
       buildActivityItems(record)
         .filter(function (item) {
           return isRendererBackedActivityItem(item);
         })
-        .forEach(register);
+        .forEach(registerActivityItem);
+
+      extractSnapshotMessages(record)
+        .filter(function (message) {
+          return message && message.role === 'tool' && isRendererBackedActivityItem(message) && !!message.artifactKey;
+        })
+        .forEach(registerLegacyMessage);
 
       return Object.keys(byKey).map(function (artifactKey) {
         return byKey[artifactKey];

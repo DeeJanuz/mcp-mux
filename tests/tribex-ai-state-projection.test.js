@@ -193,6 +193,93 @@ describe('tribex-ai-state projection helpers', function () {
     );
   });
 
+  it('includes legacy message-backed renderer artifacts in the shared artifact projection', function () {
+    window.__renderers = {
+      structured_data: function () {},
+    };
+
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var record = {
+      id: 'thread-1',
+      base: {
+        messages: [
+          {
+            id: 'legacy-artifact-1',
+            role: 'tool',
+            toolName: 'structured_data',
+            status: 'success',
+            artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+            resultContentType: 'structured_data',
+            resultData: {
+              title: 'Expense Review',
+              tables: [{
+                id: 'table-1',
+                name: 'Expenses',
+                rows: [],
+              }],
+            },
+            resultMeta: {
+              source: 'legacy-thread',
+            },
+            createdAt: '2026-04-16T10:05:00.000Z',
+          },
+        ],
+      },
+      activity: {
+        itemsById: {},
+        order: [],
+      },
+      artifactDrawer: {
+        drawerId: 'tribex-ai-thread-artifacts:thread-1',
+        selectedArtifactKey: null,
+      },
+      turnHistoryById: {},
+      turnCompletedAtById: {},
+    };
+
+    api.syncThreadArtifactDrawer(record);
+    var projection = api.buildThreadProjection(record);
+
+    expect(projection.artifacts).toEqual([
+      expect.objectContaining({
+        artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+        sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:legacy:artifact-0',
+        contentType: 'structured_data',
+        data: expect.objectContaining({
+          title: 'Expense Review',
+        }),
+      }),
+    ]);
+    expect(projection.artifactDrawer).toEqual(
+      expect.objectContaining({
+        selectedArtifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+      }),
+    );
+  });
+
   it('orders user messages ahead of assistant messages within the same turn', function () {
     var context = {
       state: {

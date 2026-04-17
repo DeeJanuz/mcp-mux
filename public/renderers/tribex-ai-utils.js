@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* TribeX AI utilities — navigator grouping, filtering, and display helpers */
+/* Hosted workspace utilities — navigator grouping, filtering, and display helpers */
 
 (function () {
   'use strict';

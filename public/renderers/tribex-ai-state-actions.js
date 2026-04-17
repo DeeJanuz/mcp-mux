@@ -424,7 +424,7 @@
 
       var config = {
         sessionKey: 'tribex-ai-thread-' + threadId,
-        toolName: 'TribeX AI',
+        toolName: 'Workspace',
         contentType: 'tribex_ai_thread',
         data: { title: thread.title },
         meta: {

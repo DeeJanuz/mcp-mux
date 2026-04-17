@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* TribeX AI shell — org-first navigator for hosted chat threads */
+/* Hosted workspace shell — org-first navigator for control-plane threads */
 
 (function () {
   'use strict';
@@ -106,8 +106,8 @@
 
     if (collapseButton) {
       collapseButton.style.display = navigatorVisible ? '' : 'none';
-      collapseButton.setAttribute('title', snapshot && snapshot.navigatorCollapsed ? 'Expand AI navigator' : 'Collapse AI navigator');
-      collapseButton.setAttribute('aria-label', snapshot && snapshot.navigatorCollapsed ? 'Expand AI navigator' : 'Collapse AI navigator');
+      collapseButton.setAttribute('title', snapshot && snapshot.navigatorCollapsed ? 'Expand workspace navigator' : 'Collapse workspace navigator');
+      collapseButton.setAttribute('aria-label', snapshot && snapshot.navigatorCollapsed ? 'Expand workspace navigator' : 'Collapse workspace navigator');
       collapseButton.textContent = snapshot && snapshot.navigatorCollapsed ? '>' : '<';
     }
   }
@@ -215,15 +215,15 @@
     panel.appendChild(copy);
 
     if (!snapshot.integration.config || !snapshot.integration.config.configured) {
-      title.textContent = 'Connect MCPViews to ProPaasAI';
-      copy.textContent = 'Set `first_party_ai.base_url` in `~/.mcpviews/config.json` to enable organizations, folders, personas, and hosted threads.';
+      title.textContent = 'Connect a hosted workspace';
+      copy.textContent = 'Set `first_party_ai.base_url` in `~/.mcpviews/config.json` to connect a hosted control plane that provides organizations, folders, personas, and threads.';
       root.appendChild(panel);
       return;
     }
 
     if (snapshot.integration.status === 'error') {
-      title.textContent = 'Unable to load hosted AI';
-      copy.textContent = snapshot.integration.error || 'The hosted AI navigation could not be loaded right now.';
+      title.textContent = 'Unable to load workspace';
+      copy.textContent = snapshot.integration.error || 'The workspace navigation could not be loaded right now.';
       panel.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Retry', {
         onClick: function () {
           aiState.refreshNavigator(true);
@@ -233,10 +233,10 @@
       return;
     }
 
-    title.textContent = 'Sign in to hosted AI';
+    title.textContent = 'Sign in to workspace';
     copy.textContent = snapshot.integration.magicLinkSentTo
       ? 'Paste the localhost verification URL or token to finish linking this desktop client.'
-      : 'Send yourself a magic link so this desktop client can attach to your hosted organization.';
+      : 'Send yourself a magic link so this desktop client can attach to your workspace.';
 
     var form = document.createElement('div');
     form.className = 'ai-nav-auth-form';
@@ -319,7 +319,7 @@
     subtitle.className = 'ai-nav-toolbar-subtitle';
     subtitle.textContent = (organization && organization.name)
       ? organization.name + (workspace && workspace.packageKey ? ' · ' + workspace.packageKey : '')
-      : 'Hosted AI';
+      : 'Connected workspace';
     copy.appendChild(subtitle);
     header.appendChild(copy);
 
@@ -404,14 +404,14 @@
           ? 'No organizations available'
           : !snapshot.hasProjects
             ? 'No folders yet'
-            : 'No hosted threads yet';
+            : 'No workspace threads yet';
     empty.appendChild(title);
 
     var copy = document.createElement('p');
     copy.textContent = snapshot.loadingNavigator
-      ? 'Refreshing folders and hosted thread history from ProPaasAI.'
+      ? 'Refreshing folders and workspace thread history.'
       : !snapshot.selectedOrganization
-        ? 'Refresh after your hosted organization is provisioned.'
+        ? 'Refresh after your workspace access is provisioned.'
         : snapshot.hasProjects
           ? 'Create a chat in the selected folder or switch to another folder to keep working.'
           : 'Create the first folder for this organization, or start a chat and MCPViews will bootstrap General once.';

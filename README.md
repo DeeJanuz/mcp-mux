@@ -6,6 +6,8 @@ The real power is the plugin system. Each plugin pairs an MCP server with a cust
 
 This blurs the line between agentic workflows and traditional applications. Instead of choosing between an AI-only flow or a manual UI, MCPViews lets both happen simultaneously — agents and humans collaborating through a shared visual layer.
 
+MCPViews is intentionally an open host, not a house-branded control plane. If you want a governance console, a coding cockpit, a research workspace, or a fully custom orchestration shell, you build that experience through the plugin system and MCP-backed renderers.
+
 ```mermaid
 graph LR
     A[AI Agent] <-->|MCP Protocol| B[MCPViews]
@@ -97,7 +99,7 @@ For the full manifest schema and auth reference, see [Plugin System Reference](d
 ## Architecture
 
 - **Rust backend** (axum): HTTP server on `:4200` for push API + review workflow
-- **WebView frontend**: Vanilla JS renderers for core content types plus a built-in AI workspace shell (home, setup, tool catalog, thread); domain-specific renderers delivered via plugins
+- **WebView frontend**: Vanilla JS renderers for core content types plus an optional workspace shell currently powered by internal compatibility modules; domain-specific and control-plane experiences are delivered via plugins
 - **Node.js sidecar**: SSE bridge for remote server connections
 - **System tray**: Hide-to-tray, click to show, auto-start on login
 
@@ -177,8 +179,8 @@ node sidecar/dist/sse-bridge.mjs --app-host https://app.example.com --key lf_com
 
 ```
 mcpviews/
-├── bundled-plugins/        # Bundled first-party plugin manifests
-│   └── tribex-ai/          # TribeX AI shell scaffold manifest
+├── bundled-plugins/        # Bundled/example plugin manifests
+│   └── tribex-ai/          # Hosted workspace compatibility manifest
 ├── src-tauri/              # Rust backend
 │   ├── src/
 │   │   ├── main.rs         # Tauri entry, tray, plugin setup
@@ -190,11 +192,11 @@ mcpviews/
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 ├── src/                    # Frontend (Vite entry)
-│   ├── index.html          # HTML shell + AI navigation frame
-│   └── styles.css          # Shared app styles and AI shell layout
+│   ├── index.html          # HTML shell + workspace navigation frame
+│   └── styles.css          # Shared app styles and workspace shell layout
 ├── public/                 # Static assets (copied to dist)
 │   ├── main.js             # App bootstrap (Tauri IPC)
-│   └── renderers/          # Built-in content renderers + TribeX AI surfaces
+│   └── renderers/          # Built-in content renderers + hosted workspace surfaces
 ├── sidecar/                # Node.js SSE bridge
 │   ├── sse-bridge.ts
 │   └── build.sh
@@ -212,7 +214,7 @@ mcpviews/
 
 MCPViews supports plugins that extend the app with tools from third-party MCP servers. Each plugin is a JSON manifest that declares renderer mappings, MCP server configuration, and authentication. Plugins are stored as individual JSON files in `~/.mcpviews/plugins/`.
 
-Bundled first-party manifests can also ship with the app under `bundled-plugins/`; MCPViews seeds them into the local plugin store during startup so built-in experiences like the TribeX AI scaffold are available immediately.
+Bundled manifests can also ship with the app under `bundled-plugins/`; MCPViews seeds them into the local plugin store during startup so example or compatibility experiences are available immediately without changing the public plugin contract.
 
 For full documentation, see [docs/plugins.md](docs/plugins.md). For a step-by-step guide to creating your own plugin, see [docs/plugin-development.md](docs/plugin-development.md).
 

@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* TribeX AI client — first-party ProPaasAI transport and normalization helpers */
+/* Hosted workspace client — compatibility transport and normalization helpers */
 
 (function () {
   'use strict';

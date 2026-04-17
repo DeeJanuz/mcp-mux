@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* TribeX AI state — composed from focused hosted-thread state modules */
+/* Hosted workspace state — composed from focused hosted-thread state modules */
 
 (function () {
   'use strict';
@@ -70,7 +70,7 @@
     typeof window.__createTribexAiStateRuntime !== 'function' ||
     typeof window.__createTribexAiStateActions !== 'function'
   ) {
-    throw new Error('TribeX AI state helpers must load before tribex-ai-state.js');
+    throw new Error('Hosted workspace state helpers must load before tribex-ai-state.js');
   }
 
   var context = {

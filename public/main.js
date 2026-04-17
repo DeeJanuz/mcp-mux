@@ -673,14 +673,14 @@
     emptyState.appendChild(title);
 
     var subtitle = document.createElement('p');
-    subtitle.textContent = 'Open the AI navigator to browse live projects, threads, and companion activity.';
+    subtitle.textContent = 'Open the workspace to browse live projects, threads, and companion activity.';
     emptyState.appendChild(subtitle);
 
     if (window.__tribexAiState && typeof window.__tribexAiState.toggleNavigator === 'function') {
       var button = document.createElement('button');
       button.className = 'ai-primary-btn';
       button.type = 'button';
-      button.textContent = 'Open AI navigator';
+      button.textContent = 'Open workspace';
       button.addEventListener('click', function () {
         window.__tribexAiState.toggleNavigator();
       });

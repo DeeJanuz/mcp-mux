@@ -2831,6 +2831,81 @@ html[data-theme] .collapsible-body {
   margin: 0;
 }
 
+.ai-inline-renderer {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.ai-inline-renderer-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ai-inline-renderer-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-inline-renderer-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ai-inline-renderer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ai-inline-renderer-badge,
+.ai-inline-renderer-time,
+.ai-inline-renderer-meta {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.ai-inline-renderer-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ai-inline-renderer-title {
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+.ai-inline-renderer-meta {
+  letter-spacing: 0.04em;
+}
+
+.ai-inline-renderer-body {
+  padding: 0 16px 16px;
+}
+
+.ai-inline-renderer-body .rc-header,
+.ai-inline-renderer-body .sd-title {
+  display: none;
+}
+
+.ai-inline-renderer-body .sd-container {
+  margin-bottom: 0;
+}
+
 .ai-result-reopen {
   border: 1px dashed rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.025);
@@ -4018,6 +4093,26 @@ body.ai-mode-session-active .ai-work-session-status-needs-approval {
 body.ai-mode-session-active .ai-run-answer {
   border-top: 1px solid var(--ai-card-border);
   padding-top: 14px;
+}
+
+body.ai-mode-session-active .ai-inline-renderer {
+  border-color: var(--ai-card-border);
+  background: color-mix(in srgb, var(--ai-thread-surface-strong) 82%, transparent);
+}
+
+body.ai-mode-session-active .ai-inline-renderer-badge {
+  border-color: var(--ai-card-border);
+  background: color-mix(in srgb, var(--ai-thread-surface) 78%, transparent);
+}
+
+body.ai-mode-session-active .ai-inline-renderer-badge,
+body.ai-mode-session-active .ai-inline-renderer-time,
+body.ai-mode-session-active .ai-inline-renderer-meta {
+  color: var(--ai-text-faint);
+}
+
+body.ai-mode-session-active .ai-inline-renderer-title {
+  color: var(--ai-text-strong);
 }
 
 body.ai-mode-session-active .ai-run-answer-streaming .ai-run-answer-body::after {

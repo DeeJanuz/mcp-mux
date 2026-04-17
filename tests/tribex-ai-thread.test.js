@@ -27,6 +27,7 @@ function renderThread(threadId) {
 beforeEach(function () {
   document.body.innerHTML = '<div id="target"></div>';
 
+  delete window.__MCPVIEWS_DEV__;
   delete window.__tribexAiUtils;
   delete window.__tribexAiState;
   window.__companionUtils = {
@@ -194,6 +195,94 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-thread-results').hidden).toBe(true);
     expect(document.querySelector('.ai-work-session')).toBeNull();
     expect(document.querySelector('.ai-run-answer').textContent).toContain('Hi.');
+  });
+
+  it('only shows the raw response toggle in dev mode and swaps assistant markdown for raw text', function () {
+    window.__MCPVIEWS_DEV__ = true;
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Debug Thread',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Show me the raw answer', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: { id: 'a1', content: '**Bold** and `inline`', createdAt: '2026-04-14T20:00:01.000Z', isStreaming: false },
+                workSession: null,
+              },
+            ],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: null,
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-thread-dev-toggle')).not.toBeNull();
+    expect(document.querySelector('.ai-run-answer .md-render strong')).not.toBeNull();
+    expect(document.querySelector('.ai-run-answer .rc-raw-markdown')).toBeNull();
+
+    document.querySelector('.ai-thread-dev-toggle').click();
+
+    var raw = document.querySelector('.ai-run-answer .rc-raw-markdown');
+    expect(raw).not.toBeNull();
+    expect(raw.textContent).toContain('**Bold** and `inline`');
+    expect(document.querySelector('.ai-run-answer .md-render')).toBeNull();
+
+    renderThread('thread-1');
+    expect(document.querySelector('.ai-run-answer .rc-raw-markdown')).not.toBeNull();
+
+    document.querySelector('.ai-thread-dev-toggle').click();
+    expect(document.querySelector('.ai-run-answer .md-render strong')).not.toBeNull();
+  });
+
+  it('hides the raw response toggle outside dev mode', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Normal Thread',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Hello', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: { id: 'a1', content: 'Hi there', createdAt: '2026-04-14T20:00:01.000Z', isStreaming: false },
+                workSession: null,
+              },
+            ],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: null,
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-thread-dev-toggle')).toBeNull();
   });
 
   it('updates the working elapsed label while a work session is still running', function () {
@@ -368,6 +457,453 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-inline-renderer')).not.toBeNull();
     expect(document.querySelector('.ai-inline-renderer-title').textContent).toBe('Inline summary');
     expect(window.__renderers.rich_content).toHaveBeenCalled();
+  });
+
+  it('keeps completed work sessions visible and collapsed directly above the summary and inline result', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Completed work session',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Show the plan', createdAt: '2026-04-14T20:00:00.000Z' },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-14T20:00:01.000Z',
+                  endedAt: '2026-04-14T20:00:04.000Z',
+                  items: [{
+                    id: 'activity-1',
+                    toolName: 'rich_content',
+                    title: 'Prepared the diagram',
+                    status: 'completed',
+                    detail: 'Built the renderer payload and finalized it for the turn.',
+                    createdAt: '2026-04-14T20:00:01.000Z',
+                    updatedAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+                answer: {
+                  id: 'a1',
+                  content: 'Here is the summary.',
+                  createdAt: '2026-04-14T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [{
+                    id: 'inline-1',
+                    artifactKey: 'artifact-inline-1',
+                    toolName: 'rich_content',
+                    contentType: 'rich_content',
+                    inlineDisplay: true,
+                    resultData: {
+                      title: 'Operational plan',
+                      body: 'Rendered inline',
+                    },
+                    createdAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+              },
+            ],
+            artifacts: [{
+              artifactKey: 'artifact-inline-1',
+              title: 'Operational plan',
+              contentType: 'rich_content',
+              updatedAt: '2026-04-14T20:00:04.000Z',
+            }],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    var surface = document.querySelector('.ai-run-group-surface');
+    var children = Array.from(surface.children);
+    expect(children[0].classList.contains('ai-work-session')).toBe(true);
+    expect(children[1].classList.contains('ai-run-answer')).toBe(true);
+    expect(children[2].classList.contains('ai-inline-renderer')).toBe(true);
+    expect(children[0].open).toBe(false);
+    expect(children[0].textContent).toContain('Worked for 3s');
+    expect(document.querySelector('.ai-thread-results').hidden).toBe(true);
+  });
+
+  it('hydrates mermaid blocks inside finalized assistant summaries', function () {
+    var renderMermaidBlocks = vi.fn(function (container) {
+      container.setAttribute('data-mermaid-hydrated', 'true');
+    });
+    window.__companionUtils.renderMarkdown = vi.fn(function () {
+      var el = document.createElement('div');
+      el.className = 'md-render';
+      var placeholder = document.createElement('div');
+      placeholder.className = 'mermaid-placeholder';
+      el.appendChild(placeholder);
+      return el;
+    });
+    window.__companionUtils.renderMermaidBlocks = renderMermaidBlocks;
+
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Mermaid Thread',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Share a diagram', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: {
+                  id: 'a1',
+                  content: '```mermaid\ngraph TD;\nA-->B;\n```',
+                  createdAt: '2026-04-14T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [],
+                },
+                workSession: null,
+              },
+            ],
+            artifacts: [],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(renderMermaidBlocks).toHaveBeenCalled();
+    expect(document.querySelector('.ai-run-answer .md-render').getAttribute('data-mermaid-hydrated')).toBe('true');
+  });
+
+  it('keeps inline renderers visible even when the thread also has reopenable stored results', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Inline And Stored',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Show me the architecture', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: {
+                  id: 'a1',
+                  content: 'Inline below.',
+                  createdAt: '2026-04-14T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [{
+                    id: 'inline-1',
+                    artifactKey: 'artifact-1',
+                    toolName: 'rich_content',
+                    contentType: 'rich_content',
+                    inlineDisplay: true,
+                    resultData: {
+                      title: 'Inline summary',
+                      body: 'Rendered inline',
+                    },
+                    createdAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+                workSession: null,
+              },
+            ],
+            artifacts: [{
+              artifactKey: 'artifact-1',
+              title: 'Inline summary',
+              summary: 'Stored copy',
+              contentType: 'rich_content',
+              sessionId: 'result-session-1',
+            }],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-inline-renderer')).not.toBeNull();
+    expect(document.querySelector('.ai-thread-results').hidden).toBe(true);
+    expect(document.querySelector('.ai-thread-result-chip')).toBeNull();
+  });
+
+  it('keeps only non-inline artifacts in the stored results shelf', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Mixed artifacts',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Show me the architecture', createdAt: '2026-04-14T20:00:00.000Z' },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-14T20:00:01.000Z',
+                  endedAt: '2026-04-14T20:00:04.000Z',
+                  items: [{
+                    id: 'activity-1',
+                    toolName: 'push_review',
+                    title: 'Prepared review packet',
+                    status: 'completed',
+                    detail: 'Stored an approval packet in the drawer.',
+                    createdAt: '2026-04-14T20:00:02.000Z',
+                    updatedAt: '2026-04-14T20:00:04.000Z',
+                    artifactKey: 'artifact-review',
+                  }],
+                },
+                answer: {
+                  id: 'a1',
+                  content: 'Inline below, plus a separate approval packet.',
+                  createdAt: '2026-04-14T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [{
+                    id: 'inline-1',
+                    artifactKey: 'artifact-inline',
+                    toolName: 'rich_content',
+                    contentType: 'rich_content',
+                    inlineDisplay: true,
+                    resultData: {
+                      title: 'Inline summary',
+                      body: 'Rendered inline',
+                    },
+                    createdAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+              },
+            ],
+            artifacts: [
+              {
+                artifactKey: 'artifact-inline',
+                title: 'Inline summary',
+                contentType: 'rich_content',
+                updatedAt: '2026-04-14T20:00:04.000Z',
+              },
+              {
+                artifactKey: 'artifact-review',
+                title: 'Approval packet',
+                contentType: 'structured_data',
+                updatedAt: '2026-04-14T20:00:05.000Z',
+              },
+            ],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-work-session')).not.toBeNull();
+    expect(document.querySelector('.ai-work-session').open).toBe(false);
+    expect(document.querySelector('.ai-inline-renderer')).not.toBeNull();
+    expect(document.querySelector('.ai-thread-results').hidden).toBe(false);
+    expect(document.querySelectorAll('.ai-thread-result-chip')).toHaveLength(1);
+    expect(document.querySelector('.ai-thread-result-chip').textContent).toContain('Approval packet');
+  });
+
+  it('hides metadata-only stored artifacts after rehydration when the same result is already inline', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Rehydrated inline result',
+            runs: [
+              {
+                id: 'run-1',
+                turnId: 'turn-2',
+                user: { id: 'u1', role: 'user', content: 'Show me the diagram', createdAt: '2026-04-14T20:00:00.000Z' },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-14T20:00:01.000Z',
+                  endedAt: '2026-04-14T20:00:04.000Z',
+                  items: [{
+                    id: 'tool-push-1',
+                    toolCallId: 'tool-push-1',
+                    turnId: 'turn-2',
+                    toolName: 'rich_content',
+                    title: 'Rendered diagram',
+                    status: 'completed',
+                    detail: 'Prepared inline result.',
+                    createdAt: '2026-04-14T20:00:01.000Z',
+                    updatedAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+                answer: {
+                  id: 'a1',
+                  content: 'Diagram below.',
+                  createdAt: '2026-04-14T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [{
+                    id: 'tool-push-1',
+                    toolCallId: 'tool-push-1',
+                    turnId: 'turn-2',
+                    toolName: 'rich_content',
+                    contentType: 'rich_content',
+                    inlineDisplay: true,
+                    resultData: {
+                      title: 'Resource Allocation Strategy: Woodchuck Operations',
+                      body: '### Operational transition diagram...',
+                    },
+                    resultMeta: {
+                      headerTitle: 'Resource Allocation Strategy: Woodchuck Operations',
+                      activityId: 'tool-push-1',
+                      turnId: 'turn-2',
+                    },
+                    createdAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+              },
+            ],
+            artifacts: [{
+              artifactKey: 'tribex-ai-result:thread-1:turn-2:artifact-legacy',
+              title: 'Resource Allocation Strategy: Woodchuck Operations',
+              contentType: 'rich_content',
+              meta: {
+                headerTitle: 'Resource Allocation Strategy: Woodchuck Operations',
+                activityId: 'tool-push-1',
+                turnId: 'turn-2',
+              },
+              updatedAt: '2026-04-14T20:00:05.000Z',
+            }],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-inline-renderer')).not.toBeNull();
+    expect(document.querySelector('.ai-thread-results').hidden).toBe(true);
+    expect(document.querySelector('.ai-thread-result-chip')).toBeNull();
+  });
+
+  it('hides title-only stored artifacts after rehydration when the same inline result is already visible', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Minimal artifact rehydration',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Show me the diagram', createdAt: '2026-04-14T20:00:00.000Z' },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-14T20:00:01.000Z',
+                  endedAt: '2026-04-14T20:00:04.000Z',
+                  items: [],
+                },
+                answer: {
+                  id: 'a1',
+                  content: 'Diagram below.',
+                  createdAt: '2026-04-14T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [{
+                    id: 'tool-push-1',
+                    toolName: 'rich_content',
+                    contentType: 'rich_content',
+                    inlineDisplay: true,
+                    resultData: {
+                      title: 'Resource Allocation Strategy: Woodchuck Operations',
+                      body: '### Operational transition diagram...',
+                    },
+                    createdAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+              },
+            ],
+            artifacts: [{
+              artifactKey: 'tribex-ai-result:thread-1:rehydrated-only',
+              title: 'Resource Allocation Strategy: Woodchuck Operations',
+              contentType: 'rich_content',
+              updatedAt: '2026-04-14T20:00:05.000Z',
+            }],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-inline-renderer')).not.toBeNull();
+    expect(document.querySelector('.ai-thread-results').hidden).toBe(true);
+    expect(document.querySelector('.ai-thread-result-chip')).toBeNull();
   });
 
   it('collapses large inline structured data results by default and keeps them out of the stored results shelf', function () {

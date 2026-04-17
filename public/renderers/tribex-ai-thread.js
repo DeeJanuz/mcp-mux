@@ -38,11 +38,30 @@
       var markdown = window.__companionUtils.renderMarkdown(content || '');
       if (markdown) {
         body.appendChild(markdown);
+        if (
+          window.__companionUtils &&
+          typeof window.__companionUtils.renderMermaidBlocks === 'function'
+        ) {
+          window.__companionUtils.renderMermaidBlocks(markdown);
+        }
         return body;
       }
     }
     body.textContent = content || '';
     return body;
+  }
+
+  function createRawBody(content, className) {
+    var body = document.createElement('pre');
+    body.className = (className ? className + ' ' : '') + 'rc-raw-markdown';
+    var code = document.createElement('code');
+    code.textContent = content || '';
+    body.appendChild(code);
+    return body;
+  }
+
+  function isDevModeEnabled() {
+    return !!window.__MCPVIEWS_DEV__;
   }
 
   function buildLegacyBlocks(messages) {
@@ -72,7 +91,7 @@
     };
   }
 
-  function buildRunGroups(messages) {
+  function buildRunGroups(messages, rawMode) {
     var groups = [];
     var current = null;
     var shouldFallbackToLegacy = false;
@@ -136,7 +155,7 @@
     return {
       mode: 'groups',
       groups: groups.map(function (group, index) {
-        return enrichRunGroup(group, index);
+        return enrichRunGroup(group, index, rawMode);
       }),
     };
   }
@@ -261,7 +280,7 @@
     return collapsed;
   }
 
-  function enrichRunGroup(group, index) {
+  function enrichRunGroup(group, index, rawMode) {
     var answer = buildRunAnswer(group.assistantMessages);
     var tasks = buildRunTasks(group.lifecycleMessages, answer.isStreaming);
     var toolNotes = collapseToolNotes(group.toolNotes);
@@ -277,6 +296,7 @@
       answer: answer,
       isStreaming: answer.isStreaming,
       signature: JSON.stringify({
+        displayMode: rawMode ? 'raw' : 'rendered',
         repeatCount: group.repeatCount,
         prompt: group.user && group.user.content,
         tasks: tasks.map(function (task) {
@@ -534,7 +554,145 @@
     return createSummaryText(body, 140);
   }
 
+  function buildArtifactMatchFingerprint(candidate) {
+    if (!candidate) return null;
+    var contentType = candidate.contentType || candidate.resultContentType || candidate.toolName || null;
+    var title = candidate.title
+      || candidate.resultTitle
+      || (candidate.resultMeta && candidate.resultMeta.headerTitle)
+      || (candidate.resultData && candidate.resultData.title)
+      || null;
+    var body = candidate.summary
+      || candidate.detail
+      || (candidate.resultMeta && candidate.resultMeta.summary)
+      || (candidate.resultData && candidate.resultData.body)
+      || null;
+
+    if (!contentType && !title && !body) return null;
+    return JSON.stringify([
+      contentType || '',
+      title || '',
+      createSummaryText(body || '', 120),
+    ]);
+  }
+
+  function buildArtifactTitleKey(candidate) {
+    if (!candidate) return null;
+    var contentType = candidate.contentType || candidate.resultContentType || candidate.toolName || null;
+    var title = candidate.title
+      || candidate.resultTitle
+      || (candidate.resultMeta && candidate.resultMeta.headerTitle)
+      || (candidate.resultData && candidate.resultData.title)
+      || null;
+    if (!contentType && !title) return null;
+    return JSON.stringify([
+      String(contentType || '').trim().toLowerCase(),
+      String(title || '').trim().toLowerCase(),
+    ]);
+  }
+
+  function collectInlineArtifactMatchers(thread) {
+    var artifactKeys = {};
+    var fingerprints = {};
+    var activityIds = {};
+    var turnKeys = {};
+    var titleKeys = {};
+    var runs = thread && Array.isArray(thread.runs) ? thread.runs : [];
+
+    runs.forEach(function (run) {
+      var inlineResults = run && run.answer && Array.isArray(run.answer.inlineResults)
+        ? run.answer.inlineResults
+        : [];
+      inlineResults.forEach(function (item) {
+        if (!item) return;
+        if (item.artifactKey) {
+          artifactKeys[item.artifactKey] = true;
+        }
+        var activityId = item.id
+          || item.toolCallId
+          || (item.resultMeta && item.resultMeta.activityId)
+          || null;
+        if (activityId) {
+          activityIds[String(activityId)] = true;
+        }
+        var turnId = item.turnId || (item.resultMeta && item.resultMeta.turnId) || null;
+        var turnOrdinal = item.turnOrdinal || (item.resultMeta && item.resultMeta.turnOrdinal) || null;
+        var contentType = item.contentType || item.resultContentType || item.toolName || null;
+        var title = item.title
+          || item.resultTitle
+          || (item.resultMeta && item.resultMeta.headerTitle)
+          || (item.resultData && item.resultData.title)
+          || null;
+        if ((turnId || turnOrdinal) && (contentType || title)) {
+          turnKeys[JSON.stringify([
+            turnId || '',
+            turnOrdinal || '',
+            contentType || '',
+            title || '',
+          ])] = true;
+        }
+        var titleKey = buildArtifactTitleKey(item);
+        if (titleKey) {
+          titleKeys[titleKey] = true;
+        }
+        var fingerprint = buildArtifactMatchFingerprint(item);
+        if (fingerprint) {
+          fingerprints[fingerprint] = true;
+        }
+      });
+    });
+
+    return {
+      artifactKeys: artifactKeys,
+      fingerprints: fingerprints,
+      activityIds: activityIds,
+      turnKeys: turnKeys,
+      titleKeys: titleKeys,
+    };
+  }
+
   function collectReopenableArtifacts(thread) {
+    var inlineMatchers = collectInlineArtifactMatchers(thread);
+
+    function isInlineDuplicate(candidate) {
+      if (!candidate) return false;
+      if (candidate.artifactKey && inlineMatchers.artifactKeys[candidate.artifactKey]) {
+        return true;
+      }
+      var activityId = candidate.id
+        || candidate.toolCallId
+        || (candidate.resultMeta && candidate.resultMeta.activityId)
+        || null;
+      if (activityId && inlineMatchers.activityIds[String(activityId)]) {
+        return true;
+      }
+      var turnId = candidate.turnId || (candidate.resultMeta && candidate.resultMeta.turnId) || null;
+      var turnOrdinal = candidate.turnOrdinal || (candidate.resultMeta && candidate.resultMeta.turnOrdinal) || null;
+      var contentType = candidate.contentType || candidate.resultContentType || candidate.toolName || null;
+      var title = candidate.title
+        || candidate.resultTitle
+        || (candidate.resultMeta && candidate.resultMeta.headerTitle)
+        || (candidate.resultData && candidate.resultData.title)
+        || null;
+      if ((turnId || turnOrdinal) && (contentType || title)) {
+        var turnKey = JSON.stringify([
+          turnId || '',
+          turnOrdinal || '',
+          contentType || '',
+          title || '',
+        ]);
+        if (inlineMatchers.turnKeys[turnKey]) {
+          return true;
+        }
+      }
+      var titleKey = buildArtifactTitleKey(candidate);
+      if (titleKey && inlineMatchers.titleKeys[titleKey]) {
+        return true;
+      }
+      var fingerprint = buildArtifactMatchFingerprint(candidate);
+      return !!(fingerprint && inlineMatchers.fingerprints[fingerprint]);
+    }
+
     if (thread && Array.isArray(thread.artifacts) && thread.artifacts.length) {
       return thread.artifacts.slice().map(function (artifact) {
         return {
@@ -547,8 +705,12 @@
             120,
           ),
           contentType: artifact.contentType || null,
+          resultData: artifact.data || null,
+          resultMeta: artifact.meta || null,
           updatedAt: artifact.updatedAt || artifact.createdAt || null,
         };
+      }).filter(function (artifact) {
+        return !isInlineDuplicate(artifact);
       }).sort(function (left, right) {
         var leftTime = getTimeValue(left.updatedAt);
         var rightTime = getTimeValue(right.updatedAt);
@@ -561,6 +723,7 @@
 
     function register(candidate) {
       if (!candidate || !candidate.artifactKey) return;
+      if (isInlineDuplicate(candidate)) return;
       byKey[candidate.artifactKey] = {
         artifactKey: candidate.artifactKey,
         title: candidate.title || candidate.resultTitle || 'Open result',
@@ -895,7 +1058,7 @@
     return block;
   }
 
-  function createRunAnswer(answer) {
+  function createRunAnswer(answer, threadState) {
     var section = document.createElement('section');
     section.className = 'ai-run-answer' + (answer.isStreaming ? ' ai-run-answer-streaming' : '');
 
@@ -909,10 +1072,15 @@
     }
 
     section.appendChild(header);
+    var content = answer.content || (answer.isStreaming ? 'Waiting for response…' : '');
     section.appendChild(
-      answer.isStreaming
-        ? createTextBody(answer.content || 'Waiting for response…', 'ai-chat-body ai-run-answer-body')
-        : createMarkdownBody(answer.content || '', 'ai-chat-body ai-run-answer-body')
+      threadState && threadState.showRawResponses
+        ? createRawBody(content, 'ai-chat-body ai-run-answer-body')
+        : (
+          answer.isStreaming
+            ? createTextBody(content, 'ai-chat-body ai-run-answer-body')
+            : createMarkdownBody(content, 'ai-chat-body ai-run-answer-body')
+        )
     );
     return section;
   }
@@ -937,7 +1105,7 @@
     }
 
     if (group.answer.content || group.answer.isStreaming) {
-      surface.appendChild(createRunAnswer(group.answer));
+      surface.appendChild(createRunAnswer(group.answer, threadState));
     }
 
     (group.answer && Array.isArray(group.answer.inlineResults) ? group.answer.inlineResults : []).forEach(function (item, index) {
@@ -1067,7 +1235,37 @@
     container.appendChild(createMetaLabel(className, value));
   }
 
-  function updateHeader(headerState, threadContext) {
+  function rerenderActiveThread(state) {
+    if (
+      !state ||
+      !state.threadId ||
+      !window.__tribexAiState ||
+      typeof window.__tribexAiState.getThreadContext !== 'function'
+    ) {
+      return;
+    }
+
+    var threadContext = window.__tribexAiState.getThreadContext(state.threadId);
+    if (!threadContext || !threadContext.thread) return;
+    renderThread(state, threadContext);
+  }
+
+  function createDevToggle(state) {
+    var toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'ai-thread-dev-toggle' + (state.showRawResponses ? ' is-active' : '');
+    toggle.textContent = 'Raw responses';
+    toggle.title = state.showRawResponses ? 'Showing raw assistant response text' : 'Show raw assistant response text';
+    toggle.setAttribute('aria-pressed', state.showRawResponses ? 'true' : 'false');
+    toggle.addEventListener('click', function () {
+      state.showRawResponses = !state.showRawResponses;
+      rerenderActiveThread(state);
+    });
+    return toggle;
+  }
+
+  function updateHeader(state, threadContext) {
+    var headerState = state.header;
     headerState.breadcrumb.textContent = [
       threadContext.organization && threadContext.organization.name,
       threadContext.project && threadContext.project.name,
@@ -1104,6 +1302,10 @@
         ? window.__tribexAiUtils.formatRelativeTime(threadContext.thread.lastActivityAt)
         : null
     );
+
+    if (isDevModeEnabled()) {
+      headerState.statusRow.appendChild(createDevToggle(state));
+    }
   }
 
   function getScrollHost(container) {
@@ -1299,6 +1501,7 @@
       lastRenderedThreadId: null,
       workSessionOpen: {},
       inlineResultOpen: {},
+      showRawResponses: false,
       liveTickId: null,
     };
 
@@ -1337,7 +1540,7 @@
   function updateLegacyTranscript(state, model) {
     var signature = JSON.stringify(model.blocks.map(function (block) {
       return [block.type, block.message && block.message.id, block.message && block.message.content, block.message && block.message.toolName];
-    }));
+    }).concat([[state.showRawResponses ? 'raw' : 'rendered']]));
     if (state.lastModeSignature === 'legacy:' + signature) return false;
 
     if (state.lastModeSignature && state.lastModeSignature.indexOf('groups:') === 0) {
@@ -1361,7 +1564,7 @@
               content: block.message.content || '',
               createdAt: block.message.createdAt || null,
               isStreaming: !!block.message.isStreaming,
-            }));
+            }, state));
           }
           return;
         }
@@ -1452,6 +1655,7 @@
         groups: runtimeRuns.map(function (group, index) {
           return Object.assign({}, group, {
             signature: JSON.stringify({
+              displayMode: state.showRawResponses ? 'raw' : 'rendered',
               id: group.id,
               turnId: group.turnId,
               prompt: group.user && group.user.content,
@@ -1494,6 +1698,7 @@
       }
       : buildRunGroups(
         (threadContext.thread && (threadContext.thread.displayMessages || threadContext.thread.messages)) || [],
+        state.showRawResponses,
       );
     if (model.mode === 'legacy') {
       return updateLegacyTranscript(state, model);
@@ -1544,7 +1749,7 @@
     var beforeHeight = state.scrollHost.scrollHeight || 0;
 
     state.threadId = nextThreadId;
-    updateHeader(state.header, threadContext);
+    updateHeader(state, threadContext);
     updateAlerts(state, threadContext);
     updateResultsShelf(state, threadContext);
     var changed = updateTranscript(state, threadContext);

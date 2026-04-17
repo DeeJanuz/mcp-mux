@@ -251,15 +251,42 @@
           preview: detail.preview || '',
           lastActivityAt: detail.lastActivityAt || null,
         };
+        if (
+          merged.activeTurn &&
+          merged.activeTurn.userMessage &&
+          api.containsMessage(merged.runtimeSnapshot.messages, merged.activeTurn.userMessage)
+        ) {
+          var settledAssistant = merged.runtimeSnapshot.messages.reduce(function (latest, message) {
+            if (!message || message.role !== 'assistant') return latest;
+            if (!latest) return message;
+            var latestTime = api.parseActivityTimestamp(latest.createdAt);
+            var messageTime = api.parseActivityTimestamp(message.createdAt);
+            if (latestTime !== null && messageTime !== null && messageTime >= latestTime) {
+              return message;
+            }
+            return latest;
+          }, null);
+          if (settledAssistant) {
+            merged.activeTurn.assistantMessage = Object.assign({}, settledAssistant, {
+              turnId: merged.activeTurn.turnId || settledAssistant.turnId || null,
+              turnOrdinal: merged.activeTurn.turnOrdinal || settledAssistant.turnOrdinal || null,
+              isStreaming: false,
+            });
+            merged.activeTurn.status = 'finalized';
+            api.rememberTurnHistory(merged);
+          }
+        }
         merged.lastTurnOrdinal = Math.max(
           merged.lastTurnOrdinal || 0,
           api.countUserMessages(merged.runtimeSnapshot.messages)
         );
+        api.rebuildTurnHistory(merged);
         api.reconcileActiveTurn(merged);
         api.reconcileLiveActivity(merged);
         api.syncThreadArtifactDrawer(merged);
       } else if (Array.isArray(detail.messages)) {
         merged.base.messages = detail.messages.slice();
+        api.rebuildTurnHistory(merged);
       }
 
       api.ensureThreadUi(detail.id);
@@ -306,6 +333,7 @@
         detail.base.preview = detail.activeTurn.userMessage.content;
         detail.base.lastActivityAt = detail.activeTurn.userMessage.createdAt || detail.base.lastActivityAt;
       }
+      api.rememberTurnHistory(detail);
       api.syncThreadSummaryFromRecord(detail);
       return detail;
     }
@@ -334,6 +362,7 @@
       detail.activeTurn.userMessage.turnId = detail.activeTurn.turnId;
       detail.base.preview = prompt;
       detail.base.lastActivityAt = createdAt;
+      api.rememberTurnHistory(detail);
       api.syncThreadSummaryFromRecord(detail);
       return detail.activeTurn;
     }
@@ -373,6 +402,7 @@
 
     function buildCompanionActivityItem(message, record) {
       if (!message || message.role !== 'tool') return null;
+      var previous = api.getStoredActivityItem(record, message.id || null);
       var latestTurn = api.getLatestTurnReference(record) || {};
       var resultContentType = message.resultContentType || message.contentType || message.toolName || null;
       var resultMeta = message.resultMeta || null;
@@ -381,13 +411,13 @@
         message.reviewRequired ||
         (resultMeta && resultMeta.reviewRequired)
       );
-      var inlineDisplay = message.inlineDisplay === undefined
-        ? (
-          (resultContentType === 'rich_content' || resultContentType === 'structured_data') &&
-          !sessionId &&
-          !reviewRequired
-        )
-        : !!message.inlineDisplay;
+      var displayMode = api.resolveActivityDisplayMode(
+        previous,
+        resultContentType,
+        reviewRequired,
+        message.inlineDisplay
+      );
+      var inlineDisplay = displayMode === 'inline';
       return {
         id: message.id || api.randomId('activity'),
         toolCallId: message.id || null,
@@ -400,6 +430,7 @@
         resultData: message.resultData || null,
         resultMeta: resultMeta,
         reviewRequired: reviewRequired,
+        displayMode: displayMode,
         inlineDisplay: inlineDisplay,
         toolArgs: message.toolArgs || null,
         turnId: message.turnId || latestTurn.turnId || null,
@@ -411,6 +442,9 @@
 
     function shouldAutoOpenArtifactItem(item) {
       if (!item || !api.isRendererBackedActivityItem(item) || !item.artifactKey) {
+        return false;
+      }
+      if (item.displayMode === 'inline' || item.inlineDisplay === true) {
         return false;
       }
       if (item.sessionId) {
@@ -475,6 +509,7 @@
       detail.activeTurn.assistantMessage.turnId = detail.activeTurn.turnId || detail.activeTurn.assistantMessage.turnId || null;
       detail.activeTurn.assistantMessage.turnOrdinal = detail.activeTurn.turnOrdinal || detail.activeTurn.assistantMessage.turnOrdinal || null;
       updater(detail.activeTurn.assistantMessage, detail.activeTurn);
+      api.rememberTurnHistory(detail);
       api.syncThreadSummaryFromRecord(detail);
       return detail;
     }
@@ -737,6 +772,7 @@
       if (event.type === 'assistant_reset') {
         if (detail.activeTurn && (!detail.activeTurn.turnId || detail.activeTurn.turnId === event.turnId)) {
           detail.activeTurn.assistantMessage = null;
+          api.rememberTurnHistory(detail);
         }
         api.notify();
         return;

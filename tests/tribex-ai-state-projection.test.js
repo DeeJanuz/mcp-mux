@@ -136,6 +136,7 @@ describe('tribex-ai-state projection helpers', function () {
             toolCallId: 'tool-1',
             toolName: 'rich_content',
             status: 'completed',
+            displayMode: 'artifact',
             resultData: { title: 'First artifact', body: 'One' },
             createdAt: '2026-04-16T10:00:00.000Z',
             updatedAt: '2026-04-16T10:00:00.000Z',
@@ -147,6 +148,7 @@ describe('tribex-ai-state projection helpers', function () {
             toolCallId: 'tool-2',
             toolName: 'rich_content',
             status: 'completed',
+            displayMode: 'artifact',
             resultData: { title: 'Second artifact', body: 'Two' },
             createdAt: '2026-04-16T10:01:00.000Z',
             updatedAt: '2026-04-16T10:01:00.000Z',
@@ -321,6 +323,7 @@ describe('tribex-ai-state projection helpers', function () {
             role: 'tool',
             toolName: 'structured_data',
             status: 'success',
+            displayMode: 'artifact',
             artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
             resultContentType: 'structured_data',
             resultData: {

@@ -728,6 +728,7 @@
       personaReleaseId: pickFirst([thread.personaReleaseId], null),
       persona: normalizeThreadPersona(raw.persona || thread.persona),
       personaRelease: raw.personaRelease || thread.personaRelease || null,
+      personaTestRun: raw.personaTestRun || thread.personaTestRun || null,
       lastActivityAt: normalizeTimestamp(pickFirst([thread.lastActivityAt, thread.lastRunAt, thread.updatedAt, thread.createdAt], null)),
       messages: messages.map(function (message, index) {
         return normalizeMessage(message, index);
@@ -752,6 +753,7 @@
   }
 
   var runtimeSessionsByThread = {};
+  var runtimeOverridesByThread = {};
   var relayCatalogExcludedToolNames = {
     init_session: true,
     mcpviews_setup: true,
@@ -970,10 +972,118 @@
       .join('');
   }
 
+  function isRuntimeRendererToolPart(part) {
+    if (!part || typeof part !== 'object') return false;
+    var type = typeof part.type === 'string' ? part.type.toLowerCase() : '';
+    var toolName = typeof part.toolName === 'string' ? part.toolName.toLowerCase() : '';
+    return (
+      type === 'tool-rich_content' ||
+      type === 'tool-structured_data' ||
+      toolName === 'rich_content' ||
+      toolName === 'structured_data'
+    );
+  }
+
+  function extractRuntimeRendererMarkers(part) {
+    if (!isRuntimeRendererToolPart(part)) return [];
+    var input = part.input && typeof part.input === 'object' ? part.input : {};
+    var output = part.output && typeof part.output === 'object' ? part.output : {};
+    var markers = [];
+
+    function pushMarker(value) {
+      if (typeof value !== 'string') return;
+      var trimmed = value.trim();
+      if (!trimmed) return;
+      markers.push(trimmed);
+    }
+
+    function pushTitleMarkers(value) {
+      if (typeof value !== 'string') return;
+      var trimmed = value.trim();
+      if (!trimmed) return;
+      markers.push(trimmed);
+      markers.push('# ' + trimmed);
+      markers.push('## ' + trimmed);
+      markers.push('### ' + trimmed);
+    }
+
+    var body = typeof input.body === 'string'
+      ? input.body
+      : (typeof output.body === 'string' ? output.body : '');
+    if (body) {
+      var bodyLines = body.split(/\r?\n/).map(function (line) {
+        return line.trim();
+      }).filter(Boolean);
+      if (bodyLines.length) {
+        pushMarker(bodyLines[0]);
+      }
+    }
+
+    pushTitleMarkers(input.title);
+    pushTitleMarkers(output.title);
+
+    return markers.filter(Boolean);
+  }
+
+  function findRuntimeRendererEchoIndex(text, parts) {
+    if (!text || !Array.isArray(parts) || !parts.some(isRuntimeRendererToolPart)) {
+      return -1;
+    }
+
+    var indexes = [];
+
+    parts.forEach(function (part) {
+      extractRuntimeRendererMarkers(part).forEach(function (marker) {
+        var markerIndex = text.indexOf(marker);
+        if (markerIndex > 0) {
+          indexes.push(markerIndex);
+        }
+      });
+    });
+
+    [
+      '\n### ',
+      '\n## ',
+      '\n# ',
+      '\n```mermaid',
+      '\n|',
+      '\n* ',
+      '\n- ',
+    ].forEach(function (marker) {
+      var markerIndex = text.indexOf(marker);
+      if (markerIndex > 0) {
+        indexes.push(markerIndex);
+      }
+    });
+
+    if (!indexes.length) return -1;
+    return Math.min.apply(Math, indexes);
+  }
+
+  function compactRuntimeAssistantText(parts) {
+    var text = extractRuntimeText(parts);
+    if (!text || !Array.isArray(parts) || !parts.some(isRuntimeRendererToolPart)) {
+      return text;
+    }
+
+    var echoIndex = findRuntimeRendererEchoIndex(text, parts);
+    if (echoIndex > 0) {
+      var prefix = text.slice(0, echoIndex).trim();
+      if (prefix) return prefix;
+    }
+
+    var firstParagraph = text.split(/\n\s*\n/)[0];
+    return firstParagraph && firstParagraph.trim()
+      ? firstParagraph.trim()
+      : text.trim();
+  }
+
   function normalizeRuntimeUiMessage(raw, index) {
     if (!raw || typeof raw !== 'object') return null;
     var role = pickFirst([raw.role], null);
-    var text = extractRuntimeText(raw.parts);
+    var text = role === 'assistant'
+      ? compactRuntimeAssistantText(raw.parts)
+      : extractRuntimeText(raw.parts);
     if ((role !== 'user' && role !== 'assistant') || !text) {
       return null;
     }
@@ -982,6 +1092,18 @@
       id: pickFirst([raw.id], 'runtime-message-' + index),
       role: role,
       content: text,
+      turnId: pickFirst([
+        raw.turnId,
+        raw.turn_id,
+        raw.metadata && raw.metadata.turnId,
+        raw.metadata && raw.metadata.turn_id,
+      ], null),
+      turnOrdinal: pickFirst([
+        raw.turnOrdinal,
+        raw.turn_ordinal,
+        raw.metadata && raw.metadata.turnOrdinal,
+        raw.metadata && raw.metadata.turn_ordinal,
+      ], null),
       createdAt: normalizeTimestamp(pickFirst([
         raw.createdAt,
         raw.timestamp,
@@ -1052,10 +1174,21 @@
   }
 
   function fetchRuntimeSession(threadId, options) {
+    var override = runtimeOverridesByThread[threadId] || null;
+    var requestBody = Object.assign(
+      {},
+      override && override.runtimeSessionBody && typeof override.runtimeSessionBody === 'object'
+        ? override.runtimeSessionBody
+        : {},
+      options && options.body && typeof options.body === 'object'
+        ? options.body
+        : {},
+    );
+
     return requestVariants('POST', [
       {
         path: '/threads/' + encodeURIComponent(threadId) + '/runtime-session',
-        body: (options && options.body) || {},
+        body: requestBody,
       },
     ]).then(normalizeRuntimeSessionEnvelope);
   }
@@ -1338,6 +1471,7 @@
 
   function sendMessage(threadId, prompt, options) {
     return ensureAgentRuntime(threadId, { forceRefresh: true }).then(function (envelope) {
+      var override = runtimeOverridesByThread[threadId] || {};
       return getCloudflareBridge().startTurn({
         threadId: threadId,
         connection: envelope.runtimeSession && envelope.runtimeSession.connection,
@@ -1345,9 +1479,27 @@
         relayCatalog: envelope.relay && envelope.relay.catalog ? envelope.relay.catalog : null,
         prompt: prompt,
         validationProfile: options && options.validationProfile ? options.validationProfile : null,
+        personaOverride: override.personaOverride || null,
+        personaTestRunId: override.personaTestRunId || null,
+        telemetryToken: override.telemetryToken || null,
         turnId: options && options.turnId ? options.turnId : null,
       });
     });
+  }
+
+  function configureThreadRuntime(threadId, config) {
+    if (!threadId) return null;
+    runtimeOverridesByThread[threadId] = Object.assign(
+      {},
+      runtimeOverridesByThread[threadId] || {},
+      config || {},
+    );
+    return runtimeOverridesByThread[threadId];
+  }
+
+  function clearThreadRuntimeConfig(threadId) {
+    if (!threadId) return;
+    delete runtimeOverridesByThread[threadId];
   }
 
   function runSmokeTest(threadId, smokeKey) {
@@ -1477,11 +1629,13 @@
 
   window.__tribexAiClient = {
     clearAuth: clearAuth,
+    clearThreadRuntimeConfig: clearThreadRuntimeConfig,
     createCompanionSession: createCompanionSession,
     createProject: createProject,
     createWorkspace: createWorkspace,
     createThread: createThread,
     buildSmokePrompt: buildSmokePrompt,
+    configureThreadRuntime: configureThreadRuntime,
     fetchPackages: fetchPackages,
     fetchSession: fetchSession,
     fetchOrganizations: fetchOrganizations,

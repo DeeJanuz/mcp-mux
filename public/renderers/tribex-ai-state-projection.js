@@ -12,6 +12,11 @@
         : [];
     }
 
+    function cloneValue(value) {
+      if (value === undefined || value === null) return value;
+      return JSON.parse(JSON.stringify(value));
+    }
+
     function createThreadDetailRecord(threadId) {
       var summary = api.getThread(threadId) || {};
       return {
@@ -41,6 +46,7 @@
         lastTurnOrdinal: 0,
         turnCompletedAtById: {},
         turnHistoryById: {},
+        turnOrder: [],
         activity: {
           itemsById: {},
           order: [],
@@ -90,6 +96,9 @@
         }
         if (existing.connection) {
           record.connection = Object.assign({}, record.connection, existing.connection);
+        }
+        if (Array.isArray(existing.turnOrder)) {
+          record.turnOrder = existing.turnOrder.slice();
         }
       }
 
@@ -158,6 +167,150 @@
       return item.resultContentType || item.contentType || item.toolName || null;
     }
 
+    function buildTurnKey(turnId, turnOrdinal) {
+      if (turnId) return 'id:' + String(turnId);
+      if (turnOrdinal) return 'ordinal:' + String(turnOrdinal);
+      return null;
+    }
+
+    function createTurnEntry(turnId, turnOrdinal) {
+      return {
+        key: buildTurnKey(turnId, turnOrdinal),
+        turnId: turnId || null,
+        turnOrdinal: turnOrdinal || null,
+        status: 'completed',
+        startedAt: null,
+        endedAt: null,
+        userMessage: null,
+        assistantMessage: null,
+        activityItemsById: {},
+        activityOrder: [],
+        resultItemsById: {},
+        resultOrder: [],
+      };
+    }
+
+    function findTurnKeyByOrdinal(record, turnOrdinal) {
+      if (!record || !turnOrdinal) return null;
+      var keys = Array.isArray(record.turnOrder) ? record.turnOrder : Object.keys(record.turnHistoryById || {});
+      for (var index = 0; index < keys.length; index += 1) {
+        var candidate = record.turnHistoryById[keys[index]];
+        if (candidate && candidate.turnOrdinal === turnOrdinal) {
+          return keys[index];
+        }
+      }
+      return null;
+    }
+
+    function ensureTurnEntry(record, turnId, turnOrdinal) {
+      if (!record) return null;
+      var key = buildTurnKey(turnId, turnOrdinal);
+      if (!key && turnOrdinal) {
+        key = findTurnKeyByOrdinal(record, turnOrdinal);
+      }
+      if (key && !record.turnHistoryById[key] && turnOrdinal) {
+        var ordinalKey = findTurnKeyByOrdinal(record, turnOrdinal);
+        if (ordinalKey) {
+          key = ordinalKey;
+        }
+      }
+      if (!key) return null;
+      if (!record.turnHistoryById[key]) {
+        record.turnHistoryById[key] = createTurnEntry(turnId, turnOrdinal);
+      }
+      var originalKey = key;
+      var turn = record.turnHistoryById[key];
+      if (turnId && !turn.turnId) turn.turnId = turnId;
+      if (turnOrdinal && !turn.turnOrdinal) turn.turnOrdinal = turnOrdinal;
+      var nextKey = buildTurnKey(turn.turnId, turn.turnOrdinal) || key;
+      if (nextKey !== key && !record.turnHistoryById[nextKey]) {
+        delete record.turnHistoryById[key];
+        record.turnHistoryById[nextKey] = turn;
+        key = nextKey;
+      }
+      turn.key = key;
+      record.turnOrder = (record.turnOrder || []).map(function (candidate) {
+        return candidate === originalKey ? key : candidate;
+      });
+      if (record.turnOrder.indexOf(turn.key) === -1) {
+        record.turnOrder.push(turn.key);
+      }
+      return turn;
+    }
+
+    function getStoredActivityItem(record, itemId) {
+      if (!record || !itemId) return null;
+      if (record.activity && record.activity.itemsById && record.activity.itemsById[itemId]) {
+        return record.activity.itemsById[itemId];
+      }
+      var keys = Array.isArray(record.turnOrder) ? record.turnOrder : Object.keys(record.turnHistoryById || {});
+      for (var index = 0; index < keys.length; index += 1) {
+        var turn = record.turnHistoryById[keys[index]];
+        if (!turn || !turn.activityItemsById) continue;
+        if (turn.activityItemsById[itemId]) return turn.activityItemsById[itemId];
+      }
+      return null;
+    }
+
+    function isInlineCapableContentType(contentType) {
+      return contentType === 'rich_content' || contentType === 'structured_data';
+    }
+
+    function resolveActivityDisplayMode(previous, contentType, reviewRequired, explicitInlineDisplay) {
+      if (previous && previous.displayMode) {
+        return previous.displayMode;
+      }
+      if (previous && previous.inlineDisplay === true) {
+        return 'inline';
+      }
+      if (explicitInlineDisplay === true) {
+        return 'inline';
+      }
+      if (reviewRequired) {
+        return 'artifact';
+      }
+      return isInlineCapableContentType(contentType) ? 'inline' : 'artifact';
+    }
+
+    function getCanonicalActivityDisplayMode(item) {
+      if (!item) return null;
+      return resolveActivityDisplayMode(
+        item,
+        resolveActivityContentType(item),
+        !!(
+          item.reviewRequired ||
+          (item.resultMeta && item.resultMeta.reviewRequired)
+        ),
+        item.inlineDisplay === true ? true : undefined
+      );
+    }
+
+    function copyActivityItem(item) {
+      if (!item) return null;
+      return Object.assign({}, item, {
+        resultData: cloneValue(item.resultData || null),
+        resultMeta: cloneValue(item.resultMeta || null),
+        toolArgs: cloneValue(item.toolArgs || null),
+      });
+    }
+
+    function isRendererResultItem(item) {
+      return !!(
+        item &&
+        isCompletedActivityStatus(item.status) &&
+        item.resultData &&
+        resolveActivityContentType(item)
+      );
+    }
+
+    function isReopenableRendererActivityItem(item) {
+      return !!(
+        item &&
+        isRendererResultItem(item) &&
+        getCanonicalActivityDisplayMode(item) === 'artifact'
+      );
+    }
+
     function isCompletedActivityStatus(status) {
       var value = String(status || '').toLowerCase();
       return value === 'completed' || value === 'success' || value === 'done' || value === 'stored';
@@ -167,7 +320,7 @@
       var contentType = resolveActivityContentType(item);
       return !!(
         item &&
-        !item.inlineDisplay &&
+        getCanonicalActivityDisplayMode(item) === 'artifact' &&
         isCompletedActivityStatus(item.status) &&
         item.resultData &&
         contentType &&
@@ -180,13 +333,169 @@
       var contentType = resolveActivityContentType(item);
       return !!(
         item &&
-        !!item.inlineDisplay &&
+        getCanonicalActivityDisplayMode(item) === 'inline' &&
         isCompletedActivityStatus(item.status) &&
         item.resultData &&
         contentType &&
         window.__renderers &&
         typeof window.__renderers[contentType] === 'function'
       );
+    }
+
+    function syncActivityItemToTurn(record, item) {
+      if (!record || !item) return null;
+      var turn = ensureTurnEntry(record, item.turnId || null, item.turnOrdinal || null);
+      if (!turn) return null;
+      turn.startedAt = turn.startedAt || item.createdAt || item.updatedAt || null;
+      if (item.status === 'running' || item.status === 'needs-approval') {
+        turn.status = 'running';
+      } else if (item.status === 'failed') {
+        turn.status = 'failed';
+      } else if (turn.status !== 'failed') {
+        turn.status = 'completed';
+      }
+      turn.activityItemsById[item.id] = copyActivityItem(item);
+      if (turn.activityOrder.indexOf(item.id) === -1) {
+        turn.activityOrder.push(item.id);
+      }
+      if (isRendererResultItem(item)) {
+        turn.resultItemsById[item.id] = copyActivityItem(item);
+        if (turn.resultOrder.indexOf(item.id) === -1) {
+          turn.resultOrder.push(item.id);
+        }
+      }
+      return turn;
+    }
+
+    function mergeTurnMessage(turn, message) {
+      if (!turn || !message) return;
+      if (message.role === 'user') {
+        turn.userMessage = Object.assign({}, turn.userMessage || {}, message);
+        turn.startedAt = turn.startedAt || message.createdAt || null;
+        return;
+      }
+      if (message.role === 'assistant') {
+        turn.assistantMessage = Object.assign({}, turn.assistantMessage || {}, message);
+        turn.endedAt = message.isStreaming ? null : (message.createdAt || turn.endedAt || null);
+        if (message.isStreaming) {
+          turn.status = 'running';
+        } else if (turn.status !== 'failed') {
+          turn.status = 'completed';
+        }
+      }
+    }
+
+    function maybeParseStructuredValue(value) {
+      if (!value || typeof value !== 'string') return value;
+      var trimmed = value.trim();
+      if (!trimmed) return value;
+      if (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[') return value;
+      try {
+        return JSON.parse(trimmed);
+      } catch (_error) {
+        return value;
+      }
+    }
+
+    function hasRendererDataShape(contentType, data) {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+      if (contentType === 'structured_data') {
+        return Array.isArray(data.tables);
+      }
+      if (contentType === 'rich_content') {
+        return !!(
+          typeof data.body === 'string' ||
+          typeof data.title === 'string' ||
+          Array.isArray(data.tables) ||
+          (data.citations && typeof data.citations === 'object') ||
+          (data.suggestions && typeof data.suggestions === 'object')
+        );
+      }
+      return false;
+    }
+
+    function buildRendererPayload(contentType, data, meta, toolArgs, reviewRequired) {
+      if (!contentType || !hasRendererDataShape(contentType, data)) return null;
+      var nextMeta = meta && typeof meta === 'object' && !Array.isArray(meta)
+        ? Object.assign({}, meta)
+        : {};
+      if (reviewRequired) {
+        nextMeta.reviewRequired = true;
+      }
+      return {
+        contentType: contentType,
+        data: cloneValue(data),
+        meta: nextMeta,
+        toolArgs: toolArgs && typeof toolArgs === 'object' && !Array.isArray(toolArgs)
+          ? cloneValue(toolArgs)
+          : null,
+        reviewRequired: !!reviewRequired,
+      };
+    }
+
+    function unwrapRendererEnvelope(value, reviewRequired) {
+      var raw = maybeParseStructuredValue(value);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+      var contentType = raw.tool_name || raw.toolName || raw.contentType || raw.content_type || null;
+      var data = raw.data || raw.result || raw.payload || null;
+      var meta = raw.meta || null;
+      var toolArgs = raw.toolArgs || raw.tool_args || null;
+      return buildRendererPayload(contentType, data, meta, toolArgs, reviewRequired);
+    }
+
+    function extractRendererPayloadFromToolPart(toolName, part, existing) {
+      if (!part) return existing || null;
+      var reviewRequired = !!(
+        part.reviewRequired ||
+        (part.meta && part.meta.reviewRequired) ||
+        (existing && (existing.reviewRequired || (existing.resultMeta && existing.resultMeta.reviewRequired)))
+      );
+      var toolArgs = part.toolArgs || part.tool_args || (existing && existing.toolArgs) || null;
+      var explicitContentType = part.resultContentType || part.contentType || part.content_type || null;
+      var candidates = [
+        part.resultData,
+        part.output,
+        part.input,
+      ];
+
+      if (toolName === 'push_content' || toolName === 'push_review') {
+        for (var wrappedIndex = 0; wrappedIndex < candidates.length; wrappedIndex += 1) {
+          var wrappedPayload = unwrapRendererEnvelope(candidates[wrappedIndex], reviewRequired);
+          if (wrappedPayload) return wrappedPayload;
+        }
+      }
+
+      var contentTypes = [
+        explicitContentType,
+        toolName === 'push_review' || toolName === 'push_content' ? null : toolName,
+        existing && resolveActivityContentType(existing),
+      ];
+
+      for (var typeIndex = 0; typeIndex < contentTypes.length; typeIndex += 1) {
+        var contentType = contentTypes[typeIndex];
+        if (!contentType) continue;
+        for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+          var payload = buildRendererPayload(
+            contentType,
+            maybeParseStructuredValue(candidates[candidateIndex]),
+            part.resultMeta || part.meta || (existing && existing.resultMeta) || null,
+            toolArgs,
+            reviewRequired
+          );
+          if (payload) return payload;
+        }
+      }
+
+      if (existing && existing.resultData) {
+        return {
+          contentType: resolveActivityContentType(existing),
+          data: cloneValue(existing.resultData),
+          meta: cloneValue(existing.resultMeta || null),
+          toolArgs: cloneValue(existing.toolArgs || null),
+          reviewRequired: !!reviewRequired,
+        };
+      }
+      return null;
     }
 
     function buildArtifactSessionKey(threadId, artifactKey) {
@@ -312,13 +621,26 @@
 
       buildActivityItems(record)
         .filter(function (item) {
-          return isRendererBackedActivityItem(item);
+          return isReopenableRendererActivityItem(item);
         })
         .forEach(registerActivityItem);
 
       extractSnapshotMessages(record)
         .filter(function (message) {
-          return message && message.role === 'tool' && isRendererBackedActivityItem(message) && !!message.artifactKey;
+          if (!message || message.role !== 'tool' || !message.artifactKey || !message.resultData) {
+            return false;
+          }
+          return getCanonicalActivityDisplayMode({
+            displayMode: message.displayMode,
+            inlineDisplay: message.inlineDisplay,
+            reviewRequired: message.reviewRequired,
+            resultMeta: message.resultMeta || null,
+            resultContentType: resolveActivityContentType(message),
+            contentType: resolveActivityContentType(message),
+            toolName: message.toolName || null,
+            resultData: message.resultData || null,
+            status: message.status || 'completed',
+          }) === 'artifact';
         })
         .forEach(registerLegacyMessage);
 
@@ -357,20 +679,26 @@
     }
 
     function attachActivityResultDrawer(record, item) {
-      if (!record || !item || item.inlineDisplay || !isRendererBackedActivityItem(item)) return item;
+      if (!record || !item || !isRendererResultItem(item)) return item;
       var config = buildActivityArtifactConfig(record.id, item);
+      var nextItem = Object.assign({}, item, {
+        artifactKey: item.artifactKey || config.artifactKey,
+        resultContentType: item.resultContentType || config.contentType,
+        resultTitle: item.resultTitle || config.title,
+      });
+
+      if (nextItem.displayMode === 'inline' || nextItem.inlineDisplay === true) {
+        return nextItem;
+      }
+
       record.artifactDrawer = record.artifactDrawer || {
         drawerId: config.drawerId,
         selectedArtifactKey: null,
       };
       record.artifactDrawer.drawerId = config.drawerId;
-      record.artifactDrawer.selectedArtifactKey = config.artifactKey;
-      return Object.assign({}, item, {
-        artifactDrawerId: config.drawerId,
-        artifactKey: config.artifactKey,
-        resultContentType: config.contentType,
-        resultTitle: config.title,
-      });
+      record.artifactDrawer.selectedArtifactKey = nextItem.artifactKey;
+      nextItem.artifactDrawerId = config.drawerId;
+      return nextItem;
     }
 
     function normalizeToolPartStatus(part) {
@@ -408,6 +736,30 @@
           }
 
           var existing = itemsById[part.toolCallId];
+          var stored = getStoredActivityItem(record, part.toolCallId);
+          var rendererPayload = extractRendererPayloadFromToolPart(part.toolName || (existing && existing.toolName) || null, part, stored || existing);
+          var contentType = rendererPayload
+            ? rendererPayload.contentType
+            : (existing && existing.resultContentType) || (stored && stored.resultContentType) || null;
+          var reviewRequired = !!(
+            (rendererPayload && rendererPayload.reviewRequired) ||
+            (stored && (stored.reviewRequired || (stored.resultMeta && stored.resultMeta.reviewRequired))) ||
+            (existing && (existing.reviewRequired || (existing.resultMeta && existing.resultMeta.reviewRequired)))
+          );
+          var sessionId = part.sessionId
+            || part.session_id
+            || (part.output && (part.output.sessionId || part.output.session_id))
+            || (existing && existing.sessionId)
+            || (stored && stored.sessionId)
+            || null;
+          var displayMode = resolveActivityDisplayMode(
+            stored || existing,
+            contentType || part.toolName || null,
+            reviewRequired,
+            stored && stored.displayMode === 'inline'
+              ? true
+              : (stored && stored.displayMode === 'artifact' ? false : undefined)
+          );
           var item = {
             id: part.toolCallId,
             toolCallId: part.toolCallId,
@@ -420,8 +772,17 @@
             turnId: part.turnId || message.turnId || (existing && existing.turnId) || null,
             turnOrdinal: part.turnOrdinal || message.turnOrdinal || (existing && existing.turnOrdinal) || (turnOrdinal || null),
             sortIndex: messageIndex * 100 + partIndex,
+            sessionId: sessionId,
+            resultContentType: contentType,
+            resultData: rendererPayload ? rendererPayload.data : ((existing && existing.resultData) || (stored && stored.resultData) || null),
+            resultMeta: rendererPayload ? rendererPayload.meta : ((existing && existing.resultMeta) || (stored && stored.resultMeta) || null),
+            toolArgs: rendererPayload ? rendererPayload.toolArgs : ((existing && existing.toolArgs) || (stored && stored.toolArgs) || null),
+            reviewRequired: reviewRequired,
+            displayMode: displayMode,
+            inlineDisplay: displayMode === 'inline',
           };
 
+          item = attachActivityResultDrawer(record, item);
           itemsById[item.id] = item;
           if (order.indexOf(item.id) === -1) {
             order.push(item.id);
@@ -450,6 +811,7 @@
       if (record.activity.order.indexOf(item.id) === -1) {
         record.activity.order.push(item.id);
       }
+      syncActivityItemToTurn(record, nextItem);
       syncThreadArtifactDrawer(record);
       return nextItem;
     }
@@ -472,6 +834,7 @@
           turnId: existing.turnId || item.turnId,
           turnOrdinal: existing.turnOrdinal || item.turnOrdinal,
         });
+        syncActivityItemToTurn(record, record.activity.itemsById[item.id]);
       });
       syncThreadArtifactDrawer(record);
     }
@@ -577,6 +940,85 @@
     }
 
     function buildRunGroups(record, displayMessages, activityItems) {
+      var keys = Array.isArray(record && record.turnOrder) ? record.turnOrder : [];
+      if (keys.length) {
+        return keys
+          .map(function (key, index) {
+            var turn = record.turnHistoryById[key];
+            if (!turn || !turn.userMessage) return null;
+
+            var workItems = (turn.activityOrder || []).map(function (itemId) {
+              return turn.activityItemsById[itemId] ? copyActivityItem(turn.activityItemsById[itemId]) : null;
+            }).filter(Boolean);
+            var inlineResults = (turn.resultOrder || []).map(function (itemId) {
+              return turn.resultItemsById[itemId] ? copyActivityItem(turn.resultItemsById[itemId]) : null;
+            }).filter(function (item) {
+              return item && getCanonicalActivityDisplayMode(item) === 'inline';
+            }).map(function (item) {
+              item.contentType = resolveActivityContentType(item);
+              return item;
+            });
+            workItems = workItems.filter(function (item) {
+              return !(item && getCanonicalActivityDisplayMode(item) === 'inline' && isRendererResultItem(item));
+            });
+
+            workItems.sort(function (left, right) {
+              var leftTime = api.parseActivityTimestamp(left.createdAt || left.updatedAt);
+              var rightTime = api.parseActivityTimestamp(right.createdAt || right.updatedAt);
+              if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
+                return leftTime - rightTime;
+              }
+              if (leftTime === null && rightTime !== null) return 1;
+              if (leftTime !== null && rightTime === null) return -1;
+              return String(left.id || '').localeCompare(String(right.id || ''));
+            });
+
+            var assistantMessage = turn.assistantMessage ? Object.assign({}, turn.assistantMessage) : null;
+            var hasRunning = turn.status === 'running' || workItems.some(function (item) {
+              return item.status === 'running' || item.status === 'needs-approval';
+            });
+            var startedAt = workItems.length
+              ? (workItems[0].createdAt || workItems[0].updatedAt || turn.startedAt || (turn.userMessage && turn.userMessage.createdAt) || null)
+              : (turn.startedAt || (turn.userMessage && turn.userMessage.createdAt) || null);
+            var endedAt = (record && record.turnCompletedAtById && turn.turnId ? record.turnCompletedAtById[turn.turnId] || null : null)
+              || turn.endedAt
+              || (assistantMessage && !assistantMessage.isStreaming ? assistantMessage.createdAt || null : null)
+              || (workItems.length ? (workItems[workItems.length - 1].updatedAt || workItems[workItems.length - 1].createdAt || null) : null)
+              || null;
+
+            return {
+              id: turn.turnId || ('turn-' + index),
+              turnId: turn.turnId || null,
+              turnOrdinal: turn.turnOrdinal || null,
+              user: Object.assign({}, turn.userMessage),
+              latestCreatedAt: (turn.userMessage && turn.userMessage.createdAt) || turn.startedAt || null,
+              answer: assistantMessage ? {
+                id: assistantMessage.id || ('answer-' + index),
+                content: assistantMessage.content || '',
+                createdAt: assistantMessage.createdAt || null,
+                isStreaming: !!assistantMessage.isStreaming,
+                inlineResults: inlineResults,
+              } : {
+                id: 'answer-' + index,
+                content: '',
+                createdAt: null,
+                isStreaming: false,
+                inlineResults: inlineResults,
+              },
+              workSession: workItems.length ? {
+                id: turn.turnId || ('work-session-' + index),
+                turnId: turn.turnId || null,
+                turnOrdinal: turn.turnOrdinal || null,
+                status: hasRunning || (assistantMessage && assistantMessage.isStreaming) ? 'running' : (turn.status === 'failed' ? 'failed' : 'completed'),
+                startedAt: startedAt,
+                endedAt: hasRunning || (assistantMessage && assistantMessage.isStreaming) ? null : endedAt,
+                items: workItems,
+              } : null,
+            };
+          })
+          .filter(Boolean);
+      }
+
       var runs = [];
       var fallbackToLegacy = false;
       var turnOrdinal = 0;
@@ -788,6 +1230,22 @@
         || record.preview
         || '';
 
+      if (
+        record &&
+        record.activeTurn &&
+        record.activeTurn.userMessage &&
+        record.activeTurn.userMessage.content &&
+        record.activeTurn.status !== 'finalized' &&
+        record.activeTurn.status !== 'failed'
+      ) {
+        var activeTurnTime = api.parseActivityTimestamp(record.activeTurn.userMessage.createdAt || record.activeTurn.startedAt);
+        var projectedTime = api.parseActivityTimestamp(lastActivityAt);
+        if (projectedTime === null || (activeTurnTime !== null && activeTurnTime >= projectedTime)) {
+          preview = record.activeTurn.userMessage.content;
+          lastActivityAt = record.activeTurn.userMessage.createdAt || record.activeTurn.startedAt || lastActivityAt;
+        }
+      }
+
       return {
         displayMessages: displayMessages,
         activityItems: activityItems,
@@ -833,14 +1291,87 @@
 
     function rememberTurnHistory(record) {
       if (!record || !record.activeTurn || !record.activeTurn.turnId) return;
-      record.turnHistoryById[record.activeTurn.turnId] = {
-        turnId: record.activeTurn.turnId || null,
-        turnOrdinal: record.activeTurn.turnOrdinal || null,
-        userMessage: record.activeTurn.userMessage ? Object.assign({}, record.activeTurn.userMessage) : null,
-        assistantMessage: record.activeTurn.assistantMessage ? Object.assign({}, record.activeTurn.assistantMessage) : null,
-        startedAt: record.activeTurn.startedAt || null,
-        endedAt: record.turnCompletedAtById[record.activeTurn.turnId] || null,
-      };
+      var turn = ensureTurnEntry(record, record.activeTurn.turnId || null, record.activeTurn.turnOrdinal || null);
+      if (!turn) return;
+      turn.startedAt = record.activeTurn.startedAt || turn.startedAt || null;
+      turn.endedAt = record.turnCompletedAtById[record.activeTurn.turnId] || turn.endedAt || null;
+      turn.status = record.activeTurn.status || turn.status || 'completed';
+      mergeTurnMessage(turn, record.activeTurn.userMessage ? Object.assign({}, record.activeTurn.userMessage) : null);
+      if (record.activeTurn.assistantMessage) {
+        mergeTurnMessage(turn, Object.assign({}, record.activeTurn.assistantMessage));
+      } else if (record.activeTurn.status === 'running' || record.activeTurn.status === 'queued') {
+        turn.assistantMessage = null;
+      }
+    }
+
+    function rebuildTurnHistory(record) {
+      if (!record) return;
+      var baseTurnOrdinal = 0;
+      (record.base && Array.isArray(record.base.messages) ? record.base.messages : []).forEach(function (message, index) {
+        if (!message) return;
+        if (message.role === 'user') {
+          baseTurnOrdinal += 1;
+        }
+        var fallbackOrdinal = baseTurnOrdinal || null;
+        var turn = ensureTurnEntry(record, message.turnId || null, message.turnOrdinal || fallbackOrdinal);
+        if (!turn) return;
+        mergeTurnMessage(turn, message);
+        if (message.role === 'tool') {
+          syncActivityItemToTurn(record, Object.assign({
+            id: message.id || ('legacy-tool-' + index),
+            toolCallId: message.id || null,
+            displayMode: resolveActivityDisplayMode(null, resolveActivityContentType(message), !!(message.reviewRequired || (message.resultMeta && message.resultMeta.reviewRequired)), message.inlineDisplay),
+            inlineDisplay: !!message.inlineDisplay,
+            resultContentType: resolveActivityContentType(message),
+            resultData: cloneValue(message.resultData || null),
+            resultMeta: cloneValue(message.resultMeta || null),
+            toolArgs: cloneValue(message.toolArgs || null),
+            reviewRequired: !!(message.reviewRequired || (message.resultMeta && message.resultMeta.reviewRequired)),
+            title: message.summary || window.__tribexAiUtils.titleCase(message.toolName || 'tool'),
+            status: message.status || 'completed',
+            detail: message.detail || '',
+            createdAt: message.createdAt || null,
+            updatedAt: message.createdAt || null,
+            turnId: turn.turnId || message.turnId || null,
+            turnOrdinal: turn.turnOrdinal || message.turnOrdinal || null,
+            sessionId: message.sessionId || null,
+            toolName: message.toolName || null,
+          }, {}));
+        }
+      });
+
+      buildSnapshotActivityItems(record).forEach(function (item) {
+        syncActivityItemToTurn(record, item);
+      });
+
+      var snapshotTurnOrdinal = 0;
+      extractSnapshotMessages(record).forEach(function (message) {
+        if (!message || (message.role !== 'user' && message.role !== 'assistant')) return;
+        if (message.role === 'user') {
+          snapshotTurnOrdinal += 1;
+        }
+        var fallbackOrdinal = snapshotTurnOrdinal || null;
+        var turn = ensureTurnEntry(record, message.turnId || null, message.turnOrdinal || fallbackOrdinal);
+        if (!turn) return;
+        mergeTurnMessage(turn, message);
+      });
+
+      record.turnOrder = (record.turnOrder || []).filter(function (key) {
+        return !!(record.turnHistoryById && record.turnHistoryById[key] && record.turnHistoryById[key].userMessage);
+      }).sort(function (leftKey, rightKey) {
+        var left = record.turnHistoryById[leftKey];
+        var right = record.turnHistoryById[rightKey];
+        if (!left || !right) return 0;
+        if (left.turnOrdinal && right.turnOrdinal && left.turnOrdinal !== right.turnOrdinal) {
+          return left.turnOrdinal - right.turnOrdinal;
+        }
+        var leftTime = api.parseActivityTimestamp((left.userMessage && left.userMessage.createdAt) || left.startedAt);
+        var rightTime = api.parseActivityTimestamp((right.userMessage && right.userMessage.createdAt) || right.startedAt);
+        if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
+          return leftTime - rightTime;
+        }
+        return String(left.key || '').localeCompare(String(right.key || ''));
+      });
     }
 
     function reconcileActiveTurn(record) {
@@ -896,6 +1427,7 @@
     }
 
     api.copyMessages = copyMessages;
+    api.cloneValue = cloneValue;
     api.createThreadDetailRecord = createThreadDetailRecord;
     api.ensureThreadDetailRecord = ensureThreadDetailRecord;
     api.messageMatchesCandidate = messageMatchesCandidate;
@@ -905,6 +1437,11 @@
     api.getLatestTurnReference = getLatestTurnReference;
     api.resolveNextTurnOrdinal = resolveNextTurnOrdinal;
     api.resolveActivityContentType = resolveActivityContentType;
+    api.getStoredActivityItem = getStoredActivityItem;
+    api.resolveActivityDisplayMode = resolveActivityDisplayMode;
+    api.getCanonicalActivityDisplayMode = getCanonicalActivityDisplayMode;
+    api.syncActivityItemToTurn = syncActivityItemToTurn;
+    api.rebuildTurnHistory = rebuildTurnHistory;
     api.isCompletedActivityStatus = isCompletedActivityStatus;
     api.isRendererBackedActivityItem = isRendererBackedActivityItem;
     api.buildArtifactSessionKey = buildArtifactSessionKey;

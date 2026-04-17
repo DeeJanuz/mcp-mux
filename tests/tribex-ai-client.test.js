@@ -752,6 +752,46 @@ describe('tribex-ai-client', function () {
     });
   });
 
+  it('keeps only the assistant summary paragraph when a runtime assistant message echoes a rich_content body', function () {
+    var transcript = window.__tribexAiClient.normalizeRuntimeTranscript('thread-123', {
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          createdAt: '2026-04-15T00:00:01.000Z',
+          parts: [
+            { type: 'step-start' },
+            {
+              type: 'tool-rich_content',
+              toolCallId: 'tool-rich-1',
+              toolName: 'rich_content',
+              state: 'output-available',
+              input: {
+                title: 'Resource Allocation Strategy: Woodchuck Operations',
+                body: '### Operational Transition Diagram\n\n```mermaid\ngraph TD\nA-->B\n```',
+              },
+            },
+            {
+              type: 'text',
+              text: 'This diagram outlines the strategic realignment required to move from speculative activities to core operational strengths.\n\n### Operational Transition Diagram\n\n```mermaid\ngraph TD\nA-->B\n```\n\n*   **Next Action:** Return to burrowing.',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(transcript.messages).toEqual([
+      expect.objectContaining({
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'This diagram outlines the strategic realignment required to move from speculative activities to core operational strengths.',
+      }),
+    ]);
+    expect(transcript.preview).toBe(
+      'This diagram outlines the strategic realignment required to move from speculative activities to core operational strengths.',
+    );
+  });
+
   it('uses the deployed root routes for thread detail and runtime session bootstrap', async function () {
     var runtimeMessages = [
       {

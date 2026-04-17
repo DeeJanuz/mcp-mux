@@ -266,6 +266,9 @@ function buildChatRequestPayload(input) {
     validationProfile: input.validationProfile || null,
     relayBridge: input.relayBridge || null,
     relayCatalog: input.relayCatalog || null,
+    personaOverride: input.personaOverride || null,
+    personaTestRunId: input.personaTestRunId || null,
+    telemetryToken: input.telemetryToken || null,
   };
 }
 

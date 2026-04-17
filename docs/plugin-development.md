@@ -409,11 +409,15 @@ If your control plane needs to inspect or call MCP tools available on the userâ€
 ```javascript
 const { invoke } = window.__TAURI__.core;
 
-const runtimeHost = await invoke('probe_local_runtime_host');
+await invoke('probe_local_runtime_host', {
+  url: 'http://127.0.0.1:4318',
+  token: null,
+  timeoutMs: 2000
+});
 const localTools = await invoke('list_local_mcp_tools');
 const catalog = await invoke('get_local_mcp_catalog');
 const result = await invoke('call_local_mcp_tool', {
-  toolName: 'my_local_tool',
+  name: 'my_local_tool',
   arguments: { query: 'example' }
 });
 ```

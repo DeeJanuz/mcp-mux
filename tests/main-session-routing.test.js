@@ -52,7 +52,7 @@ beforeEach(function () {
 });
 
 describe('main session routing', function () {
-  it('skips standalone app sessions for thread-scoped artifact previews', function () {
+  it('opens standalone app sessions for thread-scoped artifact previews', function () {
     loadMain();
 
     window.__mainTest.handlePush({
@@ -76,7 +76,17 @@ describe('main session routing', function () {
       reviewRequired: false,
     }, { autoFocus: false });
 
-    expect(window.__mainTest.getSessionIds()).toEqual([]);
-    expect(window.__mainTest.getSession('session-123')).toBeNull();
+    expect(window.__mainTest.getSessionIds()).toEqual(['session-123']);
+    expect(window.__mainTest.getSession('session-123')).toMatchObject({
+      contentType: 'rich_content',
+      data: {
+        title: 'Final Result',
+        body: 'Rendered in the real preview session.',
+      },
+      meta: expect.objectContaining({
+        threadId: 'thread-1',
+        artifactSource: 'tribex-ai-thread-result',
+      }),
+    });
   });
 });

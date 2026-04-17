@@ -115,6 +115,8 @@ fn extract_hosted_tool_request(payload: &Value) -> Option<HostedToolRequest> {
         | "mcp_tools_call" => HostedToolMethod::Call,
         _ => {
             if extract_string(params.get("name"))
+                .or_else(|| extract_string(params.get("toolName")))
+                .or_else(|| extract_string(params.get("tool_name")))
                 .or_else(|| extract_string(payload.get("toolName")))
                 .or_else(|| extract_string(payload.get("tool_name")))
                 .is_some()
@@ -134,6 +136,8 @@ fn extract_hosted_tool_request(payload: &Value) -> Option<HostedToolRequest> {
         .or_else(|| payload.get("id").cloned());
 
     let tool_name = extract_string(params.get("name"))
+        .or_else(|| extract_string(params.get("toolName")))
+        .or_else(|| extract_string(params.get("tool_name")))
         .or_else(|| extract_string(payload.get("toolName")))
         .or_else(|| extract_string(payload.get("tool_name")))
         .or_else(|| extract_string(payload.get("name")));
@@ -145,15 +149,27 @@ fn extract_hosted_tool_request(payload: &Value) -> Option<HostedToolRequest> {
     let arguments = params
         .get("arguments")
         .cloned()
+        .or_else(|| params.get("input").cloned())
         .or_else(|| params.get("toolArgs").cloned())
         .or_else(|| params.get("tool_args").cloned())
         .or_else(|| request.get("toolArgs").cloned())
         .or_else(|| request.get("tool_args").cloned())
+        .or_else(|| request.get("input").cloned())
         .or_else(|| payload.get("arguments").cloned())
         .or_else(|| payload.get("toolArgs").cloned())
         .or_else(|| payload.get("tool_args").cloned())
+        .or_else(|| payload.get("input").cloned())
         .or_else(|| payload.get("args").cloned())
         .unwrap_or_else(|| json!({}));
+
+    let thread_id = extract_string(payload.get("threadId"))
+        .or_else(|| extract_string(get_nested_value(payload, &["context", "threadId"])))
+        .or_else(|| extract_string(get_nested_value(&arguments, &["toolArgs", "threadId"])))
+        .or_else(|| extract_string(get_nested_value(&arguments, &["toolArgs", "thread_id"])))
+        .or_else(|| extract_string(get_nested_value(&arguments, &["tool_args", "threadId"])))
+        .or_else(|| extract_string(get_nested_value(&arguments, &["tool_args", "thread_id"])))
+        .or_else(|| extract_string(get_nested_value(&arguments, &["meta", "threadId"])))
+        .or_else(|| extract_string(get_nested_value(&arguments, &["meta", "thread_id"])));
 
     Some(HostedToolRequest {
         method,
@@ -166,8 +182,7 @@ fn extract_hosted_tool_request(payload: &Value) -> Option<HostedToolRequest> {
             .or_else(|| extract_string(get_nested_value(payload, &["context", "deviceId"]))),
         workspace_id: extract_string(payload.get("workspaceId"))
             .or_else(|| extract_string(get_nested_value(payload, &["context", "workspaceId"]))),
-        thread_id: extract_string(payload.get("threadId"))
-            .or_else(|| extract_string(get_nested_value(payload, &["context", "threadId"]))),
+        thread_id,
     })
 }
 
@@ -191,6 +206,7 @@ fn build_tool_response_payload(request: &HostedToolRequest, result: Value) -> Va
         Value::String(inner) => inner.clone(),
         _ => value.to_string(),
     });
+    let request_id_value = request.request_id.clone();
     let is_error = result
         .get("isError")
         .and_then(|value| value.as_bool())
@@ -213,6 +229,8 @@ fn build_tool_response_payload(request: &HostedToolRequest, result: Value) -> Va
     };
 
     json!({
+        "jsonrpc": "2.0",
+        "id": request_id_value,
         "relaySessionId": request.relay_session_id,
         "requestId": request_id,
         "success": !is_error,
@@ -255,7 +273,6 @@ fn enrich_thread_scoped_renderer_arguments(request: &HostedToolRequest) -> Value
         .unwrap_or_default();
     meta.insert("threadId".to_string(), json!(thread_id));
     meta.insert("artifactSource".to_string(), json!("tribex-ai-thread-result"));
-    meta.insert("drawerOnly".to_string(), json!(true));
     object.insert("meta".to_string(), Value::Object(meta));
 
     let mut tool_args = object
@@ -265,7 +282,6 @@ fn enrich_thread_scoped_renderer_arguments(request: &HostedToolRequest) -> Value
         .unwrap_or_default();
     tool_args.insert("threadId".to_string(), json!(thread_id));
     tool_args.insert("artifactSource".to_string(), json!("tribex-ai-thread-result"));
-    tool_args.insert("drawerOnly".to_string(), json!(true));
     object.insert("toolArgs".to_string(), Value::Object(tool_args));
 
     Value::Object(object)
@@ -318,6 +334,171 @@ async fn execute_hosted_tool_request(
             }
         }
     }
+}
+
+async fn execute_hosted_tool_request_with_async_state(
+    async_state: &Arc<TokioMutex<AsyncAppState>>,
+    request: HostedToolRequest,
+) -> Value {
+    match request.method {
+        HostedToolMethod::List => {
+            let tools = mcp_tools::list_tools(async_state).await;
+            json!({ "tools": tools })
+        }
+        HostedToolMethod::Call => {
+            let tool_name = request.tool_name.clone().unwrap_or_default();
+            let arguments = enrich_thread_scoped_renderer_arguments(&request);
+            match mcp_tools::call_tool(&tool_name, arguments, async_state).await {
+                Ok(result) => result,
+                Err(message) => build_tool_error_result(&message),
+            }
+        }
+    }
+}
+
+fn build_local_tool_request_response(payload: &Value, result: Value) -> Value {
+    let request = payload.get("request").unwrap_or(payload);
+    let request_id = request
+        .get("id")
+        .cloned()
+        .or_else(|| payload.get("requestId").cloned())
+        .or_else(|| payload.get("request_id").cloned())
+        .or_else(|| payload.get("id").cloned());
+    let uses_jsonrpc = request
+        .get("jsonrpc")
+        .and_then(|value| value.as_str())
+        .map(|value| value == "2.0")
+        .unwrap_or(false)
+        || payload
+            .get("jsonrpc")
+            .and_then(|value| value.as_str())
+            .map(|value| value == "2.0")
+            .unwrap_or(false);
+
+    if uses_jsonrpc {
+        let is_error = result
+            .get("isError")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if is_error {
+            let message = result
+                .get("content")
+                .and_then(|value| value.as_array())
+                .and_then(|entries| {
+                    entries.iter().find_map(|entry| {
+                        entry
+                            .get("text")
+                            .and_then(|value| value.as_str())
+                            .map(|value| value.to_string())
+                    })
+                })
+                .unwrap_or_else(|| "Hosted desktop relay tool failed.".to_string());
+            return json!({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32000,
+                    "message": message,
+                    "data": result,
+                }
+            });
+        }
+
+        return json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": result,
+        });
+    }
+
+    result
+}
+
+pub(crate) async fn handle_local_tool_request(
+    async_state: Arc<TokioMutex<AsyncAppState>>,
+    payload: Value,
+) -> Value {
+    let Some(request) = extract_hosted_tool_request(&payload) else {
+        return build_local_tool_request_response(
+            &payload,
+            build_tool_error_result("Invalid desktop relay tool request."),
+        );
+    };
+
+    let request_for_response = request.clone();
+    emit_local_tool_event(&async_state, &request, "relay.tool.request.local", None, None).await;
+    let result = execute_hosted_tool_request_with_async_state(&async_state, request).await;
+    let is_error = result
+        .get("isError")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let error = if is_error {
+        result
+            .get("content")
+            .and_then(|value| value.as_array())
+            .and_then(|entries| {
+                entries.iter().find_map(|entry| {
+                    entry
+                        .get("text")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string())
+                })
+            })
+    } else {
+        None
+    };
+    emit_local_tool_event(
+        &async_state,
+        &request_for_response,
+        "relay.tool.response.local",
+        Some(&result),
+        error.as_deref(),
+    )
+    .await;
+    build_local_tool_request_response(&payload, result)
+}
+
+async fn emit_local_tool_event(
+    async_state: &Arc<TokioMutex<AsyncAppState>>,
+    request: &HostedToolRequest,
+    event_type: &str,
+    result: Option<&Value>,
+    error: Option<&str>,
+) {
+    let state_guard = async_state.lock().await;
+    let app_handle = state_guard.app_handle.clone();
+    drop(state_guard);
+
+    let relay_id = request
+        .thread_id
+        .clone()
+        .or_else(|| request.relay_session_id.clone())
+        .unwrap_or_else(|| "desktop-relay".to_string());
+    let request_id = request.request_id.clone().unwrap_or(Value::Null);
+
+    emit_event(
+        &app_handle,
+        "first_party_ai_desktop_relay_event",
+        json!({
+            "relayId": relay_id,
+            "type": "data",
+            "payload": {
+                "type": event_type,
+                "threadId": request.thread_id,
+                "relaySessionId": request.relay_session_id,
+                "workspaceId": request.workspace_id,
+                "requestId": request_id,
+                "toolName": request.tool_name,
+                "arguments": request.arguments,
+                "createdAt": chrono::Utc::now().to_rfc3339(),
+                "success": result.map(|value| {
+                    !value.get("isError").and_then(|inner| inner.as_bool()).unwrap_or(false)
+                }),
+                "result": result.cloned(),
+                "error": error,
+            },
+        }),
+    );
 }
 
 async fn respond_to_hosted_tool_request(
@@ -938,14 +1119,39 @@ mod tests {
     }
 
     #[test]
-    fn enriches_thread_scoped_renderer_requests_with_drawer_metadata() {
+    fn extracts_hosted_tool_requests_from_jsonrpc_tool_name_and_input_payloads() {
+        let request = extract_hosted_tool_request(&json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "toolName": "structured_data",
+                "input": {
+                    "tables": [{
+                        "id": "t1",
+                        "name": "Finance Review",
+                        "columns": [],
+                        "rows": []
+                    }]
+                }
+            }
+        }))
+        .expect("jsonrpc tool request should be recognized");
+
+        assert_eq!(request.method, HostedToolMethod::Call);
+        assert_eq!(request.request_id, Some(json!(9)));
+        assert_eq!(request.tool_name.as_deref(), Some("structured_data"));
+        assert_eq!(request.arguments["tables"][0]["id"], "t1");
+    }
+
+    #[test]
+    fn enriches_thread_scoped_renderer_requests_with_thread_artifact_metadata() {
         let request = HostedToolRequest {
             method: HostedToolMethod::Call,
             request_id: Some(json!("req-3")),
-            tool_name: Some("rich_content".to_string()),
+            tool_name: Some("structured_data".to_string()),
             arguments: json!({
-                "title": "Web App Architecture",
-                "body": "# Overview"
+                "tables": []
             }),
             relay_session_id: Some("relay-session-3".to_string()),
             device_id: None,
@@ -956,8 +1162,8 @@ mod tests {
         let enriched = enrich_thread_scoped_renderer_arguments(&request);
         assert_eq!(enriched["meta"]["threadId"], "thread-3");
         assert_eq!(enriched["meta"]["artifactSource"], "tribex-ai-thread-result");
-        assert_eq!(enriched["meta"]["drawerOnly"], true);
         assert_eq!(enriched["toolArgs"]["threadId"], "thread-3");
+        assert_eq!(enriched["toolArgs"]["artifactSource"], "tribex-ai-thread-result");
     }
 
     #[test]
@@ -1026,6 +1232,8 @@ mod tests {
         );
 
         assert_eq!(payload["requestId"], "req-1");
+        assert_eq!(payload["jsonrpc"], "2.0");
+        assert_eq!(payload["id"], "req-1");
         assert_eq!(payload["relaySessionId"], "relay-session-1");
         assert_eq!(payload["success"], true);
         assert_eq!(payload["result"]["content"][0]["text"], "ok");
@@ -1051,8 +1259,36 @@ mod tests {
         );
 
         assert_eq!(payload["requestId"], "req-2");
+        assert_eq!(payload["jsonrpc"], "2.0");
+        assert_eq!(payload["id"], "req-2");
         assert_eq!(payload["success"], false);
         assert_eq!(payload["error"], "Invalid mermaid block.");
+    }
+
+    #[test]
+    fn builds_local_tool_request_response_in_jsonrpc_shape() {
+        let payload = build_local_tool_request_response(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "tools/call",
+                "params": {
+                    "name": "rich_content",
+                    "arguments": {
+                        "title": "Example",
+                        "body": "# Hello"
+                    }
+                }
+            }),
+            json!({
+                "content": [{ "type": "text", "text": "ok" }]
+            }),
+        );
+
+        assert_eq!(payload["jsonrpc"], "2.0");
+        assert_eq!(payload["id"], 11);
+        assert_eq!(payload["result"]["content"][0]["text"], "ok");
+        assert!(payload.get("error").is_none());
     }
 
     #[test]

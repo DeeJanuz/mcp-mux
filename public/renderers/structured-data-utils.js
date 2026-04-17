@@ -1,14 +1,75 @@
 (function () {
   'use strict';
 
-  function getCellValue(row, colId) {
-    if (!row || !row.cells || !row.cells[colId]) return '';
-    return row.cells[colId].value != null ? row.cells[colId].value : '';
+  function normalizeColumnKey(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
   }
 
-  function getCellChange(row, colId) {
-    if (!row || !row.cells || !row.cells[colId]) return null;
-    return row.cells[colId].change || null;
+  function coerceCell(candidate) {
+    if (candidate === undefined || candidate === null) return null;
+    if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+      if (Object.prototype.hasOwnProperty.call(candidate, 'value') || Object.prototype.hasOwnProperty.call(candidate, 'change')) {
+        return candidate;
+      }
+    }
+    return {
+      value: candidate,
+      change: null,
+    };
+  }
+
+  function resolveCell(row, colId, columnName) {
+    if (!row || typeof row !== 'object') return null;
+
+    if (row.cells && row.cells[colId]) {
+      return coerceCell(row.cells[colId]);
+    }
+
+    var direct = coerceCell(row[colId]);
+    if (direct) return direct;
+
+    var values = row.values && typeof row.values === 'object' ? row.values : null;
+    if (values && values[colId] !== undefined) {
+      return coerceCell(values[colId]);
+    }
+
+    var data = row.data && typeof row.data === 'object' ? row.data : null;
+    if (data && data[colId] !== undefined) {
+      return coerceCell(data[colId]);
+    }
+
+    var targetKeys = {};
+    targetKeys[normalizeColumnKey(colId)] = true;
+    targetKeys[normalizeColumnKey(columnName)] = true;
+
+    var containers = [row, values, data].filter(Boolean);
+    for (var i = 0; i < containers.length; i += 1) {
+      var container = containers[i];
+      var keys = Object.keys(container);
+      for (var j = 0; j < keys.length; j += 1) {
+        var key = keys[j];
+        if (!targetKeys[normalizeColumnKey(key)]) continue;
+        var fallback = coerceCell(container[key]);
+        if (fallback) return fallback;
+      }
+    }
+
+    return null;
+  }
+
+  function getCellValue(row, colId, columnName) {
+    var cell = resolveCell(row, colId, columnName);
+    if (!cell) return '';
+    return cell.value != null ? cell.value : '';
+  }
+
+  function getCellChange(row, colId, columnName) {
+    var cell = resolveCell(row, colId, columnName);
+    if (!cell) return null;
+    return cell.change || null;
   }
 
   function flattenRows(rows, depth, expandedRows) {
@@ -46,7 +107,7 @@
     var lower = text.toLowerCase();
     return rows.filter(function (row) {
       var match = columns.some(function (col) {
-        return String(getCellValue(row, col.id)).toLowerCase().indexOf(lower) !== -1;
+        return String(getCellValue(row, col.id, col.name)).toLowerCase().indexOf(lower) !== -1;
       });
       if (match) return true;
       if (row.children && row.children.length > 0) {
@@ -159,7 +220,7 @@
           if (modifications[modKey]) {
             return JSON.parse(modifications[modKey]).value;
           }
-          return getCellValue(row, col.id);
+          return getCellValue(row, col.id, col.name);
         });
         result.push(cells);
         if (row.children && row.children.length > 0) {
@@ -179,6 +240,7 @@
   }
 
   window.__structuredDataUtils = {
+    resolveCell: resolveCell,
     getCellValue: getCellValue,
     getCellChange: getCellChange,
     flattenRows: flattenRows,

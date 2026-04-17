@@ -4,21 +4,25 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
-use tauri::Emitter;
+use crate::http_server::AsyncAppState;
+use crate::plugin::PluginRegistry;
 
-use crate::http_server::{execute_push, store_push, await_decision, AsyncAppState, ExecutePushResult};
-use crate::plugin::{PluginRegistry, PluginToolResult, try_refresh_oauth};
+mod builtin_registry;
+mod discovery;
+mod lifecycle;
+mod plugin_proxy;
+mod presentation;
+mod session;
 
 const RULES_VERSION: &str = "5"; // Bump when built-in rules change
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
-    // Get available renderers for dynamic tool descriptions
     let renderers = {
         let state_guard = state.lock().await;
         available_renderers(&state_guard.inner)
     };
-    let mut tools = builtin_tool_definitions(&renderers);
+    let mut tools = builtin_registry::builtin_tool_definitions(&renderers);
 
     // Check for stale plugins and collect info needed for refresh
     let (plugins_to_refresh, client) = {
@@ -59,124 +63,62 @@ pub async fn call_tool(
     arguments: Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<Value, String> {
-    // Check built-in tools first
-    match name {
-        "rich_content" => call_direct_renderer_content("rich_content", arguments, state).await,
-        "structured_data" => call_direct_renderer_content("structured_data", arguments, state).await,
-        "push_content" => call_push_content(arguments, state).await,
-        "push_review" => call_push_review(arguments, state).await,
-        "await_review" => call_await_review(arguments, state).await,
-        "push_check" => call_push_check(arguments, state).await,
-        "describe_connector" => call_describe_connector(arguments, state).await,
-        "describe_tool_group" => call_describe_tool_group(arguments, state).await,
-        "describe_tool" => call_describe_tool(arguments, state).await,
-        "init_session" => call_init_session(arguments, state).await,
-        "mcpviews_setup" => call_mcpviews_setup(arguments, state).await,
-        "mcpviews_install_plugin" => call_install_plugin(arguments, state).await,
-        "get_plugin_docs" => call_get_plugin_docs(arguments, state).await,
-        "get_plugin_prompt" => crate::mcp_prompts::call_get_plugin_prompt(arguments, state).await,
-        "update_plugins" => call_update_plugins(arguments, state).await,
-        "save_update_preference" => call_save_update_preference(arguments, state).await,
-        "list_registry" => crate::mcp_registry_tools::call_list_registry(arguments, state).await,
-        "start_plugin_auth" => crate::mcp_registry_tools::call_start_plugin_auth(arguments, state).await,
-        _ => {
-            // Check plugin tools — scope MutexGuard to block before any .await
-            let (plugin_info, client) = lookup_plugin_tool(name, &arguments, state).await;
+    if let Some(spec) = builtin_registry::find_builtin_tool_spec(name) {
+        return (spec.handler)(arguments, state).await;
+    }
 
-            // If not found, refresh stale plugins and retry once (handles race
-            // where tools/call arrives before lazy tools/list cache is populated)
-            let plugin_info = match plugin_info {
-                Some(info) => Some(info),
-                None => {
-                    ensure_plugins_refreshed(state, &client).await;
-                    let (retry_info, _) = lookup_plugin_tool(name, &arguments, state).await;
-                    retry_info
+    let (plugin_info, client) = plugin_proxy::lookup_plugin_tool(name, &arguments, state).await;
+
+    let plugin_info = match plugin_info {
+        Some(info) => Some(info),
+        None => {
+            plugin_proxy::ensure_plugins_refreshed(state, &client).await;
+            let (retry_info, _) = plugin_proxy::lookup_plugin_tool(name, &arguments, state).await;
+            retry_info
+        }
+    };
+
+    match plugin_info {
+        Some(info) => {
+            let result = plugin_proxy::proxy_plugin_tool_call(
+                &client,
+                &info.mcp_url,
+                info.auth_header.as_deref(),
+                &info.unprefixed_name,
+                &arguments,
+            )
+            .await;
+
+            match result {
+                Ok(mut val) => {
+                    if info.unprefixed_name == "list_organizations" {
+                        plugin_proxy::enrich_list_organizations(&mut val, &info.plugin_name);
+                    }
+                    Ok(val)
                 }
-            };
-
-            match plugin_info {
-                Some(info) => {
-                    let result =
-                        proxy_plugin_tool_call(&client, &info.mcp_url, info.auth_header.as_deref(), &info.unprefixed_name, &arguments)
-                            .await;
-
-                    match result {
-                        Ok(mut val) => {
+                Err(ref e) if e.contains("HTTP 401") => {
+                    if let Some(ref oauth) = info.oauth_info {
+                        if let Some(new_header) = crate::plugin::try_refresh_oauth(oauth, &client).await {
+                            let mut retry = plugin_proxy::proxy_plugin_tool_call(
+                                &client,
+                                &info.mcp_url,
+                                Some(&new_header),
+                                &info.unprefixed_name,
+                                &arguments,
+                            )
+                            .await?;
                             if info.unprefixed_name == "list_organizations" {
-                                enrich_list_organizations(&mut val, &info.plugin_name);
+                                plugin_proxy::enrich_list_organizations(&mut retry, &info.plugin_name);
                             }
-                            Ok(val)
+                            return Ok(retry);
                         }
-                        Err(ref e) if e.contains("HTTP 401") => {
-                            // Token may have been revoked server-side before expiry — force refresh and retry once
-                            if let Some(ref oauth) = info.oauth_info {
-                                if let Some(new_header) = crate::plugin::try_refresh_oauth(oauth, &client).await {
-                                    let mut retry = proxy_plugin_tool_call(&client, &info.mcp_url, Some(&new_header), &info.unprefixed_name, &arguments)
-                                        .await?;
-                                    if info.unprefixed_name == "list_organizations" {
-                                        enrich_list_organizations(&mut retry, &info.plugin_name);
-                                    }
-                                    return Ok(retry);
-                                }
-                            }
-                            result
-                        }
-                        Err(_) => result,
                     }
+                    result
                 }
-                None => Err(format!("Unknown tool: {}", name)),
+                Err(_) => result,
             }
         }
-    }
-}
-
-/// Look up a plugin tool by prefixed name, returning plugin info and HTTP client.
-/// If auth is None but OAuth refresh info is available, attempts token refresh.
-async fn lookup_plugin_tool(
-    name: &str,
-    arguments: &Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> (Option<PluginToolResult>, reqwest::Client) {
-    let (info, client) = {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let info = registry.find_plugin_for_tool_with_args(name, arguments);
-        let client = state_guard.inner.http_client.clone();
-        (info, client)
-    };
-
-    // If auth is None but OAuth info is present, attempt token refresh
-    match info {
-        Some(mut result) => {
-            if result.auth_header.is_none() {
-                if let Some(oauth) = &result.oauth_info {
-                    if let Some(bearer) = try_refresh_oauth(oauth, &client).await {
-                        result.auth_header = Some(bearer);
-                    }
-                }
-            }
-            (Some(result), client)
-        }
-        None => (None, client),
-    }
-}
-
-/// Ensure all stale plugin tool caches are refreshed.
-async fn ensure_plugins_refreshed(
-    state: &Arc<TokioMutex<AsyncAppState>>,
-    client: &reqwest::Client,
-) {
-    let has_stale = {
-        let state_guard = state.lock().await;
-        let mut registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let stale = registry.stale_plugin_indices();
-        for idx in &stale {
-            registry.mark_refresh_pending(*idx);
-        }
-        !stale.is_empty()
-    };
-    if has_stale {
-        PluginRegistry::refresh_stale_plugins(state, client).await;
+        None => Err(format!("Unknown tool: {}", name)),
     }
 }
 
@@ -248,116 +190,6 @@ fn strip_row_changes(rows: &mut Vec<Value>) {
         if let Some(children) = row.get_mut("children").and_then(|c| c.as_array_mut()) {
             strip_row_changes(children);
         }
-    }
-}
-
-async fn call_push_content(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let mut arguments = arguments;
-    // Strip change markers from structured_data — read-only view should never show diffs
-    if let Some(data) = arguments.get_mut("data") {
-        strip_change_fields(data);
-    }
-    call_push_impl(arguments, state, false).await
-}
-
-async fn call_direct_renderer_content(
-    renderer_name: &str,
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let mut data = arguments;
-    let meta = data.get("meta").cloned();
-    let tool_args = data
-        .get("toolArgs")
-        .cloned()
-        .or_else(|| data.get("tool_args").cloned());
-    if let Some(object) = data.as_object_mut() {
-        object.remove("meta");
-        object.remove("toolArgs");
-        object.remove("tool_args");
-    }
-    strip_change_fields(&mut data);
-    validate_push_payload(renderer_name, &data)?;
-
-    let result = execute_push(
-        state,
-        renderer_name.to_string(),
-        tool_args,
-        data,
-        meta,
-        false,
-        120,
-        None, // session_id
-    )
-    .await;
-
-    match result {
-        ExecutePushResult::Stored { session_id } => Ok(serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": serde_json::to_string(&serde_json::json!({
-                    "session_id": session_id,
-                    "status": "stored"
-                })).unwrap()
-            }]
-        })),
-        ExecutePushResult::Decision(resp) => Ok(serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": serde_json::to_string(&resp).unwrap()
-            }]
-        })),
-        ExecutePushResult::Pending { .. } => {
-            unreachable!("execute_push never returns Pending directly")
-        }
-    }
-}
-
-async fn call_push_review(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let params = extract_push_params(&arguments, true)?;
-
-    let result = store_push(state, params.tool_name, None, params.data, params.meta, true, params.timeout, None).await;
-
-    match result {
-        ExecutePushResult::Pending { session_id } => Ok(serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": serde_json::to_string(&serde_json::json!({
-                    "session_id": session_id,
-                    "status": "pending",
-                    "message": "Review is displayed in the companion window. Call await_review with this session_id to wait for the user's decision. If your transport times out, call await_review again — the session persists."
-                })).unwrap()
-            }]
-        })),
-        _ => unreachable!("store_push with review_required=true always returns Pending"),
-    }
-}
-
-async fn call_await_review(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: session_id")?;
-
-    let result = await_decision(state, session_id).await;
-
-    match result {
-        ExecutePushResult::Decision(resp) => Ok(serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": serde_json::to_string(&resp).unwrap()
-            }]
-        })),
-        _ => Err(format!("No pending review for session_id: {}", session_id)),
     }
 }
 
@@ -737,89 +569,6 @@ fn extract_push_params(arguments: &Value, review: bool) -> Result<PushParams, St
     };
     validate_push_payload(&tool_name, &data)?;
     Ok(PushParams { tool_name, data, meta, timeout })
-}
-
-async fn call_push_impl(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-    review_required: bool,
-) -> Result<Value, String> {
-    let params = extract_push_params(&arguments, review_required)?;
-
-    let result = execute_push(
-        state,
-        params.tool_name,
-        None, // tool_args
-        params.data,
-        params.meta,
-        review_required,
-        params.timeout,
-        None, // session_id
-    )
-    .await;
-
-    match result {
-        ExecutePushResult::Stored { session_id } => Ok(serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": serde_json::to_string(&serde_json::json!({
-                    "session_id": session_id,
-                    "status": "stored"
-                })).unwrap()
-            }]
-        })),
-        ExecutePushResult::Decision(resp) => Ok(serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": serde_json::to_string(&resp).unwrap()
-            }]
-        })),
-        ExecutePushResult::Pending { .. } => {
-            unreachable!("execute_push never returns Pending directly")
-        }
-    }
-}
-
-async fn call_push_check(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let session_id = arguments
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: session_id")?
-        .to_string();
-
-    let state_guard = state.lock().await;
-    let sessions = state_guard.inner.sessions.lock().unwrap();
-
-    let result = match sessions.get(&session_id) {
-        Some(session) => {
-            let has_decision = session.decided_at.is_some();
-            serde_json::json!({
-                "session_id": session_id,
-                "status": if has_decision { "decided" } else { "pending" },
-                "review_required": session.review_required,
-                "has_decision": has_decision,
-                "decision": session.decision,
-            })
-        }
-        None => {
-            serde_json::json!({
-                "session_id": session_id,
-                "status": "not_found",
-                "review_required": false,
-                "has_decision": false,
-            })
-        }
-    };
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&result).unwrap()
-        }]
-    }))
 }
 
 /// Collect renderer and tool rules from all renderers and plugin manifests.
@@ -1223,23 +972,33 @@ fn plugin_auth_state_map(plugin_status: &[Value]) -> HashMap<String, String> {
 }
 
 fn build_core_hosted_connector(available_tools: &[Value]) -> Option<Value> {
-    let core_tool_names = [
-        "rich_content",
-        "structured_data",
-        "push_review",
-        "await_review",
-        "push_check",
-        "describe_connector",
-        "describe_tool_group",
-        "describe_tool",
-    ];
+    let mut ordered_tools = Vec::new();
+    let mut group_entries: Vec<(String, String, Vec<Value>)> = Vec::new();
 
-    let tools: Vec<Value> = core_tool_names
-        .iter()
-        .filter_map(|name| find_tool_summary(available_tools, name).cloned())
-        .collect();
+    for spec in builtin_registry::builtin_tool_specs() {
+        let Some(group) = spec.core_connector_group else {
+            continue;
+        };
+        let Some(summary) = find_tool_summary(available_tools, spec.name).cloned() else {
+            continue;
+        };
 
-    if tools.is_empty() {
+        ordered_tools.push(summary.clone());
+
+        match group_entries
+            .iter_mut()
+            .find(|(name, _, _)| name == group.name)
+        {
+            Some((_, _, tools)) => tools.push(summary),
+            None => group_entries.push((
+                group.name.to_string(),
+                group.hint.to_string(),
+                vec![summary],
+            )),
+        }
+    }
+
+    if ordered_tools.is_empty() {
         return None;
     }
 
@@ -1251,38 +1010,16 @@ fn build_core_hosted_connector(available_tools: &[Value]) -> Option<Value> {
         "capabilities": ["rich-content", "structured-data", "review", "discovery"],
         "authState": "available",
         "discoveryState": "breadcrumb",
-        "toolCount": tools.len(),
-        "tools": tools.iter().take(3).cloned().collect::<Vec<Value>>(),
-        "toolGroups": [
-            {
-                "name": "Presentation",
-                "hint": "Open or review renderer-backed MCPViews content.",
-                "tools": tools
-                    .iter()
-                    .filter(|tool| {
-                        matches!(
-                            tool.get("name").and_then(|value| value.as_str()),
-                            Some("rich_content" | "structured_data" | "push_review" | "await_review" | "push_check")
-                        )
-                    })
-                    .cloned()
-                    .collect::<Vec<Value>>(),
-            },
-            {
-                "name": "Discovery",
-                "hint": "Describe connectors, tool groups, and individual tools before acting.",
-                "tools": tools
-                    .iter()
-                    .filter(|tool| {
-                        matches!(
-                            tool.get("name").and_then(|value| value.as_str()),
-                            Some("describe_connector" | "describe_tool_group" | "describe_tool")
-                        )
-                    })
-                    .cloned()
-                    .collect::<Vec<Value>>(),
-            }
-        ],
+        "toolCount": ordered_tools.len(),
+        "tools": ordered_tools.iter().take(3).cloned().collect::<Vec<Value>>(),
+        "toolGroups": group_entries
+            .into_iter()
+            .map(|(name, hint, tools)| serde_json::json!({
+                "name": name,
+                "hint": hint,
+                "tools": tools,
+            }))
+            .collect::<Vec<Value>>(),
     }))
 }
 
@@ -1292,7 +1029,8 @@ fn filter_hosted_model_facing_tools(tools: Vec<Value>) -> Vec<Value> {
         .filter(|tool| {
             tool.get("name")
                 .and_then(|value| value.as_str())
-                != Some("push_content")
+                .map(builtin_registry::is_hosted_model_facing_builtin)
+                .unwrap_or(true)
         })
         .collect()
 }
@@ -1396,137 +1134,7 @@ fn build_plugin_hosted_connectors(
 pub(crate) async fn build_hosted_discovery_catalog(
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Value {
-    ensure_registry_fresh(state).await;
-
-    let all_tools = list_tools(state).await;
-    let available_tools = filter_hosted_model_facing_tools(extract_tool_summaries_with_schema(&all_tools));
-
-    let state_guard = state.lock().await;
-    let registry = state_guard.inner.plugin_registry.lock().unwrap();
-    let plugin_status = collect_plugin_auth_status(&registry.manifests);
-
-    let mut connectors = Vec::new();
-    if let Some(core_connector) = build_core_hosted_connector(&available_tools) {
-        connectors.push(core_connector);
-    }
-    connectors.extend(build_plugin_hosted_connectors(
-        &registry.manifests,
-        &registry.tool_cache,
-        &available_tools,
-        &plugin_status,
-    ));
-
-    serde_json::json!({
-        "tools": available_tools,
-        "connectors": connectors,
-    })
-}
-
-async fn call_describe_connector(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let key = arguments
-        .get("key")
-        .and_then(|value| value.as_str())
-        .ok_or("Missing required parameter: key")?;
-    let catalog = build_hosted_discovery_catalog(state).await;
-    let connector = catalog
-        .get("connectors")
-        .and_then(|value| value.as_array())
-        .and_then(|connectors| {
-            connectors.iter().find(|entry| {
-                entry.get("key").and_then(|value| value.as_str()) == Some(key)
-            })
-        })
-        .cloned()
-        .ok_or_else(|| format!("Unknown connector: {}", key))?;
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&connector).unwrap()
-        }]
-    }))
-}
-
-async fn call_describe_tool_group(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let connector_key = arguments
-        .get("connector_key")
-        .and_then(|value| value.as_str())
-        .ok_or("Missing required parameter: connector_key")?;
-    let group_name = arguments
-        .get("name")
-        .and_then(|value| value.as_str())
-        .ok_or("Missing required parameter: name")?;
-    let catalog = build_hosted_discovery_catalog(state).await;
-    let group = catalog
-        .get("connectors")
-        .and_then(|value| value.as_array())
-        .and_then(|connectors| {
-            connectors.iter().find(|entry| {
-                entry.get("key").and_then(|value| value.as_str()) == Some(connector_key)
-            })
-        })
-        .and_then(|connector| connector.get("toolGroups").and_then(|value| value.as_array()))
-        .and_then(|groups| {
-            groups.iter().find(|entry| {
-                entry.get("name").and_then(|value| value.as_str()) == Some(group_name)
-            })
-        })
-        .cloned()
-        .ok_or_else(|| format!("Unknown tool group '{}' for connector '{}'", group_name, connector_key))?;
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&group).unwrap()
-        }]
-    }))
-}
-
-async fn call_describe_tool(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let name = arguments
-        .get("name")
-        .and_then(|value| value.as_str())
-        .ok_or("Missing required parameter: name")?;
-    let catalog = build_hosted_discovery_catalog(state).await;
-    let tool = catalog
-        .get("tools")
-        .and_then(|value| value.as_array())
-        .and_then(|tools| {
-            tools.iter().find(|entry| {
-                entry.get("name").and_then(|value| value.as_str()) == Some(name)
-            })
-        })
-        .cloned()
-        .ok_or_else(|| format!("Unknown tool: {}", name))?;
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&tool).unwrap()
-        }]
-    }))
-}
-
-/// Gather rules, plugin auth status, and available tool summaries from the current state.
-async fn gather_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
-    let all_tools = list_tools(state).await;
-    let available_tools = extract_tool_summaries(&all_tools);
-
-    let state_guard = state.lock().await;
-    let all_renderers = available_renderers(&state_guard.inner);
-    let registry = state_guard.inner.plugin_registry.lock().unwrap();
-    let rules = collect_rules(&all_renderers, &registry.manifests);
-    let plugin_status = collect_plugin_auth_status(&registry.manifests);
-    (rules, plugin_status, available_tools)
+    discovery::build_hosted_discovery_catalog(state).await
 }
 
 fn auto_derive_registry_index(
@@ -1762,341 +1370,9 @@ fn collect_org_tokens(manifests: &[mcpviews_shared::PluginManifest]) -> Value {
     Value::Object(result)
 }
 
-async fn gather_slim_session_data(state: &Arc<TokioMutex<AsyncAppState>>) -> (Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>, Value, Value) {
-    ensure_registry_fresh(state).await;
-
-    let state_guard = state.lock().await;
-    let all_renderers = available_renderers(&state_guard.inner);
-    let registry = state_guard.inner.plugin_registry.lock().unwrap();
-    let cached_registry = state_guard.inner.latest_registry.lock().unwrap();
-    let rules = collect_builtin_rules(&all_renderers);
-    let plugin_status = collect_plugin_auth_status(&registry.manifests);
-    let org_tokens = collect_org_tokens(&registry.manifests);
-    let plugin_registry = build_plugin_registry(&registry.manifests, &registry.tool_cache);
-    let plugin_updates = collect_plugin_updates(&registry.manifests, &cached_registry);
-
-    let store = state_guard.inner.plugin_store();
-    let plugin_update_actions = evaluate_update_preferences(&plugin_updates, store);
-
-    (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions, org_tokens)
-}
-
-async fn call_init_session(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let agent_type = arguments
-        .get("agent_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("generic");
-
-    let (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions, org_tokens) = gather_slim_session_data(state).await;
-
-    let mut response = serde_json::json!({
-        "rules": rules,
-        "rules_version": RULES_VERSION,
-        "plugin_status": plugin_status,
-        "org_tokens": org_tokens,
-        "persistence_instructions": persistence_instructions(agent_type),
-        "plugin_registry": plugin_registry,
-        "plugin_updates": plugin_updates,
-        "plugin_update_actions": plugin_update_actions,
-    });
-
-    response.as_object_mut().unwrap().insert(
-        "rules_update".to_string(),
-        serde_json::json!({
-            "current_version": RULES_VERSION,
-            "instruction": format!(
-                "Check if your persisted MCPViews rules file contains `mcpviews-rules-version: {}`. \
-                 If the version is missing or different, overwrite the file with the rules from this \
-                 response using the persistence_instructions format. This ensures you have the latest rules.",
-                RULES_VERSION
-            )
-        })
-    );
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&response).unwrap()
-        }]
-    }))
-}
-
 /// Return platform-specific instructions for configuring automatic session initialization.
 pub(crate) fn setup_instructions(agent_type: &str) -> String {
-    match agent_type {
-        "claude_code" => "Add a rule in `.claude/rules/mcpviews-init.md` containing: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, behavioral rules, plugin auth status, and the list of available tools. This must happen every time — not just once.'".to_string(),
-
-        "claude_desktop" => "Create a memory: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.'".to_string(),
-
-        "cursor" => "Add to `.cursor/rules/mcpviews-init.mdc`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.'".to_string(),
-
-        "codex" | "opencode" | "antigravity" => "Add to `AGENTS.md`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.'".to_string(),
-
-        "windsurf" => "Add to `.windsurfrules`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.'".to_string(),
-
-        _ => "Ask the user how to persist a rule that calls `init_session` at the start of every conversation, chat session, or interaction — not just once, but every time.".to_string(),
-    }
-}
-
-async fn call_mcpviews_setup(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let agent_type = arguments
-        .get("agent_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("generic");
-
-    let (rules, plugin_status, available_tools) = gather_session_data(state).await;
-
-    let response = serde_json::json!({
-        "rules": rules,
-        "rules_version": RULES_VERSION,
-        "plugin_status": plugin_status,
-        "persistence_instructions": persistence_instructions(agent_type),
-        "setup_instructions": setup_instructions(agent_type),
-        "available_tools": available_tools,
-    });
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&response).unwrap()
-        }]
-    }))
-}
-
-async fn call_get_plugin_docs(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let plugin_name = arguments
-        .get("plugin")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: plugin")?;
-
-    let groups_filter: Option<Vec<String>> = arguments
-        .get("groups")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
-
-    let tools_filter: Option<Vec<String>> = arguments
-        .get("tools")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
-
-    let renderers_filter: Option<Vec<String>> = arguments
-        .get("renderers")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
-
-    let state_guard = state.lock().await;
-    let all_renderers = available_renderers(&state_guard.inner);
-    let registry = state_guard.inner.plugin_registry.lock().unwrap();
-
-    let (_, manifest) = registry
-        .find_plugin_by_name(plugin_name)
-        .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
-
-    // Expand groups filter to tool names
-    let mut expanded_tools: Vec<String> = Vec::new();
-    if let Some(groups) = &groups_filter {
-        if let Some(ri) = &manifest.registry_index {
-            for group in &ri.tool_groups {
-                if groups.iter().any(|g| g.eq_ignore_ascii_case(&group.name)) {
-                    expanded_tools.extend(group.tools.clone());
-                }
-            }
-        }
-        // Also try auto-derived index for manifests without registry_index
-        if manifest.registry_index.is_none() {
-            let cached_tools = registry.tool_cache.plugin_tools(
-                registry.manifests.iter().position(|m| m.name == plugin_name).unwrap_or(0)
-            );
-            let derived = auto_derive_registry_index(manifest, cached_tools);
-            for group in &derived.tool_groups {
-                if groups.iter().any(|g| g.eq_ignore_ascii_case(&group.name)) {
-                    expanded_tools.extend(group.tools.clone());
-                }
-            }
-        }
-    }
-
-    // Merge expanded group tools with explicit tool filter
-    let final_tool_filter = if expanded_tools.is_empty() {
-        tools_filter.as_deref()
-    } else {
-        if let Some(extra) = &tools_filter {
-            expanded_tools.extend(extra.clone());
-        }
-        Some(expanded_tools.as_slice())
-    };
-
-    let rules = collect_plugin_rules(
-        &all_renderers,
-        manifest,
-        final_tool_filter,
-        renderers_filter.as_deref(),
-    );
-
-    let response = serde_json::json!({
-        "plugin": plugin_name,
-        "rules": rules,
-    });
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&response).unwrap()
-        }]
-    }))
-}
-
-// ─── Response enrichment ───
-
-/// Post-process `list_organizations` responses to inject `has_mcpviews_token` per org.
-fn enrich_list_organizations(result: &mut Value, plugin_name: &str) {
-    let auth_dir = mcpviews_shared::auth_dir();
-
-    // The result is an MCP tools/call response: { content: [{ type: "text", text: "..." }] }
-    // The text field contains JSON with a data array of organizations
-    if let Some(content) = result.get_mut("content").and_then(|c| c.as_array_mut()) {
-        for item in content.iter_mut() {
-            if item.get("type").and_then(|t| t.as_str()) != Some("text") {
-                continue;
-            }
-            let text = match item.get("text").and_then(|t| t.as_str()) {
-                Some(t) => t.to_string(),
-                None => continue,
-            };
-            let mut parsed = match serde_json::from_str::<Value>(&text) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let mut modified = false;
-
-            // Check for { data: [...] } shape
-            if let Some(data) = parsed.get_mut("data").and_then(|d| d.as_array_mut()) {
-                for org in data.iter_mut() {
-                    if let Some(org_id) = org.get("id").and_then(|id| id.as_str()) {
-                        let has_token = mcpviews_shared::token_store::has_stored_token_for_org(
-                            &auth_dir,
-                            plugin_name,
-                            org_id,
-                        );
-                        if let Some(obj) = org.as_object_mut() {
-                            obj.insert(
-                                "has_mcpviews_token".to_string(),
-                                Value::Bool(has_token),
-                            );
-                            modified = true;
-                        }
-                    }
-                }
-            }
-
-            // Also check top-level array shape
-            if let Some(arr) = parsed.as_array_mut() {
-                for org in arr.iter_mut() {
-                    if let Some(org_id) = org.get("id").and_then(|id| id.as_str()) {
-                        let has_token = mcpviews_shared::token_store::has_stored_token_for_org(
-                            &auth_dir,
-                            plugin_name,
-                            org_id,
-                        );
-                        if let Some(obj) = org.as_object_mut() {
-                            obj.insert(
-                                "has_mcpviews_token".to_string(),
-                                Value::Bool(has_token),
-                            );
-                            modified = true;
-                        }
-                    }
-                }
-            }
-
-            if modified {
-                if let Ok(new_text) = serde_json::to_string(&parsed) {
-                    *item.get_mut("text").unwrap() = Value::String(new_text);
-                }
-            }
-        }
-    }
-}
-
-// ─── Plugin proxy ───
-
-async fn proxy_plugin_tool_call(
-    client: &reqwest::Client,
-    mcp_url: &str,
-    auth_header: Option<&str>,
-    tool_name: &str,
-    arguments: &Value,
-) -> Result<Value, String> {
-    // Strip organization_id from arguments before forwarding — the token already scopes the request
-    let clean_args = if arguments.get("organization_id").is_some() {
-        let mut args = arguments.clone();
-        if let Some(obj) = args.as_object_mut() {
-            obj.remove("organization_id");
-        }
-        args
-    } else {
-        arguments.clone()
-    };
-
-    let rpc_request = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "name": tool_name,
-            "arguments": clean_args
-        }
-    });
-
-    let mut req_builder = client
-        .post(mcp_url)
-        .header("Accept", "application/json, text/event-stream")
-        .json(&rpc_request);
-    if let Some(auth) = auth_header {
-        req_builder = req_builder.header("Authorization", auth);
-    }
-
-    let response = req_builder
-        .send()
-        .await
-        .map_err(|e| format!("Plugin request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "Plugin returned HTTP {}",
-            response.status().as_u16()
-        ));
-    }
-
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse plugin response: {}", e))?;
-
-    // Extract result from JSON-RPC response
-    if let Some(error) = body.get("error") {
-        return Err(format!(
-            "Plugin error: {}",
-            error
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown error")
-        ));
-    }
-
-    body.get("result")
-        .cloned()
-        .ok_or_else(|| "Plugin response missing result".to_string())
+    session::setup_instructions(agent_type)
 }
 
 // ─── Renderer definitions ───
@@ -2248,6 +1524,26 @@ const STRUCTURED_DATA_RULE: &str = r#"Use structured_data when presenting tabula
 
 Use rich_content with markdown tables for simple, small, static tables.
 
+## Choose the right call pattern
+
+- Use `push_content` + `structured_data` for a read-only interactive table.
+- Use `push_review` + `structured_data` when the user needs to approve adds, deletes, updates, or edited cell values.
+- If you want review behavior, do NOT send the table through plain `push_content` and expect approval controls to appear.
+
+## Required payload shape — do not omit these
+
+The most common failure mode is sending a payload that is almost correct but missing required ids or row structure. A valid structured_data payload requires:
+
+- `data` must be a JSON object, not a stringified JSON string
+- `tables` must be an array
+- each table must have `id`, `name`, `columns`, and `rows`
+- each column must have `id`, `name`, and `change`
+- each row must have `id`, `cells`, and `children`
+- `cells` must be an object keyed by column id
+- `children` must always be present, even when empty (`[]`)
+
+If table ids, row ids, or `children` are missing, the tool may validate or appear to partially render in one surface while looking empty or broken in another.
+
 ## Hierarchical rows — USE THEM
 
 **IMPORTANT**: When data has parent-child relationships (folders containing files, categories with items, sections with sub-items, etc.), use `children` arrays to nest child rows inside parent rows. Do NOT flatten the hierarchy into a single column with descriptions like "parent: X" — the renderer supports collapsible nested rows natively.
@@ -2280,7 +1576,7 @@ This renders as a collapsible tree: clicking "Architecture" expands to show its 
 
 **When to nest**: Any time you would otherwise add a "Parent" or "Folder" column to describe containment, or group items by category in a flat list — nest them instead.
 
-## rich_content / structured_data (read-only display)
+## push_content + structured_data (read-only display)
 
 Display-only mode. Change markers are automatically stripped by the server and ignored by the renderer. Set all `change` fields to null.
 
@@ -2311,7 +1607,7 @@ Example:
 }
 ```
 
-## push_review (change review mode — two-step flow)
+## push_review + structured_data (change review mode — two-step flow)
 
 `push_review` returns immediately with a `session_id`. Call `await_review(session_id)` to block until the user submits. If your transport times out, call `await_review` again — the session persists on the server.
 
@@ -2365,6 +1661,27 @@ Example with nested rows:
 }
 ```
 
+For CSV-style review workflows, each CSV row should map to a structured_data row with a stable row `id`, and each CSV column should map to a structured_data column `id`. If a profit value was corrected in a finance CSV, that belongs in a cell like:
+
+```json
+{
+  "profit": { "value": 650, "change": "update" }
+}
+```
+
+inside a row shaped like:
+
+```json
+{
+  "id": "row_2026_04_08",
+  "cells": {
+    "date": { "value": "2026-04-08", "change": null },
+    "profit": { "value": 650, "change": "update" }
+  },
+  "children": []
+}
+```
+
 push_review response contains user decisions:
 ```json
 {
@@ -2384,6 +1701,8 @@ push_review response contains user decisions:
 - `tables[]`: Array of table objects, each with `id`, `name`, `columns[]`, `rows[]`
 - `columns[]`: `{ id, name, change }` — change is null for read-only, "add"/"delete" for review
 - `rows[]`: `{ id, cells, children }` — cells is `{ [colId]: { value, change } }`, children enables arbitrary nesting
+- For read-only tables rendered via `push_content`, set all `change` values to null
+- For approval flows rendered via `push_review`, set row/column/cell `change` values explicitly where changes exist
 - **Always use `children` for parent-child relationships** — do not flatten hierarchies into extra columns
 - Nested rows auto-expand to depth 2; deeper rows start collapsed"#;
 
@@ -2514,311 +1833,6 @@ pub fn available_renderers(state: &std::sync::Arc<crate::state::AppState>) -> Ve
     renderers
 }
 
-async fn call_install_plugin(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let manifest_json = arguments
-        .get("manifest_json")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: manifest_json")?;
-
-    let download_url = arguments
-        .get("download_url")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let manifest = if let Some(url) = &download_url {
-        let (client, plugins_dir) = {
-            let state_guard = state.lock().await;
-            (
-                state_guard.inner.http_client.clone(),
-                state_guard.inner.plugins_dir().to_path_buf(),
-            )
-        };
-        mcpviews_shared::package::download_and_install_plugin(&client, url, &plugins_dir).await?
-    } else {
-        serde_json::from_str::<mcpviews_shared::PluginManifest>(manifest_json)
-            .map_err(|e| format!("Invalid manifest JSON: {}", e))?
-    };
-
-    let plugin_name = {
-        let state_guard = state.lock().await;
-        state_guard.inner.install_plugin_from_manifest(manifest, download_url.is_some())?
-    };
-
-    // Notify MCP clients and GUI
-    {
-        let state_guard = state.lock().await;
-        state_guard.inner.notify_tools_changed();
-        let _ = state_guard.app_handle.emit("reload_renderers", ());
-    }
-
-    let trigger_auth = arguments
-        .get("trigger_auth")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    // Build auth status for the installed plugin
-    let auth_status_entry = {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        if let Some(m) = registry.manifests.iter().find(|m| m.name == plugin_name) {
-            let statuses = collect_plugin_auth_status(&[m.clone()]);
-            statuses.into_iter().next()
-        } else {
-            None
-        }
-    };
-
-    // Optionally trigger auth
-    let auth_result = if trigger_auth {
-        if let Some(ref status) = auth_status_entry {
-            let is_oauth = status["auth_type"].as_str() == Some("oauth");
-            let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
-            if is_oauth && !is_configured {
-                match crate::mcp_registry_tools::trigger_plugin_oauth(&plugin_name, None, state).await {
-                    Ok(msg) => Some(msg),
-                    Err(e) => Some(format!("Auth trigger failed: {}", e)),
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let mut response = serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": format!("Plugin '{}' installed successfully.", plugin_name)
-        }]
-    });
-
-    if let Some(status) = auth_status_entry {
-        response["auth_status"] = status;
-    }
-    if let Some(result) = auth_result {
-        response["auth_result"] = serde_json::Value::String(result);
-    }
-
-    Ok(response)
-}
-
-async fn call_update_plugins(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let plugin_name = arguments
-        .get("plugin_name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // Ensure registry is fresh
-    ensure_registry_fresh(state).await;
-
-    // Identify plugins needing updates
-    let updates_needed: Vec<(String, String, mcpviews_shared::RegistryEntry)> = {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let cached = state_guard.inner.latest_registry.lock().unwrap();
-
-        let plugins_with_updates = registry.list_plugins_with_updates(&cached);
-        plugins_with_updates
-            .iter()
-            .filter(|p| p.update_available.is_some())
-            .filter(|p| {
-                if let Some(ref name) = plugin_name {
-                    p.name == *name
-                } else {
-                    true
-                }
-            })
-            .filter_map(|p| {
-                let entry = cached.iter().find(|e| e.name == p.name)?.clone();
-                Some((p.name.clone(), p.version.clone(), entry))
-            })
-            .collect()
-    };
-
-    if updates_needed.is_empty() {
-        return Ok(serde_json::json!({
-            "content": [{
-                "type": "text",
-                "text": serde_json::to_string(&serde_json::json!({
-                    "updated": []
-                })).unwrap()
-            }]
-        }));
-    }
-
-    let mut results: Vec<Value> = Vec::new();
-
-    for (name, from_version, entry) in &updates_needed {
-        let install_result = {
-            let state_guard = state.lock().await;
-            state_guard.inner.install_or_update_from_entry(entry).await
-        };
-
-        match install_result {
-            Ok(()) => {
-                results.push(serde_json::json!({
-                    "plugin": name,
-                    "from": from_version,
-                    "to": entry.version,
-                    "status": "success",
-                }));
-            }
-            Err(e) => {
-                results.push(serde_json::json!({
-                    "plugin": name,
-                    "from": from_version,
-                    "to": entry.version,
-                    "status": "error",
-                    "error": e,
-                }));
-            }
-        }
-    }
-
-    // Notify MCP clients and GUI
-    {
-        let state_guard = state.lock().await;
-        state_guard.inner.notify_tools_changed();
-        let _ = state_guard.app_handle.emit("reload_renderers", ());
-    }
-
-    let trigger_auth = arguments
-        .get("trigger_auth")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    // Build auth status for each successfully updated plugin
-    let mut auth_statuses: Vec<Value> = Vec::new();
-    let mut auth_results: Vec<Value> = Vec::new();
-
-    let successfully_updated: Vec<String> = results
-        .iter()
-        .filter(|r| r["status"] == "success")
-        .filter_map(|r| r["plugin"].as_str().map(|s| s.to_string()))
-        .collect();
-
-    for updated_name in &successfully_updated {
-        let status_entry = {
-            let state_guard = state.lock().await;
-            let registry = state_guard.inner.plugin_registry.lock().unwrap();
-            if let Some(m) = registry.manifests.iter().find(|m| m.name == *updated_name) {
-                let statuses = collect_plugin_auth_status(&[m.clone()]);
-                statuses.into_iter().next()
-            } else {
-                None
-            }
-        };
-
-        if let Some(status) = status_entry {
-            let is_oauth = status["auth_type"].as_str() == Some("oauth");
-            let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
-
-            if trigger_auth && is_oauth && !is_configured {
-                match crate::mcp_registry_tools::trigger_plugin_oauth(updated_name, None, state).await {
-                    Ok(msg) => auth_results.push(serde_json::json!({
-                        "plugin": updated_name,
-                        "result": msg,
-                    })),
-                    Err(e) => auth_results.push(serde_json::json!({
-                        "plugin": updated_name,
-                        "result": format!("Auth trigger failed: {}", e),
-                    })),
-                }
-            }
-
-            auth_statuses.push(status);
-        }
-    }
-
-    let mut response = serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&serde_json::json!({
-                "updated": results
-            })).unwrap()
-        }]
-    });
-
-    if !auth_statuses.is_empty() {
-        response["auth_status"] = serde_json::Value::Array(auth_statuses);
-    }
-    if !auth_results.is_empty() {
-        response["auth_results"] = serde_json::Value::Array(auth_results);
-    }
-
-    Ok(response)
-}
-
-
-async fn call_save_update_preference(
-    arguments: Value,
-    state: &Arc<TokioMutex<AsyncAppState>>,
-) -> Result<Value, String> {
-    let plugin = arguments
-        .get("plugin")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: plugin")?;
-    let policy = arguments
-        .get("policy")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: policy")?;
-    let version = arguments
-        .get("version")
-        .and_then(|v| v.as_str())
-        .ok_or("Missing required parameter: version")?;
-
-    let prefs = match policy {
-        "once" => mcpviews_shared::PluginPreferences {
-            update_policy: "ask".to_string(),
-            update_policy_version: None,
-            update_policy_source: "chat".to_string(),
-        },
-        "always" => mcpviews_shared::PluginPreferences {
-            update_policy: "always".to_string(),
-            update_policy_version: None,
-            update_policy_source: "chat".to_string(),
-        },
-        "skip" => mcpviews_shared::PluginPreferences {
-            update_policy: "skip".to_string(),
-            update_policy_version: Some(version.to_string()),
-            update_policy_source: "chat".to_string(),
-        },
-        _ => return Err(format!("Invalid policy '{}'. Must be 'once', 'always', or 'skip'.", policy)),
-    };
-
-    let state_guard = state.lock().await;
-    let store = state_guard.inner.plugin_store();
-    store.save_preferences(plugin, &prefs)?;
-
-    let message = match policy {
-        "once" => format!("Preference saved for '{}'. Proceed with update_plugins, then call mcpviews_setup to re-persist rules.", plugin),
-        "always" => format!("Auto-update enabled for '{}'. Proceed with update_plugins, then call mcpviews_setup to re-persist rules.", plugin),
-        "skip" => format!("Update to version {} skipped for '{}'.", version, plugin),
-        _ => unreachable!(),
-    };
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&serde_json::json!({
-                "status": "saved",
-                "plugin": plugin,
-                "policy": policy,
-                "message": message,
-            })).unwrap()
-        }]
-    }))
-}
-
 // ─── Tool definitions ───
 
 fn build_data_description(renderers: &[RendererDef], prefix: &str) -> String {
@@ -2839,335 +1853,19 @@ fn renderer_description(renderers: &[RendererDef], name: &str, fallback: &str) -
 }
 
 fn direct_renderer_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
-    vec![
-        serde_json::json!({
-            "name": "rich_content",
-            "description": renderer_description(
-                renderers,
-                "rich_content",
-                "Display rich markdown content, diagrams, citations, and embedded tables in MCPViews."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": { "type": "string", "description": "Optional heading shown above the rich content body." },
-                    "body": { "type": "string", "description": "Markdown body. Supports mermaid fences, code blocks, suggestions, and embedded structured_data table references." },
-                    "suggestions": { "type": "object", "description": "Optional inline text suggestions keyed by suggestion id." },
-                    "tables": { "type": "array", "description": "Optional embedded structured_data tables referenced from the body." },
-                    "citations": { "type": "object", "description": "Optional citation metadata keyed by source." }
-                }
-            }
-        }),
-        serde_json::json!({
-            "name": "structured_data",
-            "description": renderer_description(
-                renderers,
-                "structured_data",
-                "Display interactive tabular data with hierarchical rows in MCPViews."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "title": { "type": "string", "description": "Optional heading shown above the table." },
-                    "tables": { "type": "array", "description": "Structured table definitions with columns, rows, and optional children." }
-                },
-                "required": ["tables"]
-            }
-        }),
-    ]
+    builtin_registry::builtin_tool_definitions(renderers)
+        .into_iter()
+        .filter(|tool| {
+            matches!(
+                tool.get("name").and_then(|value| value.as_str()),
+                Some("rich_content" | "structured_data")
+            )
+        })
+        .collect()
 }
 
 fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
-    let mut tools = direct_renderer_tool_definitions(renderers);
-    let renderer_names: Vec<String> = renderers.iter().map(|r| r.name.clone()).collect();
-    let renderer_list = if renderer_names.is_empty() {
-        "rich_content".to_string()
-    } else {
-        renderer_names.join(", ")
-    };
-
-    tools.extend(vec![
-        serde_json::json!({
-            "name": "push_content",
-            "description": "Display content in the MCPViews window. Supports multiple content types.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "tool_name": {
-                        "type": "string",
-                        "description": format!("Content type identifier for renderer selection. Available renderers: {}. Use 'rich_content' for generic markdown display.", renderer_list)
-                    },
-                    "data": {
-                        "type": "object",
-                        "description": build_data_description(renderers, "Content payload — shape depends on tool_name.")
-                    },
-                    "meta": {
-                        "type": "object",
-                        "description": "Optional metadata (e.g., citation data, source info)."
-                    }
-                },
-                "required": ["tool_name", "data"]
-            }
-        }),
-        serde_json::json!({
-            "name": "push_review",
-            "description": "Display content in the MCPViews companion window for user review. Returns immediately with a session_id. Call await_review(session_id) to wait for the user's decision. If your transport times out, call await_review again with the same session_id — the review session persists on the server.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "tool_name": {
-                        "type": "string",
-                        "description": format!("Content type identifier for renderer selection. Available renderers: {}.", renderer_list)
-                    },
-                    "data": {
-                        "type": "object",
-                        "description": build_data_description(renderers, "Content payload for review display — shape depends on tool_name.")
-                    },
-                    "meta": {
-                        "type": "object",
-                        "description": "Optional metadata."
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "description": "Review timeout in seconds. Default: 120. The timeout resets on user activity (heartbeat)."
-                    }
-                },
-                "required": ["tool_name", "data"]
-            }
-        }),
-        serde_json::json!({
-            "name": "await_review",
-            "description": "Wait for a pending review decision. Blocks until the user submits their review in the companion window, or the server-side timeout expires. If your transport times out before the user decides, call this again with the same session_id to reconnect — the review session persists. Returns the full decision payload: status, decision, operationDecisions (structured_data rows), comments, modifications, suggestionDecisions (rich_content inline suggestions), tableDecisions (rich_content embedded tables).",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "session_id": {
-                        "type": "string",
-                        "description": "The session_id returned by push_review."
-                    }
-                },
-                "required": ["session_id"]
-            }
-        }),
-        serde_json::json!({
-            "name": "push_check",
-            "description": "Non-blocking status check for a review session. Returns current status without waiting. Use await_review to block until decision.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "session_id": {
-                        "type": "string",
-                        "description": "The session ID returned by push_review."
-                    }
-                },
-                "required": ["session_id"]
-            }
-        }),
-        serde_json::json!({
-            "name": "describe_connector",
-            "description": "Describe a hosted breadcrumb connector, including representative tools and discovery metadata for the current MCPViews session.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Connector key from the hosted discovery catalog."
-                    }
-                },
-                "required": ["key"]
-            }
-        }),
-        serde_json::json!({
-            "name": "describe_tool_group",
-            "description": "Describe a hosted discovery tool group for a connector, including the tools in that group.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "connector_key": {
-                        "type": "string",
-                        "description": "Connector key from the hosted discovery catalog."
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Tool group name to expand."
-                    }
-                },
-                "required": ["connector_key", "name"]
-            }
-        }),
-        serde_json::json!({
-            "name": "describe_tool",
-            "description": "Describe one hosted MCPViews tool, including its schema and usage summary.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Literal tool name from the hosted catalog."
-                    }
-                },
-                "required": ["name"]
-            }
-        }),
-        serde_json::json!({
-            "name": "init_session",
-            "description": "Initialize MCPViews for this session. Returns current renderer definitions, behavioral rules, plugin auth status, and persistence instructions. Should be called at the start of every new agent session.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "agent_type": {
-                        "type": "string",
-                        "description": "The agent platform calling this tool. Supported: 'claude_code', 'claude_desktop', 'codex', 'cursor', 'windsurf', 'opencode', 'antigravity'. If omitted or unrecognized, returns instructions that ask the user how to persist rules."
-                    }
-                }
-            }
-        }),
-        serde_json::json!({
-            "name": "mcpviews_setup",
-            "description": "One-time setup for MCPViews. Returns instructions for persisting a session-start rule that ensures init_session is called automatically in every new session. Also returns current rules and plugin status.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "agent_type": {
-                        "type": "string",
-                        "description": "The agent platform calling this tool. Supported: 'claude_code', 'claude_desktop', 'codex', 'cursor', 'windsurf', 'opencode', 'antigravity'. If omitted or unrecognized, returns generic instructions."
-                    }
-                }
-            }
-        }),
-        serde_json::json!({
-            "name": "mcpviews_install_plugin",
-            "description": "Install a plugin into MCPViews. Provide a plugin manifest as JSON, and optionally a download URL for a .zip package containing renderer assets.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "manifest_json": {
-                        "type": "string",
-                        "description": "JSON string of a PluginManifest object defining the plugin's name, version, renderers, MCP config, and tool rules."
-                    },
-                    "download_url": {
-                        "type": "string",
-                        "description": "Optional URL to a .zip package to download and install. If provided, the manifest is extracted from the package and the manifest_json parameter is not used."
-                    },
-                    "trigger_auth": {
-                        "type": "boolean",
-                        "description": "If true, automatically start OAuth authentication after install if the plugin requires it. Defaults to false."
-                    }
-                },
-                "required": ["manifest_json"]
-            }
-        }),
-        serde_json::json!({
-            "name": "get_plugin_docs",
-            "description": "Fetch detailed usage docs for a plugin's tools and renderers. Call after init_session identifies which plugin you need.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "plugin": {
-                        "type": "string",
-                        "description": "Plugin name (e.g., 'ludflow', 'decidr')"
-                    },
-                    "groups": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Optional: specific tool group names to fetch (e.g., ['Search', 'Code Analysis'])"
-                    },
-                    "tools": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Optional: specific tool names to fetch (unprefixed, e.g., ['search_codebase'])"
-                    },
-                    "renderers": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Optional: specific renderer names to fetch (e.g., ['code_units', 'search_results'])"
-                    }
-                },
-                "required": ["plugin"]
-            }
-        }),
-        serde_json::json!({
-            "name": "update_plugins",
-            "description": "Update installed plugins to their latest versions from the registry. Uses remote manifest resolution to discover available updates.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "plugin_name": {
-                        "type": "string",
-                        "description": "Specific plugin to update. If omitted, updates all plugins with available updates."
-                    },
-                    "trigger_auth": {
-                        "type": "boolean",
-                        "description": "If true, automatically start OAuth authentication after update for plugins that require it. Defaults to false."
-                    }
-                }
-            }
-        }),
-        serde_json::json!({
-            "name": "get_plugin_prompt",
-            "description": "Fetch a prompt from a plugin. Returns the prompt content that should be used as system instructions for a guided workflow.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "plugin": { "type": "string", "description": "Plugin name" },
-                    "prompt": { "type": "string", "description": "Prompt name" },
-                    "arguments": {
-                        "type": "object",
-                        "description": "Optional arguments to template into the prompt",
-                        "additionalProperties": { "type": "string" }
-                    }
-                },
-                "required": ["plugin", "prompt"]
-            }
-        }),
-        serde_json::json!({
-            "name": "list_registry",
-            "description": "List all available plugins from the MCPViews registry, including install status, auth status, and available updates.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "tag": { "type": "string", "description": "Optional: filter plugins by tag" }
-                }
-            }
-        }),
-        serde_json::json!({
-            "name": "start_plugin_auth",
-            "description": "Start authentication for an installed plugin. Opens browser for OAuth, or checks env var for Bearer/ApiKey.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "plugin_name": { "type": "string", "description": "Name of the plugin to authenticate" },
-                    "organization_id": { "type": "string", "description": "Optional organization ID to scope the auth flow to a specific org" }
-                },
-                "required": ["plugin_name"]
-            }
-        }),
-        serde_json::json!({
-            "name": "save_update_preference",
-            "description": "Save the user's update preference for a plugin after asking them about a pending update.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "plugin": {
-                        "type": "string",
-                        "description": "Plugin name"
-                    },
-                    "policy": {
-                        "type": "string",
-                        "enum": ["once", "always", "skip"],
-                        "description": "Update policy: 'once' (update this time only), 'always' (auto-update), 'skip' (skip this version)"
-                    },
-                    "version": {
-                        "type": "string",
-                        "description": "The version this preference applies to"
-                    }
-                },
-                "required": ["plugin", "policy", "version"]
-            }
-        }),
-    ]);
-
-    tools
+    builtin_registry::builtin_tool_definitions(renderers)
 }
 
 #[cfg(test)]
@@ -3680,6 +2378,59 @@ mod tests {
         assert!(presentation_tools.contains(&"rich_content"));
         assert!(presentation_tools.contains(&"structured_data"));
         assert!(!presentation_tools.contains(&"push_content"));
+    }
+
+    #[test]
+    fn test_direct_renderer_tool_definitions_stay_in_registry_sync() {
+        let renderers = builtin_renderer_definitions();
+        let direct_tools = direct_renderer_tool_definitions(&renderers);
+        let direct_names = direct_tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(direct_names, vec!["rich_content", "structured_data"]);
+
+        let registry_tools = builtin_registry::builtin_tool_definitions(&renderers);
+        for name in direct_names {
+            assert!(
+                registry_tools.iter().any(|tool| tool["name"] == name),
+                "registry-backed builtins should still define {}",
+                name,
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_core_hosted_connector_uses_registry_group_metadata() {
+        let renderers = builtin_renderer_definitions();
+        let available_tools = extract_tool_summaries(&builtin_registry::builtin_tool_definitions(&renderers));
+        let connector =
+            build_core_hosted_connector(&available_tools).expect("core connector should exist");
+
+        let actual_groups = connector["toolGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|group| {
+                (
+                    group["name"].as_str().unwrap().to_string(),
+                    group["hint"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let mut expected_groups = Vec::new();
+        for spec in builtin_registry::builtin_tool_specs() {
+            let Some(group) = spec.core_connector_group else {
+                continue;
+            };
+            if !expected_groups.iter().any(|(name, _)| name == group.name) {
+                expected_groups.push((group.name.to_string(), group.hint.to_string()));
+            }
+        }
+
+        assert_eq!(actual_groups, expected_groups);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 import './tribex-ai-client-setup.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+var originalFetch = globalThis.fetch;
+
 afterEach(function () {
   if (globalThis.window && globalThis.window.__tribexAiCloudflareBridge) {
     globalThis.window.__tribexAiCloudflareBridge.disconnect('thread-123');
@@ -10,6 +12,8 @@ afterEach(function () {
     delete globalThis.window.__TAURI__;
     delete globalThis.window.__tribexAiAgentClientCtor;
   }
+  globalThis.fetch = originalFetch;
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -54,7 +58,7 @@ function createLocalCatalogResponse(extra) {
         capabilities: ['rich-content', 'discovery'],
         authState: 'available',
         discoveryState: 'breadcrumb',
-        toolCount: 4,
+        toolCount: 7,
         tools: [
           {
             name: 'rich_content',
@@ -73,6 +77,27 @@ function createLocalCatalogResponse(extra) {
             inputSchema: {
               type: 'object',
               required: ['key'],
+            },
+          },
+          {
+            name: 'push_review',
+            description: 'Display content for user review.',
+            inputSchema: {
+              type: 'object',
+            },
+          },
+          {
+            name: 'await_review',
+            description: 'Wait for a review decision.',
+            inputSchema: {
+              type: 'object',
+            },
+          },
+          {
+            name: 'push_check',
+            description: 'Check the current review status.',
+            inputSchema: {
+              type: 'object',
             },
           },
         ],
@@ -141,6 +166,27 @@ function createLocalCatalogResponse(extra) {
         inputSchema: {
           type: 'object',
           required: ['key'],
+        },
+      },
+      {
+        name: 'push_review',
+        description: 'Display content for user review.',
+        inputSchema: {
+          type: 'object',
+        },
+      },
+      {
+        name: 'await_review',
+        description: 'Wait for a review decision.',
+        inputSchema: {
+          type: 'object',
+        },
+      },
+      {
+        name: 'push_check',
+        description: 'Check the current review status.',
+        inputSchema: {
+          type: 'object',
         },
       },
     ],
@@ -226,6 +272,126 @@ function createAgentClientCtor(handlers) {
 }
 
 describe('tribex-ai-client', function () {
+  it('waits for a loopback runtime host to become reachable before opening the websocket client', async function () {
+    vi.useFakeTimers();
+    var invoke = vi.fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValue(undefined);
+    var FakeAgentClient = createAgentClientCtor();
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var connectPromise = window.__tribexAiCloudflareBridge.connect({
+      threadId: 'thread-123',
+      connection: {
+        transport: 'websocket',
+        host: 'http://127.0.0.1:8787',
+        agent: 'PersonaHarnessAgent',
+        name: 'thread_thread-123',
+        query: {
+          token: 'runtime-token',
+        },
+      },
+    });
+
+    await vi.runAllTimersAsync();
+
+    await expect(connectPromise).resolves.toBe(FakeAgentClient.instances[0]);
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenCalledWith(
+      'probe_local_runtime_host',
+      expect.objectContaining({
+        url: 'http://127.0.0.1:8787/__runtime-session-probe',
+        token: 'runtime-token',
+        timeoutMs: 1000,
+      }),
+    );
+    expect(FakeAgentClient.instances).toHaveLength(1);
+    expect(FakeAgentClient.instances[0].options).toMatchObject({
+      host: '127.0.0.1:8787',
+      agent: 'PersonaHarnessAgent',
+      name: 'thread_thread-123',
+    });
+  });
+
+  it('fails cleanly without opening a websocket when the loopback runtime host never becomes reachable', async function () {
+    vi.useFakeTimers();
+    var invoke = vi.fn().mockRejectedValue(new TypeError('probe failed'));
+    var FakeAgentClient = createAgentClientCtor();
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var connectPromise = window.__tribexAiCloudflareBridge.connect({
+      threadId: 'thread-123',
+      connection: {
+        transport: 'websocket',
+        host: 'http://127.0.0.1:8787',
+        agent: 'PersonaHarnessAgent',
+        name: 'thread_thread-123',
+        query: {
+          token: 'runtime-token',
+        },
+      },
+    });
+    var rejection = expect(connectPromise).rejects.toThrow('Local runtime host is unavailable at 127.0.0.1:8787');
+
+    await vi.runAllTimersAsync();
+
+    await rejection;
+    expect(invoke.mock.calls.length).toBeGreaterThan(1);
+    expect(FakeAgentClient.instances).toHaveLength(0);
+  });
+
+  it('sends the project title under compatible field names when creating a project and preserves it when the immediate response is sparse', async function () {
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/projects') {
+        return Promise.resolve({
+          id: 'project-123',
+        });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(
+      window.__tribexAiClient.createProject(
+        { id: 'workspace-123', organizationId: 'org-1', name: 'Workspace 123' },
+        'Finance Planning',
+      ),
+    ).resolves.toMatchObject({
+      id: 'project-123',
+      name: 'Finance Planning',
+    });
+
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'POST',
+      path: '/workspaces/workspace-123/projects',
+      body: {
+        name: 'Finance Planning',
+        title: 'Finance Planning',
+        projectName: 'Finance Planning',
+      },
+    }));
+  });
+
   it('suppresses preview panes for dotted lifecycle companion events', function () {
     expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
       toolName: 'opencode.thread.execution.started',
@@ -245,14 +411,14 @@ describe('tribex-ai-client', function () {
     })).toBe(true);
   });
 
-  it('keeps thread-scoped rich content inline unless it explicitly asks for a preview pane', function () {
+  it('treats thread-scoped rich content as a previewable artifact session', function () {
     expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
       toolName: 'rich_content',
       toolArgs: { threadId: 'thread-1' },
       result: {
         data: { title: 'Smoke Test Passed', body: 'All checks passed.' },
       },
-    })).toBe(false);
+    })).toBe(true);
 
     expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
       toolName: 'rich_content',
@@ -262,6 +428,67 @@ describe('tribex-ai-client', function () {
         meta: { previewPane: true },
       },
     })).toBe(true);
+  });
+
+  it('times out a runtime connection that never becomes ready instead of leaving the turn pending forever', async function () {
+    vi.useFakeTimers();
+
+    function HangingAgentClient(options) {
+      this.options = options;
+      this.readyState = 0;
+      this.listeners = {
+        message: new Set(),
+        close: new Set(),
+      };
+      this.addEventListener = vi.fn(function (type, listener) {
+        if (!this.listeners[type]) this.listeners[type] = new Set();
+        this.listeners[type].add(listener);
+      }.bind(this));
+      this.send = vi.fn();
+      this.close = vi.fn(function () {
+        this.readyState = 3;
+        if (typeof options.onClose === 'function') {
+          options.onClose();
+        }
+      }.bind(this));
+      this.stub = {
+        getMessages: vi.fn(function () {
+          return Promise.resolve([]);
+        }),
+      };
+      this.ready = new Promise(function () {});
+    }
+
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = HangingAgentClient;
+
+    var sendPromise = window.__tribexAiClient.sendMessage('thread-123', 'hello').catch(function (error) {
+      return error;
+    });
+    await vi.advanceTimersByTimeAsync(10001);
+
+    await expect(sendPromise).resolves.toBeInstanceOf(Error);
+    await expect(sendPromise).resolves.toMatchObject({
+      message: 'Runtime connection timed out.',
+    });
   });
 
   it('derives readable tool event copy from hosted execution lifecycle payloads', function () {
@@ -318,6 +545,8 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'rich_content',
       toolArgs: { threadId: 'thread-1' },
+      artifactKey: 'tribex-ai-result:thread-1:sequence:9',
+      resultContentType: 'rich_content',
       resultData: {
         title: 'Smoke Test Passed',
         body: 'Runtime: `ai-sdk-runner`',
@@ -326,6 +555,115 @@ describe('tribex-ai-client', function () {
         status: 'passed',
       },
       sequence: 9,
+    });
+  });
+
+  it('preserves review session identity for sequenced push_review companion events', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      toolName: 'push_review',
+      toolArgs: { threadId: 'thread-1' },
+      sessionId: 'review-session-1',
+      sequence: 12,
+      result: {
+        data: {
+          tool_name: 'structured_data',
+          data: {
+            title: 'Approval Example',
+            tables: [{
+              id: 'table-1',
+              name: 'Approval Example',
+              columns: [{ id: 'action', name: 'Action' }],
+              rows: [],
+            }],
+          },
+        },
+      },
+    }, 0)).toMatchObject({
+      id: 'tool-sequence:thread-1:review-session-1:12',
+      role: 'tool',
+      toolName: 'structured_data',
+      sessionId: 'review-session-1',
+      artifactKey: 'tribex-ai-result:thread-1:sequence:12',
+      resultContentType: 'structured_data',
+      resultMeta: {
+        reviewRequired: true,
+      },
+    });
+  });
+
+  it('preserves structured_data payloads and legacy artifact identity for thread-scoped tool messages', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      toolName: 'structured_data',
+      toolArgs: { threadId: 'thread-1' },
+      result: {
+        data: {
+          tables: [{
+            id: 'table-1',
+            name: 'Expenses',
+            columns: [{ id: 'amount', name: 'Amount' }],
+            rows: [],
+          }],
+        },
+      },
+    }, 0)).toMatchObject({
+      role: 'tool',
+      toolName: 'structured_data',
+      resultContentType: 'structured_data',
+      artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+      resultData: {
+        tables: [{
+          id: 'table-1',
+          name: 'Expenses',
+        }],
+      },
+    });
+  });
+
+  it('unwraps push_content renderer payloads into structured_data tool messages', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      toolName: 'push_content',
+      toolArgs: { threadId: 'thread-1' },
+      result: {
+        data: {
+          tool_name: 'structured_data',
+          data: {
+            title: 'Expense Review',
+            tables: [{
+              id: 'table-1',
+              name: 'Expenses',
+              columns: [{ id: 'amount', name: 'Amount' }],
+              rows: [{
+                id: 'row-1',
+                cells: {
+                  amount: { value: '$42.00' },
+                },
+                children: [],
+              }],
+            }],
+          },
+          meta: {
+            source: 'push-content',
+          },
+        },
+      },
+    }, 0)).toMatchObject({
+      role: 'tool',
+      toolName: 'structured_data',
+      resultContentType: 'structured_data',
+      artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+      resultMeta: {
+        source: 'push-content',
+      },
+      resultData: {
+        title: 'Expense Review',
+        tables: [{
+          id: 'table-1',
+          name: 'Expenses',
+          rows: [{
+            id: 'row-1',
+          }],
+        }],
+      },
     });
   });
 
@@ -643,7 +981,7 @@ describe('tribex-ai-client', function () {
     globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
 
     await expect(
-      window.__tribexAiClient.createThread('project-123', 'Smoke Test 2026-04-14 12:00'),
+      window.__tribexAiClient.createThread('project-123', 'Smoke Test 2026-04-14 12:00', 'general'),
     ).resolves.toMatchObject({
       id: 'thread-123',
       title: 'Smoke Test 2026-04-14 12:00',
@@ -666,7 +1004,7 @@ describe('tribex-ai-client', function () {
     expect(invoke).toHaveBeenNthCalledWith(1, 'first_party_ai_request', expect.objectContaining({
       method: 'POST',
       path: '/projects/project-123/threads',
-      body: { title: 'Smoke Test 2026-04-14 12:00' },
+      body: { title: 'Smoke Test 2026-04-14 12:00', personaKey: 'general' },
     }));
     expect(invoke).toHaveBeenNthCalledWith(2, 'first_party_ai_request', expect.objectContaining({
       method: 'POST',
@@ -873,7 +1211,7 @@ describe('tribex-ai-client', function () {
         title: 'Example Architecture Document',
         body: '```mermaid\\ngraph TD;\\nA-->B;\\n```',
       },
-      resultMeta: null,
+      resultMeta: {},
     });
     expect(updates[0].item.detail).toBe('Preparing Rich Content result: Example Architecture Document.');
     expect(updates[1].item.detail).toBe('Prepared Rich Content result: Example Architecture Document.');

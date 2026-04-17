@@ -1,8 +1,17 @@
 # Technical Debt & Enhancement Log
 
-**Last Updated:** 2026-04-06
+**Last Updated:** 2026-04-16
 **Total Active Issues:** 0
-**Resolved This Month:** 73
+**Resolved This Month:** 76
+
+---
+
+## Latest Session Summary
+
+**Last Review:** 2026-04-16 (commit `514e5a9`)
+
+- Closed the 3 medium-severity SOLID follow-ups opened during the hosted thread/runtime review of commit `514e5a9`.
+- Current residual risk is ordinary regression risk in the hosted runtime and MCP tool layers, now covered by characterization tests plus full `npm test` and `cargo test` runs.
 
 ---
 
@@ -27,6 +36,12 @@ _None_
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-04-16 (follow-up to commit `514e5a9`)
+
+- **M-041 (resolved):** Split the hosted Tribex thread coordinator into `tribex-ai-state-core.js`, `tribex-ai-state-projection.js`, `tribex-ai-state-runtime.js`, and `tribex-ai-state-actions.js`, with `tribex-ai-state.js` reduced to the composition root that preserves the public `window.__tribexAiState` API. Added characterization and helper tests for navigation/auth state, thread teardown, runtime artifact routing, drawer sync, and prompt submission behavior.
+- **M-042 (resolved):** Extracted the oversized MCP tool hub into focused Rust submodules: `mcp_tools/presentation.rs`, `discovery.rs`, `session.rs`, `plugin_proxy.rs`, `lifecycle.rs`, and `builtin_registry.rs`, while keeping shared rule/rendering/registry helpers stable in `mcp_tools.rs`. Added registry-oriented tests and kept full suite behavior stable.
+- **M-043 (resolved):** Replaced central built-in hosted tool branching with a registry-driven `BuiltinToolSpec` layer that owns schema generation, handler dispatch, hosted visibility, and hosted core-connector grouping metadata. Hosted discovery now derives the core connector/tool filtering from that registry, while `push_content` remains available locally but hidden from hosted model-facing discovery.
 
 ### Resolved 2026-04-06 (commit e524b21)
 

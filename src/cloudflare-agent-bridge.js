@@ -3,12 +3,28 @@ import { CHAT_MESSAGE_TYPES, StreamAccumulator } from 'agents/chat';
 
 var CHAT_REQUEST_TYPE = CHAT_MESSAGE_TYPES.USE_CHAT_REQUEST;
 var CHAT_RESPONSE_TYPE = CHAT_MESSAGE_TYPES.USE_CHAT_RESPONSE;
+var RUNTIME_CONNECT_TIMEOUT_MS = 10000;
+var LOCAL_RUNTIME_PROBE_TIMEOUT_MS = 4000;
+var LOCAL_RUNTIME_PROBE_INTERVAL_MS = 250;
+var LOCAL_RUNTIME_PROBE_REQUEST_TIMEOUT_MS = 1000;
 
 function ensureWindow() {
   if (typeof window === 'undefined') {
     globalThis.window = globalThis.window || globalThis;
   }
   return globalThis.window;
+}
+
+function getTauriInvoke() {
+  var targetWindow = ensureWindow();
+  if (
+    targetWindow.__TAURI__ &&
+    targetWindow.__TAURI__.core &&
+    typeof targetWindow.__TAURI__.core.invoke === 'function'
+  ) {
+    return targetWindow.__TAURI__.core.invoke.bind(targetWindow.__TAURI__.core);
+  }
+  return null;
 }
 
 function normalizeHost(value) {
@@ -18,6 +34,112 @@ function normalizeHost(value) {
   } catch (_error) {
     return String(value).replace(/^https?:\/\//i, '').replace(/\/$/g, '');
   }
+}
+
+function parseConnectionUrl(value) {
+  if (!value) return null;
+  try {
+    return new URL(value);
+  } catch (_error) {
+    try {
+      return new URL('http://' + String(value).replace(/^(ws|wss):\/\//i, ''));
+    } catch (_innerError) {
+      return null;
+    }
+  }
+}
+
+function isLoopbackRuntimeHost(value) {
+  var parsed = parseConnectionUrl(value);
+  if (!parsed) return false;
+  var hostname = String(parsed.hostname || '').toLowerCase();
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
+}
+
+function delay(ms) {
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+function extractConnectionProbeToken(connection) {
+  if (!connection || !connection.query || typeof connection.query !== 'object') {
+    return null;
+  }
+  var token = connection.query.token;
+  return typeof token === 'string' && token.trim() ? token.trim() : null;
+}
+
+function buildProbeUrl(connection, token) {
+  var parsed = parseConnectionUrl(connection && connection.host);
+  if (!parsed) return null;
+  parsed.protocol = parsed.protocol === 'https:' || parsed.protocol === 'wss:' ? 'https:' : 'http:';
+  parsed.pathname = token ? '/__runtime-session-probe' : '/healthz';
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+async function probeRuntimeHostReachable(url, token) {
+  var invoke = getTauriInvoke();
+  if (invoke) {
+    await invoke('probe_local_runtime_host', {
+      url: url,
+      token: token || undefined,
+      timeoutMs: LOCAL_RUNTIME_PROBE_REQUEST_TIMEOUT_MS,
+    });
+    return;
+  }
+
+  if (!url || typeof fetch !== 'function') return;
+
+  var controller = typeof AbortController === 'function' ? new AbortController() : null;
+  var timerId = controller
+    ? setTimeout(function () {
+      controller.abort();
+    }, LOCAL_RUNTIME_PROBE_REQUEST_TIMEOUT_MS)
+    : null;
+
+  var headers = token ? { Authorization: 'Bearer ' + token } : undefined;
+
+  try {
+    await fetch(url, {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-store',
+      headers: headers,
+      signal: controller ? controller.signal : undefined,
+    });
+  } finally {
+    if (timerId) clearTimeout(timerId);
+  }
+}
+
+async function waitForLocalRuntimeHost(connection) {
+  if (!connection || !isLoopbackRuntimeHost(connection.host)) return;
+
+  var probeToken = extractConnectionProbeToken(connection);
+  var probeUrl = buildProbeUrl(connection, probeToken);
+  if (!probeUrl) return;
+
+  var deadline = Date.now() + LOCAL_RUNTIME_PROBE_TIMEOUT_MS;
+  var lastError = null;
+
+  while (Date.now() < deadline) {
+    try {
+      await probeRuntimeHostReachable(probeUrl, probeToken);
+      return;
+    } catch (error) {
+      lastError = error;
+      await delay(LOCAL_RUNTIME_PROBE_INTERVAL_MS);
+    }
+  }
+
+  throw new Error(
+    'Local runtime host is unavailable at '
+      + normalizeHost(connection.host)
+      + (lastError && lastError.message ? ': ' + lastError.message : '.')
+  );
 }
 
 function normalizePath(value) {
@@ -85,6 +207,44 @@ function randomRequestId() {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function toError(error, fallback) {
+  if (error instanceof Error) return error;
+  return new Error(error ? String(error) : (fallback || 'Unknown runtime error.'));
+}
+
+function withTimeout(promise, timeoutMs, onTimeout) {
+  return new Promise(function (resolve, reject) {
+    var settled = false;
+    var timerId = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      if (typeof onTimeout === 'function') onTimeout();
+      reject(new Error('Runtime connection timed out.'));
+    }, timeoutMs);
+
+    Promise.resolve(promise).then(function (value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timerId);
+      resolve(value);
+    }, function (error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timerId);
+      reject(error);
+    });
+  });
+}
+
+function closeClientQuietly(client, code, reason) {
+  if (!client || typeof client.close !== 'function') return;
+  try {
+    client.close(code, reason);
+  } catch (_error) {
+    // Best-effort cleanup.
+  }
 }
 
 function buildChatRequestPayload(input) {
@@ -177,9 +337,76 @@ function extractPushContentPayload(value) {
   };
 }
 
+function hasRendererDataShape(contentType, value) {
+  if (!isRecord(value)) return false;
+  if (contentType === 'structured_data') {
+    return Array.isArray(value.tables);
+  }
+  if (contentType === 'rich_content') {
+    return (
+      'body' in value ||
+      'title' in value ||
+      'tables' in value ||
+      'suggestions' in value ||
+      'citations' in value
+    );
+  }
+  return false;
+}
+
+function buildRendererPayload(contentType, data, meta, toolArgs, reviewRequired) {
+  if (!contentType || !hasRendererDataShape(contentType, data)) return null;
+  var nextMeta = isRecord(meta) ? Object.assign({}, meta) : {};
+  if (reviewRequired) {
+    nextMeta.reviewRequired = true;
+  }
+  return {
+    contentType: String(contentType),
+    data: data,
+    meta: nextMeta,
+    toolArgs: isRecord(toolArgs) ? toolArgs : null,
+    reviewRequired: !!reviewRequired,
+  };
+}
+
+function extractWrappedRendererPayload(value, reviewRequired) {
+  var raw = maybeParseJson(value);
+  if (!isRecord(raw)) return null;
+
+  var contentType = raw.tool_name || raw.toolName || raw.contentType || raw.content_type || null;
+  if (!contentType) return null;
+
+  var data = maybeParseJson(raw.data);
+  var meta = maybeParseJson(raw.meta);
+  var toolArgs = maybeParseJson(raw.tool_args || raw.toolArgs || null);
+
+  if (!hasRendererDataShape(contentType, data) && hasRendererDataShape(contentType, raw)) {
+    data = raw;
+  }
+
+  return buildRendererPayload(
+    contentType,
+    data,
+    meta,
+    toolArgs,
+    reviewRequired || raw.reviewRequired === true
+  );
+}
+
 function extractRendererActivityPayload(toolName, value) {
   if (toolName === 'push_content') {
-    return extractPushContentPayload(value);
+    var pushPayload = extractPushContentPayload(value);
+    if (!pushPayload) return null;
+    return buildRendererPayload(
+      pushPayload.contentType,
+      pushPayload.data,
+      pushPayload.meta,
+      pushPayload.toolArgs,
+      false
+    );
+  }
+  if (toolName === 'push_review') {
+    return extractWrappedRendererPayload(value, true);
   }
   if (toolName !== 'rich_content' && toolName !== 'structured_data') {
     return null;
@@ -187,19 +414,16 @@ function extractRendererActivityPayload(toolName, value) {
 
   var raw = maybeParseJson(value);
   if (!isRecord(raw)) return null;
-  if (
-    (toolName === 'rich_content' && !('body' in raw) && !('title' in raw) && !('tables' in raw) && !('suggestions' in raw) && !('citations' in raw)) ||
-    (toolName === 'structured_data' && !('tables' in raw))
-  ) {
-    return null;
-  }
+  var directPayload = buildRendererPayload(
+    toolName,
+    hasRendererDataShape(toolName, raw) ? raw : maybeParseJson(raw.data),
+    maybeParseJson(raw.meta),
+    maybeParseJson(raw.tool_args || raw.toolArgs || null),
+    raw.reviewRequired === true
+  );
+  if (!directPayload) return null;
 
-  return {
-    contentType: String(toolName),
-    data: raw,
-    meta: null,
-    toolArgs: null,
-  };
+  return directPayload;
 }
 
 function buildPushContentDetail(payload, status) {
@@ -326,6 +550,7 @@ function buildToolActivityItem(chunk, previous) {
     resultData: pushPayload ? pushPayload.data : ((previous && previous.resultData) || null),
     resultMeta: pushPayload ? pushPayload.meta : ((previous && previous.resultMeta) || null),
     toolArgs: pushPayload ? pushPayload.toolArgs : ((previous && previous.toolArgs) || null),
+    reviewRequired: pushPayload ? !!pushPayload.reviewRequired : !!(previous && previous.reviewRequired),
   };
 }
 
@@ -700,15 +925,44 @@ async function connect(input) {
   var nextKey = connectionKey(input.connection);
   var existing = getRecord(threadId);
 
-  if (existing && existing.key === nextKey && existing.client && existing.client.readyState !== 3) {
+  if (
+    existing &&
+    existing.key === nextKey &&
+    existing.client &&
+    existing.client.readyState !== 3 &&
+    existing.connectionStatus === 'connected'
+  ) {
     return existing.client;
   }
 
   if (existing && existing.client && typeof existing.client.close === 'function') {
-    existing.client.close(1000, 'Reconnecting with updated runtime session.');
+    closeClientQuietly(existing.client, 1000, 'Reconnecting with updated runtime session.');
   }
 
+  await waitForLocalRuntimeHost(input.connection);
+
   var ClientCtor = resolveAgentClientCtor();
+  var record = null;
+  var readyResolved = false;
+  var resolveReady = null;
+  var rejectReady = null;
+  var readySignal = new Promise(function (resolve, reject) {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  function settleReadyResolve() {
+    if (readyResolved) return;
+    readyResolved = true;
+    resolveReady();
+  }
+
+  function settleReadyReject(error) {
+    if (readyResolved) return;
+    readyResolved = true;
+    rejectReady(toError(error, 'Runtime connection failed.'));
+  }
+
   var client = new ClientCtor({
     agent: input.connection.agent,
     name: input.connection.name,
@@ -716,15 +970,30 @@ async function connect(input) {
     path: normalizePath(input.connection.path),
     query: input.connection.query || {},
     onOpen: function () {
+      if (record) {
+        record.connectionStatus = 'connected';
+        record.lastError = null;
+      }
+      settleReadyResolve();
       bus.emit(threadId, { type: 'status', status: 'connected' });
     },
     onClose: function () {
+      if (record) {
+        record.connectionStatus = 'closed';
+      }
+      settleReadyReject(new Error('Connection closed before the runtime became ready.'));
       bus.emit(threadId, { type: 'status', status: 'closed' });
     },
     onError: function (error) {
+      var nextError = toError(error, 'Unknown runtime error.');
+      if (record) {
+        record.connectionStatus = 'error';
+        record.lastError = nextError.message;
+      }
+      settleReadyReject(nextError);
       bus.emit(threadId, {
         type: 'error',
-        error: error instanceof Error ? error.message : String(error || 'Unknown runtime error.'),
+        error: nextError.message,
       });
     },
     onIdentity: function (name, agent) {
@@ -736,18 +1005,45 @@ async function connect(input) {
     },
   });
 
-  var record = {
+  record = {
     key: nextKey,
     client: client,
     messages: [],
     activeTurn: null,
     listenersAttached: false,
+    connectionStatus: 'connecting',
+    lastError: null,
   };
 
   connections.set(threadId, record);
   attachClientListeners(threadId, record);
   bus.emit(threadId, { type: 'status', status: 'connecting' });
-  await client.ready;
+
+  Promise.resolve(client.ready).then(function () {
+    settleReadyResolve();
+  }, function (error) {
+    settleReadyReject(error);
+  });
+
+  try {
+    await withTimeout(readySignal, RUNTIME_CONNECT_TIMEOUT_MS, function () {
+      if (record) {
+        record.connectionStatus = 'error';
+        record.lastError = 'Runtime connection timed out.';
+      }
+      bus.emit(threadId, {
+        type: 'error',
+        error: 'Runtime connection timed out.',
+      });
+      closeClientQuietly(client, 1000, 'Runtime connection timed out.');
+    });
+  } catch (error) {
+    if (connections.get(threadId) === record) {
+      connections.delete(threadId);
+    }
+    throw toError(error, 'Runtime connection failed.');
+  }
+
   return client;
 }
 

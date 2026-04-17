@@ -280,7 +280,7 @@
 
         if (reviewRequired) {
           // Cell change styling
-          var change = getCellChange(row, col.id);
+          var change = getCellChange(row, col.id, col.name);
           if (change === 'add') td.classList.add('sd-cell-add');
           if (change === 'delete') td.classList.add('sd-cell-delete');
           if (change === 'update') td.classList.add('sd-cell-update');
@@ -298,9 +298,9 @@
           }
         }
 
-        var value = state.modifications[modKey]
+          var value = state.modifications[modKey]
           ? JSON.parse(state.modifications[modKey]).value
-          : getCellValue(row, col.id);
+          : getCellValue(row, col.id, col.name);
         td.textContent = value;
 
         // Cell editor on double-click (review mode only)
@@ -319,7 +319,7 @@
         var decTd = document.createElement('td');
         decTd.className = 'sd-td';
         var hasChange = columns.some(function (col) {
-          return getCellChange(row, col.id) != null;
+          return getCellChange(row, col.id, col.name) != null;
         });
         if (hasChange) {
           decTd.appendChild(buildDecisionToggle(row.id, state, rerenderFn, { acceptTitle: 'Accept', rejectTitle: 'Reject' }));

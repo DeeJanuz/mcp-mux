@@ -719,6 +719,14 @@ async fn push_handler(
     }
 }
 
+async fn desktop_relay_tool_request_handler(
+    Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let response = crate::desktop_relay::handle_local_tool_request(Arc::clone(&state), payload).await;
+    (StatusCode::OK, Json(response))
+}
+
 #[derive(Debug, Deserialize)]
 struct HeartbeatRequest {
     session_id: Option<String>,
@@ -1024,6 +1032,7 @@ pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle, 
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/api/push", post(push_handler))
+        .route("/api/desktop-relay/tool-request", post(desktop_relay_tool_request_handler))
         .route("/api/heartbeat", post(heartbeat_handler))
         .route("/api/reload-plugins", post(reload_plugins_handler))
         .route(

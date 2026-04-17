@@ -351,23 +351,7 @@
     return !!(session.meta && session.meta.autoFocus === true);
   }
 
-  function isThreadArtifactPreviewSession(session) {
-    var meta = session && session.meta ? session.meta : {};
-    var toolArgs = session && session.toolArgs ? session.toolArgs : {};
-    return !!(
-      session &&
-      meta &&
-      meta.drawerOnly === true &&
-      meta.artifactSource === 'tribex-ai-thread-result' &&
-      (meta.threadId || toolArgs.threadId)
-    );
-  }
-
   function handlePush(session, options) {
-    if (isThreadArtifactPreviewSession(session)) {
-      return null;
-    }
-
     var existingSession = sessions.get(session.sessionId);
     var mergedMeta = Object.assign({}, existingSession && existingSession.meta ? existingSession.meta : {}, session.meta || {});
     var mergedToolArgs = Object.assign({}, existingSession && existingSession.toolArgs ? existingSession.toolArgs : {}, session.toolArgs || {});
@@ -642,6 +626,7 @@
     // Check if we already have a cached container for this session
     var cached = contentCache.get(sessionId);
     if (cached) {
+      updateRenderedSession(cached, sessionId);
       cached.classList.add('active');
       return;
     }
@@ -720,6 +705,9 @@
   window.__companionUtils.openSession = openSyntheticSession;
   window.__companionUtils.replaceSession = replaceSyntheticSession;
   window.__companionUtils.selectSession = selectSession;
+  window.__companionUtils.getSession = function (sessionId) {
+    return sessionId ? sessions.get(sessionId) || null : null;
+  };
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
   window.__companionUtils.rerenderActiveSession = rerenderActiveSession;
   window.__companionUtils.getActiveSession = function () {

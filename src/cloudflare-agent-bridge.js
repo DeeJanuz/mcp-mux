@@ -369,6 +369,19 @@ function buildRendererPayload(contentType, data, meta, toolArgs, reviewRequired)
   };
 }
 
+function shouldInlineRendererPayload(contentType, meta, reviewRequired, sessionId) {
+  if (contentType !== 'rich_content' && contentType !== 'structured_data') {
+    return false;
+  }
+  if (sessionId) {
+    return false;
+  }
+  if (reviewRequired) {
+    return false;
+  }
+  return !(isRecord(meta) && meta.reviewRequired === true);
+}
+
 function extractWrappedRendererPayload(value, reviewRequired) {
   var raw = maybeParseJson(value);
   if (!isRecord(raw)) return null;
@@ -551,6 +564,16 @@ function buildToolActivityItem(chunk, previous) {
     resultMeta: pushPayload ? pushPayload.meta : ((previous && previous.resultMeta) || null),
     toolArgs: pushPayload ? pushPayload.toolArgs : ((previous && previous.toolArgs) || null),
     reviewRequired: pushPayload ? !!pushPayload.reviewRequired : !!(previous && previous.reviewRequired),
+    inlineDisplay: pushPayload
+      ? shouldInlineRendererPayload(
+          pushPayload.contentType,
+          pushPayload.meta,
+          pushPayload.reviewRequired,
+          (chunk.output && (chunk.output.session_id || chunk.output.sessionId)) ||
+            (previous && previous.sessionId) ||
+            null
+        )
+      : !!(previous && previous.inlineDisplay),
   };
 }
 
@@ -643,6 +666,12 @@ function buildRendererCompletionSummary(turn) {
   var title = isRecord(item.resultData) && typeof item.resultData.title === 'string'
     ? item.resultData.title.trim()
     : '';
+  if (item.inlineDisplay) {
+    if (title) {
+      return 'I added "' + title + '" inline below.';
+    }
+    return 'I added the result inline below.';
+  }
   if (title) {
     return 'I opened "' + title + '" in a background tab for you.';
   }

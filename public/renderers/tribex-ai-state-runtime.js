@@ -374,21 +374,33 @@
     function buildCompanionActivityItem(message, record) {
       if (!message || message.role !== 'tool') return null;
       var latestTurn = api.getLatestTurnReference(record) || {};
+      var resultContentType = message.resultContentType || message.contentType || message.toolName || null;
+      var resultMeta = message.resultMeta || null;
+      var sessionId = message.sessionId || null;
+      var reviewRequired = !!(
+        message.reviewRequired ||
+        (resultMeta && resultMeta.reviewRequired)
+      );
+      var inlineDisplay = message.inlineDisplay === undefined
+        ? (
+          (resultContentType === 'rich_content' || resultContentType === 'structured_data') &&
+          !sessionId &&
+          !reviewRequired
+        )
+        : !!message.inlineDisplay;
       return {
         id: message.id || api.randomId('activity'),
         toolCallId: message.id || null,
-        sessionId: message.sessionId || null,
+        sessionId: sessionId,
         toolName: message.toolName || null,
-        resultContentType: message.resultContentType || message.contentType || message.toolName || null,
+        resultContentType: resultContentType,
         title: message.summary || window.__tribexAiUtils.titleCase(message.toolName || 'tool'),
         status: message.status || 'completed',
         detail: message.detail || '',
         resultData: message.resultData || null,
-        resultMeta: message.resultMeta || null,
-        reviewRequired: !!(
-          message.reviewRequired ||
-          (message.resultMeta && message.resultMeta.reviewRequired)
-        ),
+        resultMeta: resultMeta,
+        reviewRequired: reviewRequired,
+        inlineDisplay: inlineDisplay,
         toolArgs: message.toolArgs || null,
         turnId: message.turnId || latestTurn.turnId || null,
         turnOrdinal: message.turnOrdinal || latestTurn.turnOrdinal || null,
@@ -537,6 +549,12 @@
 
       if (normalizedMessage.role === 'tool') {
         var activityItem = buildCompanionActivityItem(normalizedMessage, record);
+        if (activityItem && activityItem.inlineDisplay) {
+          api.upsertActivityItem(record, activityItem);
+          state.threadErrors[event.threadId] = null;
+          api.notify();
+          return;
+        }
         var isRendererArtifact = !!(activityItem && api.isRendererBackedActivityItem(activityItem));
         if (isRendererArtifact) {
           var storedArtifactItem = api.upsertActivityItem(record, activityItem);
@@ -700,7 +718,10 @@
       }
 
       if ((event.type === 'activity_update' || event.type === 'work_note_update') && event.item) {
-        var nextItem = api.upsertActivityItem(detail, Object.assign({}, event.item, {
+        var normalizedActivityItem = buildCompanionActivityItem(Object.assign({
+          role: 'tool',
+        }, event.item), detail);
+        var nextItem = api.upsertActivityItem(detail, Object.assign({}, normalizedActivityItem || event.item, {
           turnId: event.item.turnId || event.turnId || (detail.activeTurn && detail.activeTurn.turnId) || null,
           turnOrdinal: event.item.turnOrdinal || (detail.activeTurn && detail.activeTurn.turnOrdinal) || detail.lastTurnOrdinal || null,
         }));

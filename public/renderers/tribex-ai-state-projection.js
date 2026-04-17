@@ -167,6 +167,20 @@
       var contentType = resolveActivityContentType(item);
       return !!(
         item &&
+        !item.inlineDisplay &&
+        isCompletedActivityStatus(item.status) &&
+        item.resultData &&
+        contentType &&
+        window.__renderers &&
+        typeof window.__renderers[contentType] === 'function'
+      );
+    }
+
+    function isInlineRendererActivityItem(item) {
+      var contentType = resolveActivityContentType(item);
+      return !!(
+        item &&
+        !!item.inlineDisplay &&
         isCompletedActivityStatus(item.status) &&
         item.resultData &&
         contentType &&
@@ -343,7 +357,7 @@
     }
 
     function attachActivityResultDrawer(record, item) {
-      if (!record || !item || !isRendererBackedActivityItem(item)) return item;
+      if (!record || !item || item.inlineDisplay || !isRendererBackedActivityItem(item)) return item;
       var config = buildActivityArtifactConfig(record.id, item);
       record.artifactDrawer = record.artifactDrawer || {
         drawerId: config.drawerId,
@@ -662,6 +676,19 @@
           return String(left.id || '').localeCompare(String(right.id || ''));
         });
 
+        var inlineResults = workItems
+          .filter(function (item) {
+            return isInlineRendererActivityItem(item);
+          })
+          .map(function (item) {
+            return Object.assign({}, item, {
+              contentType: resolveActivityContentType(item),
+            });
+          });
+        workItems = workItems.filter(function (item) {
+          return !isInlineRendererActivityItem(item);
+        });
+
         var hasRunning = workItems.some(function (item) {
           return item.status === 'running' || item.status === 'needs-approval';
         });
@@ -705,11 +732,13 @@
             content: assistantMessage.content || '',
             createdAt: assistantMessage.createdAt || null,
             isStreaming: !!assistantMessage.isStreaming,
+            inlineResults: inlineResults,
           } : {
             id: 'answer-' + index,
             content: '',
             createdAt: null,
             isStreaming: false,
+            inlineResults: inlineResults,
           },
           workSession: workSession,
         };
@@ -721,6 +750,7 @@
       var displayMessages = buildDisplayMessages(record);
       var activityItems = buildActivityItems(record);
       var runs = buildRunGroups(record, displayMessages, activityItems);
+      var artifacts = normalizeArtifactItems(record);
       var latestMessage = displayMessages.length ? displayMessages[displayMessages.length - 1] : null;
       var previewSource = null;
       var lastActivityAt = latestMessage && latestMessage.createdAt
@@ -762,12 +792,12 @@
         displayMessages: displayMessages,
         activityItems: activityItems,
         runs: runs,
-        artifacts: normalizeArtifactItems(record),
+        artifacts: artifacts,
         artifactDrawer: record && record.artifactDrawer
           ? {
             drawerId: record.artifactDrawer.drawerId || null,
             selectedArtifactKey: record.artifactDrawer.selectedArtifactKey || null,
-            artifactKeys: normalizeArtifactItems(record).map(function (artifact) {
+            artifactKeys: artifacts.map(function (artifact) {
               return artifact.artifactKey;
             }),
           }

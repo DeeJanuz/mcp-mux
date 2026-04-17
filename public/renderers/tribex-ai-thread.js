@@ -28,6 +28,23 @@
     return body;
   }
 
+  function createMarkdownBody(content, className) {
+    var body = document.createElement('div');
+    body.className = className;
+    if (
+      window.__companionUtils &&
+      typeof window.__companionUtils.renderMarkdown === 'function'
+    ) {
+      var markdown = window.__companionUtils.renderMarkdown(content || '');
+      if (markdown) {
+        body.appendChild(markdown);
+        return body;
+      }
+    }
+    body.textContent = content || '';
+    return body;
+  }
+
   function buildLegacyBlocks(messages) {
     return (messages || []).map(function (message) {
       if (!message) return null;
@@ -291,6 +308,152 @@
     var text = typeof value === 'string' ? value.trim() : '';
     if (!text) return '';
     return text.length > maxLength ? text.slice(0, maxLength - 3) + '...' : text;
+  }
+
+  function countMarkdownListItems(body) {
+    if (!body) return 0;
+    var matches = String(body).match(/^\s*(?:[-*+]\s+|\d+\.\s+)/gm);
+    return matches ? matches.length : 0;
+  }
+
+  function collectStructuredRowStats(rows, depth, stats) {
+    (rows || []).forEach(function (row) {
+      stats.rowCount += 1;
+      stats.maxDepth = Math.max(stats.maxDepth, depth);
+      collectStructuredRowStats(row && row.children, depth + 1, stats);
+    });
+  }
+
+  function getStructuredDataStats(data) {
+    var tables = data && Array.isArray(data.tables) ? data.tables : [];
+    var stats = {
+      tableCount: tables.length,
+      rowCount: 0,
+      columnCount: 0,
+      maxDepth: 0,
+    };
+
+    tables.forEach(function (table) {
+      var columns = Array.isArray(table && table.columns) ? table.columns : [];
+      stats.columnCount = Math.max(stats.columnCount, columns.length);
+      collectStructuredRowStats(table && table.rows, 0, stats);
+    });
+
+    return stats;
+  }
+
+  function getInlineRendererDescriptor(item) {
+    var contentType = item && (item.contentType || item.resultContentType || item.toolName || null);
+    var data = item && item.resultData ? item.resultData : {};
+    var title = data && data.title
+      ? data.title
+      : item && item.resultTitle
+        ? item.resultTitle
+        : item && item.title
+          ? item.title
+          : contentType
+            ? window.__tribexAiUtils.titleCase(String(contentType).replace(/_/g, ' '))
+            : 'Inline result';
+
+    if (contentType === 'structured_data') {
+      var structuredStats = getStructuredDataStats(data);
+      return {
+        title: title,
+        badge: 'table',
+        summary: structuredStats.tableCount > 1
+          ? structuredStats.tableCount + ' tables'
+          : (structuredStats.rowCount || 0) + ' rows, ' + structuredStats.columnCount + ' columns',
+        shouldCollapse: structuredStats.rowCount > 10 || structuredStats.columnCount > 6 || structuredStats.maxDepth > 2,
+      };
+    }
+
+    var body = data && typeof data.body === 'string' ? data.body : '';
+    var tables = data && Array.isArray(data.tables) ? data.tables : [];
+    return {
+      title: title,
+      badge: 'rich content',
+      summary: tables.length >= 2
+        ? tables.length + ' tables'
+        : (body && body.length > 1200 ? 'long markdown' : createSummaryText(body, 80) || 'inline markdown'),
+      shouldCollapse: body.length > 1200 || countMarkdownListItems(body) > 12 || tables.length >= 2,
+    };
+  }
+
+  function cloneInlineRendererData(data) {
+    if (!data || typeof data !== 'object') return data;
+    var clone = JSON.parse(JSON.stringify(data));
+    if (clone && typeof clone === 'object' && clone.title) {
+      delete clone.title;
+    }
+    return clone;
+  }
+
+  function createInlineRendererItem(item, threadState, groupId, index) {
+    var descriptor = getInlineRendererDescriptor(item);
+    var contentType = item && (item.contentType || item.resultContentType || item.toolName || null);
+    var renderer = contentType && window.__renderers ? window.__renderers[contentType] : null;
+    var resultId = [groupId || 'run', item && item.id || contentType || 'inline', index].join(':');
+
+    var block = document.createElement('details');
+    block.className = 'ai-inline-renderer';
+    block.setAttribute('data-inline-result-id', resultId);
+    var remembered = threadState.inlineResultOpen[resultId];
+    block.open = remembered === undefined ? !descriptor.shouldCollapse : !!remembered;
+    block.addEventListener('toggle', function () {
+      threadState.inlineResultOpen[resultId] = block.open;
+    });
+
+    var summary = document.createElement('summary');
+    summary.className = 'ai-inline-renderer-summary';
+
+    var copy = document.createElement('div');
+    copy.className = 'ai-inline-renderer-copy';
+
+    var headerRow = document.createElement('div');
+    headerRow.className = 'ai-inline-renderer-header';
+    headerRow.appendChild(createMetaLabel('ai-inline-renderer-badge', descriptor.badge));
+
+    var title = document.createElement('strong');
+    title.className = 'ai-inline-renderer-title';
+    title.textContent = descriptor.title;
+    headerRow.appendChild(title);
+    copy.appendChild(headerRow);
+
+    if (descriptor.summary) {
+      var meta = document.createElement('div');
+      meta.className = 'ai-inline-renderer-meta';
+      meta.textContent = descriptor.summary;
+      copy.appendChild(meta);
+    }
+
+    summary.appendChild(copy);
+
+    if (item && (item.updatedAt || item.createdAt)) {
+      summary.appendChild(createMetaLabel(
+        'ai-inline-renderer-time',
+        window.__tribexAiUtils.formatRelativeTime(item.updatedAt || item.createdAt)
+      ));
+    }
+
+    block.appendChild(summary);
+
+    var body = document.createElement('div');
+    body.className = 'ai-inline-renderer-body';
+    if (typeof renderer === 'function') {
+      renderer(
+        body,
+        cloneInlineRendererData(item.resultData || {}),
+        item.resultMeta || {},
+        item.toolArgs || {},
+        false,
+        null,
+      );
+    } else {
+      body.appendChild(createTextBody('Unable to render inline result.', 'ai-chat-body'));
+    }
+    block.appendChild(body);
+
+    return block;
   }
 
   function createPromptBlock(message, repeatCount, latestCreatedAt) {
@@ -746,7 +909,11 @@
     }
 
     section.appendChild(header);
-    section.appendChild(createTextBody(answer.content || (answer.isStreaming ? 'Waiting for response…' : ''), 'ai-chat-body ai-run-answer-body'));
+    section.appendChild(
+      answer.isStreaming
+        ? createTextBody(answer.content || 'Waiting for response…', 'ai-chat-body ai-run-answer-body')
+        : createMarkdownBody(answer.content || '', 'ai-chat-body ai-run-answer-body')
+    );
     return section;
   }
 
@@ -772,6 +939,10 @@
     if (group.answer.content || group.answer.isStreaming) {
       surface.appendChild(createRunAnswer(group.answer));
     }
+
+    (group.answer && Array.isArray(group.answer.inlineResults) ? group.answer.inlineResults : []).forEach(function (item, index) {
+      surface.appendChild(createInlineRendererItem(item, threadState, group.id, index));
+    });
 
     section.appendChild(surface);
     return section;
@@ -1127,6 +1298,7 @@
       threadId: null,
       lastRenderedThreadId: null,
       workSessionOpen: {},
+      inlineResultOpen: {},
       liveTickId: null,
     };
 
@@ -1284,6 +1456,17 @@
               turnId: group.turnId,
               prompt: group.user && group.user.content,
               answer: group.answer ? [group.answer.content, group.answer.isStreaming] : null,
+              inlineResults: group.answer && Array.isArray(group.answer.inlineResults)
+                ? group.answer.inlineResults.map(function (item) {
+                  return [
+                    item.id,
+                    item.contentType || item.resultContentType || item.toolName,
+                    item.resultData && item.resultData.title,
+                    item.resultData && item.resultData.body,
+                    item.updatedAt || item.createdAt,
+                  ];
+                })
+                : [],
               workSession: group.workSession
                 ? {
                   status: group.workSession.status,

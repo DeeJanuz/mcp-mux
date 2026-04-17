@@ -303,6 +303,25 @@
     return false;
   }
 
+  function isReviewRequiredMeta(value) {
+    return !!(
+      value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      value.reviewRequired === true
+    );
+  }
+
+  function shouldInlineRendererPayload(contentType, meta, sessionId) {
+    if (contentType !== 'rich_content' && contentType !== 'structured_data') {
+      return false;
+    }
+    if (sessionId) {
+      return false;
+    }
+    return !isReviewRequiredMeta(meta);
+  }
+
   function extractRendererToolPayload(raw, toolName) {
     if (!raw || typeof raw !== 'object' || !toolName) return null;
 
@@ -625,6 +644,7 @@
       var rendererPayload = extractRendererToolPayload(raw, toolName);
       var toolArgs = rendererPayload ? rendererPayload.toolArgs : (raw.toolArgs || raw.tool_args || null);
       var resultData = rendererPayload ? rendererPayload.resultData : extractToolResultData(raw);
+      var resultMeta = rendererPayload ? rendererPayload.resultMeta : extractToolResultMeta(raw);
       var resultContentType = rendererPayload
         ? rendererPayload.resultContentType
         : pickFirst([
@@ -633,6 +653,12 @@
           raw.content_type,
           toolName,
         ], null);
+      var sessionId = extractCompanionSessionId(raw);
+      var inlineDisplay = shouldInlineRendererPayload(
+        resultContentType,
+        resultMeta,
+        sessionId
+      );
       return {
         id: buildCompanionToolMessageId(raw, index),
         role: 'tool',
@@ -642,10 +668,13 @@
         detail: deriveToolDetail(raw),
         toolArgs: toolArgs,
         resultData: resultData,
-        resultMeta: rendererPayload ? rendererPayload.resultMeta : extractToolResultMeta(raw),
+        resultMeta: resultMeta,
         resultContentType: resultContentType,
-        artifactKey: resultData ? buildLegacyArtifactKey(raw, index, resultContentType) : null,
-        sessionId: extractCompanionSessionId(raw),
+        artifactKey: resultData && !inlineDisplay
+          ? buildLegacyArtifactKey(raw, index, resultContentType)
+          : null,
+        sessionId: sessionId,
+        inlineDisplay: inlineDisplay,
         sequence: typeof raw.sequence === 'number' ? raw.sequence : null,
         createdAt: normalizeTimestamp(pickFirst([raw.createdAt, raw.timestamp], null)),
       };

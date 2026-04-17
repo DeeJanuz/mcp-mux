@@ -31,6 +31,12 @@ beforeEach(function () {
   delete window.__tribexAiState;
   window.__companionUtils = {
     selectThreadArtifact: vi.fn(),
+    renderMarkdown: vi.fn(function (content) {
+      var el = document.createElement('div');
+      el.className = 'md-render';
+      el.innerHTML = String(content || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      return el;
+    }),
     getActiveSession: vi.fn(function () {
       return {
         sessionId: 'thread-session-1',
@@ -45,6 +51,9 @@ beforeEach(function () {
   window.__renderers = {
     rich_content: vi.fn(function (container, data) {
       container.textContent = data.title;
+    }),
+    structured_data: vi.fn(function (container, data) {
+      container.textContent = (data.tables && data.tables[0] && data.tables[0].name) || 'Table';
     }),
   };
 
@@ -302,6 +311,144 @@ describe('tribex-ai-thread', function () {
     })).toBe(true);
     expect(document.querySelector('.ai-run-answer').textContent).toContain('SMOKE KEY: rule-skill-echo');
     expect(window.__renderers.rich_content).not.toHaveBeenCalled();
+  });
+
+  it('renders finalized assistant answers as markdown and mounts inline rich content results in the transcript', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Inline rich content',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Summarize this', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: {
+                  id: 'a1',
+                  content: '**Summary**\n\n- Direct\n- Short',
+                  createdAt: '2026-04-14T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [{
+                    id: 'inline-1',
+                    toolName: 'rich_content',
+                    contentType: 'rich_content',
+                    resultData: {
+                      title: 'Inline summary',
+                      body: 'Rendered inline',
+                    },
+                    createdAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+                workSession: null,
+              },
+            ],
+            artifacts: [],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(window.__companionUtils.renderMarkdown).toHaveBeenCalledWith('**Summary**\n\n- Direct\n- Short');
+    expect(document.querySelector('.ai-run-answer-body strong').textContent).toBe('Summary');
+    expect(document.querySelector('.ai-inline-renderer')).not.toBeNull();
+    expect(document.querySelector('.ai-inline-renderer-title').textContent).toBe('Inline summary');
+    expect(window.__renderers.rich_content).toHaveBeenCalled();
+  });
+
+  it('collapses large inline structured data results by default and keeps them out of the stored results shelf', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Inline structured data',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Show the review table', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: {
+                  id: 'a1',
+                  content: 'Table inline below.',
+                  createdAt: '2026-04-14T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [{
+                    id: 'inline-table-1',
+                    toolName: 'structured_data',
+                    contentType: 'structured_data',
+                    resultData: {
+                      title: 'Large table',
+                      tables: [{
+                        id: 'table-1',
+                        name: 'Finance Review',
+                        columns: [
+                          { id: 'c1', name: 'A' },
+                          { id: 'c2', name: 'B' },
+                          { id: 'c3', name: 'C' },
+                          { id: 'c4', name: 'D' },
+                          { id: 'c5', name: 'E' },
+                          { id: 'c6', name: 'F' },
+                          { id: 'c7', name: 'G' },
+                        ],
+                        rows: [
+                          { id: 'r1', cells: {}, children: [] },
+                          { id: 'r2', cells: {}, children: [] },
+                          { id: 'r3', cells: {}, children: [] },
+                          { id: 'r4', cells: {}, children: [] },
+                          { id: 'r5', cells: {}, children: [] },
+                          { id: 'r6', cells: {}, children: [] },
+                          { id: 'r7', cells: {}, children: [] },
+                          { id: 'r8', cells: {}, children: [] },
+                          { id: 'r9', cells: {}, children: [] },
+                          { id: 'r10', cells: {}, children: [] },
+                          { id: 'r11', cells: {}, children: [] },
+                        ],
+                      }],
+                    },
+                    createdAt: '2026-04-14T20:00:04.000Z',
+                  }],
+                },
+                workSession: null,
+              },
+            ],
+            artifacts: [],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-inline-renderer').open).toBe(false);
+    expect(document.querySelector('.ai-inline-renderer-meta').textContent).toContain('11 rows');
+    expect(document.querySelector('.ai-thread-results').hidden).toBe(true);
+    expect(window.__renderers.structured_data).toHaveBeenCalled();
   });
 
   it('keeps a legacy work session collapsed once a streaming run finishes', function () {

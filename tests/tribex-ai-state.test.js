@@ -21,6 +21,7 @@ beforeEach(function () {
 });
 
 afterEach(function () {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   delete globalThis.fetch;
 });
@@ -643,7 +644,8 @@ describe('tribex-ai-state', function () {
     expect(window.__tribexAiState.getThreadContext('thread-1').relayStatus).toBe('online');
   });
 
-  it('turns local desktop relay tool requests into visible work-session activity and reopenable structured-data artifacts', async function () {
+  it('turns local desktop relay tool requests into inline structured-data results instead of reopenable artifacts', async function () {
+    vi.useFakeTimers();
     var relayHandler = null;
     window.__renderers = {
       structured_data: vi.fn(),
@@ -755,6 +757,7 @@ describe('tribex-ai-state', function () {
     await window.__tribexAiState.refreshNavigator(true);
     window.__tribexAiState.openThread('thread-1', { connectStream: false });
     await vi.runAllTimersAsync();
+    window.__companionUtils.openSession.mockClear();
     await window.__tribexAiState.submitPrompt('thread-1', 'Push an example finance review table.');
 
     relayHandler({
@@ -829,37 +832,22 @@ describe('tribex-ai-state', function () {
     var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
     expect(thread.runs).toHaveLength(1);
     expect(thread.runs[0].user.content).toBe('Push an example finance review table.');
-    expect(thread.runs[0].workSession).toMatchObject({
-      status: 'completed',
-      items: [
-        expect.objectContaining({
-          toolName: 'structured_data',
-          status: 'completed',
-        }),
-      ],
-    });
-    expect(thread.artifacts).toEqual(
+    expect(thread.runs[0].workSession).toBeNull();
+    expect(thread.runs[0].answer.inlineResults).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          contentType: 'structured_data',
-          data: expect.objectContaining({
-            title: 'Finance Review',
-            tables: expect.any(Array),
-          }),
+          toolName: 'structured_data',
+          inlineDisplay: true,
+          status: 'completed',
         }),
       ]),
     );
-    expect(window.__companionUtils.openSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contentType: 'structured_data',
-      }),
-      expect.objectContaining({
-        autoFocus: true,
-      }),
-    );
+    expect(thread.artifacts).toEqual([]);
+    expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
-  it('routes thread-scoped rich_content companion payloads into a work session and reopenable artifact tab state', async function () {
+  it('routes thread-scoped rich_content companion payloads into inline transcript results instead of artifact tabs', async function () {
     var streamHandler = null;
     var fetchMock = vi.fn(function () {
       return Promise.resolve({ ok: true });
@@ -988,23 +976,7 @@ describe('tribex-ai-state', function () {
     });
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(window.__companionUtils.openSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionKey: expect.stringContaining('tribex-ai-artifact:thread-1:tribex-ai-result:thread-1'),
-        contentType: 'rich_content',
-        data: expect.objectContaining({
-          title: 'Smoke Test Passed',
-        }),
-        meta: expect.objectContaining({
-          aiView: 'thread-artifact',
-          threadId: 'thread-1',
-          artifactSource: 'tribex-ai-thread-result',
-        }),
-      }),
-      expect.objectContaining({
-        autoFocus: true,
-      }),
-    );
+    expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
     expect(window.__tribexAiState.getThreadContext('thread-1').thread.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ role: 'user', content: 'Push a sample architecture document.' }),
@@ -1019,28 +991,20 @@ describe('tribex-ai-state', function () {
         }),
       ]),
     );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].workSession.items).toEqual(
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].workSession).toBeNull();
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].answer.inlineResults).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           toolName: 'rich_content',
-          artifactKey: expect.stringContaining('tribex-ai-result:thread-1'),
-        }),
-      ]),
-    );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          artifactKey: expect.stringContaining('tribex-ai-result:thread-1'),
+          inlineDisplay: true,
           contentType: 'rich_content',
-          data: expect.objectContaining({
-            title: 'Smoke Test Passed',
-          }),
         }),
       ]),
     );
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
   });
 
-  it('opens a focused artifact tab for runtime rich_content activity updates', async function () {
+  it('keeps runtime rich_content activity updates inline instead of opening artifact tabs', async function () {
     var runtimeHandler = null;
     window.__renderers = {
       rich_content: vi.fn(),
@@ -1162,57 +1126,27 @@ describe('tribex-ai-state', function () {
       },
     });
 
-    expect(window.__companionUtils.openSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:turn-1:tool-push-1',
-        contentType: 'rich_content',
-        data: expect.objectContaining({
-          title: 'Example Architecture Document',
-        }),
-        meta: expect.objectContaining({
-          aiView: 'thread-artifact',
-          threadId: 'thread-1',
-          artifactKey: 'tribex-ai-result:thread-1:turn-1:tool-push-1',
-        }),
-      }),
-      expect.objectContaining({
-        autoFocus: true,
-      }),
-    );
+    expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
 
     expect(window.__tribexAiState.getThreadContext('thread-1').thread.activityItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           toolName: 'rich_content',
-          artifactKey: 'tribex-ai-result:thread-1:turn-1:tool-push-1',
           resultContentType: 'rich_content',
+          inlineDisplay: true,
         }),
       ]),
     );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual(
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.activityItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          artifactKey: 'tribex-ai-result:thread-1:turn-1:tool-push-1',
-          sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:turn-1:tool-push-1',
-          contentType: 'rich_content',
+          id: 'tool-push-1',
+          resultContentType: 'rich_content',
+          inlineDisplay: true,
         }),
       ]),
     );
-
-    window.__companionUtils.openSession.mockClear();
-    window.__tribexAiState.openThreadArtifact('thread-1', 'tribex-ai-result:thread-1:turn-1:tool-push-1');
-    expect(window.__companionUtils.openSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:turn-1:tool-push-1',
-        contentType: 'rich_content',
-        data: expect.objectContaining({
-          title: 'Example Architecture Document',
-        }),
-      }),
-      expect.objectContaining({
-        autoFocus: true,
-      }),
-    );
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
   });
 
   it('reopens legacy message-backed renderer artifacts for older threads', async function () {
@@ -1329,7 +1263,7 @@ describe('tribex-ai-state', function () {
     );
   });
 
-  it('keeps multiple thread artifacts as distinct reopenable artifact tabs for the same thread', async function () {
+  it('keeps multiple inline rich-content results distinct inside the same thread turn', async function () {
     var runtimeHandler = null;
     window.__renderers = {
       rich_content: vi.fn(),
@@ -1460,39 +1394,17 @@ describe('tribex-ai-state', function () {
       },
     });
 
-    expect(window.__companionUtils.openSession).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:turn-1:tool-push-1',
-        contentType: 'rich_content',
-        data: expect.objectContaining({ title: 'Architecture Overview' }),
-      }),
-      expect.objectContaining({ autoFocus: true }),
-    );
-    expect(window.__companionUtils.openSession).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:turn-1:tool-push-2',
-        contentType: 'rich_content',
-        data: expect.objectContaining({ title: 'Deployment Diagram' }),
-      }),
-      expect.objectContaining({ autoFocus: true }),
-    );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifactDrawer).toEqual(
-      expect.objectContaining({
-        drawerId: 'tribex-ai-thread-artifacts:thread-1',
-        selectedArtifactKey: 'tribex-ai-result:thread-1:turn-1:tool-push-2',
-      }),
-    );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual(
+    expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.activityItems).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ title: 'Architecture Overview' }),
-        expect.objectContaining({ title: 'Deployment Diagram' }),
+        expect.objectContaining({ id: 'tool-push-1', inlineDisplay: true, resultData: expect.objectContaining({ title: 'Architecture Overview' }) }),
+        expect.objectContaining({ id: 'tool-push-2', inlineDisplay: true, resultData: expect.objectContaining({ title: 'Deployment Diagram' }) }),
       ]),
     );
   });
 
-  it('preserves a completed runtime artifact after the follow-up runtime snapshot', async function () {
+  it('preserves a completed inline runtime result after the follow-up runtime snapshot', async function () {
     var runtimeHandler = null;
     window.__renderers = {
       rich_content: vi.fn(),
@@ -1652,22 +1564,12 @@ describe('tribex-ai-state', function () {
     });
 
     var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
-    expect(thread.artifacts).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          artifactKey: 'tribex-ai-result:thread-1:turn-1:tool-push-1',
-          title: 'Runtime Architecture',
-          contentType: 'rich_content',
-          data: expect.objectContaining({
-            title: 'Runtime Architecture',
-          }),
-        }),
-      ]),
-    );
+    expect(thread.artifacts).toEqual([]);
     expect(thread.activityItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'tool-push-1',
+          inlineDisplay: true,
           resultData: expect.objectContaining({
             title: 'Runtime Architecture',
           }),
@@ -2510,6 +2412,10 @@ describe('tribex-ai-state', function () {
 
   it('dedupes replayed sequenced companion rich_content events', async function () {
     var streamHandler = null;
+    var fetchMock = vi.fn(function () {
+      return Promise.resolve({ ok: true });
+    });
+    globalThis.fetch = fetchMock;
 
     var client = {
       getConfig: vi.fn(function () {
@@ -2616,21 +2522,21 @@ describe('tribex-ai-state', function () {
     streamHandler(replayedEvent);
     streamHandler(replayedEvent);
 
-    expect(window.__companionUtils.openSession).toHaveBeenCalledTimes(1);
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual(
+    expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.activityItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          artifactKey: 'tribex-ai-result:thread-1:ordinal-0:tool-smoke-1',
-          contentType: 'rich_content',
-          data: expect.objectContaining({
-            title: 'Smoke Test Passed',
-          }),
+          id: 'tool-smoke-1',
+          resultContentType: 'rich_content',
+          inlineDisplay: true,
         }),
       ]),
     );
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('opens structured_data push_content results as artifact tabs without syncing the thread drawer', async function () {
+  it('keeps structured_data push_content results inline without syncing the thread drawer', async function () {
     var streamHandler = null;
     var fetchMock = vi.fn(function () {
       return Promise.resolve({ ok: true });
@@ -2752,32 +2658,20 @@ describe('tribex-ai-state', function () {
       },
     });
 
-    expect(window.__companionUtils.openSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        contentType: 'structured_data',
-        data: expect.objectContaining({
-          title: 'Expense Review',
-          tables: [{
-            id: 'table-1',
-            name: 'Expenses',
-            columns: [{ id: 'amount', name: 'Amount' }],
-            rows: [],
-          }],
-        }),
-      }),
-      expect.objectContaining({ autoFocus: true }),
-    );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual(
+    expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.activityItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          contentType: 'structured_data',
-          data: expect.objectContaining({
+          resultContentType: 'structured_data',
+          inlineDisplay: true,
+          resultData: expect.objectContaining({
             title: 'Expense Review',
             tables: expect.any(Array),
           }),
         }),
       ]),
     );
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
     expect(window.__companionUtils.syncThreadArtifactDrawer).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });

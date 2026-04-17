@@ -193,6 +193,96 @@ describe('tribex-ai-state projection helpers', function () {
     );
   });
 
+  it('keeps inline-display renderer activity in the run answer instead of the artifact drawer', function () {
+    window.__renderers = {
+      rich_content: function () {},
+    };
+
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var record = {
+      id: 'thread-1',
+      activity: {
+        itemsById: {
+          'inline-1': {
+            id: 'inline-1',
+            toolCallId: 'tool-1',
+            toolName: 'rich_content',
+            status: 'completed',
+            inlineDisplay: true,
+            resultData: { title: 'Inline summary', body: '- One\\n- Two' },
+            createdAt: '2026-04-16T10:00:30.000Z',
+            updatedAt: '2026-04-16T10:00:30.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+        },
+        order: ['inline-1'],
+      },
+      base: {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Summarize this',
+            createdAt: '2026-04-16T10:00:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'Inline below.',
+            createdAt: '2026-04-16T10:01:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+        ],
+      },
+      artifactDrawer: {
+        drawerId: 'tribex-ai-thread-artifacts:thread-1',
+        selectedArtifactKey: null,
+      },
+      turnHistoryById: {},
+      turnCompletedAtById: {},
+    };
+
+    var projection = api.buildThreadProjection(record);
+
+    expect(projection.artifacts).toEqual([]);
+    expect(projection.runs).toHaveLength(1);
+    expect(projection.runs[0].workSession).toBeNull();
+    expect(projection.runs[0].answer.inlineResults).toEqual([
+      expect.objectContaining({
+        id: 'inline-1',
+        contentType: 'rich_content',
+        inlineDisplay: true,
+      }),
+    ]);
+  });
+
   it('includes legacy message-backed renderer artifacts in the shared artifact projection', function () {
     window.__renderers = {
       structured_data: function () {},

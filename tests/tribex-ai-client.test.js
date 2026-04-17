@@ -545,7 +545,8 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'rich_content',
       toolArgs: { threadId: 'thread-1' },
-      artifactKey: 'tribex-ai-result:thread-1:sequence:9',
+      artifactKey: null,
+      inlineDisplay: true,
       resultContentType: 'rich_content',
       resultData: {
         title: 'Smoke Test Passed',
@@ -609,7 +610,8 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'structured_data',
       resultContentType: 'structured_data',
-      artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+      artifactKey: null,
+      inlineDisplay: true,
       resultData: {
         tables: [{
           id: 'table-1',
@@ -650,7 +652,8 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'structured_data',
       resultContentType: 'structured_data',
-      artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+      artifactKey: null,
+      inlineDisplay: true,
       resultMeta: {
         source: 'push-content',
       },

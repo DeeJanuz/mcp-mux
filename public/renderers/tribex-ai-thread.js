@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* TribeX AI thread renderer */
+/* Hosted workspace thread renderer */
 
 (function () {
   'use strict';

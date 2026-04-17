@@ -78,6 +78,26 @@ sequenceDiagram
     MuxApp-->>Agent: Tool result
 ```
 
+## Build an Agentic Control Plane
+
+MCPViews does not reserve agentic workflows for a built-in product. The supported path is to compose your own control plane through the same plugin system every other contributor uses.
+
+For a full control-plane experience, treat MCPViews as four reusable layers:
+
+1. **MCP server** for orchestration, tool execution, and any hosted backend logic.
+2. **Plugin manifest** for auth, tool prefixing, renderer mappings, and discovery metadata.
+3. **Custom renderers** for the surfaces you want to own, such as a navigator rail, focused thread view, artifact panel, dashboards, or workflow-specific detail pages.
+4. **Desktop bridge helpers** when your renderer needs local context, auth, or tool access from the user’s machine.
+
+The public integration points for that pattern are:
+
+- `window.__mcpviews_plugins[pluginName].mcp_url` for your plugin backend URL
+- `get_plugin_auth_header` for auth resolution that matches MCP tool execution
+- `get_renderer_registry` and renderer invocation metadata for cross-renderer linking
+- `probe_local_runtime_host`, `list_local_mcp_tools`, `get_local_mcp_catalog`, and `call_local_mcp_tool` when you want a hosted control plane to inspect or invoke local MCP tools
+
+That means you can ship a control plane that feels like a dedicated workspace without needing MCPViews core changes. MCPViews hosts the shell, sessions, auth plumbing, and renderer runtime; your plugin owns the domain model, backend, and user experience.
+
 ## Quick Start: Minimal Plugin
 
 The simplest plugin is a JSON manifest with no MCP server -- it only maps existing tools to renderers.
@@ -381,6 +401,24 @@ The resolution order for the base URL is:
 1. `meta._api_base` — explicit override passed in push data
 2. `window.__mcpviews_plugins[pluginName].mcp_url` — standard MCPViews config (recommended)
 3. Hardcoded fallback — for local development only
+
+#### Optional Local Control-Plane Bridge Commands
+
+If your control plane needs to inspect or call MCP tools available on the user’s desktop, MCPViews exposes a small Tauri bridge alongside plugin auth:
+
+```javascript
+const { invoke } = window.__TAURI__.core;
+
+const runtimeHost = await invoke('probe_local_runtime_host');
+const localTools = await invoke('list_local_mcp_tools');
+const catalog = await invoke('get_local_mcp_catalog');
+const result = await invoke('call_local_mcp_tool', {
+  toolName: 'my_local_tool',
+  arguments: { query: 'example' }
+});
+```
+
+Use these sparingly and only when your control plane genuinely needs local tool visibility or execution. Most plugins can stay fully remote and rely only on MCP tool calls plus renderer-specific API fetches.
 
 ### Accessing Custom Renderers
 

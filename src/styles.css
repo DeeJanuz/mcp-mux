@@ -1668,7 +1668,7 @@ html[data-theme] .collapsible-body {
   text-align: center;
 }
 
-/* === TribeX AI shell scaffold === */
+/* === Hosted workspace shell scaffold === */
 #ai-shell {
   display: none;
   width: 282px;
@@ -2288,7 +2288,7 @@ html[data-theme] .collapsible-body {
   opacity: 0.84;
 }
 
-/* === Simplified AI navigator === */
+/* === Simplified workspace navigator === */
 #ai-shell {
   width: 282px;
   transition: width var(--transition-fast), padding var(--transition-fast);

@@ -1215,6 +1215,120 @@ describe('tribex-ai-state', function () {
     );
   });
 
+  it('reopens legacy message-backed renderer artifacts for older threads', async function () {
+    window.__renderers = {
+      structured_data: vi.fn(),
+    };
+
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'Legacy artifact thread',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'Legacy artifact thread',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [
+            {
+              id: 'legacy-artifact-1',
+              role: 'tool',
+              toolName: 'structured_data',
+              status: 'success',
+              artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+              resultContentType: 'structured_data',
+              resultData: {
+                title: 'Expense Review',
+                tables: [{
+                  id: 'table-1',
+                  name: 'Expenses',
+                  rows: [],
+                }],
+              },
+              createdAt: '2026-04-15T11:00:00.000Z',
+            },
+          ],
+        });
+      }),
+      createCompanionSession: vi.fn(function () {
+        return Promise.resolve({ companionKey: 'companion-1' });
+      }),
+      startCompanionStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopCompanionStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1', { connectStream: false });
+    await Promise.resolve();
+    window.__companionUtils.openSession.mockClear();
+
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+          contentType: 'structured_data',
+        }),
+      ]),
+    );
+
+    window.__tribexAiState.openThreadArtifact('thread-1', 'tribex-ai-result:thread-1:legacy:artifact-0');
+    expect(window.__companionUtils.openSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:legacy:artifact-0',
+        contentType: 'structured_data',
+        data: expect.objectContaining({
+          title: 'Expense Review',
+        }),
+        meta: expect.objectContaining({
+          threadId: 'thread-1',
+          artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+        }),
+      }),
+      expect.objectContaining({
+        autoFocus: true,
+      }),
+    );
+  });
+
   it('keeps multiple thread artifacts as distinct reopenable artifact tabs for the same thread', async function () {
     var runtimeHandler = null;
     window.__renderers = {
@@ -3068,10 +3182,40 @@ describe('tribex-ai-state', function () {
       }),
     };
     loadState();
+    window.__tribexAiState.setActiveSession('session-1', {
+      meta: {
+        aiView: 'thread',
+        threadId: 'thread-1',
+      },
+    });
+    window.__companionUtils.rerenderActiveSession.mockClear();
+    window.__companionUtils.refreshActiveSession.mockClear();
 
     window.__tribexAiState.setSearchTerm('finance');
 
     expect(window.__companionUtils.rerenderActiveSession).toHaveBeenCalled();
+    expect(window.__companionUtils.refreshActiveSession).not.toHaveBeenCalled();
+  });
+
+  it('does not rerender a focused thread artifact session for background AI state changes', function () {
+    window.__tribexAiClient = {
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+    };
+    loadState();
+    window.__tribexAiState.setActiveSession('session-1', {
+      meta: {
+        aiView: 'thread-artifact',
+        threadId: 'thread-1',
+      },
+    });
+    window.__companionUtils.rerenderActiveSession.mockClear();
+    window.__companionUtils.refreshActiveSession.mockClear();
+
+    window.__tribexAiState.setSearchTerm('finance');
+
+    expect(window.__companionUtils.rerenderActiveSession).not.toHaveBeenCalled();
     expect(window.__companionUtils.refreshActiveSession).not.toHaveBeenCalled();
   });
 

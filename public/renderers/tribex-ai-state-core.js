@@ -13,9 +13,19 @@
       context.listeners.slice().forEach(function (listener) {
         listener(snapshot);
       });
-      if (window.__companionUtils && typeof window.__companionUtils.rerenderActiveSession === 'function') {
+      if (
+        context.activeSession &&
+        context.activeSession.isThread &&
+        window.__companionUtils &&
+        typeof window.__companionUtils.rerenderActiveSession === 'function'
+      ) {
         window.__companionUtils.rerenderActiveSession();
-      } else if (window.__companionUtils && typeof window.__companionUtils.refreshActiveSession === 'function') {
+      } else if (
+        context.activeSession &&
+        context.activeSession.isThread &&
+        window.__companionUtils &&
+        typeof window.__companionUtils.refreshActiveSession === 'function'
+      ) {
         window.__companionUtils.refreshActiveSession();
       }
     }

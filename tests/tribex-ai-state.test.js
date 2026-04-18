@@ -102,6 +102,136 @@ describe('tribex-ai-state', function () {
     expect(window.__companionUtils.openSession).toHaveBeenCalled();
   });
 
+  it('renames a project and updates project context for its threads', async function () {
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([
+          { id: 'thread-1', projectId: 'project-1', workspaceId: 'workspace-1', organizationId: 'org-1', title: 'Existing chat', projectName: 'General' },
+        ]);
+      }),
+      renameProject: vi.fn(function () {
+        return Promise.resolve({
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'Forecasting',
+          workspaceName: 'Workspace 1',
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    await window.__tribexAiState.openProjectRename('project-1');
+    window.__tribexAiState.setProjectRenameName('Forecasting');
+    await window.__tribexAiState.renameProject();
+
+    expect(client.renameProject).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'workspace-1' }),
+      'project-1',
+      'Forecasting',
+    );
+
+    expect(window.__tribexAiState.getSnapshot().selectedProject).toMatchObject({
+      id: 'project-1',
+      name: 'Forecasting',
+    });
+    expect(window.__tribexAiState.getThreadContext('thread-1').project).toMatchObject({
+      id: 'project-1',
+      name: 'Forecasting',
+    });
+  });
+
+  it('renames a thread and updates the thread context title', async function () {
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([
+          { id: 'thread-1', projectId: 'project-1', workspaceId: 'workspace-1', organizationId: 'org-1', title: 'Existing chat', projectName: 'General', workspaceName: 'Workspace 1' },
+        ]);
+      }),
+      renameThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          organizationId: 'org-1',
+          title: 'Renamed chat',
+          projectName: 'General',
+          workspaceName: 'Workspace 1',
+          messages: [],
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    await window.__tribexAiState.openThreadRename('thread-1');
+    window.__tribexAiState.setThreadRenameTitle('Renamed chat');
+    await window.__tribexAiState.renameThread();
+
+    expect(client.renameThread).toHaveBeenCalledWith('thread-1', 'Renamed chat');
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread).toMatchObject({
+      id: 'thread-1',
+      title: 'Renamed chat',
+    });
+  });
+
   it('tears down the previous thread resources before reusing the thread session for a new chat', async function () {
     var client = {
       getConfig: vi.fn(function () {
@@ -4062,5 +4192,201 @@ describe('tribex-ai-state', function () {
         }),
       ]),
     );
+  });
+
+  it('binds the active turn to the first assistant reply after its user prompt during runtime rehydrate', async function () {
+    vi.useFakeTimers();
+    window.__renderers = {
+      rich_content: vi.fn(),
+    };
+
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'Rehydrate Thread',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'Rehydrate Thread',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [
+            {
+              id: 'user-1',
+              role: 'user',
+              content: 'First question',
+              createdAt: '2026-04-17T22:18:19.000Z',
+            },
+            {
+              id: 'assistant-1',
+              role: 'assistant',
+              content: 'First answer',
+              createdAt: '2026-04-17T22:18:20.000Z',
+            },
+            {
+              id: 'user-2',
+              role: 'user',
+              content: 'Second question',
+              createdAt: '2026-04-17T22:18:21.000Z',
+            },
+          ],
+        });
+      }),
+      registerDesktopRelay: vi.fn(function () {
+        return Promise.resolve({
+          relaySession: { id: 'relay-session-1' },
+          relayDeviceId: 'device-1',
+        });
+      }),
+      startDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      syncThreadRuntime: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          messagesSource: 'runtime',
+          rawRuntimeMessages: [
+            {
+              id: 'runtime-user-1',
+              role: 'user',
+              createdAt: '2026-04-17T22:18:19.000Z',
+              parts: [{ type: 'text', text: 'First question' }],
+            },
+            {
+              id: 'runtime-assistant-1',
+              role: 'assistant',
+              createdAt: '2026-04-17T22:18:20.000Z',
+              parts: [{ type: 'text', text: 'First answer' }],
+            },
+            {
+              id: 'runtime-user-2',
+              role: 'user',
+              createdAt: '2026-04-17T22:18:21.000Z',
+              parts: [{ type: 'text', text: 'Second question' }],
+            },
+            {
+              id: 'runtime-assistant-2',
+              role: 'assistant',
+              createdAt: '2026-04-17T22:18:22.000Z',
+              parts: [{ type: 'text', text: 'Second answer' }],
+            },
+            {
+              id: 'runtime-user-3',
+              role: 'user',
+              createdAt: '2026-04-17T22:18:23.000Z',
+              parts: [{ type: 'text', text: 'Third question' }],
+            },
+            {
+              id: 'runtime-assistant-3',
+              role: 'assistant',
+              createdAt: '2026-04-17T22:18:24.000Z',
+              parts: [{ type: 'text', text: 'Third answer' }],
+            },
+          ],
+          runtimeMessages: [
+            {
+              id: 'runtime-user-1',
+              role: 'user',
+              content: 'First question',
+              createdAt: '2026-04-17T22:18:19.000Z',
+            },
+            {
+              id: 'runtime-assistant-1',
+              role: 'assistant',
+              content: 'First answer',
+              createdAt: '2026-04-17T22:18:20.000Z',
+            },
+            {
+              id: 'runtime-user-2',
+              role: 'user',
+              content: 'Second question',
+              createdAt: '2026-04-17T22:18:21.000Z',
+            },
+            {
+              id: 'runtime-assistant-2',
+              role: 'assistant',
+              content: 'Second answer',
+              createdAt: '2026-04-17T22:18:22.000Z',
+            },
+            {
+              id: 'runtime-user-3',
+              role: 'user',
+              content: 'Third question',
+              createdAt: '2026-04-17T22:18:23.000Z',
+            },
+            {
+              id: 'runtime-assistant-3',
+              role: 'assistant',
+              content: 'Third answer',
+              createdAt: '2026-04-17T22:18:24.000Z',
+            },
+          ],
+          preview: 'Third answer',
+          lastActivityAt: '2026-04-17T22:18:24.000Z',
+        });
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1');
+    await vi.runAllTimersAsync();
+
+    var runs = window.__tribexAiState.getThreadContext('thread-1').thread.runs;
+    expect(runs).toHaveLength(3);
+    expect(runs[0].user.content).toBe('First question');
+    expect(runs[0].answer.content).toBe('First answer');
+    expect(runs[1].user.content).toBe('Second question');
+    expect(runs[1].answer.content).toBe('Second answer');
+    expect(runs[2].user.content).toBe('Third question');
+    expect(runs[2].answer.content).toBe('Third answer');
   });
 });

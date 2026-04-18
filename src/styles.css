@@ -2538,7 +2538,28 @@ html[data-theme] .collapsible-body {
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
+.ai-thread-rename-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
 .ai-thread-dev-toggle:hover {
+  color: var(--text-primary);
+  border-color: rgba(143, 178, 255, 0.35);
+}
+
+.ai-thread-rename-button:hover {
   color: var(--text-primary);
   border-color: rgba(143, 178, 255, 0.35);
 }
@@ -3988,6 +4009,7 @@ body.ai-mode-session-active .ai-thread-title {
 }
 
 body.ai-mode-session-active .ai-thread-status-pill,
+body.ai-mode-session-active .ai-thread-rename-button,
 body.ai-mode-session-active .ai-thread-dev-toggle,
 body.ai-mode-session-active .ai-turn-repeat,
 body.ai-mode-session-active .ai-turn-time {
@@ -4492,7 +4514,8 @@ body.ai-mode-active .ai-nav-project-row:focus-within .ai-nav-project-trigger {
   color: var(--ai-rail-text);
 }
 
-body.ai-mode-active .ai-nav-project-thread-action {
+body.ai-mode-active .ai-nav-project-thread-action,
+body.ai-mode-active .ai-nav-project-action {
   width: 26px;
   height: 26px;
   margin-right: 2px;
@@ -4511,25 +4534,31 @@ body.ai-mode-active .ai-nav-project-thread-action {
   transition: opacity var(--transition-fast), transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
 }
 
-body.ai-mode-active .ai-nav-project-thread-action svg {
+body.ai-mode-active .ai-nav-project-thread-action svg,
+body.ai-mode-active .ai-nav-project-action svg {
   width: 13px;
   height: 13px;
 }
 
 body.ai-mode-active .ai-nav-project-row:hover .ai-nav-project-thread-action,
 body.ai-mode-active .ai-nav-project-row:focus-within .ai-nav-project-thread-action,
-body.ai-mode-active .ai-nav-project-row.active .ai-nav-project-thread-action {
+body.ai-mode-active .ai-nav-project-row.active .ai-nav-project-thread-action,
+body.ai-mode-active .ai-nav-project-row:hover .ai-nav-project-action,
+body.ai-mode-active .ai-nav-project-row:focus-within .ai-nav-project-action,
+body.ai-mode-active .ai-nav-project-row.active .ai-nav-project-action {
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0);
 }
 
-body.ai-mode-active .ai-nav-project-thread-action:hover:not(:disabled) {
+body.ai-mode-active .ai-nav-project-thread-action:hover:not(:disabled),
+body.ai-mode-active .ai-nav-project-action:hover:not(:disabled) {
   background: var(--ai-rail-hover);
   color: var(--ai-rail-text);
 }
 
-body.ai-mode-active .ai-nav-project-thread-action:disabled {
+body.ai-mode-active .ai-nav-project-thread-action:disabled,
+body.ai-mode-active .ai-nav-project-action:disabled {
   opacity: 0.34;
   pointer-events: none;
 }
@@ -4570,8 +4599,17 @@ body.ai-mode-active .ai-nav-thread-list {
   padding-left: 20px;
 }
 
+body.ai-mode-active .ai-nav-thread-item-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border-radius: 10px;
+}
+
 body.ai-mode-active .ai-nav-thread-row {
   width: 100%;
+  min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
@@ -4584,8 +4622,11 @@ body.ai-mode-active .ai-nav-thread-row {
   text-align: left;
 }
 
+body.ai-mode-active .ai-nav-thread-item-row:hover .ai-nav-thread-row,
+body.ai-mode-active .ai-nav-thread-item-row:focus-within .ai-nav-thread-row,
 body.ai-mode-active .ai-nav-thread-row:hover,
-body.ai-mode-active .ai-nav-thread-row.active {
+body.ai-mode-active .ai-nav-thread-row.active,
+body.ai-mode-active .ai-nav-thread-item-row.active .ai-nav-thread-row {
   background: var(--ai-rail-hover);
   color: var(--ai-rail-text);
 }
@@ -4615,6 +4656,48 @@ body.ai-mode-active .ai-nav-thread-row-time {
 
 body.ai-mode-active .ai-nav-thread-row.active .ai-nav-thread-row-time {
   color: var(--ai-rail-text);
+}
+
+body.ai-mode-active .ai-nav-thread-action {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ai-rail-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(2px);
+  transition: opacity var(--transition-fast), transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+body.ai-mode-active .ai-nav-thread-action svg {
+  width: 12px;
+  height: 12px;
+}
+
+body.ai-mode-active .ai-nav-thread-item-row:hover .ai-nav-thread-action,
+body.ai-mode-active .ai-nav-thread-item-row:focus-within .ai-nav-thread-action,
+body.ai-mode-active .ai-nav-thread-item-row.active .ai-nav-thread-action {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+body.ai-mode-active .ai-nav-thread-action:hover:not(:disabled) {
+  background: var(--ai-rail-hover);
+  color: var(--ai-rail-text);
+}
+
+body.ai-mode-active .ai-nav-thread-action:disabled {
+  opacity: 0.34;
+  pointer-events: none;
 }
 
 body.ai-mode-active .ai-nav-thread-state-marker {
@@ -4859,11 +4942,14 @@ body.ai-mode-active .ai-nav-thread-tree-row {
   background: transparent;
 }
 
+body.ai-mode-active .ai-nav-thread-item-row:hover .ai-nav-thread-tree-row,
+body.ai-mode-active .ai-nav-thread-item-row:focus-within .ai-nav-thread-tree-row,
 body.ai-mode-active .ai-nav-thread-tree-row:hover {
   background: var(--ai-subtle-bg);
 }
 
-body.ai-mode-active .ai-nav-thread-tree-row.active {
+body.ai-mode-active .ai-nav-thread-tree-row.active,
+body.ai-mode-active .ai-nav-thread-item-row.active .ai-nav-thread-tree-row {
   background: var(--ai-active-bg);
   border-color: transparent;
 }

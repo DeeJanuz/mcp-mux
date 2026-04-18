@@ -13,6 +13,92 @@
       return current === undefined ? null : current;
     }
 
+    function messageMatchesCandidate(message, candidate) {
+      if (!message || !candidate) return false;
+      if (candidate.messageId && message.messageId && candidate.messageId === message.messageId) {
+        return true;
+      }
+      if (candidate.id && message.id && candidate.id === message.id) {
+        return true;
+      }
+      return message.role === candidate.role && message.content === candidate.content;
+    }
+
+    function findMessageIndex(messages, candidate) {
+      if (!Array.isArray(messages) || !candidate) return -1;
+      for (var i = 0; i < messages.length; i += 1) {
+        if (messageMatchesCandidate(messages[i], candidate)) {
+          return i;
+        }
+      }
+      return -1;
+    }
+
+    function pickLatestMessage(messages) {
+      if (!Array.isArray(messages) || !messages.length) return null;
+      return messages.reduce(function (latest, message) {
+        if (!message) return latest;
+        if (!latest) return message;
+        var latestTime = api.parseActivityTimestamp(latest.createdAt);
+        var messageTime = api.parseActivityTimestamp(message.createdAt);
+        if (latestTime !== null && messageTime !== null && messageTime >= latestTime) {
+          return message;
+        }
+        return latest;
+      }, null);
+    }
+
+    function findUserIndexForActiveTurn(messages, activeTurn) {
+      if (!Array.isArray(messages) || !activeTurn) return -1;
+
+      if (activeTurn.turnId) {
+        for (var i = 0; i < messages.length; i += 1) {
+          if (messages[i] && messages[i].role === 'user' && messages[i].turnId === activeTurn.turnId) {
+            return i;
+          }
+        }
+      }
+
+      if (activeTurn.turnOrdinal) {
+        for (var ordinal = 0, j = 0; j < messages.length; j += 1) {
+          if (!messages[j] || messages[j].role !== 'user') continue;
+          ordinal += 1;
+          if (messages[j].turnOrdinal === activeTurn.turnOrdinal || ordinal === activeTurn.turnOrdinal) {
+            return j;
+          }
+        }
+      }
+
+      return findMessageIndex(messages, activeTurn.userMessage);
+    }
+
+    function findSettledAssistantForActiveTurn(messages, activeTurn) {
+      if (!Array.isArray(messages) || !activeTurn) return null;
+
+      var turnMatchedAssistants = messages.filter(function (message) {
+        if (!message || message.role !== 'assistant') return false;
+        if (activeTurn.turnId && message.turnId) return message.turnId === activeTurn.turnId;
+        if (activeTurn.turnOrdinal && message.turnOrdinal) return message.turnOrdinal === activeTurn.turnOrdinal;
+        return false;
+      });
+      if (turnMatchedAssistants.length) {
+        return pickLatestMessage(turnMatchedAssistants);
+      }
+
+      var userIndex = findUserIndexForActiveTurn(messages, activeTurn);
+      if (userIndex < 0) return null;
+      for (var i = userIndex + 1; i < messages.length; i += 1) {
+        var message = messages[i];
+        if (!message) continue;
+        if (message.role === 'user') break;
+        if (message.role === 'assistant') {
+          return message;
+        }
+      }
+
+      return null;
+    }
+
     function bindStreamListener() {
       if (context.streamListenerBound || !window.__tribexAiClient || typeof window.__tribexAiClient.listenToStreamEvents !== 'function') {
         return;
@@ -256,16 +342,7 @@
           merged.activeTurn.userMessage &&
           api.containsMessage(merged.runtimeSnapshot.messages, merged.activeTurn.userMessage)
         ) {
-          var settledAssistant = merged.runtimeSnapshot.messages.reduce(function (latest, message) {
-            if (!message || message.role !== 'assistant') return latest;
-            if (!latest) return message;
-            var latestTime = api.parseActivityTimestamp(latest.createdAt);
-            var messageTime = api.parseActivityTimestamp(message.createdAt);
-            if (latestTime !== null && messageTime !== null && messageTime >= latestTime) {
-              return message;
-            }
-            return latest;
-          }, null);
+          var settledAssistant = findSettledAssistantForActiveTurn(merged.runtimeSnapshot.messages, merged.activeTurn);
           if (settledAssistant) {
             merged.activeTurn.assistantMessage = Object.assign({}, settledAssistant, {
               turnId: merged.activeTurn.turnId || settledAssistant.turnId || null,

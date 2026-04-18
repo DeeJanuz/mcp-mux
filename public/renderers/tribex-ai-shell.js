@@ -28,6 +28,11 @@
       '<path d="M3.5 3.25h9A1.25 1.25 0 0 1 13.75 4.5v5A1.25 1.25 0 0 1 12.5 10.75H7.1L4 13V10.75H3.5A1.25 1.25 0 0 1 2.25 9.5v-5A1.25 1.25 0 0 1 3.5 3.25Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>' +
       '<path d="M8 5.6v2.8M6.6 7h2.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>' +
       '</svg>',
+    edit:
+      '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+      '<path d="M10.9 2.35a1.2 1.2 0 0 1 1.7 0l1.05 1.05a1.2 1.2 0 0 1 0 1.7l-6.8 6.8-2.75.7.7-2.75 6.1-6.8Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>' +
+      '<path d="M9.8 3.45l2.75 2.75" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>' +
+      '</svg>',
     settings:
       '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
       '<path d="M6.8 1.85h2.4l.35 1.4c.29.1.57.21.83.35l1.28-.7 1.7 1.7-.7 1.28c.14.27.25.55.35.83l1.4.35v2.4l-1.4.35c-.1.29-.21.57-.35.83l.7 1.28-1.7 1.7-1.28-.7c-.26.14-.54.25-.83.35l-.35 1.4H6.8l-.35-1.4a5.2 5.2 0 0 1-.83-.35l-1.28.7-1.7-1.7.7-1.28a5.2 5.2 0 0 1-.35-.83l-1.4-.35v-2.4l1.4-.35c.1-.28.21-.56.35-.83l-.7-1.28 1.7-1.7 1.28.7c.26-.14.54-.25.83-.35l.35-1.4Z" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/>' +
@@ -106,8 +111,8 @@
 
     if (collapseButton) {
       collapseButton.style.display = navigatorVisible ? '' : 'none';
-      collapseButton.setAttribute('title', snapshot && snapshot.navigatorCollapsed ? 'Expand workspace navigator' : 'Collapse workspace navigator');
-      collapseButton.setAttribute('aria-label', snapshot && snapshot.navigatorCollapsed ? 'Expand workspace navigator' : 'Collapse workspace navigator');
+      collapseButton.setAttribute('title', snapshot && snapshot.navigatorCollapsed ? 'Expand AI workspace navigator' : 'Collapse AI workspace navigator');
+      collapseButton.setAttribute('aria-label', snapshot && snapshot.navigatorCollapsed ? 'Expand AI workspace navigator' : 'Collapse AI workspace navigator');
       collapseButton.textContent = snapshot && snapshot.navigatorCollapsed ? '>' : '<';
     }
   }
@@ -155,6 +160,34 @@
 
   function getSearchEnabled(snapshot) {
     return searchVisible || !!String(snapshot && snapshot.searchTerm || '').trim();
+  }
+
+  function findProjectGroup(snapshot, projectId) {
+    var groups = snapshot && snapshot.projectGroups ? snapshot.projectGroups : [];
+    for (var index = 0; index < groups.length; index += 1) {
+      var group = groups[index];
+      if (group && group.project && group.project.id === projectId) {
+        return group;
+      }
+    }
+    return null;
+  }
+
+  function findThreadGroup(snapshot, threadId) {
+    var groups = snapshot && snapshot.projectGroups ? snapshot.projectGroups : [];
+    for (var groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
+      var group = groups[groupIndex];
+      var threads = group && group.threads ? group.threads : [];
+      for (var threadIndex = 0; threadIndex < threads.length; threadIndex += 1) {
+        if (threads[threadIndex] && threads[threadIndex].id === threadId) {
+          return {
+            group: group,
+            thread: threads[threadIndex],
+          };
+        }
+      }
+    }
+    return null;
   }
 
   function toggleSearch(snapshot, aiState) {
@@ -215,15 +248,15 @@
     panel.appendChild(copy);
 
     if (!snapshot.integration.config || !snapshot.integration.config.configured) {
-      title.textContent = 'Connect a hosted workspace';
+      title.textContent = 'Connect a hosted AI workspace';
       copy.textContent = 'Set `first_party_ai.base_url` in `~/.mcpviews/config.json` to connect a hosted control plane that provides organizations, folders, personas, and threads.';
       root.appendChild(panel);
       return;
     }
 
     if (snapshot.integration.status === 'error') {
-      title.textContent = 'Unable to load workspace';
-      copy.textContent = snapshot.integration.error || 'The workspace navigation could not be loaded right now.';
+      title.textContent = 'Unable to load AI workspace';
+      copy.textContent = snapshot.integration.error || 'The AI workspace navigation could not be loaded right now.';
       panel.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Retry', {
         onClick: function () {
           aiState.refreshNavigator(true);
@@ -233,10 +266,10 @@
       return;
     }
 
-    title.textContent = 'Sign in to workspace';
+    title.textContent = 'Sign in to AI workspace';
     copy.textContent = snapshot.integration.magicLinkSentTo
       ? 'Paste the localhost verification URL or token to finish linking this desktop client.'
-      : 'Send yourself a magic link so this desktop client can attach to your workspace.';
+      : 'Send yourself a magic link so this desktop client can attach to your AI workspace.';
 
     var form = document.createElement('div');
     form.className = 'ai-nav-auth-form';
@@ -319,7 +352,7 @@
     subtitle.className = 'ai-nav-toolbar-subtitle';
     subtitle.textContent = (organization && organization.name)
       ? organization.name + (workspace && workspace.packageKey ? ' · ' + workspace.packageKey : '')
-      : 'Connected workspace';
+      : 'Connected AI workspace';
     copy.appendChild(subtitle);
     header.appendChild(copy);
 
@@ -404,14 +437,14 @@
           ? 'No organizations available'
           : !snapshot.hasProjects
             ? 'No folders yet'
-            : 'No workspace threads yet';
+            : 'No AI workspace threads yet';
     empty.appendChild(title);
 
     var copy = document.createElement('p');
     copy.textContent = snapshot.loadingNavigator
-      ? 'Refreshing folders and workspace thread history.'
+      ? 'Refreshing folders and AI workspace thread history.'
       : !snapshot.selectedOrganization
-        ? 'Refresh after your workspace access is provisioned.'
+        ? 'Refresh after your AI workspace access is provisioned.'
         : snapshot.hasProjects
           ? 'Create a chat in the selected folder or switch to another folder to keep working.'
           : 'Create the first folder for this organization, or start a chat and MCPViews will bootstrap General once.';
@@ -511,6 +544,16 @@
 
       row.appendChild(projectButton);
 
+      var renameProjectButton = createIconButton('ai-nav-project-action ai-nav-project-rename-action', 'Rename ' + group.project.name, ICONS.edit, {
+        title: 'Rename ' + group.project.name,
+        disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator,
+        onClick: function (event) {
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          aiState.openProjectRename(group.project.id).catch(function () {});
+        },
+      });
+      row.appendChild(renameProjectButton);
+
       var newThreadButton = createIconButton('ai-nav-project-thread-action', 'New chat in ' + group.project.name, ICONS.chatAdd, {
         title: 'New chat in ' + group.project.name,
         disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator,
@@ -530,6 +573,9 @@
         var visibleThreads = showAll ? group.threads : group.threads.slice(0, 5);
 
         visibleThreads.forEach(function (thread) {
+          var row = document.createElement('div');
+          row.className = 'ai-nav-thread-item-row' + (snapshot.activeThreadId === thread.id ? ' active' : '');
+
           var button = document.createElement('button');
           button.className = 'ai-nav-thread-row ai-nav-thread-tree-row' + (snapshot.activeThreadId === thread.id ? ' active' : '');
           button.type = 'button';
@@ -558,7 +604,19 @@
               ? 'Creating'
               : 'Open';
           button.appendChild(time);
-          list.appendChild(button);
+          row.appendChild(button);
+
+          var renameThreadButton = createIconButton('ai-nav-thread-action', 'Rename ' + thread.title, ICONS.edit, {
+            title: 'Rename ' + thread.title,
+            disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator,
+            onClick: function (event) {
+              if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+              aiState.openThreadRename(thread.id).catch(function () {});
+            },
+          });
+          row.appendChild(renameThreadButton);
+
+          list.appendChild(row);
         });
 
         if (group.threads.length > 5) {
@@ -655,6 +713,77 @@
         disabled: !!snapshot.composer.creatingProject,
         onClick: function () {
           aiState.createProject().catch(function () {});
+        },
+      }
+    ));
+    form.appendChild(actions);
+    modal.appendChild(form);
+    backdrop.appendChild(modal);
+    shell.appendChild(backdrop);
+  }
+
+  function renderProjectRenameModal(shell, snapshot, aiState) {
+    if (!snapshot.projectRenameOpen) return;
+
+    var targetGroup = findProjectGroup(snapshot, snapshot.composer.projectRenameId);
+    var targetProject = targetGroup && targetGroup.project ? targetGroup.project : snapshot.selectedProject;
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'ai-nav-modal-backdrop';
+
+    var modal = document.createElement('section');
+    modal.className = 'ai-nav-modal';
+
+    var header = document.createElement('div');
+    header.className = 'ai-nav-modal-header';
+
+    var title = document.createElement('strong');
+    title.textContent = 'Rename folder';
+    header.appendChild(title);
+    header.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Cancel', {
+      onClick: function () {
+        aiState.closeProjectRename();
+      },
+    }));
+    modal.appendChild(header);
+
+    var form = document.createElement('div');
+    form.className = 'ai-nav-auth-form';
+
+    if (targetProject) {
+      var helper = document.createElement('p');
+      helper.className = 'ai-nav-helper';
+      helper.textContent = 'Current name: ' + targetProject.name;
+      form.appendChild(helper);
+    }
+
+    var nameInput = document.createElement('input');
+    nameInput.className = 'ai-nav-auth-input';
+    nameInput.type = 'text';
+    nameInput.setAttribute('data-focus-key', 'project-rename-name');
+    nameInput.placeholder = 'Folder name';
+    nameInput.value = snapshot.composer.projectRenameName || '';
+    nameInput.addEventListener('input', function (event) {
+      aiState.setProjectRenameName(event.target.value);
+    });
+    form.appendChild(nameInput);
+
+    if (snapshot.integration && snapshot.integration.error) {
+      var error = document.createElement('p');
+      error.className = 'ai-nav-helper ai-nav-helper-error';
+      error.textContent = snapshot.integration.error;
+      form.appendChild(error);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'ai-nav-auth-actions';
+    actions.appendChild(createButton(
+      'ai-nav-action ai-nav-action-primary',
+      snapshot.composer.renamingProject ? 'Saving...' : 'Save rename',
+      {
+        disabled: !!snapshot.composer.renamingProject,
+        onClick: function () {
+          aiState.renameProject().catch(function () {});
         },
       }
     ));
@@ -789,6 +918,85 @@
     shell.appendChild(backdrop);
   }
 
+  function renderThreadRenameModal(shell, snapshot, aiState) {
+    if (!snapshot.threadRenameOpen) return;
+
+    var target = findThreadGroup(snapshot, snapshot.composer.threadRenameId);
+    var targetThread = target && target.thread ? target.thread : null;
+    var targetProject = target && target.group ? target.group.project : snapshot.selectedProject;
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'ai-nav-modal-backdrop';
+
+    var modal = document.createElement('section');
+    modal.className = 'ai-nav-modal';
+
+    var header = document.createElement('div');
+    header.className = 'ai-nav-modal-header';
+
+    var title = document.createElement('strong');
+    title.textContent = 'Rename chat';
+    header.appendChild(title);
+    header.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Cancel', {
+      onClick: function () {
+        aiState.closeThreadRename();
+      },
+    }));
+    modal.appendChild(header);
+
+    var form = document.createElement('div');
+    form.className = 'ai-nav-auth-form';
+
+    if (targetProject) {
+      var helper = document.createElement('p');
+      helper.className = 'ai-nav-helper';
+      helper.textContent = 'Folder: ' + targetProject.name;
+      form.appendChild(helper);
+    }
+
+    if (targetThread) {
+      var current = document.createElement('p');
+      current.className = 'ai-nav-helper';
+      current.textContent = 'Current title: ' + targetThread.title;
+      form.appendChild(current);
+    }
+
+    var nameInput = document.createElement('input');
+    nameInput.className = 'ai-nav-auth-input';
+    nameInput.type = 'text';
+    nameInput.setAttribute('data-focus-key', 'thread-rename-name');
+    nameInput.placeholder = 'Chat title';
+    nameInput.value = snapshot.composer.threadRenameTitle || '';
+    nameInput.addEventListener('input', function (event) {
+      aiState.setThreadRenameTitle(event.target.value);
+    });
+    form.appendChild(nameInput);
+
+    if (snapshot.integration && snapshot.integration.error) {
+      var error = document.createElement('p');
+      error.className = 'ai-nav-helper ai-nav-helper-error';
+      error.textContent = snapshot.integration.error;
+      form.appendChild(error);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'ai-nav-auth-actions';
+    actions.appendChild(createButton(
+      'ai-nav-action ai-nav-action-primary',
+      snapshot.composer.renamingThread ? 'Saving...' : 'Save rename',
+      {
+        disabled: !!snapshot.composer.renamingThread,
+        onClick: function () {
+          aiState.renameThread().catch(function () {});
+        },
+      }
+    ));
+    form.appendChild(actions);
+    modal.appendChild(form);
+    backdrop.appendChild(modal);
+    shell.appendChild(backdrop);
+  }
+
   function renderCollapsed(shell, snapshot, aiState) {
     var stack = document.createElement('div');
     stack.className = 'ai-nav-collapsed-stack';
@@ -852,7 +1060,9 @@
     if (snapshot.navigatorCollapsed) {
       renderCollapsed(shell, snapshot, aiState);
       renderProjectComposerModal(shell, snapshot, aiState);
+      renderProjectRenameModal(shell, snapshot, aiState);
       renderThreadComposerModal(shell, snapshot, aiState);
+      renderThreadRenameModal(shell, snapshot, aiState);
       restoreFocusState(shell, focusState);
       return;
     }
@@ -873,7 +1083,9 @@
 
     shell.appendChild(frame);
     renderProjectComposerModal(shell, snapshot, aiState);
+    renderProjectRenameModal(shell, snapshot, aiState);
     renderThreadComposerModal(shell, snapshot, aiState);
+    renderThreadRenameModal(shell, snapshot, aiState);
     restoreFocusState(shell, focusState);
     applyPendingFocus(shell);
   }

@@ -424,7 +424,7 @@
 
       var config = {
         sessionKey: 'tribex-ai-thread-' + threadId,
-        toolName: 'Workspace',
+        toolName: 'AI Workspace',
         contentType: 'tribex_ai_thread',
         data: { title: thread.title },
         meta: {
@@ -840,6 +840,94 @@
       teardownThreadSession(threadId);
     }
 
+    function renameProject() {
+      var projectId = state.composer.projectRenameId;
+      var nextName = String(state.composer.projectRenameName || '').trim() || 'Project';
+      var project = api.getProject(projectId);
+      var workspace = project && project.workspaceId ? api.getWorkspace(project.workspaceId) : api.getSelectedWorkspace();
+
+      if (!project || !workspace) {
+        return Promise.reject(new Error('No project is available to rename.'));
+      }
+
+      state.composer.renamingProject = true;
+      state.integration.error = null;
+      api.notify();
+
+      return window.__tribexAiClient.renameProject(workspace, projectId, nextName).then(function (updatedProject) {
+        var merged = api.mergeProject(Object.assign({}, updatedProject || {}, {
+          id: projectId,
+          workspaceId: (updatedProject && updatedProject.workspaceId) || project.workspaceId || null,
+          organizationId: (updatedProject && updatedProject.organizationId) || project.organizationId || null,
+          name: (updatedProject && updatedProject.name) || nextName,
+          workspaceName: (updatedProject && updatedProject.workspaceName) || project.workspaceName || (workspace && workspace.name) || null,
+        }));
+
+        Object.keys(state.threadEntitiesById).forEach(function (threadId) {
+          var thread = state.threadEntitiesById[threadId];
+          if (!thread || thread.projectId !== projectId) return;
+          thread.projectName = (merged && merged.name) || nextName;
+        });
+
+        state.ui.projectRenameOpen = false;
+        state.composer.projectRenameId = null;
+        state.composer.projectRenameName = '';
+        api.notify();
+        return merged;
+      }).catch(function (error) {
+        state.integration.error = error && error.message ? error.message : String(error);
+        throw error;
+      }).finally(function () {
+        state.composer.renamingProject = false;
+        api.notify();
+      });
+    }
+
+    function renameThread() {
+      var threadId = state.composer.threadRenameId;
+      var nextTitle = String(state.composer.threadRenameTitle || '').trim() || 'Thread';
+      var thread = api.getThread(threadId);
+      var project = thread && thread.projectId ? api.getProject(thread.projectId) : null;
+
+      if (!thread) {
+        return Promise.reject(new Error('No thread is available to rename.'));
+      }
+
+      state.composer.renamingThread = true;
+      state.integration.error = null;
+      api.notify();
+
+      return window.__tribexAiClient.renameThread(threadId, nextTitle).then(function (updatedThread) {
+        var merged = api.mergeThreadSummary(Object.assign({}, updatedThread || {}, {
+          id: threadId,
+          projectId: (updatedThread && updatedThread.projectId) || thread.projectId || null,
+          workspaceId: (updatedThread && updatedThread.workspaceId) || thread.workspaceId || null,
+          organizationId: (updatedThread && updatedThread.organizationId) || thread.organizationId || null,
+          title: (updatedThread && updatedThread.title) || nextTitle,
+          status: (updatedThread && updatedThread.status) || thread.status || null,
+          projectName: (updatedThread && updatedThread.projectName) || (project && project.name) || thread.projectName || null,
+          workspaceName: (updatedThread && updatedThread.workspaceName) || thread.workspaceName || null,
+          personaReleaseId: (updatedThread && updatedThread.personaReleaseId) || thread.personaReleaseId || null,
+          persona: (updatedThread && updatedThread.persona) || thread.persona || null,
+          lastActivityAt: (updatedThread && updatedThread.lastActivityAt) || thread.lastActivityAt || api.nowIso(),
+          optimistic: false,
+          rowState: null,
+        }));
+
+        state.ui.threadRenameOpen = false;
+        state.composer.threadRenameId = null;
+        state.composer.threadRenameTitle = '';
+        api.notify();
+        return merged;
+      }).catch(function (error) {
+        state.integration.error = error && error.message ? error.message : String(error);
+        throw error;
+      }).finally(function () {
+        state.composer.renamingThread = false;
+        api.notify();
+      });
+    }
+
     function createProject() {
       var workspace = api.getSelectedWorkspace();
       var name = String(state.composer.projectName || '').trim() || 'General';
@@ -985,6 +1073,8 @@
     api.openThreadArtifact = openThreadArtifact;
     api.selectThreadArtifact = selectThreadArtifact;
     api.onSessionClosed = onSessionClosed;
+    api.renameProject = renameProject;
+    api.renameThread = renameThread;
     api.createProject = createProject;
     api.connect = connect;
     api.sendMagicLink = sendMagicLink;

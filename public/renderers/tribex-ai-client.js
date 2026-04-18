@@ -997,6 +997,15 @@
       markers.push(trimmed);
     }
 
+    function pushBodyMarkers(value) {
+      if (typeof value !== 'string') return;
+      value.split(/\r?\n/).map(function (line) {
+        return line.trim();
+      }).filter(function (line) {
+        return line && /[A-Za-z0-9]/.test(line) && line.length >= 12;
+      }).slice(0, 3).forEach(pushMarker);
+    }
+
     function pushTitleMarkers(value) {
       if (typeof value !== 'string') return;
       var trimmed = value.trim();
@@ -1011,12 +1020,7 @@
       ? input.body
       : (typeof output.body === 'string' ? output.body : '');
     if (body) {
-      var bodyLines = body.split(/\r?\n/).map(function (line) {
-        return line.trim();
-      }).filter(Boolean);
-      if (bodyLines.length) {
-        pushMarker(bodyLines[0]);
-      }
+      pushBodyMarkers(body);
     }
 
     pushTitleMarkers(input.title);
@@ -1035,25 +1039,10 @@
     parts.forEach(function (part) {
       extractRuntimeRendererMarkers(part).forEach(function (marker) {
         var markerIndex = text.indexOf(marker);
-        if (markerIndex > 0) {
+        if (markerIndex >= 0) {
           indexes.push(markerIndex);
         }
       });
-    });
-
-    [
-      '\n### ',
-      '\n## ',
-      '\n# ',
-      '\n```mermaid',
-      '\n|',
-      '\n* ',
-      '\n- ',
-    ].forEach(function (marker) {
-      var markerIndex = text.indexOf(marker);
-      if (markerIndex > 0) {
-        indexes.push(markerIndex);
-      }
     });
 
     if (!indexes.length) return -1;
@@ -1067,15 +1056,14 @@
     }
 
     var echoIndex = findRuntimeRendererEchoIndex(text, parts);
+    if (echoIndex === 0) {
+      return '';
+    }
     if (echoIndex > 0) {
       var prefix = text.slice(0, echoIndex).trim();
       if (prefix) return prefix;
     }
-
-    var firstParagraph = text.split(/\n\s*\n/)[0];
-    return firstParagraph && firstParagraph.trim()
-      ? firstParagraph.trim()
-      : text.trim();
+    return text.trim();
   }
 
   function normalizeRuntimeUiMessage(raw, index) {
@@ -1416,6 +1404,24 @@
     });
   }
 
+  function renameProject(workspace, projectId, name) {
+    var projectName = String(name || '').trim() || 'Project';
+    return requestVariants('PATCH', [
+      {
+        path: '/projects/' + encodeURIComponent(projectId),
+        body: {
+          name: projectName,
+        },
+      },
+    ]).then(function (raw) {
+      var project = normalizeProject(raw.project || raw, workspace, 0);
+      if (!project.name || project.name === 'Project') {
+        project.name = projectName;
+      }
+      return project;
+    });
+  }
+
   function fetchThreads(project) {
     return requestCandidates('GET', [
       '/projects/' + encodeURIComponent(project.id) + '/threads',
@@ -1461,6 +1467,24 @@
       var summary = normalizeThreadSummary(raw.thread || raw, { id: projectId }, 0);
       if (!summary.title || summary.title === 'Untitled thread') summary.title = threadTitle;
       return summary;
+    });
+  }
+
+  function renameThread(threadId, title) {
+    var threadTitle = String(title || 'Thread').trim() || 'Thread';
+    return requestVariants('PATCH', [
+      {
+        path: '/threads/' + encodeURIComponent(threadId),
+        body: {
+          title: threadTitle,
+        },
+      },
+    ]).then(function (raw) {
+      var detail = normalizeThreadDetail(raw);
+      if (!detail.title || detail.title === 'Untitled thread') {
+        detail.title = threadTitle;
+      }
+      return detail;
     });
   }
 
@@ -1658,6 +1682,8 @@
     normalizeMessage: normalizeMessage,
     request: request,
     relayRequest: relayRequest,
+    renameProject: renameProject,
+    renameThread: renameThread,
     listLocalMcpTools: listLocalMcpTools,
     callLocalMcpTool: callLocalMcpTool,
     disconnectRuntime: disconnectRuntime,

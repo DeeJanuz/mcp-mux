@@ -392,6 +392,43 @@ describe('tribex-ai-client', function () {
     }));
   });
 
+  it('renames a project through the hosted control plane and preserves the requested name when the response is sparse', async function () {
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/projects/project-123') {
+        return Promise.resolve({
+          id: 'project-123',
+        });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(
+      window.__tribexAiClient.renameProject(
+        { id: 'workspace-123', organizationId: 'org-1', name: 'Workspace 123' },
+        'project-123',
+        'Forecasting',
+      ),
+    ).resolves.toMatchObject({
+      id: 'project-123',
+      name: 'Forecasting',
+    });
+
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'PATCH',
+      path: '/projects/project-123',
+      body: {
+        name: 'Forecasting',
+      },
+    }));
+  });
+
   it('suppresses preview panes for dotted lifecycle companion events', function () {
     expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
       toolName: 'opencode.thread.execution.started',
@@ -792,6 +829,43 @@ describe('tribex-ai-client', function () {
     );
   });
 
+  it('preserves legitimate assistant markdown sections that do not match the rich_content payload', function () {
+    var transcript = window.__tribexAiClient.normalizeRuntimeTranscript('thread-123', {
+      messages: [
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          createdAt: '2026-04-15T00:00:01.000Z',
+          parts: [
+            { type: 'step-start' },
+            {
+              type: 'tool-rich_content',
+              toolCallId: 'tool-rich-1',
+              toolName: 'rich_content',
+              state: 'output-available',
+              input: {
+                title: 'Resource Allocation Strategy: Woodchuck Operations',
+                body: '### Operational Transition Diagram\n\n```mermaid\ngraph TD\nA-->B\n```',
+              },
+            },
+            {
+              type: 'text',
+              text: 'This diagram outlines the strategic realignment required to move from speculative activities to core operational strengths.\n\n### Risks\n\n- Burrowing capacity remains under-allocated.\n- Tool wear will continue until reallocation completes.',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(transcript.messages).toEqual([
+      expect.objectContaining({
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'This diagram outlines the strategic realignment required to move from speculative activities to core operational strengths.\n\n### Risks\n\n- Burrowing capacity remains under-allocated.\n- Tool wear will continue until reallocation completes.',
+      }),
+    ]);
+  });
+
   it('uses the deployed root routes for thread detail and runtime session bootstrap', async function () {
     var runtimeMessages = [
       {
@@ -1090,6 +1164,53 @@ describe('tribex-ai-client', function () {
         }),
       ],
     });
+  });
+
+  it('renames a thread through the hosted control plane and preserves the requested title when the response is sparse', async function () {
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123') {
+        return Promise.resolve({
+          thread: {
+            id: 'thread-123',
+          },
+          project: {
+            id: 'project-123',
+            workspaceId: 'workspace-123',
+            name: 'Finance Planning',
+          },
+          workspace: {
+            id: 'workspace-123',
+            organizationId: 'org-1',
+            name: 'Workspace 123',
+          },
+          messages: [],
+        });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(
+      window.__tribexAiClient.renameThread('thread-123', 'Quarterly review'),
+    ).resolves.toMatchObject({
+      id: 'thread-123',
+      title: 'Quarterly review',
+      projectId: 'project-123',
+    });
+
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'PATCH',
+      path: '/threads/thread-123',
+      body: {
+        title: 'Quarterly review',
+      },
+    }));
   });
 
   it('emits a settled runtime snapshot after the turn completes', async function () {

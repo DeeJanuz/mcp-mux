@@ -55,6 +55,29 @@
       }) || null;
     }
 
+    function mergeProject(project) {
+      if (!project || !project.id) return null;
+      var next = Object.assign({}, getProject(project.id) || {});
+      Object.keys(project || {}).forEach(function (key) {
+        var value = project[key];
+        if (value === undefined || value === null) return;
+        next[key] = value;
+      });
+
+      var replaced = false;
+      state.projects = state.projects.map(function (candidate) {
+        if (!candidate || candidate.id !== next.id) return candidate;
+        replaced = true;
+        return next;
+      });
+
+      if (!replaced) {
+        state.projects = state.projects.concat([next]);
+      }
+
+      return next;
+    }
+
     function getAllThreads() {
       return Object.keys(state.threadEntitiesById).map(function (threadId) {
         return state.threadEntitiesById[threadId];
@@ -424,7 +447,9 @@
 
     function openProjectComposer() {
       state.ui.projectComposerOpen = true;
+      state.ui.projectRenameOpen = false;
       state.ui.threadComposerOpen = false;
+      state.ui.threadRenameOpen = false;
       state.composer.projectName = '';
       state.integration.error = null;
       notify();
@@ -443,6 +468,36 @@
       notify();
     }
 
+    function openProjectRename(projectId) {
+      var targetProjectId = projectId || resolveSelectedProjectId();
+      var project = getProject(targetProjectId);
+      if (!project) return Promise.resolve(null);
+
+      state.ui.projectRenameOpen = true;
+      state.ui.projectComposerOpen = false;
+      state.ui.threadComposerOpen = false;
+      state.ui.threadRenameOpen = false;
+      state.composer.projectRenameId = project.id;
+      state.composer.projectRenameName = project.name || '';
+      state.integration.error = null;
+      notify();
+      return Promise.resolve(project.id);
+    }
+
+    function closeProjectRename() {
+      state.ui.projectRenameOpen = false;
+      state.composer.projectRenameId = null;
+      state.composer.projectRenameName = '';
+      state.composer.renamingProject = false;
+      state.integration.error = null;
+      notify();
+    }
+
+    function setProjectRenameName(value) {
+      state.composer.projectRenameName = value || '';
+      notify();
+    }
+
     function openThreadComposer(options) {
       var targetProjectId = options && options.projectId ? options.projectId : resolveSelectedProjectId();
       if (!targetProjectId) return Promise.resolve(null);
@@ -452,6 +507,8 @@
 
       state.ui.threadComposerOpen = true;
       state.ui.projectComposerOpen = false;
+      state.ui.projectRenameOpen = false;
+      state.ui.threadRenameOpen = false;
       state.composer.threadProjectId = targetProjectId;
       state.composer.threadTitle = state.composer.threadTitle || 'New chat';
       state.composer.threadPersonaError = null;
@@ -488,6 +545,36 @@
 
     function setThreadDraftName(value) {
       state.composer.threadTitle = value || '';
+      notify();
+    }
+
+    function openThreadRename(threadId) {
+      var targetThreadId = threadId || (context.activeSession && context.activeSession.threadId) || null;
+      var thread = getThread(targetThreadId);
+      if (!thread) return Promise.resolve(null);
+
+      state.ui.threadRenameOpen = true;
+      state.ui.threadComposerOpen = false;
+      state.ui.projectComposerOpen = false;
+      state.ui.projectRenameOpen = false;
+      state.composer.threadRenameId = thread.id;
+      state.composer.threadRenameTitle = thread.title || '';
+      state.integration.error = null;
+      notify();
+      return Promise.resolve(thread.id);
+    }
+
+    function closeThreadRename() {
+      state.ui.threadRenameOpen = false;
+      state.composer.threadRenameId = null;
+      state.composer.threadRenameTitle = '';
+      state.composer.renamingThread = false;
+      state.integration.error = null;
+      notify();
+    }
+
+    function setThreadRenameTitle(value) {
+      state.composer.threadRenameTitle = value || '';
       notify();
     }
 
@@ -534,7 +621,9 @@
         navigatorVisible: state.ui.navigatorVisible,
         navigatorCollapsed: state.ui.navigatorCollapsed,
         projectComposerOpen: state.ui.projectComposerOpen,
+        projectRenameOpen: state.ui.projectRenameOpen,
         threadComposerOpen: state.ui.threadComposerOpen,
+        threadRenameOpen: state.ui.threadRenameOpen,
         searchTerm: state.ui.searchTerm,
         packages: clone(state.packages),
         composer: clone(state.composer),
@@ -578,6 +667,7 @@
     api.getThreadUi = getThreadUi;
     api.getSelectedWorkspace = getSelectedWorkspace;
     api.getSelectedProject = getSelectedProject;
+    api.mergeProject = mergeProject;
     api.rememberOrganizationContext = rememberOrganizationContext;
     api.isProjectExpanded = isProjectExpanded;
     api.setProjectExpanded = setProjectExpanded;
@@ -603,9 +693,15 @@
     api.openProjectComposer = openProjectComposer;
     api.closeProjectComposer = closeProjectComposer;
     api.setProjectDraftName = setProjectDraftName;
+    api.openProjectRename = openProjectRename;
+    api.closeProjectRename = closeProjectRename;
+    api.setProjectRenameName = setProjectRenameName;
     api.openThreadComposer = openThreadComposer;
     api.closeThreadComposer = closeThreadComposer;
     api.setThreadDraftName = setThreadDraftName;
+    api.openThreadRename = openThreadRename;
+    api.closeThreadRename = closeThreadRename;
+    api.setThreadRenameTitle = setThreadRenameTitle;
     api.setThreadDraftPersona = setThreadDraftPersona;
     api.setThreadDraft = setThreadDraft;
     api.rememberThreadScroll = rememberThreadScroll;

@@ -1264,6 +1264,25 @@
     return toggle;
   }
 
+  function createRenameButton(state) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ai-thread-rename-button';
+    button.textContent = 'Rename';
+    button.title = 'Rename this chat';
+    button.addEventListener('click', function () {
+      if (
+        !window.__tribexAiState ||
+        typeof window.__tribexAiState.openThreadRename !== 'function' ||
+        !state.threadId
+      ) {
+        return;
+      }
+      window.__tribexAiState.openThreadRename(state.threadId).catch(function () {});
+    });
+    return button;
+  }
+
   function updateHeader(state, threadContext) {
     var headerState = state.header;
     headerState.breadcrumb.textContent = [
@@ -1302,6 +1321,14 @@
         ? window.__tribexAiUtils.formatRelativeTime(threadContext.thread.lastActivityAt)
         : null
     );
+
+    if (
+      state.threadId &&
+      window.__tribexAiState &&
+      typeof window.__tribexAiState.openThreadRename === 'function'
+    ) {
+      headerState.statusRow.appendChild(createRenameButton(state));
+    }
 
     if (isDevModeEnabled()) {
       headerState.statusRow.appendChild(createDevToggle(state));

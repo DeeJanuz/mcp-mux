@@ -210,6 +210,18 @@ describe('tribex-ai-state', function () {
           messages: [],
         });
       }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          organizationId: 'org-1',
+          title: 'Existing chat',
+          projectName: 'General',
+          workspaceName: 'Workspace 1',
+          messages: [],
+        });
+      }),
       listenToStreamEvents: vi.fn(function () {
         return Promise.resolve(function () {});
       }),
@@ -221,6 +233,14 @@ describe('tribex-ai-state', function () {
     loadState();
 
     await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1', { connectStream: false });
+    window.__tribexAiState.setActiveSession('session-1', {
+      meta: {
+        aiView: 'thread',
+        projectId: 'project-1',
+        threadId: 'thread-1',
+      },
+    });
     await window.__tribexAiState.openThreadRename('thread-1');
     window.__tribexAiState.setThreadRenameTitle('Renamed chat');
     await window.__tribexAiState.renameThread();
@@ -230,6 +250,90 @@ describe('tribex-ai-state', function () {
       id: 'thread-1',
       title: 'Renamed chat',
     });
+    expect(window.__companionUtils.replaceSession).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({
+        sessionKey: 'tribex-ai-thread-thread-1',
+        data: expect.objectContaining({
+          title: 'Renamed chat',
+        }),
+        meta: expect.objectContaining({
+          headerTitle: 'Renamed chat',
+          threadId: 'thread-1',
+        }),
+      }),
+      undefined,
+    );
+  });
+
+  it('drops stale workspaces from the active organization during navigator refresh', async function () {
+    var fetchWorkspaces = vi.fn()
+      .mockResolvedValueOnce([
+        { id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' },
+      ])
+      .mockResolvedValueOnce([
+        { id: 'workspace-2', organizationId: 'org-1', name: 'Workspace 2', packageKey: 'generic' },
+      ]);
+    var fetchProjects = vi.fn(function (workspace) {
+      return Promise.resolve([{
+        id: 'project-' + workspace.id,
+        organizationId: 'org-1',
+        workspaceId: workspace.id,
+        name: 'General',
+        workspaceName: workspace.name,
+      }]);
+    });
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: fetchWorkspaces,
+      fetchProjects: fetchProjects,
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      createProject: vi.fn(function (workspace) {
+        return Promise.resolve({
+          id: 'created-project',
+          organizationId: 'org-1',
+          workspaceId: workspace.id,
+          name: 'Created',
+          workspaceName: workspace.name,
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    expect(window.__tribexAiState.getSnapshot().selectedWorkspace).toMatchObject({
+      id: 'workspace-1',
+    });
+
+    await window.__tribexAiState.refreshNavigator(true);
+
+    expect(window.__tribexAiState.getSnapshot().selectedWorkspace).toMatchObject({
+      id: 'workspace-2',
+    });
+
+    await window.__tribexAiState.createProject();
+
+    expect(client.createProject).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'workspace-2' }),
+      'General',
+    );
   });
 
   it('tears down the previous thread resources before reusing the thread session for a new chat', async function () {

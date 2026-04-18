@@ -102,7 +102,13 @@
         .then(function (workspaces) {
           if (!workspaces || epoch !== state.requestState.navigatorEpoch) return null;
 
-          var nextWorkspacesById = Object.assign({}, state.workspacesById);
+          var activeOrganizationId = state.selectedOrganizationId;
+          var nextWorkspacesById = {};
+          Object.keys(state.workspacesById).forEach(function (workspaceId) {
+            var workspace = state.workspacesById[workspaceId];
+            if (!workspace || workspace.organizationId === activeOrganizationId) return;
+            nextWorkspacesById[workspaceId] = workspace;
+          });
           workspaces.forEach(function (workspace) {
             nextWorkspacesById[workspace.id] = workspace;
             api.ensureOrganizationUi(workspace.organizationId);
@@ -913,6 +919,35 @@
           optimistic: false,
           rowState: null,
         }));
+
+        if (
+          merged &&
+          context.activeSession &&
+          context.activeSession.isThread &&
+          context.activeSession.threadId === threadId
+        ) {
+          var sessionConfig = {
+            sessionKey: 'tribex-ai-thread-' + threadId,
+            toolName: 'AI Workspace',
+            contentType: 'tribex_ai_thread',
+            data: { title: merged.title || nextTitle },
+            meta: {
+              aiView: 'thread',
+              headerTitle: merged.title || nextTitle,
+              projectId: merged.projectId || thread.projectId || null,
+              threadId: threadId,
+            },
+            toolArgs: {
+              threadId: threadId,
+            },
+          };
+          var sessionId = replaceSession(context.activeSession.sessionId, sessionConfig);
+          if (sessionId) {
+            setActiveSession(sessionId, {
+              meta: sessionConfig.meta,
+            });
+          }
+        }
 
         state.ui.threadRenameOpen = false;
         state.composer.threadRenameId = null;

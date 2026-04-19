@@ -741,6 +741,7 @@
                 ? api.shouldSilenceInterruptedFailure(threadId, turn.turnId || null)
                 : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);
               api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
+                turnId: turn.turnId || turnId,
                 silent: wasInterrupted,
               });
               api.notify();
@@ -759,6 +760,7 @@
             ? api.shouldSilenceInterruptedFailure(threadId, turnId)
             : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);
           api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
+            turnId: turnId,
             silent: wasInterrupted,
           });
           api.notify();
@@ -777,12 +779,16 @@
       state.interruptedThreadIds[targetThreadId] = detail && detail.activeTurn && detail.activeTurn.turnId
         ? detail.activeTurn.turnId
         : true;
+      var interruptedTurnId = state.interruptedThreadIds[targetThreadId] === true
+        ? null
+        : state.interruptedThreadIds[targetThreadId];
 
       if (window.__tribexAiClient && typeof window.__tribexAiClient.disconnectRuntime === 'function') {
         window.__tribexAiClient.disconnectRuntime(targetThreadId);
       }
 
       api.failActiveTurnLocally(targetThreadId, 'Stopped by user.', {
+        turnId: interruptedTurnId,
         silent: true,
       });
       api.notify();

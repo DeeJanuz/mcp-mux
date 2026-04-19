@@ -4,6 +4,19 @@
   window.__createTribexAiStateProjection = function __createTribexAiStateProjection(context, api) {
     var state = context.state;
 
+    function maxActivityTimestamp(left, right) {
+      if (typeof api.maxActivityTimestamp === 'function') {
+        return api.maxActivityTimestamp(left, right);
+      }
+      if (!left) return right || null;
+      if (!right) return left || null;
+      var leftTime = api.parseActivityTimestamp(left);
+      var rightTime = api.parseActivityTimestamp(right);
+      if (leftTime === null || Number.isNaN(leftTime)) return right;
+      if (rightTime === null || Number.isNaN(rightTime)) return left;
+      return rightTime >= leftTime ? right : left;
+    }
+
     function copyMessages(messages) {
       return Array.isArray(messages)
         ? messages.filter(Boolean).map(function (message) {
@@ -27,6 +40,7 @@
         organizationId: summary.organizationId || null,
         hydrateState: summary.hydrateState || summary.status || null,
         preview: summary.preview || '',
+        messageActivityAt: summary.messageActivityAt || summary.lastActivityAt || null,
         lastActivityAt: summary.lastActivityAt || null,
         personaReleaseId: summary.personaReleaseId || null,
         persona: summary.persona || null,
@@ -37,7 +51,7 @@
         lastHydratedAt: summary.lastHydratedAt || null,
         base: {
           preview: summary.preview || '',
-          lastActivityAt: summary.lastActivityAt || null,
+          lastActivityAt: summary.messageActivityAt || summary.lastActivityAt || null,
           messages: [],
         },
         runtimeSnapshot: null,
@@ -1193,11 +1207,30 @@
       var activityItems = buildActivityItems(record);
       var runs = buildRunGroups(record, displayMessages, activityItems);
       var artifacts = normalizeArtifactItems(record);
-      var latestMessage = displayMessages.length ? displayMessages[displayMessages.length - 1] : null;
+      var latestConversationMessage = null;
+      for (var messageIndex = displayMessages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+        var candidateMessage = displayMessages[messageIndex];
+        if (!candidateMessage) continue;
+        if (candidateMessage.role === 'user' || candidateMessage.role === 'assistant') {
+          latestConversationMessage = candidateMessage;
+          break;
+        }
+      }
       var previewSource = null;
-      var lastActivityAt = latestMessage && latestMessage.createdAt
-        ? latestMessage.createdAt
-        : (record.runtimeSnapshot && record.runtimeSnapshot.lastActivityAt) || recordBase.lastActivityAt || record.lastActivityAt || null;
+      var messageActivityAt = maxActivityTimestamp(
+        maxActivityTimestamp(
+          record && record.messageActivityAt ? record.messageActivityAt : null,
+          recordBase.lastActivityAt || null
+        ),
+        maxActivityTimestamp(
+          record && record.lastActivityAt ? record.lastActivityAt : null,
+          record && record.runtimeSnapshot ? (record.runtimeSnapshot.messageActivityAt || record.runtimeSnapshot.lastActivityAt || null) : null
+        )
+      );
+      if (latestConversationMessage && latestConversationMessage.createdAt) {
+        messageActivityAt = maxActivityTimestamp(messageActivityAt, latestConversationMessage.createdAt);
+      }
+      var lastActivityAt = messageActivityAt;
 
       if (Array.isArray(runs) && runs.length) {
         for (var runIndex = runs.length - 1; runIndex >= 0; runIndex -= 1) {
@@ -1239,10 +1272,9 @@
         record.activeTurn.status !== 'failed'
       ) {
         var activeTurnTime = api.parseActivityTimestamp(record.activeTurn.userMessage.createdAt || record.activeTurn.startedAt);
-        var projectedTime = api.parseActivityTimestamp(lastActivityAt);
+        var projectedTime = api.parseActivityTimestamp(messageActivityAt);
         if (projectedTime === null || (activeTurnTime !== null && activeTurnTime >= projectedTime)) {
           preview = record.activeTurn.userMessage.content;
-          lastActivityAt = record.activeTurn.userMessage.createdAt || record.activeTurn.startedAt || lastActivityAt;
         }
       }
 
@@ -1261,6 +1293,7 @@
           }
           : null,
         preview: preview,
+        messageActivityAt: messageActivityAt,
         lastActivityAt: lastActivityAt,
       };
     }
@@ -1269,6 +1302,7 @@
       if (!record) return;
       var projection = buildThreadProjection(record);
       record.preview = projection.preview;
+      record.messageActivityAt = projection.messageActivityAt;
       record.lastActivityAt = projection.lastActivityAt;
       api.mergeThreadSummary({
         id: record.id,
@@ -1278,6 +1312,7 @@
         organizationId: record.organizationId,
         preview: projection.preview,
         hydrateState: record.hydrateState,
+        messageActivityAt: projection.messageActivityAt,
         lastActivityAt: projection.lastActivityAt,
         personaReleaseId: record.personaReleaseId,
         persona: record.persona || null,
@@ -1408,6 +1443,7 @@
           artifacts: projection.artifacts,
           artifactDrawer: projection.artifactDrawer,
           preview: projection.preview,
+          messageActivityAt: projection.messageActivityAt,
           lastActivityAt: projection.lastActivityAt,
           ui: threadUi ? Object.assign({}, threadUi) : null,
         })

@@ -702,6 +702,44 @@ pub async fn save_file(
 }
 
 #[tauri::command]
+pub async fn save_binary_file(
+    app_handle: tauri::AppHandle,
+    filename: String,
+    content_base64: String,
+) -> Result<bool, String> {
+    use base64::Engine;
+    use tauri_plugin_dialog::DialogExt;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(content_base64.as_bytes())
+        .map_err(|e| format!("Failed to decode file content: {}", e))?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    app_handle
+        .dialog()
+        .file()
+        .set_file_name(&filename)
+        .add_filter("All Files", &["*"])
+        .save_file(move |path| {
+            let _ = tx.send(path);
+        });
+
+    let path = rx.await.map_err(|_| "Save dialog cancelled unexpectedly".to_string())?;
+
+    match path {
+        Some(file_path) => {
+            let p = file_path
+                .as_path()
+                .ok_or_else(|| "Save dialog returned a non-local path".to_string())?;
+            std::fs::write(p, &bytes)
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
+#[tauri::command]
 pub fn get_standalone_renderers(state: State<'_, Arc<AppState>>) -> Vec<serde_json::Value> {
     let registry = state.plugin_registry.lock().unwrap();
     let mut results = Vec::new();

@@ -4,6 +4,29 @@
   window.__createTribexAiStateRuntime = function __createTribexAiStateRuntime(context, api) {
     var state = context.state;
 
+    function maxActivityTimestamp(left, right) {
+      if (typeof api.maxActivityTimestamp === 'function') {
+        return api.maxActivityTimestamp(left, right);
+      }
+      if (!left) return right || null;
+      if (!right) return left || null;
+      var leftTime = api.parseActivityTimestamp ? api.parseActivityTimestamp(left) : Date.parse(left);
+      var rightTime = api.parseActivityTimestamp ? api.parseActivityTimestamp(right) : Date.parse(right);
+      if (leftTime === null || Number.isNaN(leftTime)) return right;
+      if (rightTime === null || Number.isNaN(rightTime)) return left;
+      return rightTime >= leftTime ? right : left;
+    }
+
+    function resolveConversationActivityTimestamp(messages) {
+      if (!Array.isArray(messages)) return null;
+      return messages.reduce(function (latest, message) {
+        if (!message || (message.role !== 'user' && message.role !== 'assistant') || !message.createdAt) {
+          return latest;
+        }
+        return maxActivityTimestamp(latest, message.createdAt);
+      }, null);
+    }
+
     function getNestedValue(value, path) {
       var current = value;
       for (var i = 0; i < path.length; i += 1) {
@@ -267,6 +290,7 @@
           streamStatus: 'error',
           error: event.message || 'Desktop relay stream failed.',
         });
+        failActiveTurnLocally(event.relayId, event.message || 'Desktop relay stream failed.');
         api.notify();
         return;
       }
@@ -320,7 +344,15 @@
       if (detail.persona) merged.persona = detail.persona;
       if (detail.personaRelease) merged.personaRelease = detail.personaRelease;
       if (detail.preview) merged.base.preview = detail.preview;
-      if (detail.lastActivityAt) merged.base.lastActivityAt = detail.lastActivityAt;
+      var detailMessages = Array.isArray(detail.runtimeMessages)
+        ? detail.runtimeMessages
+        : (Array.isArray(detail.messages) ? detail.messages : []);
+      var conversationActivityAt = resolveConversationActivityTimestamp(detailMessages);
+      if (conversationActivityAt || detail.messageActivityAt || detail.lastActivityAt) {
+        var nextActivityAt = conversationActivityAt || detail.messageActivityAt || detail.lastActivityAt;
+        merged.messageActivityAt = maxActivityTimestamp(merged.messageActivityAt, nextActivityAt);
+        merged.base.lastActivityAt = maxActivityTimestamp(merged.base.lastActivityAt, nextActivityAt);
+      }
       if (detail.rowState !== undefined) merged.rowState = detail.rowState;
       if (detail.optimistic !== undefined) merged.optimistic = !!detail.optimistic;
       if (detail.syncing !== undefined) merged.syncing = !!detail.syncing;
@@ -335,6 +367,7 @@
               ? detail.messages.slice()
               : [],
           preview: detail.preview || '',
+          messageActivityAt: conversationActivityAt || detail.messageActivityAt || detail.lastActivityAt || null,
           lastActivityAt: detail.lastActivityAt || null,
         };
         if (
@@ -408,7 +441,14 @@
       }
       if (detail.activeTurn.userMessage && detail.activeTurn.userMessage.content) {
         detail.base.preview = detail.activeTurn.userMessage.content;
-        detail.base.lastActivityAt = detail.activeTurn.userMessage.createdAt || detail.base.lastActivityAt;
+        detail.messageActivityAt = maxActivityTimestamp(
+          detail.messageActivityAt,
+          detail.activeTurn.userMessage.createdAt || detail.activeTurn.startedAt || null
+        );
+        detail.base.lastActivityAt = maxActivityTimestamp(
+          detail.base.lastActivityAt,
+          detail.activeTurn.userMessage.createdAt || detail.activeTurn.startedAt || null
+        );
       }
       api.rememberTurnHistory(detail);
       api.syncThreadSummaryFromRecord(detail);
@@ -438,7 +478,8 @@
       };
       detail.activeTurn.userMessage.turnId = detail.activeTurn.turnId;
       detail.base.preview = prompt;
-      detail.base.lastActivityAt = createdAt;
+      detail.messageActivityAt = maxActivityTimestamp(detail.messageActivityAt, createdAt);
+      detail.base.lastActivityAt = maxActivityTimestamp(detail.base.lastActivityAt, createdAt);
       api.rememberTurnHistory(detail);
       api.syncThreadSummaryFromRecord(detail);
       return detail.activeTurn;
@@ -471,8 +512,9 @@
       if (message.content && (message.role === 'user' || message.role === 'assistant')) {
         record.base.preview = message.content;
       }
-      if (message.createdAt) {
-        record.base.lastActivityAt = message.createdAt;
+      if (message.createdAt && (message.role === 'user' || message.role === 'assistant')) {
+        record.messageActivityAt = maxActivityTimestamp(record.messageActivityAt, message.createdAt);
+        record.base.lastActivityAt = maxActivityTimestamp(record.base.lastActivityAt, message.createdAt);
       }
       api.syncThreadSummaryFromRecord(record);
     }
@@ -591,6 +633,62 @@
       return detail;
     }
 
+    function failActiveTurnLocally(threadId, message, options) {
+      if (!threadId) return null;
+      var detail = (state.threadDetails && state.threadDetails[threadId])
+        || (state.threadEntitiesById && state.threadEntitiesById[threadId])
+        || null;
+      var errorMessage = message || 'Runtime turn failed.';
+      var silent = !!(options && options.silent);
+      var completedAt = options && options.completedAt ? options.completedAt : api.nowIso();
+
+      state.pendingThreadIds = state.pendingThreadIds || {};
+      state.threadErrors = state.threadErrors || {};
+      delete state.pendingThreadIds[threadId];
+      state.threadErrors[threadId] = silent ? null : errorMessage;
+
+      if (detail) {
+        detail.turnCompletedAtById = detail.turnCompletedAtById || {};
+        if (detail.activeTurn) {
+          var turnId = detail.activeTurn.turnId || null;
+          if (turnId) {
+            detail.turnCompletedAtById[turnId] = completedAt;
+          }
+          detail.lastTurnId = turnId || detail.lastTurnId || null;
+          detail.lastTurnOrdinal = detail.activeTurn.turnOrdinal || detail.lastTurnOrdinal || 0;
+          detail.activeTurn.status = 'failed';
+          if (detail.activeTurn.userMessage) {
+            detail.activeTurn.userMessage.pending = false;
+          }
+          if (detail.activeTurn.assistantMessage) {
+            detail.activeTurn.assistantMessage.isStreaming = false;
+          }
+          api.rememberTurnHistory(detail);
+        }
+        detail.rowState = silent ? null : 'error';
+        api.syncThreadSummaryFromRecord(detail);
+      }
+
+      return detail;
+    }
+
+    function shouldSilenceInterruptedFailure(threadId, turnId) {
+      if (!threadId || !state.interruptedThreadIds || !state.interruptedThreadIds[threadId]) return false;
+      var marker = state.interruptedThreadIds[threadId];
+      if (marker !== true) {
+        var detail = (state.threadDetails && state.threadDetails[threadId])
+          || (state.threadEntitiesById && state.threadEntitiesById[threadId])
+          || null;
+        var currentTurnId = detail && detail.activeTurn ? detail.activeTurn.turnId || null : detail && detail.lastTurnId || null;
+        if ((turnId && marker !== turnId) || (!turnId && currentTurnId && marker !== currentTurnId)) {
+          delete state.interruptedThreadIds[threadId];
+          return false;
+        }
+      }
+      delete state.interruptedThreadIds[threadId];
+      return true;
+    }
+
     function postPushPreview(payload) {
       return fetch('http://localhost:4200/api/push', {
         method: 'POST',
@@ -622,8 +720,9 @@
       }
 
       if (event.type === 'error') {
+        var streamError = event.message || 'Companion stream failed.';
         state.streamStatuses[event.threadId] = 'error';
-        state.threadErrors[event.threadId] = event.message || 'Companion stream failed.';
+        failActiveTurnLocally(event.threadId, streamError);
         api.notify();
         return;
       }
@@ -749,8 +848,9 @@
 
       if (event.type === 'error') {
         detail.connection.runtimeError = event.error || 'Runtime connection failed.';
-        state.threadErrors[threadId] = detail.connection.runtimeError;
-        delete state.pendingThreadIds[threadId];
+        failActiveTurnLocally(threadId, detail.connection.runtimeError, {
+          silent: shouldSilenceInterruptedFailure(threadId, event.turnId || null),
+        });
         api.notify();
         return;
       }
@@ -856,23 +956,11 @@
       }
 
       if (event.type === 'turn_error') {
-        if (event.turnId) {
-          detail.turnCompletedAtById[event.turnId] = event.createdAt || api.nowIso();
-        } else if (detail.activeTurn && detail.activeTurn.turnId) {
-          detail.turnCompletedAtById[detail.activeTurn.turnId] = event.createdAt || api.nowIso();
-        }
-        if (detail.activeTurn && (!detail.activeTurn.turnId || detail.activeTurn.turnId === event.turnId)) {
-          detail.lastTurnId = detail.activeTurn.turnId || detail.lastTurnId || null;
-          detail.lastTurnOrdinal = detail.activeTurn.turnOrdinal || detail.lastTurnOrdinal || 0;
-          detail.activeTurn.status = 'failed';
-          if (detail.activeTurn.assistantMessage) {
-            detail.activeTurn.assistantMessage.isStreaming = false;
-          }
-          api.rememberTurnHistory(detail);
-        }
         detail.connection.runtimeError = event.error || 'Runtime turn failed.';
-        state.threadErrors[threadId] = detail.connection.runtimeError;
-        delete state.pendingThreadIds[threadId];
+        failActiveTurnLocally(threadId, detail.connection.runtimeError, {
+          completedAt: event.createdAt || null,
+          silent: shouldSilenceInterruptedFailure(threadId, event.turnId || null),
+        });
         api.notify();
         return;
       }
@@ -915,6 +1003,8 @@
     api.buildCompanionActivityItem = buildCompanionActivityItem;
     api.applySendResult = applySendResult;
     api.updateActiveAssistant = updateActiveAssistant;
+    api.failActiveTurnLocally = failActiveTurnLocally;
+    api.shouldSilenceInterruptedFailure = shouldSilenceInterruptedFailure;
     api.postPushPreview = postPushPreview;
     api.shouldSkipReplayEvent = shouldSkipReplayEvent;
     api.handleStreamEvent = handleStreamEvent;

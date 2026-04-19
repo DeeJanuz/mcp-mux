@@ -192,6 +192,7 @@ fn main() {
             commands::reinstall_plugin,
             commands::clear_plugin_auth,
             commands::save_file,
+            commands::save_binary_file,
             commands::get_renderer_registry,
             commands::get_standalone_renderers,
             commands::set_native_theme,

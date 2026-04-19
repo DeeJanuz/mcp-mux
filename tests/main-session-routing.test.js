@@ -14,6 +14,7 @@ function loadMain() {
       '    handlePush: handlePush,',
       '    getSession: function (sessionId) { return sessions.get(sessionId) || null; },',
       '    getSessionIds: function () { return Array.from(sessions.keys()); },',
+      '    updateSessionMetadata: updateSessionMetadata,',
       '  };',
       '  renderEmpty();',
       '  initAiButton();',
@@ -88,5 +89,35 @@ describe('main session routing', function () {
         artifactSource: 'tribex-ai-thread-result',
       }),
     });
+  });
+
+  it('renders and clears the top-of-viewport busy pulse from session metadata', function () {
+    loadMain();
+
+    window.__mainTest.handlePush({
+      sessionId: 'session-busy',
+      toolName: 'AI Workspace',
+      contentType: 'rich_content',
+      data: {
+        title: 'Busy Session',
+      },
+      meta: {
+        headerTitle: 'Busy Session',
+        busyIndicator: {
+          kind: 'line-pulse',
+          status: 'busy',
+        },
+      },
+      toolArgs: {},
+      reviewRequired: false,
+    });
+
+    expect(document.querySelector('.session-content.active .session-busy-indicator')).not.toBeNull();
+
+    window.__mainTest.updateSessionMetadata('session-busy', {
+      busyIndicator: null,
+    });
+
+    expect(document.querySelector('.session-content.active .session-busy-indicator')).toBeNull();
   });
 });

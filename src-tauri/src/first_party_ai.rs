@@ -45,6 +45,97 @@ fn join_url(base: &str, path: &str) -> String {
     }
 }
 
+fn url_origin(raw_url: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw_url).ok()?;
+    let scheme = url.scheme();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+
+    let host = url.host_str()?;
+    let mut origin = format!("{}://{}", scheme, host);
+    if let Some(port) = url.port() {
+        origin.push(':');
+        origin.push_str(&port.to_string());
+    }
+    Some(origin)
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+}
+
+fn same_loopback_endpoint(left: &str, right: &str) -> bool {
+    let Ok(left_url) = reqwest::Url::parse(left) else {
+        return false;
+    };
+    let Ok(right_url) = reqwest::Url::parse(right) else {
+        return false;
+    };
+
+    left_url.scheme() == right_url.scheme()
+        && left_url.port_or_known_default() == right_url.port_or_known_default()
+        && left_url
+            .host_str()
+            .map(is_loopback_host)
+            .unwrap_or(false)
+        && right_url
+            .host_str()
+            .map(is_loopback_host)
+            .unwrap_or(false)
+}
+
+fn should_align_endpoint(
+    candidate: Option<&str>,
+    previous_base_url: Option<&str>,
+    verified_origin: &str,
+) -> bool {
+    let Some(candidate) = candidate else {
+        return false;
+    };
+    if candidate == verified_origin {
+        return false;
+    }
+    if previous_base_url
+        .map(|base_url| candidate == base_url || same_loopback_endpoint(candidate, base_url))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    same_loopback_endpoint(candidate, verified_origin)
+}
+
+fn align_first_party_base_url_with_paths(
+    settings_path: &std::path::Path,
+    verified_origin: &str,
+) -> Result<(), String> {
+    let verified_origin = trim_trailing_slash(verified_origin);
+    let mut settings = mcpviews_shared::settings::Settings::load_from_path(settings_path);
+    let first_party_ai = settings.first_party_ai.get_or_insert_with(Default::default);
+    let previous_base_url = first_party_ai.base_url.clone();
+
+    if first_party_ai.base_url.as_deref() == Some(verified_origin.as_str()) {
+        return Ok(());
+    }
+
+    if should_align_endpoint(
+        first_party_ai.relay_base_url.as_deref(),
+        previous_base_url.as_deref(),
+        &verified_origin,
+    ) {
+        first_party_ai.relay_base_url = Some(verified_origin.clone());
+    }
+    if should_align_endpoint(
+        first_party_ai.device_base_url.as_deref(),
+        previous_base_url.as_deref(),
+        &verified_origin,
+    ) {
+        first_party_ai.device_base_url = Some(verified_origin.clone());
+    }
+    first_party_ai.base_url = Some(verified_origin);
+    settings.save_to_path(settings_path)
+}
+
 fn shorten_error_body(body: &str) -> String {
     let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
     if compact.len() > 240 {
@@ -634,6 +725,7 @@ pub async fn verify_magic_link(
     } else {
         build_request_url(&format!("/api/auth/magic-link/verify?token={}", raw))?
     };
+    let verified_origin = url_origin(&verify_url);
 
     let response = state
         .http_client
@@ -656,6 +748,9 @@ pub async fn verify_magic_link(
     }
 
     state.persist_first_party_ai_cookies()?;
+    if let Some(origin) = verified_origin {
+        align_first_party_base_url_with_paths(&mcpviews_shared::config_path(), &origin)?;
+    }
     get_session(state).await
 }
 
@@ -891,4 +986,100 @@ pub async fn start_companion_stream(
     let mut streams = state.first_party_ai_streams.lock().unwrap();
     streams.insert(thread_id, handle);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_loopback_endpoint_treats_localhost_and_127_as_equivalent() {
+        assert!(same_loopback_endpoint(
+            "http://127.0.0.1:3000",
+            "http://localhost:3000"
+        ));
+        assert!(!same_loopback_endpoint(
+            "http://127.0.0.1:3000",
+            "http://localhost:3001"
+        ));
+        assert!(!same_loopback_endpoint(
+            "https://127.0.0.1:3000",
+            "http://localhost:3000"
+        ));
+    }
+
+    #[test]
+    fn url_origin_extracts_scheme_host_and_port() {
+        assert_eq!(
+            url_origin("http://localhost:3000/api/auth/magic-link/verify?token=abc")
+                .as_deref(),
+            Some("http://localhost:3000")
+        );
+        assert_eq!(
+            url_origin("https://ai.example.com/sign-in").as_deref(),
+            Some("https://ai.example.com")
+        );
+    }
+
+    #[test]
+    fn align_first_party_base_url_updates_matching_loopback_endpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_path = dir.path().join("config.json");
+        let settings = mcpviews_shared::settings::Settings {
+            registry_url: None,
+            registry_sources: Vec::new(),
+            first_party_ai: Some(mcpviews_shared::settings::FirstPartyAiSettings {
+                base_url: Some("http://127.0.0.1:3000".to_string()),
+                auth_url: None,
+                token_url: None,
+                client_id: None,
+                relay_base_url: Some("http://127.0.0.1:3000".to_string()),
+                device_base_url: Some("http://127.0.0.1:3000".to_string()),
+                relay_token: Some("keep-token".to_string()),
+                relay_token_expires_at: Some(1_800_000_000),
+                relay_device_id: Some("device-1".to_string()),
+            }),
+        };
+        settings.save_to_path(&settings_path).unwrap();
+
+        align_first_party_base_url_with_paths(&settings_path, "http://localhost:3000").unwrap();
+
+        let updated = mcpviews_shared::settings::Settings::load_from_path(&settings_path);
+        let cfg = updated.first_party_ai.unwrap();
+        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(cfg.relay_base_url.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(cfg.device_base_url.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(cfg.relay_token.as_deref(), Some("keep-token"));
+        assert_eq!(cfg.relay_device_id.as_deref(), Some("device-1"));
+    }
+
+    #[test]
+    fn align_first_party_base_url_preserves_distinct_relay_endpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings_path = dir.path().join("config.json");
+        let settings = mcpviews_shared::settings::Settings {
+            registry_url: None,
+            registry_sources: Vec::new(),
+            first_party_ai: Some(mcpviews_shared::settings::FirstPartyAiSettings {
+                base_url: Some("http://127.0.0.1:3000".to_string()),
+                auth_url: None,
+                token_url: None,
+                client_id: None,
+                relay_base_url: Some("https://relay.example.com".to_string()),
+                device_base_url: Some("https://device.example.com".to_string()),
+                relay_token: None,
+                relay_token_expires_at: None,
+                relay_device_id: None,
+            }),
+        };
+        settings.save_to_path(&settings_path).unwrap();
+
+        align_first_party_base_url_with_paths(&settings_path, "http://localhost:3000").unwrap();
+
+        let updated = mcpviews_shared::settings::Settings::load_from_path(&settings_path);
+        let cfg = updated.first_party_ai.unwrap();
+        assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(cfg.relay_base_url.as_deref(), Some("https://relay.example.com"));
+        assert_eq!(cfg.device_base_url.as_deref(), Some("https://device.example.com"));
+    }
 }

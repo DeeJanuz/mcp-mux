@@ -641,32 +641,46 @@
       var errorMessage = message || 'Runtime turn failed.';
       var silent = !!(options && options.silent);
       var completedAt = options && options.completedAt ? options.completedAt : api.nowIso();
+      var failedTurnId = options && options.turnId ? options.turnId : null;
 
       state.pendingThreadIds = state.pendingThreadIds || {};
       state.threadErrors = state.threadErrors || {};
-      delete state.pendingThreadIds[threadId];
-      state.threadErrors[threadId] = silent ? null : errorMessage;
 
       if (detail) {
         detail.turnCompletedAtById = detail.turnCompletedAtById || {};
-        if (detail.activeTurn) {
-          var turnId = detail.activeTurn.turnId || null;
+        var activeTurn = detail.activeTurn || null;
+        var activeTurnId = activeTurn ? activeTurn.turnId || null : null;
+        var failureMatchesActiveTurn = !failedTurnId || !activeTurn || !activeTurnId || activeTurnId === failedTurnId;
+        if (failedTurnId) {
+          detail.turnCompletedAtById[failedTurnId] = completedAt;
+        }
+        if (failureMatchesActiveTurn) {
+          delete state.pendingThreadIds[threadId];
+          state.threadErrors[threadId] = silent ? null : errorMessage;
+        }
+        if (activeTurn && failureMatchesActiveTurn) {
+          var turnId = activeTurnId || failedTurnId || null;
           if (turnId) {
             detail.turnCompletedAtById[turnId] = completedAt;
           }
           detail.lastTurnId = turnId || detail.lastTurnId || null;
-          detail.lastTurnOrdinal = detail.activeTurn.turnOrdinal || detail.lastTurnOrdinal || 0;
-          detail.activeTurn.status = 'failed';
-          if (detail.activeTurn.userMessage) {
-            detail.activeTurn.userMessage.pending = false;
+          detail.lastTurnOrdinal = activeTurn.turnOrdinal || detail.lastTurnOrdinal || 0;
+          activeTurn.status = 'failed';
+          if (activeTurn.userMessage) {
+            activeTurn.userMessage.pending = false;
           }
-          if (detail.activeTurn.assistantMessage) {
-            detail.activeTurn.assistantMessage.isStreaming = false;
+          if (activeTurn.assistantMessage) {
+            activeTurn.assistantMessage.isStreaming = false;
           }
           api.rememberTurnHistory(detail);
         }
-        detail.rowState = silent ? null : 'error';
+        if (failureMatchesActiveTurn) {
+          detail.rowState = silent ? null : 'error';
+        }
         api.syncThreadSummaryFromRecord(detail);
+      } else {
+        delete state.pendingThreadIds[threadId];
+        state.threadErrors[threadId] = silent ? null : errorMessage;
       }
 
       return detail;
@@ -722,7 +736,9 @@
       if (event.type === 'error') {
         var streamError = event.message || 'Companion stream failed.';
         state.streamStatuses[event.threadId] = 'error';
-        failActiveTurnLocally(event.threadId, streamError);
+        failActiveTurnLocally(event.threadId, streamError, {
+          turnId: event.turnId || null,
+        });
         api.notify();
         return;
       }
@@ -849,6 +865,7 @@
       if (event.type === 'error') {
         detail.connection.runtimeError = event.error || 'Runtime connection failed.';
         failActiveTurnLocally(threadId, detail.connection.runtimeError, {
+          turnId: event.turnId || null,
           silent: shouldSilenceInterruptedFailure(threadId, event.turnId || null),
         });
         api.notify();
@@ -958,6 +975,7 @@
       if (event.type === 'turn_error') {
         detail.connection.runtimeError = event.error || 'Runtime turn failed.';
         failActiveTurnLocally(threadId, detail.connection.runtimeError, {
+          turnId: event.turnId || null,
           completedAt: event.createdAt || null,
           silent: shouldSilenceInterruptedFailure(threadId, event.turnId || null),
         });

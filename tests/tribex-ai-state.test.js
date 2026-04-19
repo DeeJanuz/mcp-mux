@@ -1062,6 +1062,112 @@ describe('tribex-ai-state', function () {
     });
   });
 
+  it('ignores stale stopped-turn failures after a newer turn starts', async function () {
+    var doneRejectsByTurnId = {};
+    var submittedTurnIds = [];
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'New chat',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'New chat',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [],
+        });
+      }),
+      registerDesktopRelay: vi.fn(function () {
+        return Promise.resolve({
+          relaySession: { id: 'relay-session-1' },
+          relayDeviceId: 'device-1',
+        });
+      }),
+      startDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      disconnectRuntime: vi.fn(),
+      sendMessage: vi.fn(function (_threadId, _prompt, options) {
+        var turnId = options && options.turnId ? options.turnId : 'turn-' + (submittedTurnIds.length + 1);
+        submittedTurnIds.push(turnId);
+        return Promise.resolve({
+          turnId: turnId,
+          done: new Promise(function (_resolve, reject) {
+            doneRejectsByTurnId[turnId] = reject;
+          }),
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value.thread || value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1', { connectStream: false });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await window.__tribexAiState.submitPrompt('thread-1', 'First turn');
+    var stoppedTurnId = submittedTurnIds[0];
+    await window.__tribexAiState.interruptThread('thread-1');
+    await window.__tribexAiState.submitPrompt('thread-1', 'Second turn');
+    var activeTurnId = submittedTurnIds[1];
+
+    doneRejectsByTurnId[stoppedTurnId](new Error('Connection closed'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    var threadContext = window.__tribexAiState.getThreadContext('thread-1');
+    expect(threadContext.pending).toBe(true);
+    expect(threadContext.error).toBeNull();
+    expect(threadContext.thread.activeTurn).toMatchObject({
+      turnId: activeTurnId,
+      status: 'queued',
+    });
+    expect(threadContext.thread.activeTurn.userMessage.pending).toBe(true);
+  });
+
   it('turns local desktop relay tool requests into inline structured-data results instead of reopenable artifacts', async function () {
     vi.useFakeTimers();
     var relayHandler = null;

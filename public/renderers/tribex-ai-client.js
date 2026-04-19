@@ -509,6 +509,59 @@
     };
   }
 
+  function normalizeWorkspaceFile(raw, index) {
+    raw = raw || {};
+    var relativePath = pickFirst([raw.relativePath, raw.relative_path, raw.path, raw.name], 'file-' + index);
+    return {
+      id: pickFirst([raw.id, raw.fileId, raw.file_id], relativePath),
+      relativePath: relativePath,
+      name: String(relativePath || '').split('/').pop() || relativePath,
+      bucketName: pickFirst([raw.bucketName, raw.bucket_name], null),
+      objectKey: pickFirst([raw.objectKey, raw.object_key], null),
+      contentType: pickFirst([raw.contentType, raw.content_type, raw.mimeType, raw.mime_type], null),
+      sizeBytes: Number(pickFirst([raw.sizeBytes, raw.size_bytes, raw.size], 0)) || 0,
+      checksum: pickFirst([raw.checksum, raw.etag], null),
+      source: pickFirst([raw.source], null),
+      syncState: pickFirst([raw.syncState, raw.sync_state, raw.status], null),
+      metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
+      uploadedAt: normalizeTimestamp(pickFirst([raw.uploadedAt, raw.uploaded_at], null)),
+      lastSyncedAt: normalizeTimestamp(pickFirst([raw.lastSyncedAt, raw.last_synced_at], null)),
+      lastModifiedAt: normalizeTimestamp(pickFirst([raw.lastModifiedAt, raw.last_modified_at, raw.updatedAt, raw.updated_at], null)),
+      createdAt: normalizeTimestamp(pickFirst([raw.createdAt, raw.created_at], null)),
+      raw: raw,
+    };
+  }
+
+  function normalizeWorkspaceFileEnvelope(raw) {
+    raw = raw || {};
+    var file = raw.file ? normalizeWorkspaceFile(raw.file, 0) : null;
+    return {
+      environment: raw.environment || null,
+      file: file,
+      download: raw.download || null,
+      upload: raw.upload || null,
+      expiresAt: normalizeTimestamp(pickFirst([raw.expiresAt, raw.expires_at], null)),
+      raw: raw,
+    };
+  }
+
+  function normalizeWorkspaceFileBatch(raw) {
+    raw = raw || {};
+    return {
+      environment: raw.environment || null,
+      batch: raw.batch || null,
+      items: extractArray(raw, ['items', 'files']).map(function (item, index) {
+        var file = item.file ? normalizeWorkspaceFile(item.file, index) : null;
+        return Object.assign({}, item, {
+          file: file,
+          relativePath: pickFirst([item.relativePath, item.relative_path, file && file.relativePath], 'file-' + index),
+          upload: item.upload || null,
+        });
+      }),
+      raw: raw,
+    };
+  }
+
   function normalizePackage(raw, index) {
     raw = raw || {};
     var key = pickFirst([raw.key, raw.packageKey, raw.slug], 'package-' + index);
@@ -555,6 +608,18 @@
   function normalizeThreadSummary(raw, project, index) {
     raw = raw || {};
     var id = pickFirst([raw.id, raw.threadId], 'thread-' + index);
+    var messageActivityAt = normalizeTimestamp(pickFirst([
+      raw.messageActivityAt,
+      raw.message_activity_at,
+      raw.latestMessageAt,
+      raw.latest_message_at,
+      raw.lastMessageAt,
+      raw.last_message_at,
+      raw.lastActivityAt,
+      raw.last_activity_at,
+      raw.createdAt,
+      raw.created_at,
+    ], null));
     return {
       id: id,
       projectId: pickFirst([raw.projectId, project && project.id], null),
@@ -563,7 +628,8 @@
       title: pickFirst([raw.title, raw.name], 'Untitled thread'),
       preview: pickFirst([raw.preview, raw.summary, raw.lastMessagePreview, stringifyContent(raw.lastMessage)], ''),
       hydrateState: pickFirst([raw.hydrateState, raw.status, raw.state], null),
-      lastActivityAt: normalizeTimestamp(pickFirst([raw.lastActivityAt, raw.latestMessageAt, raw.lastRunAt, raw.updatedAt, raw.createdAt], null)),
+      messageActivityAt: messageActivityAt,
+      lastActivityAt: messageActivityAt,
       workspaceName: pickFirst([raw.workspaceName, project && project.workspaceName], null),
       projectName: pickFirst([raw.projectName, project && project.name], null),
       personaReleaseId: pickFirst([raw.personaReleaseId], null),
@@ -706,6 +772,28 @@
     var thread = raw.thread && typeof raw.thread === 'object' ? raw.thread : raw;
     var project = raw.project && typeof raw.project === 'object' ? raw.project : {};
     var workspace = raw.workspace && typeof raw.workspace === 'object' ? raw.workspace : {};
+    var messageActivityAt = normalizeTimestamp(pickFirst([
+      thread.messageActivityAt,
+      thread.message_activity_at,
+      raw.messageActivityAt,
+      raw.message_activity_at,
+      thread.latestMessageAt,
+      thread.latest_message_at,
+      raw.latestMessageAt,
+      raw.latest_message_at,
+      thread.lastMessageAt,
+      thread.last_message_at,
+      raw.lastMessageAt,
+      raw.last_message_at,
+      thread.lastActivityAt,
+      thread.last_activity_at,
+      raw.lastActivityAt,
+      raw.last_activity_at,
+      thread.createdAt,
+      thread.created_at,
+      raw.createdAt,
+      raw.created_at,
+    ], null));
     var messages = extractArray(raw, ['messages', 'events', 'transcript', 'items']);
     if (!messages.length && thread !== raw) {
       messages = extractArray(thread, ['messages', 'events', 'transcript', 'items']);
@@ -729,7 +817,8 @@
       persona: normalizeThreadPersona(raw.persona || thread.persona),
       personaRelease: raw.personaRelease || thread.personaRelease || null,
       personaTestRun: raw.personaTestRun || thread.personaTestRun || null,
-      lastActivityAt: normalizeTimestamp(pickFirst([thread.lastActivityAt, thread.lastRunAt, thread.updatedAt, thread.createdAt], null)),
+      messageActivityAt: messageActivityAt,
+      lastActivityAt: messageActivityAt,
       messages: messages.map(function (message, index) {
         return normalizeMessage(message, index);
       }),
@@ -1114,6 +1203,7 @@
       runtimeMessages: messages,
       messages: messages,
       preview: latest && latest.content ? latest.content : '',
+      messageActivityAt: latest && latest.createdAt ? latest.createdAt : null,
       lastActivityAt: latest && latest.createdAt ? latest.createdAt : null,
     };
   }
@@ -1127,6 +1217,7 @@
       persona: normalizeThreadPersona(raw.persona),
       packageManifest: raw.packageManifest || null,
       runtimeSession: raw.runtimeSession || null,
+      runtimeMessages: raw.runtimeMessages || null,
       companionSession: raw.companionSession || null,
       relay: raw.relay || {},
     };
@@ -1205,30 +1296,53 @@
     });
   }
 
-  function ensureAgentRuntime(threadId, options) {
-    return ensureRuntimeSession(threadId, options).then(function (envelope) {
-      return buildLocalRelayCatalog(envelope).then(function (catalog) {
-        var relaySessionId = envelope.relay && envelope.relay.bridge
-          ? envelope.relay.bridge.relaySessionId
-          : null;
-        return publishDesktopRelayCatalog(relaySessionId, catalog).then(function (publishResult) {
-          envelope.relay = envelope.relay || {};
-          envelope.relay.catalog = publishResult.catalog || catalog;
-          return connectAgentRuntime(threadId, envelope).then(function () {
-            return envelope;
-          });
+  function prepareAgentRuntime(threadId, envelope) {
+    return buildLocalRelayCatalog(envelope).then(function (catalog) {
+      var relaySessionId = envelope.relay && envelope.relay.bridge
+        ? envelope.relay.bridge.relaySessionId
+        : null;
+      return publishDesktopRelayCatalog(relaySessionId, catalog).then(function (publishResult) {
+        envelope.relay = envelope.relay || {};
+        envelope.relay.catalog = publishResult.catalog || catalog;
+        return connectAgentRuntime(threadId, envelope).then(function () {
+          return envelope;
         });
       });
     });
   }
 
+  function ensureAgentRuntime(threadId, options) {
+    return ensureRuntimeSession(threadId, options).then(function (envelope) {
+      return prepareAgentRuntime(threadId, envelope);
+    });
+  }
+
   function syncThreadRuntime(threadId, options) {
-    return ensureAgentRuntime(threadId, options).then(function (envelope) {
-      return getCloudflareBridge().getMessages({
-        threadId: threadId,
-        connection: envelope.runtimeSession && envelope.runtimeSession.connection,
-      }).then(function (messages) {
-        return normalizeRuntimeTranscript(threadId, messages);
+    return ensureRuntimeSession(threadId, options).then(function (envelope) {
+      var bootstrapTranscript = normalizeRuntimeTranscript(threadId, envelope.runtimeMessages);
+      if (bootstrapTranscript.rawRuntimeMessages.length) {
+        return bootstrapTranscript;
+      }
+
+      return prepareAgentRuntime(threadId, envelope).then(function (preparedEnvelope) {
+        return getCloudflareBridge().getMessages({
+          threadId: threadId,
+          connection: preparedEnvelope.runtimeSession && preparedEnvelope.runtimeSession.connection,
+        }).then(function (messages) {
+          var liveTranscript = normalizeRuntimeTranscript(threadId, messages);
+          if (
+            !liveTranscript.rawRuntimeMessages.length &&
+            bootstrapTranscript.rawRuntimeMessages.length
+          ) {
+            return bootstrapTranscript;
+          }
+          return liveTranscript;
+        });
+      }).catch(function (error) {
+        if (bootstrapTranscript.rawRuntimeMessages.length) {
+          return bootstrapTranscript;
+        }
+        throw error;
       });
     });
   }
@@ -1545,6 +1659,157 @@
     ]).then(normalizeCompanionSession);
   }
 
+  function listWorkspaceFiles(workspaceId, prefix) {
+    var query = prefix ? { prefix: prefix } : null;
+    return requestCandidates('GET', [
+      '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/files',
+    ], null, query).then(function (raw) {
+      return {
+        environment: raw && raw.environment ? raw.environment : null,
+        files: extractArray(raw, ['files', 'items', 'results']).map(normalizeWorkspaceFile),
+      };
+    });
+  }
+
+  function initWorkspaceFileUpload(workspaceId, fileInfo) {
+    fileInfo = fileInfo || {};
+    return requestVariants('POST', [
+      {
+        path: '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/files',
+        body: {
+          relativePath: fileInfo.relativePath,
+          contentType: fileInfo.contentType || null,
+          sizeBytes: fileInfo.sizeBytes || 0,
+          source: fileInfo.source || 'mcpviews-file-browser',
+          metadata: fileInfo.metadata || {},
+        },
+      },
+    ]).then(normalizeWorkspaceFileEnvelope);
+  }
+
+  function createWorkspaceFileBatch(workspaceId, files, metadata) {
+    return requestVariants('POST', [
+      {
+        path: '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/file-batches',
+        body: {
+          source: 'mcpviews-folder-upload',
+          metadata: metadata || {},
+          files: (files || []).map(function (file) {
+            return {
+              relativePath: file.relativePath,
+              contentType: file.contentType || null,
+              sizeBytes: file.sizeBytes || 0,
+              checksum: file.checksum || null,
+              source: file.source || 'mcpviews-file-browser',
+              metadata: file.metadata || {},
+            };
+          }),
+        },
+      },
+    ]).then(normalizeWorkspaceFileBatch);
+  }
+
+  function getWorkspaceFileBatch(workspaceId, batchId) {
+    return requestCandidates('GET', [
+      '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/file-batches/' + encodeURIComponent(batchId),
+    ]).then(normalizeWorkspaceFileBatch);
+  }
+
+  function finalizeWorkspaceFileBatch(workspaceId, batchId) {
+    return requestVariants('POST', [
+      {
+        path: '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/file-batches/' + encodeURIComponent(batchId) + '/finalize',
+      },
+    ]).then(normalizeWorkspaceFileBatch);
+  }
+
+  function getWorkspaceFile(workspaceId, fileId) {
+    return requestCandidates('GET', [
+      '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/files/' + encodeURIComponent(fileId),
+    ]).then(normalizeWorkspaceFileEnvelope);
+  }
+
+  function deleteWorkspaceFile(workspaceId, fileId) {
+    return requestVariants('DELETE', [
+      {
+        path: '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/files/' + encodeURIComponent(fileId),
+      },
+    ]);
+  }
+
+  function uploadWorkspaceFileToSignedUrl(upload, file) {
+    var url = upload && upload.url ? upload.url : upload;
+    if (!url) return Promise.reject(new Error('Upload URL is unavailable.'));
+    return fetch(url, {
+      method: 'POST',
+      headers: file && file.type ? { 'content-type': file.type } : undefined,
+      body: file,
+    }).then(function (response) {
+      if (!response.ok) {
+        return response.text().catch(function () { return response.statusText; }).then(function (detail) {
+          throw new Error('Upload failed (' + response.status + '): ' + (detail || response.statusText));
+        });
+      }
+      return response.json().catch(function () {
+        return { ok: true };
+      });
+    });
+  }
+
+  function fetchSignedFileBytes(download) {
+    var url = download && download.url ? download.url : download;
+    if (!url) return Promise.reject(new Error('Download URL is unavailable.'));
+    return fetch(url, { method: 'GET' }).then(function (response) {
+      if (!response.ok) {
+        return response.text().catch(function () { return response.statusText; }).then(function (detail) {
+          throw new Error('Download failed (' + response.status + '): ' + (detail || response.statusText));
+        });
+      }
+      return response.arrayBuffer().then(function (buffer) {
+        return {
+          bytes: new Uint8Array(buffer),
+          contentType: response.headers.get('content-type') || null,
+          contentDisposition: response.headers.get('content-disposition') || null,
+        };
+      });
+    });
+  }
+
+  function bytesToBase64(bytes) {
+    var binary = '';
+    var chunkSize = 0x8000;
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function triggerByteDownload(filename, bytes, contentType) {
+    var safeName = filename || 'download';
+    if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
+      return window.__TAURI__.core.invoke('save_binary_file', {
+        filename: safeName,
+        contentBase64: bytesToBase64(bytes),
+      }).catch(browserDownload);
+    }
+    return browserDownload();
+
+    function browserDownload() {
+      var blob = new Blob([bytes], { type: contentType || 'application/octet-stream' });
+      var url = URL.createObjectURL(blob);
+      var anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = safeName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 1000);
+      return Promise.resolve(true);
+    }
+  }
+
   function startCompanionStream(threadId, companionKey) {
     return invoke('start_first_party_ai_companion_stream', {
       threadId: threadId,
@@ -1658,9 +1923,12 @@
     createProject: createProject,
     createWorkspace: createWorkspace,
     createThread: createThread,
+    createWorkspaceFileBatch: createWorkspaceFileBatch,
     buildSmokePrompt: buildSmokePrompt,
     configureThreadRuntime: configureThreadRuntime,
+    deleteWorkspaceFile: deleteWorkspaceFile,
     fetchPackages: fetchPackages,
+    fetchSignedFileBytes: fetchSignedFileBytes,
     fetchSession: fetchSession,
     fetchOrganizations: fetchOrganizations,
     fetchProjects: fetchProjects,
@@ -1669,8 +1937,13 @@
     fetchThread: fetchThread,
     fetchThreads: fetchThreads,
     fetchWorkspaces: fetchWorkspaces,
+    finalizeWorkspaceFileBatch: finalizeWorkspaceFileBatch,
     getConfig: getConfig,
+    getWorkspaceFile: getWorkspaceFile,
+    getWorkspaceFileBatch: getWorkspaceFileBatch,
     ensureAgentRuntime: ensureAgentRuntime,
+    initWorkspaceFileUpload: initWorkspaceFileUpload,
+    listWorkspaceFiles: listWorkspaceFiles,
     listenToRuntimeEvents: listenToRuntimeEvents,
     listenToDesktopPresenceEvents: listenToDesktopPresenceEvents,
     listenToDesktopRelayEvents: listenToDesktopRelayEvents,
@@ -1703,6 +1976,8 @@
     stopDesktopPresenceHeartbeat: stopDesktopPresenceHeartbeat,
     stopDesktopRelayStream: stopDesktopRelayStream,
     syncThreadRuntime: syncThreadRuntime,
+    triggerByteDownload: triggerByteDownload,
+    uploadWorkspaceFileToSignedUrl: uploadWorkspaceFileToSignedUrl,
     verifyMagicLink: verifyMagicLink,
   };
 })();

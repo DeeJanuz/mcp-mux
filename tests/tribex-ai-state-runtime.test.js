@@ -69,4 +69,56 @@ describe('tribex-ai-state runtime helpers', function () {
     expect(api.syncThreadSummaryFromRecord).toHaveBeenCalledWith(detail);
     expect(api.notify).toHaveBeenCalled();
   });
+
+  it('marks active turns failed on runtime connection errors', function () {
+    var detail = {
+      id: 'thread-1',
+      rowState: 'pending',
+      activeTurn: {
+        turnId: 'turn-1',
+        turnOrdinal: 2,
+        status: 'queued',
+        userMessage: {
+          id: 'user-1',
+          pending: true,
+        },
+        assistantMessage: {
+          id: 'assistant-1',
+          isStreaming: true,
+        },
+      },
+      turnCompletedAtById: {},
+      lastTurnId: null,
+      lastTurnOrdinal: 0,
+    };
+    var context = {
+      state: {
+        threadDetails: { 'thread-1': detail },
+        threadEntitiesById: { 'thread-1': detail },
+        pendingThreadIds: { 'thread-1': true },
+        threadErrors: {},
+      },
+      runtimeEventUnsubscribers: {},
+    };
+    var api = {
+      rememberTurnHistory: vi.fn(),
+      syncThreadSummaryFromRecord: vi.fn(),
+      nowIso: function () { return '2026-04-16T10:03:00.000Z'; },
+    };
+
+    window.__createTribexAiStateRuntime(context, api);
+    api.failActiveTurnLocally('thread-1', 'Runtime connection timed out.');
+
+    expect(context.state.pendingThreadIds['thread-1']).toBeUndefined();
+    expect(context.state.threadErrors['thread-1']).toBe('Runtime connection timed out.');
+    expect(detail.turnCompletedAtById['turn-1']).toBe('2026-04-16T10:03:00.000Z');
+    expect(detail.lastTurnId).toBe('turn-1');
+    expect(detail.lastTurnOrdinal).toBe(2);
+    expect(detail.activeTurn.status).toBe('failed');
+    expect(detail.activeTurn.userMessage.pending).toBe(false);
+    expect(detail.activeTurn.assistantMessage.isStreaming).toBe(false);
+    expect(detail.rowState).toBe('error');
+    expect(api.rememberTurnHistory).toHaveBeenCalledWith(detail);
+    expect(api.syncThreadSummaryFromRecord).toHaveBeenCalledWith(detail);
+  });
 });

@@ -52,9 +52,13 @@
             state.packages = [];
             state.organizations = [];
             state.workspacesById = {};
+            state.workspaceFilesByWorkspaceId = {};
             state.projects = [];
             state.threadEntitiesById = {};
             state.threadDetails = state.threadEntitiesById;
+            state.loadingThreadIds = {};
+            state.pendingThreadIds = {};
+            state.interruptedThreadIds = {};
             return null;
           }
           return window.__tribexAiClient.fetchSession();
@@ -67,9 +71,13 @@
             state.packages = [];
             state.organizations = [];
             state.workspacesById = {};
+            state.workspaceFilesByWorkspaceId = {};
             state.projects = [];
             state.threadEntitiesById = {};
             state.threadDetails = state.threadEntitiesById;
+            state.loadingThreadIds = {};
+            state.pendingThreadIds = {};
+            state.interruptedThreadIds = {};
             return null;
           }
 
@@ -368,6 +376,22 @@
       });
     }
 
+    function hydrateThread(threadId, seed) {
+      if (!threadId) return Promise.resolve(null);
+
+      if (seed && typeof seed === 'object') {
+        api.mergeThreadSummary(Object.assign({}, seed, {
+          id: threadId,
+          optimistic: false,
+          rowState: null,
+        }));
+      }
+
+      return refreshThread(threadId, false).then(function (detail) {
+        return detail || api.getThread(threadId) || null;
+      });
+    }
+
     function openSession(config, options) {
       if (!window.__companionUtils || typeof window.__companionUtils.openSession !== 'function') {
         return null;
@@ -438,6 +462,7 @@
           headerTitle: thread.title,
           projectId: thread.projectId,
           threadId: threadId,
+          busyIndicator: null,
         },
         toolArgs: {
           threadId: threadId,
@@ -712,10 +737,12 @@
           if (turn && turn.done && typeof turn.done.then === 'function') {
             turn.done.catch(function (error) {
               var message = error && error.message ? error.message : String(error);
-              state.threadErrors[threadId] = message;
-              delete state.pendingThreadIds[threadId];
-              var erroredThread = api.getThread(threadId);
-              if (erroredThread) erroredThread.rowState = 'error';
+              var wasInterrupted = typeof api.shouldSilenceInterruptedFailure === 'function'
+                ? api.shouldSilenceInterruptedFailure(threadId, turn.turnId || null)
+                : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);
+              api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
+                silent: wasInterrupted,
+              });
               api.notify();
             });
           } else {
@@ -727,13 +754,39 @@
           return true;
         })
         .catch(function (error) {
-          state.threadErrors[threadId] = error && error.message ? error.message : String(error);
-          delete state.pendingThreadIds[threadId];
-          var failedThread = api.getThread(threadId);
-          if (failedThread) failedThread.rowState = 'error';
+          var message = error && error.message ? error.message : String(error);
+          var wasInterrupted = typeof api.shouldSilenceInterruptedFailure === 'function'
+            ? api.shouldSilenceInterruptedFailure(threadId, turnId)
+            : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);
+          api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
+            silent: wasInterrupted,
+          });
           api.notify();
           return false;
         });
+    }
+
+    function interruptThread(threadId) {
+      var targetThreadId = threadId || (context.activeSession && context.activeSession.threadId) || null;
+      if (!targetThreadId) return Promise.resolve(false);
+
+      state.interruptedThreadIds = state.interruptedThreadIds || {};
+      var detail = (state.threadDetails && state.threadDetails[targetThreadId])
+        || (state.threadEntitiesById && state.threadEntitiesById[targetThreadId])
+        || null;
+      state.interruptedThreadIds[targetThreadId] = detail && detail.activeTurn && detail.activeTurn.turnId
+        ? detail.activeTurn.turnId
+        : true;
+
+      if (window.__tribexAiClient && typeof window.__tribexAiClient.disconnectRuntime === 'function') {
+        window.__tribexAiClient.disconnectRuntime(targetThreadId);
+      }
+
+      api.failActiveTurnLocally(targetThreadId, 'Stopped by user.', {
+        silent: true,
+      });
+      api.notify();
+      return Promise.resolve(true);
     }
 
     function setActiveSession(sessionId, session) {
@@ -1059,12 +1112,36 @@
         state.ui.projectComposerOpen = false;
         state.ui.threadComposerOpen = false;
         state.workspacesById = {};
+        state.workspaceFilesByWorkspaceId = {};
+        state.workspaceFileBrowser = {
+          loading: false,
+          error: null,
+          activeWorkspaceId: null,
+          selectedType: null,
+          selectedFileId: null,
+          selectedFolderPath: '',
+          preview: {
+            status: 'idle',
+            fileId: null,
+            contentType: null,
+            text: '',
+            objectUrl: null,
+            error: null,
+          },
+          uploading: false,
+          uploadProgress: null,
+          downloading: false,
+          downloadProgress: null,
+        };
         state.organizationUiById = {};
         state.selectedWorkspaceId = null;
         state.projects = [];
         state.selectedProjectId = null;
         state.threadEntitiesById = {};
         state.threadDetails = state.threadEntitiesById;
+        state.pendingThreadIds = {};
+        state.loadingThreadIds = {};
+        state.interruptedThreadIds = {};
         state.relayStates = {};
         state.companionKeys = {};
         state.lastCompanionSequences = {};
@@ -1083,6 +1160,479 @@
       });
     }
 
+    function resetWorkspaceFilePreview() {
+      var preview = state.workspaceFileBrowser.preview || {};
+      if (preview.objectUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+        URL.revokeObjectURL(preview.objectUrl);
+      }
+      state.workspaceFileBrowser.preview = {
+        status: 'idle',
+        fileId: null,
+        contentType: null,
+        text: '',
+        objectUrl: null,
+        error: null,
+      };
+    }
+
+    function getActiveWorkspaceForFiles() {
+      var workspace = api.getSelectedWorkspace();
+      if (!workspace || !workspace.id) return null;
+      return workspace;
+    }
+
+    function getWorkspaceFiles(workspaceId) {
+      return workspaceId && state.workspaceFilesByWorkspaceId[workspaceId]
+        ? state.workspaceFilesByWorkspaceId[workspaceId]
+        : [];
+    }
+
+    function setWorkspaceFiles(workspaceId, files) {
+      if (!workspaceId) return;
+      state.workspaceFilesByWorkspaceId[workspaceId] = (files || []).slice().sort(function (left, right) {
+        return String(left.relativePath || '').localeCompare(String(right.relativePath || ''));
+      });
+    }
+
+    function findWorkspaceFile(workspaceId, fileId) {
+      return getWorkspaceFiles(workspaceId).find(function (file) {
+        return file && file.id === fileId;
+      }) || null;
+    }
+
+    function openWorkspaceFileBrowser() {
+      var workspace = getActiveWorkspaceForFiles();
+      state.ui.fileBrowserOpen = true;
+      if (workspace) state.workspaceFileBrowser.activeWorkspaceId = workspace.id;
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+      if (workspace && !getWorkspaceFiles(workspace.id).length) {
+        return refreshWorkspaceFiles(false);
+      }
+      return Promise.resolve(null);
+    }
+
+    function closeWorkspaceFileBrowser() {
+      state.ui.fileBrowserOpen = false;
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+    }
+
+    function toggleWorkspaceFileBrowser() {
+      return state.ui.fileBrowserOpen ? (closeWorkspaceFileBrowser(), Promise.resolve(null)) : openWorkspaceFileBrowser();
+    }
+
+    function refreshWorkspaceFiles(force) {
+      var workspace = getActiveWorkspaceForFiles();
+      if (!workspace) {
+        state.workspaceFileBrowser.error = 'No workspace is selected.';
+        api.notify();
+        return Promise.resolve(null);
+      }
+      if (state.workspaceFileBrowser.loading && !force) return Promise.resolve(null);
+      state.workspaceFileBrowser.loading = true;
+      state.workspaceFileBrowser.error = null;
+      state.workspaceFileBrowser.activeWorkspaceId = workspace.id;
+      api.notify();
+
+      return window.__tribexAiClient.listWorkspaceFiles(workspace.id)
+        .then(function (result) {
+          setWorkspaceFiles(workspace.id, result && result.files ? result.files : []);
+          if (
+            state.workspaceFileBrowser.selectedFileId &&
+            !findWorkspaceFile(workspace.id, state.workspaceFileBrowser.selectedFileId)
+          ) {
+            state.workspaceFileBrowser.selectedType = null;
+            state.workspaceFileBrowser.selectedFileId = null;
+            state.workspaceFileBrowser.selectedFolderPath = '';
+            resetWorkspaceFilePreview();
+          }
+          return result;
+        })
+        .catch(function (error) {
+          state.workspaceFileBrowser.error = error && error.message ? error.message : String(error);
+          return null;
+        })
+        .finally(function () {
+          state.workspaceFileBrowser.loading = false;
+          api.notify();
+        });
+    }
+
+    function isPreviewTextType(file, contentType) {
+      var type = String(contentType || file && file.contentType || '').toLowerCase();
+      var path = String(file && file.relativePath || '').toLowerCase();
+      return type.indexOf('text/') === 0 ||
+        /json|csv|xml|yaml|markdown|javascript|typescript/.test(type) ||
+        /\.(txt|md|markdown|json|csv|tsv|js|ts|tsx|jsx|css|html|xml|yaml|yml|toml|log)$/i.test(path);
+    }
+
+    function isPreviewImageType(file, contentType) {
+      var type = String(contentType || file && file.contentType || '').toLowerCase();
+      var path = String(file && file.relativePath || '').toLowerCase();
+      return type.indexOf('image/') === 0 || /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
+    }
+
+    function selectWorkspaceFolder(folderPath) {
+      resetWorkspaceFilePreview();
+      state.workspaceFileBrowser.selectedType = 'folder';
+      state.workspaceFileBrowser.selectedFileId = null;
+      state.workspaceFileBrowser.selectedFolderPath = folderPath || '';
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+      return Promise.resolve(folderPath || '');
+    }
+
+    function selectWorkspaceFile(fileId) {
+      var workspace = getActiveWorkspaceForFiles();
+      if (!workspace) return Promise.resolve(null);
+      var file = findWorkspaceFile(workspace.id, fileId);
+      resetWorkspaceFilePreview();
+      state.workspaceFileBrowser.selectedType = 'file';
+      state.workspaceFileBrowser.selectedFileId = fileId;
+      state.workspaceFileBrowser.selectedFolderPath = file && file.relativePath ? file.relativePath.split('/').slice(0, -1).join('/') : '';
+      state.workspaceFileBrowser.preview = {
+        status: 'loading',
+        fileId: fileId,
+        contentType: file && file.contentType ? file.contentType : null,
+        text: '',
+        objectUrl: null,
+        error: null,
+      };
+      api.notify();
+
+      return window.__tribexAiClient.getWorkspaceFile(workspace.id, fileId)
+        .then(function (detail) {
+          var detailFile = detail && detail.file ? detail.file : file;
+          return window.__tribexAiClient.fetchSignedFileBytes(detail && detail.download).then(function (downloaded) {
+            if (state.workspaceFileBrowser.selectedFileId !== fileId) return null;
+            var contentType = downloaded.contentType || (detailFile && detailFile.contentType) || null;
+            if (isPreviewTextType(detailFile, contentType)) {
+              var limit = Math.min(downloaded.bytes.length, 128 * 1024);
+              state.workspaceFileBrowser.preview = {
+                status: 'ready',
+                fileId: fileId,
+                contentType: contentType,
+                text: new TextDecoder('utf-8').decode(downloaded.bytes.slice(0, limit)) + (downloaded.bytes.length > limit ? '\n\n[Preview truncated]' : ''),
+                objectUrl: null,
+                error: null,
+              };
+            } else if (isPreviewImageType(detailFile, contentType)) {
+              var blob = new Blob([downloaded.bytes], { type: contentType || 'application/octet-stream' });
+              state.workspaceFileBrowser.preview = {
+                status: 'ready',
+                fileId: fileId,
+                contentType: contentType,
+                text: '',
+                objectUrl: URL.createObjectURL(blob),
+                error: null,
+              };
+            } else {
+              state.workspaceFileBrowser.preview = {
+                status: 'unsupported',
+                fileId: fileId,
+                contentType: contentType,
+                text: '',
+                objectUrl: null,
+                error: null,
+              };
+            }
+            api.notify();
+            return detail;
+          });
+        })
+        .catch(function (error) {
+          if (state.workspaceFileBrowser.selectedFileId === fileId) {
+            state.workspaceFileBrowser.preview = {
+              status: 'error',
+              fileId: fileId,
+              contentType: file && file.contentType ? file.contentType : null,
+              text: '',
+              objectUrl: null,
+              error: error && error.message ? error.message : String(error),
+            };
+            api.notify();
+          }
+          return null;
+        });
+    }
+
+    function fileRelativePath(file) {
+      return String((file && file.webkitRelativePath) || (file && file.name) || '').replace(/^\/+/, '');
+    }
+
+    function uploadWorkspaceFiles(fileList) {
+      var workspace = getActiveWorkspaceForFiles();
+      var files = Array.prototype.slice.call(fileList || []).filter(Boolean);
+      if (!workspace || !files.length) return Promise.resolve(null);
+
+      var folderMode = files.some(function (file) {
+        return !!(file && file.webkitRelativePath);
+      });
+      state.workspaceFileBrowser.uploading = true;
+      state.workspaceFileBrowser.uploadProgress = {
+        total: files.length,
+        completed: 0,
+        label: folderMode ? 'Uploading folder' : 'Uploading files',
+      };
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+
+      var uploadPromise = folderMode ? uploadWorkspaceFolderBatch(workspace.id, files) : uploadWorkspaceFileSet(workspace.id, files);
+      return uploadPromise
+        .then(function () {
+          return refreshWorkspaceFiles(true);
+        })
+        .catch(function (error) {
+          state.workspaceFileBrowser.error = error && error.message ? error.message : String(error);
+          return null;
+        })
+        .finally(function () {
+          state.workspaceFileBrowser.uploading = false;
+          api.notify();
+        });
+    }
+
+    function uploadWorkspaceFileSet(workspaceId, files) {
+      var sequence = Promise.resolve();
+      files.forEach(function (file) {
+        sequence = sequence.then(function () {
+          return window.__tribexAiClient.initWorkspaceFileUpload(workspaceId, {
+            relativePath: fileRelativePath(file),
+            contentType: file.type || null,
+            sizeBytes: file.size || 0,
+          }).then(function (init) {
+            return window.__tribexAiClient.uploadWorkspaceFileToSignedUrl(init.upload, file);
+          }).then(function () {
+            state.workspaceFileBrowser.uploadProgress.completed += 1;
+            api.notify();
+          });
+        });
+      });
+      return sequence;
+    }
+
+    function uploadWorkspaceFolderBatch(workspaceId, files) {
+      var metadata = {
+        uploadedFrom: 'mcpviews-file-browser',
+        fileCount: files.length,
+      };
+      return window.__tribexAiClient.createWorkspaceFileBatch(workspaceId, files.map(function (file) {
+        return {
+          relativePath: fileRelativePath(file),
+          contentType: file.type || null,
+          sizeBytes: file.size || 0,
+        };
+      }), metadata).then(function (batch) {
+        var byPath = {};
+        files.forEach(function (file) {
+          byPath[fileRelativePath(file)] = file;
+        });
+        var items = batch && batch.items ? batch.items : [];
+        var index = 0;
+        var workers = [0, 1, 2].map(function () {
+          function next() {
+            if (index >= items.length) return Promise.resolve();
+            var item = items[index++];
+            var file = byPath[item.relativePath];
+            if (!file) return next();
+            return window.__tribexAiClient.uploadWorkspaceFileToSignedUrl(item.upload, file)
+              .then(function () {
+                state.workspaceFileBrowser.uploadProgress.completed += 1;
+                api.notify();
+              })
+              .then(next);
+          }
+          return next();
+        });
+        return Promise.all(workers).then(function () {
+          return window.__tribexAiClient.finalizeWorkspaceFileBatch(workspaceId, batch.batch && batch.batch.id);
+        });
+      });
+    }
+
+    function getSelectedWorkspaceFiles() {
+      var workspace = getActiveWorkspaceForFiles();
+      if (!workspace) return [];
+      if (state.workspaceFileBrowser.selectedType === 'file') {
+        var file = findWorkspaceFile(workspace.id, state.workspaceFileBrowser.selectedFileId);
+        return file ? [file] : [];
+      }
+      var folder = state.workspaceFileBrowser.selectedFolderPath || '';
+      var prefix = folder ? folder.replace(/\/+$/g, '') + '/' : '';
+      return getWorkspaceFiles(workspace.id).filter(function (file) {
+        return file && (!prefix || String(file.relativePath || '').indexOf(prefix) === 0);
+      });
+    }
+
+    function buildStoredZip(files) {
+      var encoder = new TextEncoder();
+      var localParts = [];
+      var centralParts = [];
+      var offset = 0;
+      var centralLength = 0;
+
+      files.forEach(function (entry) {
+        var nameBytes = encoder.encode(entry.path);
+        var crc = crc32(entry.bytes);
+        var local = new Uint8Array(30 + nameBytes.length);
+        var localView = new DataView(local.buffer);
+        localView.setUint32(0, 0x04034b50, true);
+        localView.setUint16(4, 20, true);
+        localView.setUint16(10, 0, true);
+        localView.setUint16(12, 0, true);
+        localView.setUint32(14, crc, true);
+        localView.setUint32(18, entry.bytes.length, true);
+        localView.setUint32(22, entry.bytes.length, true);
+        localView.setUint16(26, nameBytes.length, true);
+        local.set(nameBytes, 30);
+        localParts.push(local, entry.bytes);
+
+        var central = new Uint8Array(46 + nameBytes.length);
+        var centralView = new DataView(central.buffer);
+        centralView.setUint32(0, 0x02014b50, true);
+        centralView.setUint16(4, 20, true);
+        centralView.setUint16(6, 20, true);
+        centralView.setUint16(12, 0, true);
+        centralView.setUint16(14, 0, true);
+        centralView.setUint32(16, crc, true);
+        centralView.setUint32(20, entry.bytes.length, true);
+        centralView.setUint32(24, entry.bytes.length, true);
+        centralView.setUint16(28, nameBytes.length, true);
+        centralView.setUint32(42, offset, true);
+        central.set(nameBytes, 46);
+        centralParts.push(central);
+        centralLength += central.length;
+        offset += local.length + entry.bytes.length;
+      });
+
+      var end = new Uint8Array(22);
+      var endView = new DataView(end.buffer);
+      endView.setUint32(0, 0x06054b50, true);
+      endView.setUint16(8, files.length, true);
+      endView.setUint16(10, files.length, true);
+      endView.setUint32(12, centralLength, true);
+      endView.setUint32(16, offset, true);
+      var totalLength = offset + centralLength + end.length;
+      var result = new Uint8Array(totalLength);
+      var cursor = 0;
+      localParts.concat(centralParts, [end]).forEach(function (part) {
+        result.set(part, cursor);
+        cursor += part.length;
+      });
+      return result;
+    }
+
+    var crcTable = null;
+    function crc32(bytes) {
+      if (!crcTable) {
+        crcTable = [];
+        for (var n = 0; n < 256; n += 1) {
+          var c = n;
+          for (var k = 0; k < 8; k += 1) {
+            c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+          }
+          crcTable[n] = c >>> 0;
+        }
+      }
+      var crc = 0xffffffff;
+      for (var index = 0; index < bytes.length; index += 1) {
+        crc = crcTable[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
+      }
+      return (crc ^ 0xffffffff) >>> 0;
+    }
+
+    function downloadSelectedWorkspaceEntry() {
+      var workspace = getActiveWorkspaceForFiles();
+      var files = getSelectedWorkspaceFiles();
+      if (!workspace || !files.length) return Promise.resolve(null);
+
+      state.workspaceFileBrowser.downloading = true;
+      state.workspaceFileBrowser.downloadProgress = {
+        total: files.length,
+        completed: 0,
+        label: files.length === 1 ? 'Downloading file' : 'Building folder zip',
+      };
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+
+      if (files.length === 1 && state.workspaceFileBrowser.selectedType === 'file') {
+        var file = files[0];
+        return window.__tribexAiClient.getWorkspaceFile(workspace.id, file.id)
+          .then(function (detail) {
+            return window.__tribexAiClient.fetchSignedFileBytes(detail && detail.download).then(function (downloaded) {
+              state.workspaceFileBrowser.downloadProgress.completed = 1;
+              api.notify();
+              return window.__tribexAiClient.triggerByteDownload(file.name || file.relativePath, downloaded.bytes, downloaded.contentType || file.contentType);
+            });
+          })
+          .catch(function (error) {
+            state.workspaceFileBrowser.error = error && error.message ? error.message : String(error);
+          })
+          .finally(function () {
+            state.workspaceFileBrowser.downloading = false;
+            api.notify();
+          });
+      }
+
+      var zipEntries = [];
+      var sequence = Promise.resolve();
+      files.forEach(function (file) {
+        sequence = sequence.then(function () {
+          return window.__tribexAiClient.getWorkspaceFile(workspace.id, file.id)
+            .then(function (detail) {
+              return window.__tribexAiClient.fetchSignedFileBytes(detail && detail.download);
+            })
+            .then(function (downloaded) {
+              zipEntries.push({
+                path: file.relativePath,
+                bytes: downloaded.bytes,
+              });
+              state.workspaceFileBrowser.downloadProgress.completed += 1;
+              api.notify();
+            });
+        });
+      });
+
+      return sequence
+        .then(function () {
+          var folder = state.workspaceFileBrowser.selectedFolderPath || workspace.name || 'workspace-files';
+          var name = String(folder).split('/').filter(Boolean).pop() || 'workspace-files';
+          return window.__tribexAiClient.triggerByteDownload(name + '.zip', buildStoredZip(zipEntries), 'application/zip');
+        })
+        .catch(function (error) {
+          state.workspaceFileBrowser.error = error && error.message ? error.message : String(error);
+        })
+        .finally(function () {
+          state.workspaceFileBrowser.downloading = false;
+          api.notify();
+        });
+    }
+
+    function deleteSelectedWorkspaceFile() {
+      var workspace = getActiveWorkspaceForFiles();
+      if (!workspace || state.workspaceFileBrowser.selectedType !== 'file' || !state.workspaceFileBrowser.selectedFileId) {
+        return Promise.resolve(null);
+      }
+      var fileId = state.workspaceFileBrowser.selectedFileId;
+      state.workspaceFileBrowser.error = null;
+      return window.__tribexAiClient.deleteWorkspaceFile(workspace.id, fileId)
+        .then(function () {
+          setWorkspaceFiles(workspace.id, getWorkspaceFiles(workspace.id).filter(function (file) {
+            return file && file.id !== fileId;
+          }));
+          state.workspaceFileBrowser.selectedType = null;
+          state.workspaceFileBrowser.selectedFileId = null;
+          resetWorkspaceFilePreview();
+        })
+        .catch(function (error) {
+          state.workspaceFileBrowser.error = error && error.message ? error.message : String(error);
+        })
+        .finally(function () {
+          api.notify();
+        });
+    }
+
     function refreshActiveThread() {
       if (!context.activeSession || !context.activeSession.threadId) return Promise.resolve(null);
       return refreshThread(context.activeSession.threadId, true);
@@ -1093,6 +1643,7 @@
     api.buildSmokeThreadTitle = buildSmokeThreadTitle;
     api.ensureDesktopRelay = ensureDesktopRelay;
     api.refreshThread = refreshThread;
+    api.hydrateThread = hydrateThread;
     api.pollThread = pollThread;
     api.openSession = openSession;
     api.replaceSession = replaceSession;
@@ -1103,6 +1654,7 @@
     api.submitThreadComposer = submitThreadComposer;
     api.runSmokeTest = runSmokeTest;
     api.submitPrompt = submitPrompt;
+    api.interruptThread = interruptThread;
     api.setActiveSession = setActiveSession;
     api.buildThreadArtifactSessionConfig = buildThreadArtifactSessionConfig;
     api.openThreadArtifact = openThreadArtifact;
@@ -1116,6 +1668,15 @@
     api.verifyMagicLink = verifyMagicLink;
     api.clearConnection = clearConnection;
     api.refreshActiveThread = refreshActiveThread;
+    api.openWorkspaceFileBrowser = openWorkspaceFileBrowser;
+    api.closeWorkspaceFileBrowser = closeWorkspaceFileBrowser;
+    api.toggleWorkspaceFileBrowser = toggleWorkspaceFileBrowser;
+    api.refreshWorkspaceFiles = refreshWorkspaceFiles;
+    api.selectWorkspaceFile = selectWorkspaceFile;
+    api.selectWorkspaceFolder = selectWorkspaceFolder;
+    api.uploadWorkspaceFiles = uploadWorkspaceFiles;
+    api.downloadSelectedWorkspaceEntry = downloadSelectedWorkspaceEntry;
+    api.deleteSelectedWorkspaceFile = deleteSelectedWorkspaceFile;
 
     return api;
   };

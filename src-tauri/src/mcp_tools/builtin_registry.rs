@@ -57,7 +57,11 @@ fn rich_content_definition(renderers: &[RendererDef]) -> Value {
                 "title": { "type": "string", "description": "Optional heading shown above the rich content body." },
                 "body": { "type": "string", "description": "Markdown body. Supports mermaid fences, code blocks, suggestions, and embedded structured_data table references." },
                 "suggestions": { "type": "object", "description": "Optional inline text suggestions keyed by suggestion id." },
-                "tables": { "type": "array", "description": "Optional embedded structured_data tables referenced from the body." },
+                "tables": {
+                    "type": "array",
+                    "description": "Optional embedded structured_data tables referenced from the body.",
+                    "items": { "type": "object" }
+                },
                 "citations": { "type": "object", "description": "Optional citation metadata keyed by source." }
             }
         }
@@ -76,7 +80,11 @@ fn structured_data_definition(renderers: &[RendererDef]) -> Value {
             "type": "object",
             "properties": {
                 "title": { "type": "string", "description": "Optional heading shown above the table." },
-                "tables": { "type": "array", "description": "Structured table definitions. Each table must include id, name, columns, and rows. Each row must include id, cells, and children." }
+                "tables": {
+                    "type": "array",
+                    "description": "Structured table definitions. Each table must include id, name, columns, and rows. Each row must include id, cells, and children.",
+                    "items": { "type": "object" }
+                }
             },
             "required": ["tables"]
         }

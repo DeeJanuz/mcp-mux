@@ -570,9 +570,68 @@
     renderContent(activeSessionId);
   }
 
+  function syncSessionBusyIndicator(container, session) {
+    if (!container) return;
+
+    var busyIndicator = session && session.meta ? session.meta.busyIndicator || null : null;
+    var existing = container.querySelector('.session-busy-indicator');
+
+    if (!busyIndicator) {
+      container.classList.remove('has-busy-indicator');
+      if (existing && existing.parentNode) {
+        existing.parentNode.removeChild(existing);
+      }
+      return;
+    }
+
+    if (!existing) {
+      existing = document.createElement('div');
+      existing.className = 'session-busy-indicator';
+      existing.setAttribute('aria-hidden', 'true');
+      container.insertBefore(existing, container.firstChild || null);
+    }
+
+    existing.setAttribute('data-busy-kind', busyIndicator.kind || 'line-pulse');
+    existing.setAttribute('data-busy-status', busyIndicator.status || 'busy');
+    container.classList.add('has-busy-indicator');
+  }
+
+  function updateSessionMetadata(sessionId, metaPatch) {
+    var session = sessions.get(sessionId);
+    if (!session) return null;
+
+    var nextMeta = Object.assign({}, session.meta || {});
+    Object.keys(metaPatch || {}).forEach(function (key) {
+      if (!Object.prototype.hasOwnProperty.call(metaPatch, key)) return;
+      var value = metaPatch[key];
+      if (value === undefined) return;
+      if (value === null) {
+        delete nextMeta[key];
+        return;
+      }
+      nextMeta[key] = value;
+    });
+
+    session.meta = nextMeta;
+    sessions.set(sessionId, session);
+    renderTabBar();
+
+    if (sessionId === activeSessionId) {
+      mainTitle.textContent = (session.meta && session.meta.headerTitle) || getTabLabel(session);
+    }
+
+    var cached = contentCache.get(sessionId);
+    if (cached) {
+      syncSessionBusyIndicator(cached, session);
+    }
+
+    return session;
+  }
+
   function updateRenderedSession(container, sessionId) {
     var session = sessions.get(sessionId);
     if (!session || !container) return false;
+    syncSessionBusyIndicator(container, session);
     var scroll = container.querySelector('.session-scroll');
     if (!scroll) return false;
     var renderer = getRenderer(session.contentType);
@@ -642,6 +701,7 @@
 
     contentArea.appendChild(container);
     contentCache.set(sessionId, container);
+    syncSessionBusyIndicator(container, session);
 
     const renderer = getRenderer(session.contentType);
     renderer(scroll, session.data, session.meta, session.toolArgs || {}, session.reviewRequired, function (decision) {
@@ -708,6 +768,7 @@
   window.__companionUtils.getSession = function (sessionId) {
     return sessionId ? sessions.get(sessionId) || null : null;
   };
+  window.__companionUtils.updateSessionMetadata = updateSessionMetadata;
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
   window.__companionUtils.rerenderActiveSession = rerenderActiveSession;
   window.__companionUtils.getActiveSession = function () {

@@ -36,6 +36,14 @@ function createState(snapshot) {
     closeThreadComposer: vi.fn(),
     openProjectComposer: vi.fn(),
     openThreadComposer: vi.fn(function () { return Promise.resolve(); }),
+    closeWorkspaceFileBrowser: vi.fn(),
+    deleteSelectedWorkspaceFile: vi.fn(function () { return Promise.resolve(); }),
+    downloadSelectedWorkspaceEntry: vi.fn(function () { return Promise.resolve(); }),
+    refreshWorkspaceFiles: vi.fn(function () { return Promise.resolve(); }),
+    selectWorkspaceFile: vi.fn(function () { return Promise.resolve(); }),
+    selectWorkspaceFolder: vi.fn(function () { return Promise.resolve(); }),
+    toggleWorkspaceFileBrowser: vi.fn(function () { return Promise.resolve(); }),
+    uploadWorkspaceFiles: vi.fn(function () { return Promise.resolve(); }),
     refreshNavigator: vi.fn(),
     runSmokeTest: vi.fn(),
     openThread: vi.fn(),
@@ -223,7 +231,7 @@ describe('tribex-ai-shell', function () {
     expect(document.querySelector('.ai-nav-toolbar-title').textContent).toBe('Threads');
     expect(document.querySelector('.ai-nav-toolbar-subtitle').textContent).toContain('Org 1');
     expect(document.querySelector('.ai-nav-toolbar-subtitle').textContent).toContain('smoke');
-    expect(document.querySelectorAll('.ai-nav-icon-button')).toHaveLength(2);
+    expect(document.querySelectorAll('.ai-nav-icon-button')).toHaveLength(3);
     expect(document.querySelector('.ai-nav-footer-link').textContent).toContain('Run smoke test');
     expect(document.querySelector('.ai-nav-settings-button')).not.toBeNull();
     expect(document.querySelector('.ai-nav-group-icon')).not.toBeNull();
@@ -308,6 +316,81 @@ describe('tribex-ai-shell', function () {
     document.querySelector('[title="Create folder"]').click();
     expect(state.openProjectComposer).toHaveBeenCalled();
     expect(document.querySelector('.ai-nav-org-switcher')).toBeNull();
+  });
+
+  it('opens a right-side workspace file browser with tree rows and actions', function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      searchTerm: '',
+      fileBrowserOpen: true,
+      organizations: [{ id: 'org-1', name: 'Org 1' }],
+      selectedOrganization: { id: 'org-1', name: 'Org 1' },
+      selectedWorkspace: { id: 'workspace-1', name: 'Finance', packageKey: 'generic' },
+      selectedProject: { id: 'project-1', name: 'Forecasting', workspaceId: 'workspace-1' },
+      projectGroups: [],
+      projectExpansion: {},
+      packages: [],
+      workspaceFiles: [
+        { id: 'file-1', relativePath: 'reports/april.csv', name: 'april.csv', sizeBytes: 42, contentType: 'text/csv' },
+      ],
+      workspaceFileBrowser: {
+        loading: false,
+        error: null,
+        selectedType: 'file',
+        selectedFileId: 'file-1',
+        selectedFolderPath: 'reports',
+        preview: { status: 'ready', text: 'a,b\\n1,2', contentType: 'text/csv' },
+      },
+      composer: {
+        creatingWorkspace: false,
+        projectName: '',
+        creatingProject: false,
+        threadProjectId: null,
+        threadTitle: '',
+        threadPersonasByProjectId: {},
+        loadingThreadPersonas: false,
+        threadPersonaError: null,
+        selectedPersonaKey: '',
+        creatingThread: false,
+      },
+      hasProjects: false,
+      canRunSmokeTest: false,
+      activeProjectId: null,
+      activeThreadId: null,
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    expect(document.querySelector('#workspace-file-browser')).not.toBeNull();
+    expect(document.querySelector('.workspace-file-header-copy').textContent).toContain('Finance');
+    expect(Array.from(document.querySelectorAll('.workspace-file-folder')).map(function (node) {
+      return node.textContent;
+    }).join(' ')).toContain('reports');
+    expect(document.querySelector('.workspace-file-leaf.active').textContent).toContain('april.csv');
+    expect(document.querySelector('.workspace-file-preview').textContent).toContain('a,b');
+
+    document.querySelector('.workspace-file-leaf').click();
+    expect(state.selectWorkspaceFile).toHaveBeenCalledWith('file-1');
+    document.querySelector('.workspace-file-close').click();
+    expect(state.closeWorkspaceFileBrowser).toHaveBeenCalled();
   });
 
   it('shows a compact show more control for long thread lists', function () {

@@ -4,11 +4,70 @@
   window.__createTribexAiStateCore = function __createTribexAiStateCore(context, api) {
     var state = context.state;
 
+    function maxActivityTimestamp(left, right) {
+      if (!left) return right || null;
+      if (!right) return left || null;
+      var leftTime = parseActivityTimestamp(left);
+      var rightTime = parseActivityTimestamp(right);
+      if (leftTime === null) return right;
+      if (rightTime === null) return left;
+      return rightTime >= leftTime ? right : left;
+    }
+
+    function buildThreadBusyIndicator(threadId) {
+      if (!threadId) return null;
+      var detail = state.threadDetails[threadId] || state.threadEntitiesById[threadId] || null;
+      var activeTurnStatus = detail && detail.activeTurn
+        ? String(detail.activeTurn.status || '').toLowerCase()
+        : '';
+      var activeTurnBusy = activeTurnStatus === 'queued' || activeTurnStatus === 'running';
+      var runs = [];
+      if (detail && Array.isArray(detail.runs)) {
+        runs = detail.runs;
+      } else if (detail && typeof api.buildThreadProjection === 'function') {
+        runs = api.buildThreadProjection(detail).runs || [];
+      }
+      var runBusy = runs.some(function (run) {
+        return !!(
+          run &&
+          ((run.answer && run.answer.isStreaming) ||
+          (run.workSession && String(run.workSession.status || '').toLowerCase() === 'running'))
+        );
+      });
+      var busy = !!state.pendingThreadIds[threadId] || activeTurnBusy || runBusy;
+      return busy
+        ? {
+          kind: 'line-pulse',
+          status: 'busy',
+        }
+        : null;
+    }
+
+    function syncActiveSessionMetadata() {
+      if (
+        !context.activeSession ||
+        !context.activeSession.sessionId ||
+        !window.__companionUtils ||
+        typeof window.__companionUtils.updateSessionMetadata !== 'function'
+      ) {
+        return;
+      }
+
+      var metaPatch = {
+        busyIndicator: null,
+      };
+      if (context.activeSession.isThread && context.activeSession.threadId) {
+        metaPatch.busyIndicator = buildThreadBusyIndicator(context.activeSession.threadId);
+      }
+      window.__companionUtils.updateSessionMetadata(context.activeSession.sessionId, metaPatch);
+    }
+
     function clone(value) {
       return JSON.parse(JSON.stringify(value));
     }
 
     function notify() {
+      syncActiveSessionMetadata();
       var snapshot = typeof api.getSnapshot === 'function' ? api.getSnapshot() : null;
       context.listeners.slice().forEach(function (listener) {
         listener(snapshot);
@@ -301,8 +360,22 @@
       Object.keys(summary || {}).forEach(function (key) {
         var value = summary[key];
         if (value === undefined || value === null) return;
+        if (key === 'lastActivityAt') {
+          next.lastActivityAt = maxActivityTimestamp(next.lastActivityAt, value);
+          return;
+        }
+        if (key === 'messageActivityAt') {
+          next.messageActivityAt = maxActivityTimestamp(next.messageActivityAt || next.lastActivityAt, value);
+          return;
+        }
         next[key] = value;
       });
+      if (!next.messageActivityAt && next.lastActivityAt) {
+        next.messageActivityAt = next.lastActivityAt;
+      }
+      if (next.messageActivityAt) {
+        next.lastActivityAt = maxActivityTimestamp(next.lastActivityAt, next.messageActivityAt);
+      }
       if (!next.ui) {
         next.ui = {
           draftText: '',
@@ -624,6 +697,7 @@
         projectRenameOpen: state.ui.projectRenameOpen,
         threadComposerOpen: state.ui.threadComposerOpen,
         threadRenameOpen: state.ui.threadRenameOpen,
+        fileBrowserOpen: state.ui.fileBrowserOpen,
         searchTerm: state.ui.searchTerm,
         packages: clone(state.packages),
         composer: clone(state.composer),
@@ -631,6 +705,10 @@
         selectedOrganization: clone(selectedOrganization),
         selectedWorkspace: clone(selectedWorkspace),
         selectedProject: clone(selectedProject),
+        workspaceFiles: clone(selectedWorkspace && state.workspaceFilesByWorkspaceId[selectedWorkspace.id]
+          ? state.workspaceFilesByWorkspaceId[selectedWorkspace.id]
+          : []),
+        workspaceFileBrowser: clone(state.workspaceFileBrowser),
         projectGroups: clone(window.__tribexAiUtils.buildProjectGroups(
           getOrganizationProjects(organizationId),
           allThreads.filter(function (thread) {
@@ -678,6 +756,7 @@
     api.restoreOrganizationContext = restoreOrganizationContext;
     api.isThreadSession = isThreadSession;
     api.mergeThreadSummary = mergeThreadSummary;
+    api.maxActivityTimestamp = maxActivityTimestamp;
     api.replaceThreadSummaries = replaceThreadSummaries;
     api.parseActivityTimestamp = parseActivityTimestamp;
     api.nowIso = nowIso;

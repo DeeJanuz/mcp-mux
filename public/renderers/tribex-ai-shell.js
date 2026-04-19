@@ -28,6 +28,24 @@
       '<path d="M3.5 3.25h9A1.25 1.25 0 0 1 13.75 4.5v5A1.25 1.25 0 0 1 12.5 10.75H7.1L4 13V10.75H3.5A1.25 1.25 0 0 1 2.25 9.5v-5A1.25 1.25 0 0 1 3.5 3.25Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>' +
       '<path d="M8 5.6v2.8M6.6 7h2.8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>' +
       '</svg>',
+    files:
+      '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+      '<path d="M4.25 1.75h4.2l3.3 3.3v8.2a1 1 0 0 1-1 1h-6.5a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>' +
+      '<path d="M8.35 1.9v3.25h3.25M5.45 8.25h5.1M5.45 10.55h5.1" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>',
+    refresh:
+      '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+      '<path d="M13.2 3.7v3.2H10M2.8 12.3V9.1H6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<path d="M12.35 6.6A4.65 4.65 0 0 0 4 4.55M3.65 9.4A4.65 4.65 0 0 0 12 11.45" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>' +
+      '</svg>',
+    download:
+      '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+      '<path d="M8 2.25v7.1M5.35 6.8 8 9.45l2.65-2.65M3 13.25h10" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>',
+    trash:
+      '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+      '<path d="M2.75 4.25h10.5M6.25 2.25h3.5M4.35 4.25l.55 9h6.2l.55-9M6.75 6.55v4.15M9.25 6.55v4.15" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>',
     edit:
       '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
       '<path d="M10.9 2.35a1.2 1.2 0 0 1 1.7 0l1.05 1.05a1.2 1.2 0 0 1 0 1.7l-6.8 6.8-2.75.7.7-2.75 6.1-6.8Z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>' +
@@ -89,6 +107,8 @@
     var shell = document.getElementById('ai-shell');
     var mainBody = document.getElementById('main-body');
     if (!shell || !mainBody) return;
+    var fileBrowser = document.getElementById('workspace-file-browser');
+    if (fileBrowser && fileBrowser.parentNode) fileBrowser.parentNode.removeChild(fileBrowser);
     shell.innerHTML = '';
     shell.className = 'hidden';
     mainBody.classList.remove('ai-shell-visible');
@@ -365,6 +385,19 @@
         aiState.openProjectComposer();
       },
     }));
+
+    actions.appendChild(createIconButton(
+      'ai-nav-icon-button' + (snapshot.fileBrowserOpen ? ' active' : ''),
+      snapshot.fileBrowserOpen ? 'Close file browser' : 'Open file browser',
+      ICONS.files,
+      {
+        pressed: !!snapshot.fileBrowserOpen,
+        disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator || !snapshot.selectedWorkspace,
+        onClick: function () {
+          aiState.toggleWorkspaceFileBrowser().catch(function () {});
+        },
+      }
+    ));
 
     actions.appendChild(createIconButton(
       'ai-nav-icon-button' + (getSearchEnabled(snapshot) ? ' active' : ''),
@@ -997,6 +1030,303 @@
     shell.appendChild(backdrop);
   }
 
+  function formatBytes(value) {
+    var bytes = Number(value || 0);
+    if (!bytes) return '0 B';
+    var units = ['B', 'KB', 'MB', 'GB'];
+    var index = 0;
+    while (bytes >= 1024 && index < units.length - 1) {
+      bytes /= 1024;
+      index += 1;
+    }
+    return (index === 0 ? bytes.toFixed(0) : bytes.toFixed(bytes >= 10 ? 1 : 2)) + ' ' + units[index];
+  }
+
+  function buildFileTree(files) {
+    var root = { type: 'folder', name: '', path: '', children: {}, files: [] };
+    (files || []).forEach(function (file) {
+      var parts = String(file.relativePath || file.name || '').split('/').filter(Boolean);
+      var node = root;
+      parts.slice(0, -1).forEach(function (part, index) {
+        var path = parts.slice(0, index + 1).join('/');
+        if (!node.children[part]) {
+          node.children[part] = { type: 'folder', name: part, path: path, children: {}, files: [] };
+        }
+        node = node.children[part];
+      });
+      node.files.push(file);
+    });
+    return root;
+  }
+
+  function countFolderFiles(node) {
+    var count = (node.files || []).length;
+    Object.keys(node.children || {}).forEach(function (key) {
+      count += countFolderFiles(node.children[key]);
+    });
+    return count;
+  }
+
+  function appendFileTree(parent, node, snapshot, aiState, depth) {
+    var folders = Object.keys(node.children || {}).sort();
+    folders.forEach(function (folderName) {
+      var folder = node.children[folderName];
+      var row = document.createElement('button');
+      row.className = 'workspace-file-row workspace-file-folder' + (
+        snapshot.workspaceFileBrowser.selectedType === 'folder' &&
+        snapshot.workspaceFileBrowser.selectedFolderPath === folder.path ? ' active' : ''
+      );
+      row.type = 'button';
+      row.style.setProperty('--depth', String(depth));
+      row.title = folder.path;
+      row.addEventListener('click', function () {
+        aiState.selectWorkspaceFolder(folder.path);
+      });
+      row.innerHTML = '<span class="workspace-file-chevron">⌄</span><span class="workspace-file-glyph">▸</span>';
+      var label = document.createElement('span');
+      label.className = 'workspace-file-name';
+      label.textContent = folder.name;
+      row.appendChild(label);
+      var meta = document.createElement('span');
+      meta.className = 'workspace-file-meta';
+      meta.textContent = String(countFolderFiles(folder));
+      row.appendChild(meta);
+      parent.appendChild(row);
+      appendFileTree(parent, folder, snapshot, aiState, depth + 1);
+    });
+
+    (node.files || []).sort(function (left, right) {
+      return String(left.name || left.relativePath || '').localeCompare(String(right.name || right.relativePath || ''));
+    }).forEach(function (file) {
+      var row = document.createElement('button');
+      row.className = 'workspace-file-row workspace-file-leaf' + (
+        snapshot.workspaceFileBrowser.selectedType === 'file' &&
+        snapshot.workspaceFileBrowser.selectedFileId === file.id ? ' active' : ''
+      );
+      row.type = 'button';
+      row.style.setProperty('--depth', String(depth));
+      row.title = file.relativePath;
+      row.addEventListener('click', function () {
+        aiState.selectWorkspaceFile(file.id).catch(function () {});
+      });
+      row.innerHTML = '<span class="workspace-file-spacer"></span><span class="workspace-file-glyph">□</span>';
+      var label = document.createElement('span');
+      label.className = 'workspace-file-name';
+      label.textContent = file.name || file.relativePath;
+      row.appendChild(label);
+      var meta = document.createElement('span');
+      meta.className = 'workspace-file-meta';
+      meta.textContent = file.sizeBytes ? formatBytes(file.sizeBytes) : '';
+      row.appendChild(meta);
+      parent.appendChild(row);
+    });
+  }
+
+  function selectedFile(snapshot) {
+    var fileId = snapshot.workspaceFileBrowser && snapshot.workspaceFileBrowser.selectedFileId;
+    if (!fileId) return null;
+    return (snapshot.workspaceFiles || []).find(function (file) {
+      return file && file.id === fileId;
+    }) || null;
+  }
+
+  function renderFileBrowserDetails(root, snapshot, aiState) {
+    var details = document.createElement('section');
+    details.className = 'workspace-file-details';
+    var browser = snapshot.workspaceFileBrowser || {};
+    var file = selectedFile(snapshot);
+
+    var title = document.createElement('strong');
+    title.className = 'workspace-file-details-title';
+    title.textContent = file
+      ? file.name
+      : browser.selectedType === 'folder'
+        ? (browser.selectedFolderPath || 'Workspace files')
+        : 'No selection';
+    details.appendChild(title);
+
+    var meta = document.createElement('div');
+    meta.className = 'workspace-file-details-meta';
+    if (file) {
+      meta.textContent = [
+        formatBytes(file.sizeBytes),
+        file.contentType || 'unknown type',
+        file.lastModifiedAt ? window.__tribexAiUtils.formatRelativeTime(file.lastModifiedAt) : '',
+      ].filter(Boolean).join(' · ');
+    } else if (browser.selectedType === 'folder') {
+      var prefix = browser.selectedFolderPath ? browser.selectedFolderPath.replace(/\/+$/g, '') + '/' : '';
+      var count = (snapshot.workspaceFiles || []).filter(function (candidate) {
+        return !prefix || String(candidate.relativePath || '').indexOf(prefix) === 0;
+      }).length;
+      meta.textContent = count + ' file' + (count === 1 ? '' : 's');
+    } else {
+      meta.textContent = 'Select a file or folder to inspect it.';
+    }
+    details.appendChild(meta);
+
+    if (file && browser.preview) {
+      var preview = document.createElement('div');
+      preview.className = 'workspace-file-preview';
+      if (browser.preview.status === 'loading') {
+        preview.textContent = 'Loading preview...';
+      } else if (browser.preview.status === 'ready' && browser.preview.objectUrl) {
+        var image = document.createElement('img');
+        image.src = browser.preview.objectUrl;
+        image.alt = file.name;
+        preview.appendChild(image);
+      } else if (browser.preview.status === 'ready') {
+        var pre = document.createElement('pre');
+        pre.textContent = browser.preview.text || '';
+        preview.appendChild(pre);
+      } else if (browser.preview.status === 'unsupported') {
+        preview.textContent = 'Preview unavailable for this file type.';
+      } else if (browser.preview.status === 'error') {
+        preview.classList.add('error');
+        preview.textContent = browser.preview.error || 'Preview failed.';
+      }
+      details.appendChild(preview);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'workspace-file-detail-actions';
+    actions.appendChild(createIconButton('workspace-file-icon-button', 'Download selection', ICONS.download, {
+      disabled: !file && browser.selectedType !== 'folder' || !!browser.downloading,
+      onClick: function () {
+        aiState.downloadSelectedWorkspaceEntry().catch(function () {});
+      },
+    }));
+    actions.appendChild(createIconButton('workspace-file-icon-button danger', 'Delete file', ICONS.trash, {
+      disabled: !file,
+      onClick: function () {
+        aiState.deleteSelectedWorkspaceFile().catch(function () {});
+      },
+    }));
+    details.appendChild(actions);
+    root.appendChild(details);
+  }
+
+  function renderFileBrowser(snapshot, aiState) {
+    var existing = document.getElementById('workspace-file-browser');
+    if (!snapshot.fileBrowserOpen) {
+      if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+      return;
+    }
+
+    var mainBody = document.getElementById('main-body');
+    if (!mainBody) return;
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+    var browser = snapshot.workspaceFileBrowser || {};
+    var panel = document.createElement('aside');
+    panel.id = 'workspace-file-browser';
+    panel.className = 'workspace-file-browser open';
+    panel.setAttribute('aria-label', 'Workspace file browser');
+
+    var header = document.createElement('div');
+    header.className = 'workspace-file-header';
+    var copy = document.createElement('div');
+    copy.className = 'workspace-file-header-copy';
+    var title = document.createElement('strong');
+    title.textContent = 'Files';
+    copy.appendChild(title);
+    var subtitle = document.createElement('span');
+    subtitle.textContent = snapshot.selectedWorkspace && snapshot.selectedWorkspace.name ? snapshot.selectedWorkspace.name : 'Active workspace';
+    copy.appendChild(subtitle);
+    header.appendChild(copy);
+
+    var actions = document.createElement('div');
+    actions.className = 'workspace-file-actions';
+    var fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.multiple = true;
+    fileInput.className = 'workspace-file-input';
+    fileInput.addEventListener('change', function (event) {
+      aiState.uploadWorkspaceFiles(event.target.files).catch(function () {});
+      event.target.value = '';
+    });
+    panel.appendChild(fileInput);
+
+    var folderInput = document.createElement('input');
+    folderInput.type = 'file';
+    folderInput.multiple = true;
+    folderInput.className = 'workspace-file-input';
+    folderInput.setAttribute('webkitdirectory', '');
+    folderInput.setAttribute('directory', '');
+    folderInput.addEventListener('change', function (event) {
+      aiState.uploadWorkspaceFiles(event.target.files).catch(function () {});
+      event.target.value = '';
+    });
+    panel.appendChild(folderInput);
+
+    actions.appendChild(createIconButton('workspace-file-icon-button', 'Refresh files', ICONS.refresh, {
+      disabled: !!browser.loading,
+      onClick: function () {
+        aiState.refreshWorkspaceFiles(true).catch(function () {});
+      },
+    }));
+    actions.appendChild(createButton('workspace-file-text-button', 'Upload', {
+      disabled: !!browser.uploading,
+      onClick: function () {
+        fileInput.click();
+      },
+    }));
+    actions.appendChild(createButton('workspace-file-text-button', 'Folder', {
+      disabled: !!browser.uploading,
+      onClick: function () {
+        folderInput.click();
+      },
+    }));
+    actions.appendChild(createButton('workspace-file-close', '×', {
+      title: 'Close file browser',
+      onClick: function () {
+        aiState.closeWorkspaceFileBrowser();
+      },
+    }));
+    header.appendChild(actions);
+    panel.appendChild(header);
+
+    if (browser.error) {
+      var error = document.createElement('div');
+      error.className = 'workspace-file-error';
+      error.textContent = browser.error;
+      panel.appendChild(error);
+    }
+
+    if (browser.uploadProgress || browser.downloadProgress) {
+      var progress = document.createElement('div');
+      progress.className = 'workspace-file-progress';
+      var progressData = browser.uploadProgress || browser.downloadProgress;
+      progress.textContent = progressData.label + ' · ' + progressData.completed + '/' + progressData.total;
+      panel.appendChild(progress);
+    }
+
+    var body = document.createElement('div');
+    body.className = 'workspace-file-body';
+    var tree = document.createElement('div');
+    tree.className = 'workspace-file-tree';
+    if (browser.loading) {
+      tree.textContent = 'Loading files...';
+    } else if (!(snapshot.workspaceFiles || []).length) {
+      tree.textContent = 'No files yet.';
+    } else {
+      var root = buildFileTree(snapshot.workspaceFiles || []);
+      var rootRow = createButton('workspace-file-row workspace-file-folder' + (
+        browser.selectedType === 'folder' && !browser.selectedFolderPath ? ' active' : ''
+      ), 'Workspace root', {
+        onClick: function () {
+          aiState.selectWorkspaceFolder('');
+        },
+      });
+      rootRow.style.setProperty('--depth', '0');
+      tree.appendChild(rootRow);
+      appendFileTree(tree, root, snapshot, aiState, 1);
+    }
+    body.appendChild(tree);
+    renderFileBrowserDetails(body, snapshot, aiState);
+    panel.appendChild(body);
+    mainBody.appendChild(panel);
+  }
+
   function renderCollapsed(shell, snapshot, aiState) {
     var stack = document.createElement('div');
     stack.className = 'ai-nav-collapsed-stack';
@@ -1063,6 +1393,7 @@
       renderProjectRenameModal(shell, snapshot, aiState);
       renderThreadComposerModal(shell, snapshot, aiState);
       renderThreadRenameModal(shell, snapshot, aiState);
+      renderFileBrowser(snapshot, aiState);
       restoreFocusState(shell, focusState);
       return;
     }
@@ -1086,6 +1417,7 @@
     renderProjectRenameModal(shell, snapshot, aiState);
     renderThreadComposerModal(shell, snapshot, aiState);
     renderThreadRenameModal(shell, snapshot, aiState);
+    renderFileBrowser(snapshot, aiState);
     restoreFocusState(shell, focusState);
     applyPendingFocus(shell);
   }

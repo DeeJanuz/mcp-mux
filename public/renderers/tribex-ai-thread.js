@@ -1379,6 +1379,25 @@
     });
   }
 
+  function isThreadTurnLocked(threadContext) {
+    if (!threadContext) return false;
+    if (threadContext.pending) return true;
+    var activeTurnStatus = threadContext.thread && threadContext.thread.activeTurn
+      ? String(threadContext.thread.activeTurn.status || '').toLowerCase()
+      : '';
+    if (activeTurnStatus === 'queued' || activeTurnStatus === 'running') return true;
+    var runs = threadContext.thread && Array.isArray(threadContext.thread.runs)
+      ? threadContext.thread.runs
+      : [];
+    return runs.some(function (run) {
+      return !!(
+        run &&
+        ((run.answer && run.answer.isStreaming) ||
+        (run.workSession && run.workSession.status === 'running'))
+      );
+    });
+  }
+
   function scheduleLiveTick(state) {
     if (!state || state.liveTickId || !state.threadId) return;
     state.liveTickId = window.setTimeout(function () {
@@ -1430,6 +1449,23 @@
       scrollToBottom(scrollHost);
     });
     view.appendChild(jumpButton);
+
+    var interrupt = document.createElement('button');
+    interrupt.className = 'ai-interrupt-turn';
+    interrupt.type = 'button';
+    interrupt.textContent = 'Stop';
+    interrupt.hidden = true;
+    interrupt.addEventListener('click', function () {
+      if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.interruptThread !== 'function') return;
+      interrupt.disabled = true;
+      Promise.resolve(window.__tribexAiState.interruptThread(state.threadId)).finally(function () {
+        interrupt.disabled = false;
+        if (state.textarea && typeof state.textarea.focus === 'function') {
+          state.textarea.focus();
+        }
+      });
+    });
+    view.appendChild(interrupt);
 
     var composer = document.createElement('section');
     composer.className = 'ai-composer-shell';
@@ -1520,6 +1556,7 @@
       layout: layout,
       transcript: transcript,
       jumpButton: jumpButton,
+      interrupt: interrupt,
       composer: composer,
       textarea: textarea,
       primary: primary,
@@ -1538,24 +1575,6 @@
 
   function updateAlerts(state, threadContext) {
     state.alerts.innerHTML = '';
-    var hasContent = !!(
-      threadContext &&
-      threadContext.thread &&
-      (
-        (threadContext.thread.runs && threadContext.thread.runs.length) ||
-        (threadContext.thread.messages && threadContext.thread.messages.length)
-      )
-    );
-
-    if (threadContext.loading) {
-      var loading = document.createElement('section');
-      loading.className = 'ai-inline-alert ai-inline-alert-info';
-      loading.innerHTML = hasContent
-        ? '<div><strong>Syncing thread</strong><p>Refreshing transcript and hosted activity in the background.</p></div>'
-        : '<div><strong>Hydrating thread</strong><p>Refreshing transcript and hosted activity for this thread.</p></div>';
-      state.alerts.appendChild(loading);
-    }
-
     if (threadContext.error) {
       var error = document.createElement('section');
       error.className = 'ai-inline-alert ai-inline-alert-warning';
@@ -1735,13 +1754,20 @@
 
   function updateComposer(state, threadContext, threadChanged) {
     var nextThreadId = threadContext.thread && threadContext.thread.id ? threadContext.thread.id : null;
+    var locked = isThreadTurnLocked(threadContext);
     state.threadId = nextThreadId;
     state.textarea.value = threadContext.thread && threadContext.thread.ui
       ? (threadContext.thread.ui.draftText || '')
       : '';
-    state.textarea.disabled = !!threadContext.pending;
-    state.primary.disabled = !!threadContext.pending;
-    state.primary.textContent = threadContext.pending ? 'Sending…' : 'Send';
+    state.view.classList.toggle('ai-thread-turn-locked', locked);
+    state.composer.classList.toggle('is-busy-hidden', locked);
+    state.composer.setAttribute('aria-hidden', locked ? 'true' : 'false');
+    if ('inert' in state.composer) state.composer.inert = locked;
+    state.interrupt.hidden = !locked;
+    state.interrupt.disabled = !locked;
+    state.textarea.disabled = locked;
+    state.primary.disabled = locked;
+    state.primary.textContent = 'Send';
   }
 
   function restoreThreadScroll(state, threadContext, threadChanged) {

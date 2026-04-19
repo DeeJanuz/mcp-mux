@@ -596,6 +596,62 @@ describe('tribex-ai-client', function () {
     });
   });
 
+  it('normalizes thread summaries from message activity instead of updatedAt', function () {
+    expect(window.__tribexAiClient.normalizeThreadSummary({
+      id: 'thread-1',
+      title: 'Summary Thread',
+      updatedAt: '2026-04-17T22:18:24.000Z',
+      createdAt: '2026-04-17T22:18:00.000Z',
+      latestMessageAt: '2026-04-17T22:18:22.000Z',
+    }, {
+      id: 'project-1',
+      workspaceId: 'workspace-1',
+      organizationId: 'org-1',
+    }, 0)).toMatchObject({
+      id: 'thread-1',
+      messageActivityAt: '2026-04-17T22:18:22.000Z',
+      lastActivityAt: '2026-04-17T22:18:22.000Z',
+    });
+  });
+
+  it('falls back to thread creation time when no explicit message activity is present', function () {
+    expect(window.__tribexAiClient.normalizeThreadSummary({
+      id: 'thread-2',
+      title: 'Fresh Thread',
+      updatedAt: '2026-04-17T22:18:24.000Z',
+      createdAt: '2026-04-17T22:18:00.000Z',
+    }, {
+      id: 'project-1',
+      workspaceId: 'workspace-1',
+      organizationId: 'org-1',
+    }, 0)).toMatchObject({
+      id: 'thread-2',
+      messageActivityAt: '2026-04-17T22:18:00.000Z',
+      lastActivityAt: '2026-04-17T22:18:00.000Z',
+    });
+  });
+
+  it('normalizes thread detail activity from explicit message timestamps instead of updatedAt', function () {
+    expect(window.__tribexAiClient.normalizeThreadDetail({
+      thread: {
+        id: 'thread-3',
+        title: 'Detail Thread',
+        updatedAt: '2026-04-17T22:18:24.000Z',
+        latestMessageAt: '2026-04-17T22:18:22.000Z',
+      },
+      project: {
+        id: 'project-1',
+        workspaceId: 'workspace-1',
+        organizationId: 'org-1',
+      },
+      messages: [],
+    })).toMatchObject({
+      id: 'thread-3',
+      messageActivityAt: '2026-04-17T22:18:22.000Z',
+      lastActivityAt: '2026-04-17T22:18:22.000Z',
+    });
+  });
+
   it('preserves review session identity for sequenced push_review companion events', function () {
     expect(window.__tribexAiClient.normalizeMessage({
       toolName: 'push_review',
@@ -1037,6 +1093,129 @@ describe('tribex-ai-client', function () {
       expect.objectContaining({ type: 'user_accepted' }),
       expect.objectContaining({ type: 'turn_finish' }),
     ]));
+  });
+
+  it('uses runtime-session transcript bootstrap without opening a websocket', async function () {
+    var bootstrapMessages = [
+      {
+        id: 'user-bootstrap-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'What changed in Q1?' }],
+        createdAt: '2026-04-15T00:00:00.000Z',
+      },
+      {
+        id: 'assistant-bootstrap-1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'Q1 revenue improved on services mix.' }],
+        createdAt: '2026-04-15T00:00:01.000Z',
+      },
+    ];
+    var runtimeEnvelope = createRuntimeSessionEnvelope('thread-123');
+    runtimeEnvelope.runtimeMessages = {
+      source: 'cloudflare-agent',
+      messages: bootstrapMessages,
+    };
+    var FakeAgentClient = createAgentClientCtor();
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(runtimeEnvelope);
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    await expect(window.__tribexAiClient.syncThreadRuntime('thread-123', {
+      forceRefresh: true,
+    })).resolves.toMatchObject({
+      id: 'thread-123',
+      messagesSource: 'runtime',
+      messages: [
+        expect.objectContaining({
+          id: 'user-bootstrap-1',
+          role: 'user',
+          content: 'What changed in Q1?',
+        }),
+        expect.objectContaining({
+          id: 'assistant-bootstrap-1',
+          role: 'assistant',
+          content: 'Q1 revenue improved on services mix.',
+        }),
+      ],
+      preview: 'Q1 revenue improved on services mix.',
+    });
+    expect(FakeAgentClient.instances).toHaveLength(0);
+  });
+
+  it('does not let an empty live sync override a non-empty runtime-session transcript bootstrap', async function () {
+    var runtimeEnvelope = createRuntimeSessionEnvelope('thread-123');
+    runtimeEnvelope.runtimeMessages = {
+      source: 'cloudflare-agent',
+      messages: [
+        {
+          id: 'user-bootstrap-empty-live-1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'Summarize the test.' }],
+          createdAt: '2026-04-15T00:00:00.000Z',
+        },
+        {
+          id: 'assistant-bootstrap-empty-live-1',
+          role: 'assistant',
+          parts: [{ type: 'text', text: 'The test finished successfully.' }],
+          createdAt: '2026-04-15T00:00:01.000Z',
+        },
+      ],
+    };
+    var FakeAgentClient = createAgentClientCtor();
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(runtimeEnvelope);
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    await expect(window.__tribexAiClient.syncThreadRuntime('thread-123', {
+      forceRefresh: true,
+    })).resolves.toMatchObject({
+      messages: [
+        expect.objectContaining({
+          id: 'user-bootstrap-empty-live-1',
+          content: 'Summarize the test.',
+        }),
+        expect.objectContaining({
+          id: 'assistant-bootstrap-empty-live-1',
+          content: 'The test finished successfully.',
+        }),
+      ],
+      preview: 'The test finished successfully.',
+    });
+    expect(FakeAgentClient.instances).toHaveLength(0);
   });
 
   it('creates titled threads and sends smoke prompts through the runtime agent bridge', async function () {
@@ -1784,5 +1963,103 @@ describe('tribex-ai-client', function () {
     );
     expect(relayHandler).toHaveBeenCalledWith({ ok: true });
     expect(presenceHandler).toHaveBeenCalledWith({ ok: true });
+  });
+
+  it('calls workspace sandbox file routes and normalizes files', async function () {
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/user-sandbox/files' && args.method === 'GET') {
+        return Promise.resolve({
+          files: [{
+            id: 'file-1',
+            relativePath: 'reports/april.csv',
+            contentType: 'text/csv',
+            sizeBytes: 42,
+          }],
+        });
+      }
+      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/user-sandbox/files' && args.method === 'POST') {
+        return Promise.resolve({
+          file: {
+            id: 'file-2',
+            relativePath: args.body.relativePath,
+          },
+          upload: { url: 'https://worker.example/__sandbox/workspace-file?token=upload' },
+        });
+      }
+      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/user-sandbox/files/file-1') {
+        return Promise.resolve({
+          file: { id: 'file-1', relativePath: 'reports/april.csv' },
+          download: { url: 'https://worker.example/__sandbox/workspace-file?token=download' },
+        });
+      }
+      return Promise.reject(new Error('unexpected request ' + JSON.stringify(args)));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = { core: { invoke: invoke } };
+
+    await expect(window.__tribexAiClient.listWorkspaceFiles('workspace-123')).resolves.toMatchObject({
+      files: [{ id: 'file-1', name: 'april.csv', sizeBytes: 42 }],
+    });
+    await expect(window.__tribexAiClient.initWorkspaceFileUpload('workspace-123', {
+      relativePath: 'uploads/a.txt',
+      contentType: 'text/plain',
+      sizeBytes: 3,
+    })).resolves.toMatchObject({
+      file: { id: 'file-2', relativePath: 'uploads/a.txt' },
+      upload: { url: expect.stringContaining('workspace-file') },
+    });
+    await expect(window.__tribexAiClient.getWorkspaceFile('workspace-123', 'file-1')).resolves.toMatchObject({
+      file: { id: 'file-1' },
+      download: { url: expect.stringContaining('download') },
+    });
+
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'GET',
+      path: '/workspaces/workspace-123/user-sandbox/files',
+    }));
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'POST',
+      path: '/workspaces/workspace-123/user-sandbox/files',
+      body: expect.objectContaining({ relativePath: 'uploads/a.txt' }),
+    }));
+  });
+
+  it('uploads and downloads through signed worker URLs', async function () {
+    var uploadFetch = vi.fn(function (url, init) {
+      expect(url).toContain('token=upload');
+      expect(init.method).toBe('POST');
+      return Promise.resolve({
+        ok: true,
+        json: function () { return Promise.resolve({ ok: true }); },
+      });
+    });
+    globalThis.fetch = uploadFetch;
+
+    await expect(window.__tribexAiClient.uploadWorkspaceFileToSignedUrl(
+      { url: 'https://worker.example/__sandbox/workspace-file?token=upload' },
+      new Blob(['hello'], { type: 'text/plain' }),
+    )).resolves.toMatchObject({ ok: true });
+
+    globalThis.fetch = vi.fn(function () {
+      return Promise.resolve({
+        ok: true,
+        headers: {
+          get: function (name) {
+            return name === 'content-type' ? 'text/plain' : null;
+          },
+        },
+        arrayBuffer: function () {
+          return Promise.resolve(new Uint8Array([104, 105]).buffer);
+        },
+      });
+    });
+
+    await expect(window.__tribexAiClient.fetchSignedFileBytes({
+      url: 'https://worker.example/__sandbox/workspace-file?token=download',
+    })).resolves.toMatchObject({
+      contentType: 'text/plain',
+      bytes: new Uint8Array([104, 105]),
+    });
   });
 });

@@ -214,6 +214,8 @@ mcpviews/
 
 MCPViews supports plugins that extend the app with tools from third-party MCP servers. Each plugin is a JSON manifest that declares renderer mappings, MCP server configuration, and authentication. Plugins are stored as individual JSON files in `~/.mcpviews/plugins/`.
 
+For hosted AI workspace durable file storage, see [Workspace File Browser](./docs/workspace-file-browser.md). MCPViews uses ProPaasAI sandbox routes and short-lived signed worker URLs; Cloudflare R2 credentials stay in the hosted control plane and worker environment.
+
 Bundled manifests can also ship with the app under `bundled-plugins/`; MCPViews seeds them into the local plugin store during startup so example or compatibility experiences are available immediately without changing the public plugin contract.
 
 For full documentation, see [docs/plugins.md](docs/plugins.md). For a step-by-step guide to creating your own plugin, see [docs/plugin-development.md](docs/plugin-development.md).

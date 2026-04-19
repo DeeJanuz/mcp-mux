@@ -1194,6 +1194,50 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-jump-latest').hidden).toBe(true);
   });
 
+  it('slides the composer away and shows a centered stop button while the turn is active', async function () {
+    var interruptThread = vi.fn(function () { return Promise.resolve(true); });
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Active thread',
+            activeTurn: {
+              status: 'running',
+            },
+            messages: [
+              { id: 'u1', role: 'user', content: 'Keep working', createdAt: '2026-04-14T20:00:00.000Z' },
+            ],
+          },
+          loading: false,
+          pending: true,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: null,
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      interruptThread: interruptThread,
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-view').classList.contains('ai-thread-turn-locked')).toBe(true);
+    expect(document.querySelector('.ai-composer-shell').classList.contains('is-busy-hidden')).toBe(true);
+    expect(document.querySelector('.ai-composer-input').disabled).toBe(true);
+    expect(document.querySelector('.ai-interrupt-turn').hidden).toBe(false);
+
+    document.querySelector('.ai-interrupt-turn').click();
+    await Promise.resolve();
+
+    expect(interruptThread).toHaveBeenCalledWith('thread-1');
+  });
+
   it('renders non-lifecycle tool events inside the work session log', function () {
     window.__tribexAiState = {
       getThreadContext: vi.fn(function () {

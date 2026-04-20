@@ -1621,6 +1621,8 @@
         personaTestRunId: override.personaTestRunId || null,
         telemetryToken: override.telemetryToken || null,
         turnId: options && options.turnId ? options.turnId : null,
+        messageId: options && options.messageId ? options.messageId : null,
+        waitForStable: options && options.waitForStable === false ? false : undefined,
       });
     });
   }

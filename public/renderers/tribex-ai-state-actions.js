@@ -710,19 +710,56 @@
       });
     }
 
+    function isThreadBusy(threadId) {
+      if (!threadId) return false;
+      if (state.pendingThreadIds[threadId]) return true;
+      var detail = (state.threadDetails && state.threadDetails[threadId])
+        || (state.threadEntitiesById && state.threadEntitiesById[threadId])
+        || null;
+      var activeTurnStatus = detail && detail.activeTurn
+        ? String(detail.activeTurn.status || '').toLowerCase()
+        : '';
+      if (activeTurnStatus === 'queued' || activeTurnStatus === 'running') {
+        return true;
+      }
+
+      var runs = [];
+      if (detail && Array.isArray(detail.runs)) {
+        runs = detail.runs;
+      } else if (detail && typeof api.buildThreadProjection === 'function') {
+        runs = api.buildThreadProjection(detail).runs || [];
+      }
+
+      return runs.some(function (run) {
+        return !!(
+          run &&
+          ((run.answer && run.answer.isStreaming) ||
+          (run.workSession && String(run.workSession.status || '').toLowerCase() === 'running'))
+        );
+      });
+    }
+
     function submitPrompt(threadId, prompt) {
       var trimmed = String(prompt || '').trim();
       if (!trimmed) return Promise.resolve(false);
       var turnId = api.randomId('turn');
+      var busy = isThreadBusy(threadId);
+      var messageId = busy ? api.randomId('user') : null;
       var thread = api.getThread(threadId);
       if (thread) {
         thread.rowState = 'pending';
       }
 
-      state.pendingThreadIds[threadId] = true;
+      if (!busy) {
+        state.pendingThreadIds[threadId] = true;
+      }
       state.threadErrors[threadId] = null;
       api.bindRuntimeBridge(threadId);
-      api.queueLocalTurn(threadId, trimmed, turnId);
+      if (busy && typeof api.queueContextMessage === 'function') {
+        api.queueContextMessage(threadId, trimmed, messageId);
+      } else {
+        api.queueLocalTurn(threadId, trimmed, turnId);
+      }
       api.setThreadDraft(threadId, '');
       api.notify();
 
@@ -730,10 +767,14 @@
         .then(function () {
           return window.__tribexAiClient.sendMessage(threadId, trimmed, {
             turnId: turnId,
+            messageId: messageId || undefined,
+            waitForStable: busy ? false : undefined,
           });
         })
         .then(function (turn) {
-          api.applySendResult(threadId, turn);
+          if (!busy) {
+            api.applySendResult(threadId, turn);
+          }
           if (turn && turn.done && typeof turn.done.then === 'function') {
             turn.done.catch(function (error) {
               var message = error && error.message ? error.message : String(error);
@@ -746,16 +787,27 @@
               });
               api.notify();
             });
-          } else {
+          } else if (!busy) {
             delete state.pendingThreadIds[threadId];
             var currentThread = api.getThread(threadId);
             if (currentThread) currentThread.rowState = null;
+            api.notify();
+          } else {
+            var busyThread = api.getThread(threadId);
+            if (busyThread) busyThread.rowState = null;
             api.notify();
           }
           return true;
         })
         .catch(function (error) {
           var message = error && error.message ? error.message : String(error);
+          if (busy) {
+            state.threadErrors[threadId] = message;
+            var busyThread = api.getThread(threadId);
+            if (busyThread) busyThread.rowState = null;
+            api.notify();
+            return false;
+          }
           var wasInterrupted = typeof api.shouldSilenceInterruptedFailure === 'function'
             ? api.shouldSilenceInterruptedFailure(threadId, turnId)
             : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);

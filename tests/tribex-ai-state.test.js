@@ -1168,6 +1168,125 @@ describe('tribex-ai-state', function () {
     expect(threadContext.thread.activeTurn.userMessage.pending).toBe(true);
   });
 
+  it('adds busy prompts as queued context without replacing the active turn', async function () {
+    var submitted = [];
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'New chat',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'New chat',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [],
+        });
+      }),
+      registerDesktopRelay: vi.fn(function () {
+        return Promise.resolve({
+          relaySession: { id: 'relay-session-1' },
+          relayDeviceId: 'device-1',
+        });
+      }),
+      startDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      disconnectRuntime: vi.fn(),
+      sendMessage: vi.fn(function (_threadId, prompt, options) {
+        submitted.push({ prompt: prompt, options: options || {} });
+        if (options && options.waitForStable === false) {
+          return Promise.resolve({
+            turnId: options.turnId,
+            messageId: options.messageId,
+            queued: true,
+          });
+        }
+        return Promise.resolve({
+          turnId: options && options.turnId ? options.turnId : 'turn-1',
+          done: new Promise(function () {}),
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value.thread || value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1', { connectStream: false });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await window.__tribexAiState.submitPrompt('thread-1', 'Start the report');
+    var activeTurnId = submitted[0].options.turnId;
+    await window.__tribexAiState.submitPrompt('thread-1', 'Use the newer revenue number.');
+    await Promise.resolve();
+
+    expect(submitted).toHaveLength(2);
+    expect(submitted[1]).toMatchObject({
+      prompt: 'Use the newer revenue number.',
+      options: {
+        waitForStable: false,
+        messageId: expect.any(String),
+      },
+    });
+    expect(submitted[1].options.messageId).toBeTruthy();
+
+    var threadContext = window.__tribexAiState.getThreadContext('thread-1');
+    expect(threadContext.thread.activeTurn).toMatchObject({
+      turnId: activeTurnId,
+      status: 'queued',
+      userMessage: expect.objectContaining({
+        content: 'Start the report',
+      }),
+    });
+    expect(threadContext.thread.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: 'Start the report' }),
+      expect.objectContaining({ content: 'Use the newer revenue number.' }),
+    ]));
+    expect(threadContext.pending).toBe(true);
+  });
+
   it('turns local desktop relay tool requests into inline structured-data results instead of reopenable artifacts', async function () {
     vi.useFakeTimers();
     var relayHandler = null;

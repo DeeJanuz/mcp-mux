@@ -356,9 +356,15 @@
 
     function mergeThreadSummary(summary) {
       if (!summary || !summary.id) return null;
+      var childThreads = Array.isArray(summary.childThreads) ? summary.childThreads.slice() : [];
       var next = Object.assign({}, getThread(summary.id) || {});
       Object.keys(summary || {}).forEach(function (key) {
         var value = summary[key];
+        if (key === 'childThreads') return;
+        if (key === 'parentThreadId') {
+          next.parentThreadId = value || null;
+          return;
+        }
         if (value === undefined || value === null) return;
         if (key === 'lastActivityAt') {
           next.lastActivityAt = maxActivityTimestamp(next.lastActivityAt, value);
@@ -388,6 +394,17 @@
       }
       state.threadEntitiesById[next.id] = next;
       state.threadDetails = state.threadEntitiesById;
+      childThreads.forEach(function (childThread) {
+        if (!childThread || !childThread.id) return;
+        mergeThreadSummary(Object.assign({}, childThread, {
+          projectId: childThread.projectId || next.projectId || null,
+          workspaceId: childThread.workspaceId || next.workspaceId || null,
+          organizationId: childThread.organizationId || next.organizationId || null,
+          projectName: childThread.projectName || next.projectName || null,
+          workspaceName: childThread.workspaceName || next.workspaceName || null,
+          parentThreadId: childThread.parentThreadId || next.id,
+        }));
+      });
       return next;
     }
 
@@ -398,6 +415,11 @@
         if (merged && merged.id) {
           nextIds[merged.id] = true;
         }
+        (thread && thread.childThreads || []).forEach(function markChild(childThread) {
+          if (!childThread || !childThread.id) return;
+          nextIds[childThread.id] = true;
+          (childThread.childThreads || []).forEach(markChild);
+        });
       });
 
       Object.keys(state.threadEntitiesById).forEach(function (threadId) {
@@ -432,8 +454,7 @@
       if (value == null) return '';
       if (typeof value === 'string') return value;
       try {
-        var json = JSON.stringify(value, null, 2);
-        return json.length > 500 ? json.slice(0, 500) + '...' : json;
+        return JSON.stringify(value, null, 2);
       } catch (_error) {
         return String(value);
       }

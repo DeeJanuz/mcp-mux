@@ -634,6 +634,12 @@
       projectName: pickFirst([raw.projectName, project && project.name], null),
       personaReleaseId: pickFirst([raw.personaReleaseId], null),
       persona: normalizeThreadPersona(raw.persona),
+      parentThreadId: pickFirst([raw.parentThreadId, raw.parent_thread_id], null),
+      childThreads: extractArray(raw, ['childThreads', 'child_threads', 'children']).map(function (childThread, childIndex) {
+        var normalizedChild = normalizeThreadSummary(childThread, project, childIndex);
+        normalizedChild.parentThreadId = normalizedChild.parentThreadId || id;
+        return normalizedChild;
+      }),
     };
   }
 
@@ -817,6 +823,23 @@
       persona: normalizeThreadPersona(raw.persona || thread.persona),
       personaRelease: raw.personaRelease || thread.personaRelease || null,
       personaTestRun: raw.personaTestRun || thread.personaTestRun || null,
+      parentThreadId: pickFirst([
+        thread.parentThreadId,
+        thread.parent_thread_id,
+        raw.parentThreadId,
+        raw.parent_thread_id,
+      ], null),
+      childThreads: (extractArray(thread, ['childThreads', 'child_threads', 'children']).length
+        ? extractArray(thread, ['childThreads', 'child_threads', 'children'])
+        : extractArray(raw, ['childThreads', 'child_threads', 'children'])
+      ).map(function (childThread, childIndex) {
+        var normalizedChild = normalizeThreadSummary(childThread, project, childIndex);
+        normalizedChild.parentThreadId = normalizedChild.parentThreadId || pickFirst([
+          thread.id,
+          thread.threadId,
+        ], null);
+        return normalizedChild;
+      }),
       messageActivityAt: messageActivityAt,
       lastActivityAt: messageActivityAt,
       messages: messages.map(function (message, index) {

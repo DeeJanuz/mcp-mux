@@ -10,6 +10,7 @@ describe('tribex-ai-state runtime helpers', function () {
     delete window.__createTribexAiStateRuntime;
     delete window.__createTribexAiStateActions;
     delete window.__tribexAiState;
+    delete window.__tribexAiClient;
 
     loadTribexAiUtils();
     loadTribexAiState();
@@ -120,5 +121,103 @@ describe('tribex-ai-state runtime helpers', function () {
     expect(detail.rowState).toBe('error');
     expect(api.rememberTurnHistory).toHaveBeenCalledWith(detail);
     expect(api.syncThreadSummaryFromRecord).toHaveBeenCalledWith(detail);
+  });
+
+  it('creates and hydrates child thread summaries from subagent dispatch activity', function () {
+    var parentDetail = {
+      id: 'thread-parent',
+      projectId: 'project-1',
+      workspaceId: 'workspace-1',
+      organizationId: 'org-1',
+      projectName: 'Project',
+      workspaceName: 'Workspace',
+      activity: {
+        itemsById: {},
+        order: [],
+      },
+    };
+    var mergedSummaries = [];
+    var context = {
+      state: {
+        pendingThreadIds: {},
+        threadErrors: {},
+      },
+      runtimeEventUnsubscribers: {},
+    };
+    var api = {
+      ensureThreadDetailRecord: function () { return parentDetail; },
+      getStoredActivityItem: function () { return null; },
+      getLatestTurnReference: function () { return {}; },
+      resolveActivityDisplayMode: function () { return 'artifact'; },
+      getThread: function (threadId) {
+        if (threadId === 'thread-parent') return parentDetail;
+        return mergedSummaries.find(function (summary) { return summary.id === threadId; }) || null;
+      },
+      getProject: function () {
+        return {
+          id: 'project-1',
+          workspaceId: 'workspace-1',
+          organizationId: 'org-1',
+          name: 'Project',
+          workspaceName: 'Workspace',
+        };
+      },
+      upsertActivityItem: vi.fn(function (_record, item) { return item; }),
+      mergeThreadSummary: vi.fn(function (summary) {
+        mergedSummaries.push(summary);
+        return summary;
+      }),
+      setProjectExpanded: vi.fn(),
+      hydrateThread: vi.fn(function () { return Promise.resolve(null); }),
+      isRendererBackedActivityItem: function () { return false; },
+      notify: vi.fn(),
+      nowIso: function () { return '2026-04-16T10:04:00.000Z'; },
+    };
+    window.__tribexAiClient = {
+      normalizeThreadSummary: function (raw, project) {
+        return {
+          id: raw.id,
+          title: raw.title,
+          projectId: raw.projectId || project.id,
+          workspaceId: raw.workspaceId || project.workspaceId,
+          organizationId: raw.organizationId || project.organizationId,
+        };
+      },
+    };
+
+    window.__createTribexAiStateRuntime(context, api);
+    api.handleRuntimeEvent('thread-parent', {
+      type: 'activity_update',
+      item: {
+        id: 'tool-1',
+        role: 'tool',
+        toolName: 'subagent_dispatch',
+        status: 'completed',
+        rawOutput: {
+          childThread: {
+            id: 'thread-child',
+            title: 'Finance delegate',
+          },
+          subAgentRun: {
+            id: 'run-1',
+            childThreadId: 'thread-child',
+            status: 'RUNNING',
+          },
+        },
+      },
+    });
+
+    expect(api.mergeThreadSummary).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'thread-child',
+      title: 'Finance delegate',
+      parentThreadId: 'thread-parent',
+      projectId: 'project-1',
+      rowState: 'syncing',
+    }));
+    expect(api.setProjectExpanded).toHaveBeenCalledWith('project-1', true);
+    expect(api.hydrateThread).toHaveBeenCalledWith(
+      'thread-child',
+      expect.objectContaining({ parentThreadId: 'thread-parent' }),
+    );
   });
 });

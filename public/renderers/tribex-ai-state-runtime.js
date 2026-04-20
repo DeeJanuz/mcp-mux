@@ -368,6 +368,7 @@
       if (detail.projectId) merged.projectId = detail.projectId;
       if (detail.workspaceId) merged.workspaceId = detail.workspaceId;
       if (detail.organizationId) merged.organizationId = detail.organizationId;
+      if (detail.parentThreadId !== undefined) merged.parentThreadId = detail.parentThreadId || null;
       if (detail.hydrateState || detail.status) merged.hydrateState = detail.hydrateState || detail.status;
       if (detail.personaReleaseId) merged.personaReleaseId = detail.personaReleaseId;
       if (detail.persona) merged.persona = detail.persona;
@@ -430,6 +431,19 @@
 
       api.ensureThreadUi(detail.id);
       api.syncThreadSummaryFromRecord(merged);
+      if (Array.isArray(detail.childThreads)) {
+        detail.childThreads.forEach(function (childThread) {
+          if (!childThread || !childThread.id) return;
+          api.mergeThreadSummary(Object.assign({}, childThread, {
+            projectId: childThread.projectId || merged.projectId || null,
+            workspaceId: childThread.workspaceId || merged.workspaceId || null,
+            organizationId: childThread.organizationId || merged.organizationId || null,
+            projectName: childThread.projectName || merged.projectName || null,
+            workspaceName: childThread.workspaceName || merged.workspaceName || null,
+            parentThreadId: childThread.parentThreadId || merged.id,
+          }));
+        });
+      }
       return merged;
     }
 
@@ -603,6 +617,8 @@
         title: message.summary || window.__tribexAiUtils.titleCase(message.toolName || 'tool'),
         status: message.status || 'completed',
         detail: message.detail || '',
+        rawInput: message.rawInput !== undefined ? message.rawInput : null,
+        rawOutput: message.rawOutput !== undefined ? message.rawOutput : null,
         resultData: message.resultData || null,
         resultMeta: resultMeta,
         reviewRequired: reviewRequired,
@@ -909,6 +925,137 @@
       delete context.runtimeEventUnsubscribers[threadId];
     }
 
+    function parseObjectCandidate(value) {
+      if (!value) return null;
+      if (typeof value === 'object' && !Array.isArray(value)) return value;
+      if (typeof value !== 'string') return null;
+      var trimmed = value.trim();
+      if (!trimmed || (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[')) return null;
+      try {
+        var parsed = JSON.parse(trimmed);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+      } catch (_error) {
+        return null;
+      }
+    }
+
+    function extractSubAgentPayload(item) {
+      if (!item) return null;
+      var toolName = String(item.toolName || '').toLowerCase();
+      var candidates = [
+        item.rawOutput,
+        item.resultData,
+        item.detail,
+        item.rawInput,
+      ];
+
+      for (var index = 0; index < candidates.length; index += 1) {
+        var candidate = parseObjectCandidate(candidates[index]);
+        if (!candidate) continue;
+        var run = candidate.subAgentRun || candidate.sub_agent_run || null;
+        var childThread = candidate.childThread || candidate.child_thread || null;
+        if (
+          childThread ||
+          candidate.childThreadId ||
+          candidate.child_thread_id ||
+          (run && (run.childThreadId || run.child_thread_id))
+        ) {
+          return candidate;
+        }
+      }
+
+      return toolName === 'subagent_dispatch' ? parseObjectCandidate(item.detail) : null;
+    }
+
+    function normalizeSubAgentChildThread(parentThreadId, payload) {
+      if (!payload) return null;
+      var parent = api.getThread(parentThreadId) || {};
+      var run = payload.subAgentRun || payload.sub_agent_run || null;
+      var childRaw = payload.childThread || payload.child_thread || null;
+      var childThreadId = childRaw && (childRaw.id || childRaw.threadId)
+        ? childRaw.id || childRaw.threadId
+        : payload.childThreadId || payload.child_thread_id || (run && (run.childThreadId || run.child_thread_id)) || null;
+      if (!childThreadId) return null;
+
+      var project = api.getProject(parent.projectId) || {
+        id: parent.projectId || null,
+        workspaceId: parent.workspaceId || null,
+        organizationId: parent.organizationId || null,
+        name: parent.projectName || null,
+        workspaceName: parent.workspaceName || null,
+      };
+      var summary = childRaw && window.__tribexAiClient && typeof window.__tribexAiClient.normalizeThreadSummary === 'function'
+        ? window.__tribexAiClient.normalizeThreadSummary(childRaw, project, 0)
+        : {
+            id: childThreadId,
+            title: childRaw && (childRaw.title || childRaw.name) || 'Child thread',
+          };
+
+      return Object.assign({}, summary, {
+        id: childThreadId,
+        projectId: summary.projectId || parent.projectId || project.id || null,
+        workspaceId: summary.workspaceId || parent.workspaceId || project.workspaceId || null,
+        organizationId: summary.organizationId || parent.organizationId || project.organizationId || null,
+        projectName: summary.projectName || parent.projectName || project.name || null,
+        workspaceName: summary.workspaceName || parent.workspaceName || project.workspaceName || null,
+        parentThreadId: summary.parentThreadId || parentThreadId,
+        rowState: summary.rowState || 'syncing',
+      });
+    }
+
+    function syncBackgroundChildRuntime(threadId, seed) {
+      if (!threadId || !window.__tribexAiClient) return;
+      context.backgroundRuntimeSyncs = context.backgroundRuntimeSyncs || {};
+      if (context.backgroundRuntimeSyncs[threadId]) return;
+
+      if (typeof api.bindRuntimeBridge === 'function') {
+        api.bindRuntimeBridge(threadId);
+      }
+
+      var hydrate = typeof api.hydrateThread === 'function'
+        ? api.hydrateThread(threadId, seed).catch(function () { return null; })
+        : Promise.resolve(null);
+
+      context.backgroundRuntimeSyncs[threadId] = hydrate
+        .then(function () {
+          if (typeof window.__tribexAiClient.syncThreadRuntime !== 'function') {
+            return null;
+          }
+          return window.__tribexAiClient.syncThreadRuntime(threadId, {
+            forceRefresh: false,
+          }).catch(function () {
+            return null;
+          });
+        })
+        .then(function (runtimeDetail) {
+          if (runtimeDetail && runtimeDetail.id && typeof api.mergeThreadDetail === 'function') {
+            api.mergeThreadDetail(runtimeDetail);
+          }
+          var thread = api.getThread(threadId);
+          if (thread && thread.rowState === 'syncing') {
+            thread.rowState = null;
+          }
+          if (typeof api.notify === 'function') {
+            api.notify();
+          }
+        })
+        .finally(function () {
+          delete context.backgroundRuntimeSyncs[threadId];
+        });
+    }
+
+    function registerSubAgentChildThread(parentThreadId, item) {
+      var payload = extractSubAgentPayload(item);
+      var childSummary = normalizeSubAgentChildThread(parentThreadId, payload);
+      if (!childSummary || !childSummary.id) return null;
+      api.mergeThreadSummary(childSummary);
+      if (childSummary.projectId && typeof api.setProjectExpanded === 'function') {
+        api.setProjectExpanded(childSummary.projectId, true);
+      }
+      syncBackgroundChildRuntime(childSummary.id, childSummary);
+      return childSummary;
+    }
+
     function handleRuntimeEvent(threadId, event) {
       if (!threadId || !event) return;
       var detail = api.ensureThreadDetailRecord(threadId);
@@ -1011,6 +1158,7 @@
           turnId: event.item.turnId || event.turnId || (detail.activeTurn && detail.activeTurn.turnId) || null,
           turnOrdinal: event.item.turnOrdinal || (detail.activeTurn && detail.activeTurn.turnOrdinal) || detail.lastTurnOrdinal || null,
         }));
+        registerSubAgentChildThread(threadId, nextItem || normalizedActivityItem || event.item);
         if (shouldAutoOpenArtifactItem(nextItem)) {
           api.openThreadArtifact(threadId, nextItem.artifactKey, {
             autoFocus: true,

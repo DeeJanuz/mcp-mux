@@ -749,6 +749,44 @@ describe('tribex-ai-client', function () {
     });
   });
 
+  it('normalizes thread hierarchy fields from summaries and details', function () {
+    var summary = window.__tribexAiClient.normalizeThreadSummary({
+      id: 'thread-parent',
+      title: 'Coordinator',
+      childThreads: [{
+        id: 'thread-child',
+        title: 'Finance delegate',
+      }],
+    }, {
+      id: 'project-1',
+      workspaceId: 'workspace-1',
+      organizationId: 'org-1',
+    }, 0);
+
+    expect(summary.childThreads[0]).toMatchObject({
+      id: 'thread-child',
+      parentThreadId: 'thread-parent',
+      projectId: 'project-1',
+    });
+
+    expect(window.__tribexAiClient.normalizeThreadDetail({
+      thread: {
+        id: 'thread-child',
+        title: 'Finance delegate',
+        parentThreadId: 'thread-parent',
+      },
+      project: {
+        id: 'project-1',
+        workspaceId: 'workspace-1',
+        organizationId: 'org-1',
+      },
+      messages: [],
+    })).toMatchObject({
+      id: 'thread-child',
+      parentThreadId: 'thread-parent',
+    });
+  });
+
   it('normalizes thread detail activity from explicit message timestamps instead of updatedAt', function () {
     expect(window.__tribexAiClient.normalizeThreadDetail({
       thread: {

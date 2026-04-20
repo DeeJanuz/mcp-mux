@@ -443,7 +443,7 @@
         api.mergeThreadSummary(Object.assign({}, seed, {
           id: threadId,
           optimistic: false,
-          rowState: null,
+          rowState: seed.rowState === undefined ? null : seed.rowState,
         }));
       }
 

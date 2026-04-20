@@ -17,6 +17,53 @@
       return rightTime >= leftTime ? right : left;
     }
 
+    function firstValidTimestamp(values) {
+      for (var index = 0; index < values.length; index += 1) {
+        var value = values[index];
+        if (value && api.parseActivityTimestamp(value) !== null) return value;
+      }
+      return null;
+    }
+
+    function getActivityStartedAt(item, fallback) {
+      return firstValidTimestamp([
+        item && item.startedAt,
+        item && item.startTime,
+        item && item.createdAt,
+        fallback,
+      ]);
+    }
+
+    function getActivityEndedAt(item, fallback) {
+      return firstValidTimestamp([
+        item && item.completedAt,
+        item && item.finishedAt,
+        item && item.endedAt,
+        item && item.updatedAt,
+        item && item.createdAt,
+        fallback,
+      ]);
+    }
+
+    function latestWorkItemTimestamp(workItems) {
+      return (workItems || []).reduce(function (latest, item) {
+        return maxActivityTimestamp(latest, getActivityEndedAt(item, null));
+      }, null);
+    }
+
+    function resolveWorkSessionEndedAt(record, turn, assistantMessage, workItems, startedAt) {
+      var turnCompletedAt = record && record.turnCompletedAtById && turn && turn.turnId
+        ? record.turnCompletedAtById[turn.turnId] || null
+        : null;
+      return maxActivityTimestamp(
+        maxActivityTimestamp(
+          maxActivityTimestamp(turnCompletedAt, turn && turn.endedAt ? turn.endedAt : null),
+          assistantMessage && !assistantMessage.isStreaming ? assistantMessage.createdAt || null : null
+        ),
+        latestWorkItemTimestamp(workItems)
+      ) || startedAt || null;
+    }
+
     function copyMessages(messages) {
       return Array.isArray(messages)
         ? messages.filter(Boolean).map(function (message) {
@@ -38,6 +85,7 @@
         projectId: summary.projectId || null,
         workspaceId: summary.workspaceId || null,
         organizationId: summary.organizationId || null,
+        parentThreadId: summary.parentThreadId || null,
         hydrateState: summary.hydrateState || summary.status || null,
         preview: summary.preview || '',
         messageActivityAt: summary.messageActivityAt || summary.lastActivityAt || null,
@@ -314,6 +362,8 @@
         resultData: cloneValue(item.resultData || null),
         resultMeta: cloneValue(item.resultMeta || null),
         toolArgs: cloneValue(item.toolArgs || null),
+        rawInput: cloneValue(item.rawInput || null),
+        rawOutput: cloneValue(item.rawOutput || null),
       });
     }
 
@@ -374,8 +424,10 @@
         turn.status = 'running';
       } else if (item.status === 'failed') {
         turn.status = 'failed';
+        turn.endedAt = maxActivityTimestamp(turn.endedAt, getActivityEndedAt(item, null));
       } else if (turn.status !== 'failed') {
         turn.status = 'completed';
+        turn.endedAt = maxActivityTimestamp(turn.endedAt, getActivityEndedAt(item, null));
       }
       turn.activityItemsById[item.id] = copyActivityItem(item);
       if (turn.activityOrder.indexOf(item.id) === -1) {
@@ -790,8 +842,8 @@
             title: part.title || (existing && existing.title) || window.__tribexAiUtils.titleCase(part.toolName || 'tool'),
             status: normalizeToolPartStatus(part),
             detail: buildToolPartDetail(part) || (existing && existing.detail) || '',
-            createdAt: (existing && existing.createdAt) || message.createdAt || null,
-            updatedAt: message.createdAt || (existing && existing.updatedAt) || null,
+            createdAt: (existing && existing.createdAt) || getActivityStartedAt(part, message.createdAt || null),
+            updatedAt: getActivityEndedAt(part, message.createdAt || (existing && existing.updatedAt) || null),
             turnId: part.turnId || message.turnId || (existing && existing.turnId) || null,
             turnOrdinal: part.turnOrdinal || message.turnOrdinal || (existing && existing.turnOrdinal) || (turnOrdinal || null),
             sortIndex: messageIndex * 100 + partIndex,
@@ -1003,11 +1055,7 @@
             var startedAt = workItems.length
               ? (workItems[0].createdAt || workItems[0].updatedAt || turn.startedAt || (turn.userMessage && turn.userMessage.createdAt) || null)
               : (turn.startedAt || (turn.userMessage && turn.userMessage.createdAt) || null);
-            var endedAt = (record && record.turnCompletedAtById && turn.turnId ? record.turnCompletedAtById[turn.turnId] || null : null)
-              || turn.endedAt
-              || (assistantMessage && !assistantMessage.isStreaming ? assistantMessage.createdAt || null : null)
-              || (workItems.length ? (workItems[workItems.length - 1].updatedAt || workItems[workItems.length - 1].createdAt || null) : null)
-              || null;
+            var endedAt = resolveWorkSessionEndedAt(record, turn, assistantMessage, workItems, startedAt);
 
             return {
               id: turn.turnId || ('turn-' + index),
@@ -1166,14 +1214,10 @@
         var userMessage = history && history.userMessage
           ? Object.assign({}, history.userMessage)
           : Object.assign({}, run.userMessage);
-        var turnCompletedAt = record && record.turnCompletedAtById && run.turnId
-          ? record.turnCompletedAtById[run.turnId] || null
-          : null;
-        var endedAt = turnCompletedAt
-          || (assistantMessage && !assistantMessage.isStreaming ? assistantMessage.createdAt || null : null)
-          || (workItems.length
-            ? (workItems[workItems.length - 1].updatedAt || workItems[workItems.length - 1].createdAt || null)
-            : null);
+        var endedAt = resolveWorkSessionEndedAt(record, Object.assign({}, history || {}, {
+          turnId: run.turnId || (history && history.turnId) || null,
+          endedAt: history && history.endedAt ? history.endedAt : null,
+        }), assistantMessage, workItems, startedAt);
         var workSession = workItems.length
           ? {
             id: run.turnId || ('work-session-' + index),
@@ -1319,6 +1363,7 @@
         projectId: record.projectId,
         workspaceId: record.workspaceId,
         organizationId: record.organizationId,
+        parentThreadId: record.parentThreadId || null,
         preview: projection.preview,
         hydrateState: record.hydrateState,
         messageActivityAt: projection.messageActivityAt,

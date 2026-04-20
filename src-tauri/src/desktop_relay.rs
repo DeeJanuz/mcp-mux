@@ -19,6 +19,7 @@ enum EndpointScope {
 const RELAY_TOOL_SNAPSHOT_PATH: &str = "/api/desktop-relay/tools/list";
 const RELAY_TOOL_RESPONSE_PATH: &str = "/api/desktop-relay/tools/response";
 const REALTIME_REQUEST_RUNNING: &str = "running";
+const REALTIME_REQUEST_RESPONSE_PENDING: &str = "response_pending";
 const REALTIME_REQUEST_RESPONDED: &str = "responded";
 const REALTIME_RECONNECT_BASE_MS: u64 = 500;
 const REALTIME_RECONNECT_MAX_MS: u64 = 30_000;
@@ -35,6 +36,13 @@ struct RealtimeToolRequest {
     request_id: String,
     relay_session_id: String,
     timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum RealtimeRequestClaim {
+    Started,
+    Duplicate,
+    PendingResponse(Value),
 }
 
 fn shorten_error_body(body: &str) -> String {
@@ -781,18 +789,27 @@ fn realtime_request_key(relay_session_id: &str, request_id: &str) -> String {
     format!("{}::{}", relay_session_id, request_id)
 }
 
-fn mark_realtime_request_running(
+fn realtime_request_status(value: &Value) -> Option<&str> {
+    value.get("status").and_then(|entry| entry.as_str())
+}
+
+fn claim_realtime_request(
     state: &Arc<AppState>,
     relay_session_id: &str,
     request_id: &str,
-) -> bool {
+) -> RealtimeRequestClaim {
     let key = realtime_request_key(relay_session_id, request_id);
     let mut requests = state.first_party_ai_realtime_relay_requests.lock().unwrap();
-    if requests.contains_key(&key) {
-        return false;
+    if let Some(existing) = requests.get(&key) {
+        if realtime_request_status(existing) == Some(REALTIME_REQUEST_RESPONSE_PENDING) {
+            if let Some(response) = existing.get("response") {
+                return RealtimeRequestClaim::PendingResponse(response.clone());
+            }
+        }
+        return RealtimeRequestClaim::Duplicate;
     }
-    requests.insert(key, REALTIME_REQUEST_RUNNING.to_string());
-    true
+    requests.insert(key, json!({ "status": REALTIME_REQUEST_RUNNING }));
+    RealtimeRequestClaim::Started
 }
 
 fn mark_realtime_request_responded(
@@ -802,7 +819,24 @@ fn mark_realtime_request_responded(
 ) {
     let key = realtime_request_key(relay_session_id, request_id);
     let mut requests = state.first_party_ai_realtime_relay_requests.lock().unwrap();
-    requests.insert(key, REALTIME_REQUEST_RESPONDED.to_string());
+    requests.insert(key, json!({ "status": REALTIME_REQUEST_RESPONDED }));
+}
+
+fn mark_realtime_request_response_pending(
+    state: &Arc<AppState>,
+    relay_session_id: &str,
+    request_id: &str,
+    response_payload: Value,
+) {
+    let key = realtime_request_key(relay_session_id, request_id);
+    let mut requests = state.first_party_ai_realtime_relay_requests.lock().unwrap();
+    requests.insert(
+        key,
+        json!({
+            "status": REALTIME_REQUEST_RESPONSE_PENDING,
+            "response": response_payload,
+        }),
+    );
 }
 
 fn clear_realtime_requests_for_stream_session(
@@ -962,26 +996,45 @@ async fn respond_to_realtime_tool_request(
     token: String,
     realtime_request: RealtimeToolRequest,
 ) {
-    if !mark_realtime_request_running(
+    match claim_realtime_request(
         &state,
         &realtime_request.relay_session_id,
         &realtime_request.request_id,
     ) {
-        emit_event(
-            &app_handle,
-            event_name,
-            json!({
-                "relayId": relay_id,
-                "type": "data",
-                "payload": {
-                    "type": "relay.tool.request.duplicate",
-                    "requestId": realtime_request.request_id,
-                    "relaySessionId": realtime_request.relay_session_id,
-                    "toolName": realtime_request.request.tool_name,
-                },
-            }),
-        );
-        return;
+        RealtimeRequestClaim::Started => {}
+        RealtimeRequestClaim::PendingResponse(response_payload) => {
+            retry_realtime_pending_response(
+                state,
+                app_handle,
+                event_name,
+                relay_id,
+                response_url,
+                token,
+                realtime_request.relay_session_id,
+                realtime_request.request_id,
+                realtime_request.request.tool_name,
+                response_payload,
+            )
+            .await;
+            return;
+        }
+        RealtimeRequestClaim::Duplicate => {
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool.request.duplicate",
+                        "requestId": realtime_request.request_id,
+                        "relaySessionId": realtime_request.relay_session_id,
+                        "toolName": realtime_request.request.tool_name,
+                    },
+                }),
+            );
+            return;
+        }
     }
 
     let async_state = Arc::new(TokioMutex::new(AsyncAppState {
@@ -1030,7 +1083,7 @@ async fn respond_to_realtime_tool_request(
         &state.http_client,
         &response_url,
         &token,
-        response_payload,
+        response_payload.clone(),
     )
     .await;
 
@@ -1054,9 +1107,21 @@ async fn respond_to_realtime_tool_request(
             );
         }
         Err(err) if err.status == Some(401) => {
+            mark_realtime_request_response_pending(
+                &state,
+                &relay_session_id,
+                &request_id,
+                response_payload,
+            );
             emit_realtime_auth_expired(&app_handle, &relay_id, "Realtime relay token expired.");
         }
         Err(err) => {
+            mark_realtime_request_response_pending(
+                &state,
+                &relay_session_id,
+                &request_id,
+                response_payload,
+            );
             emit_event(
                 &app_handle,
                 event_name,
@@ -1067,6 +1132,80 @@ async fn respond_to_realtime_tool_request(
                         "type": "relay.tool_response.error",
                         "requestId": request_id,
                         "toolName": request_for_response.tool_name,
+                        "relaySessionId": relay_session_id,
+                        "message": err.message,
+                    },
+                }),
+            );
+        }
+    }
+}
+
+async fn retry_realtime_pending_response(
+    state: Arc<AppState>,
+    app_handle: AppHandle,
+    event_name: &'static str,
+    relay_id: String,
+    response_url: String,
+    token: String,
+    relay_session_id: String,
+    request_id: String,
+    tool_name: Option<String>,
+    response_payload: Value,
+) {
+    let response_result = send_realtime_tool_response(
+        &state.http_client,
+        &response_url,
+        &token,
+        response_payload.clone(),
+    )
+    .await;
+
+    match response_result {
+        Ok(ack) => {
+            mark_realtime_request_responded(&state, &relay_session_id, &request_id);
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool.response.posted",
+                        "requestId": request_id,
+                        "relaySessionId": relay_session_id,
+                        "toolName": tool_name,
+                        "ack": ack,
+                    },
+                }),
+            );
+        }
+        Err(err) if err.status == Some(401) => {
+            mark_realtime_request_response_pending(
+                &state,
+                &relay_session_id,
+                &request_id,
+                response_payload,
+            );
+            emit_realtime_auth_expired(&app_handle, &relay_id, "Realtime relay token expired.");
+        }
+        Err(err) => {
+            mark_realtime_request_response_pending(
+                &state,
+                &relay_session_id,
+                &request_id,
+                response_payload,
+            );
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool_response.error",
+                        "requestId": request_id,
+                        "toolName": tool_name,
                         "relaySessionId": relay_session_id,
                         "message": err.message,
                     },
@@ -1088,7 +1227,7 @@ async fn post_realtime_validation_failure(
     error: String,
 ) {
     let response_payload = build_realtime_tool_failure_payload(&request_id, &error);
-    match send_realtime_tool_response(&state.http_client, &response_url, &token, response_payload).await {
+    match send_realtime_tool_response(&state.http_client, &response_url, &token, response_payload.clone()).await {
         Ok(_) => {
             mark_realtime_request_responded(&state, &relay_session_id, &request_id);
             emit_event(
@@ -1107,22 +1246,36 @@ async fn post_realtime_validation_failure(
             );
         }
         Err(err) if err.status == Some(401) => {
+            mark_realtime_request_response_pending(
+                &state,
+                &relay_session_id,
+                &request_id,
+                response_payload,
+            );
             emit_realtime_auth_expired(&app_handle, &relay_id, "Realtime relay token expired.");
         }
-        Err(err) => emit_event(
-            &app_handle,
-            event_name,
-            json!({
-                "relayId": relay_id,
-                "type": "data",
-                "payload": {
-                    "type": "relay.tool_response.error",
-                    "requestId": request_id,
-                    "relaySessionId": relay_session_id,
-                    "message": err.message,
-                },
-            }),
-        ),
+        Err(err) => {
+            mark_realtime_request_response_pending(
+                &state,
+                &relay_session_id,
+                &request_id,
+                response_payload,
+            );
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool_response.error",
+                        "requestId": request_id,
+                        "relaySessionId": relay_session_id,
+                        "message": err.message,
+                    },
+                }),
+            );
+        }
     }
 }
 
@@ -2088,14 +2241,56 @@ mod tests {
         let (state, _dir) = test_app_state();
 
         clear_realtime_requests_for_stream_session(&state, "thread-1", "relay-session-1");
-        assert!(mark_realtime_request_running(&state, "relay-session-1", "req-1"));
-        assert!(!mark_realtime_request_running(&state, "relay-session-1", "req-1"));
+        assert_eq!(
+            claim_realtime_request(&state, "relay-session-1", "req-1"),
+            RealtimeRequestClaim::Started,
+        );
+        assert_eq!(
+            claim_realtime_request(&state, "relay-session-1", "req-1"),
+            RealtimeRequestClaim::Duplicate,
+        );
         mark_realtime_request_responded(&state, "relay-session-1", "req-1");
-        assert!(!mark_realtime_request_running(&state, "relay-session-1", "req-1"));
+        assert_eq!(
+            claim_realtime_request(&state, "relay-session-1", "req-1"),
+            RealtimeRequestClaim::Duplicate,
+        );
 
         clear_realtime_requests_for_stream_session(&state, "thread-1", "relay-session-2");
-        assert!(mark_realtime_request_running(&state, "relay-session-1", "req-1"));
-        assert!(mark_realtime_request_running(&state, "relay-session-2", "req-1"));
+        assert_eq!(
+            claim_realtime_request(&state, "relay-session-1", "req-1"),
+            RealtimeRequestClaim::Started,
+        );
+        assert_eq!(
+            claim_realtime_request(&state, "relay-session-2", "req-1"),
+            RealtimeRequestClaim::Started,
+        );
+    }
+
+    #[test]
+    fn replays_pending_realtime_response_without_reclaiming_execution() {
+        let (state, _dir) = test_app_state();
+        let response = json!({
+            "requestId": "req-2",
+            "success": true,
+            "result": { "ok": true }
+        });
+
+        clear_realtime_requests_for_stream_session(&state, "thread-1", "relay-session-1");
+        assert_eq!(
+            claim_realtime_request(&state, "relay-session-1", "req-2"),
+            RealtimeRequestClaim::Started,
+        );
+        mark_realtime_request_response_pending(
+            &state,
+            "relay-session-1",
+            "req-2",
+            response.clone(),
+        );
+
+        assert_eq!(
+            claim_realtime_request(&state, "relay-session-1", "req-2"),
+            RealtimeRequestClaim::PendingResponse(response),
+        );
     }
 
     #[test]

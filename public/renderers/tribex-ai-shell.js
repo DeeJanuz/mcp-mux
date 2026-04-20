@@ -56,6 +56,10 @@
       '<path d="M6.8 1.85h2.4l.35 1.4c.29.1.57.21.83.35l1.28-.7 1.7 1.7-.7 1.28c.14.27.25.55.35.83l1.4.35v2.4l-1.4.35c-.1.29-.21.57-.35.83l.7 1.28-1.7 1.7-1.28-.7c-.26.14-.54.25-.83.35l-.35 1.4H6.8l-.35-1.4a5.2 5.2 0 0 1-.83-.35l-1.28.7-1.7-1.7.7-1.28a5.2 5.2 0 0 1-.35-.83l-1.4-.35v-2.4l1.4-.35c.1-.28.21-.56.35-.83l-.7-1.28 1.7-1.7 1.28.7c.26-.14.54-.25.83-.35l.35-1.4Z" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/>' +
       '<circle cx="8" cy="8" r="2.15" fill="none" stroke="currentColor" stroke-width="1.15"/>' +
       '</svg>',
+    chevron:
+      '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+      '<path d="M6.25 3.75 10.25 8l-4 4.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>',
   };
 
   function captureFocusState(shell) {
@@ -180,6 +184,14 @@
 
   function getSearchEnabled(snapshot) {
     return searchVisible || !!String(snapshot && snapshot.searchTerm || '').trim();
+  }
+
+  function threadTreeContainsThread(thread, threadId) {
+    if (!thread || !threadId) return false;
+    if (thread.id === threadId) return true;
+    return (thread.childThreads || []).some(function (childThread) {
+      return threadTreeContainsThread(childThread, threadId);
+    });
   }
 
   function findProjectGroup(snapshot, projectId) {
@@ -605,14 +617,51 @@
         var showAll = !!expandedThreadLists[group.project.id] || !!String(snapshot.searchTerm || '').trim();
         var threadTree = group.threadTree || group.threads || [];
         var visibleThreads = showAll ? threadTree : threadTree.slice(0, 5);
+        var searching = !!String(snapshot.searchTerm || '').trim();
 
         function renderThreadRow(thread, depth) {
+          var hasChildren = !!(thread.childThreads && thread.childThreads.length);
+          var childPathActive = hasChildren && threadTreeContainsThread(thread, snapshot.activeThreadId);
+          var hasExpansionOverride = !!(
+            snapshot.threadExpansion &&
+            Object.prototype.hasOwnProperty.call(snapshot.threadExpansion, thread.id)
+          );
+          var threadExpanded = searching ||
+            (hasExpansionOverride ? snapshot.threadExpansion[thread.id] !== false : childPathActive);
           var row = document.createElement('div');
           row.className = 'ai-nav-thread-item-row' + (snapshot.activeThreadId === thread.id ? ' active' : '');
           if (depth > 0) row.className += ' child';
+          if (hasChildren) row.className += ' has-children';
+          if (threadExpanded) row.className += ' expanded';
           row.style.setProperty('--thread-depth', String(depth || 0));
           if (thread.parentThreadId) {
             row.setAttribute('data-parent-thread-id', thread.parentThreadId);
+          }
+
+          if (hasChildren) {
+            var expandButton = createIconButton(
+              'ai-nav-thread-expander' + (threadExpanded ? ' expanded' : ''),
+              (threadExpanded ? 'Collapse ' : 'Expand ') + thread.title,
+              ICONS.chevron,
+              {
+                title: (threadExpanded ? 'Collapse ' : 'Expand ') + thread.title,
+                pressed: threadExpanded,
+                onClick: function (event) {
+                  if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+                  if (aiState && typeof aiState.setThreadExpanded === 'function') {
+                    aiState.setThreadExpanded(thread.id, !threadExpanded);
+                  } else if (aiState && typeof aiState.toggleThreadExpanded === 'function') {
+                    aiState.toggleThreadExpanded(thread.id);
+                  }
+                },
+              }
+            );
+            expandButton.setAttribute('aria-expanded', threadExpanded ? 'true' : 'false');
+            row.appendChild(expandButton);
+          } else {
+            var spacer = document.createElement('span');
+            spacer.className = 'ai-nav-thread-expander-spacer';
+            row.appendChild(spacer);
           }
 
           var button = document.createElement('button');
@@ -656,9 +705,11 @@
           row.appendChild(renameThreadButton);
 
           list.appendChild(row);
-          (thread.childThreads || []).forEach(function (childThread) {
-            renderThreadRow(childThread, depth + 1);
-          });
+          if (threadExpanded) {
+            (thread.childThreads || []).forEach(function (childThread) {
+              renderThreadRow(childThread, depth + 1);
+            });
+          }
         }
 
         visibleThreads.forEach(function (thread) {

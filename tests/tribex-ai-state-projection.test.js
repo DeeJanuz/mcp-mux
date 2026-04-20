@@ -17,7 +17,7 @@ describe('tribex-ai-state projection helpers', function () {
     loadTribexAiState();
   });
 
-  it('groups assistant answers and work-session activity by turn', function () {
+  it('groups assistant answers and pins work-session duration to work activity by turn', function () {
     var context = {
       state: {
         threadDetails: {},
@@ -87,7 +87,7 @@ describe('tribex-ai-state projection helpers', function () {
     expect(runs[0].answer.content).toBe('Opened it.');
     expect(runs[0].workSession.items).toHaveLength(1);
     expect(runs[0].workSession.items[0].id).toBe('activity-1');
-    expect(runs[0].workSession.endedAt).toBe('2026-04-16T10:02:00.000Z');
+    expect(runs[0].workSession.endedAt).toBe('2026-04-16T10:01:30.000Z');
   });
 
   it('builds concrete artifact records with stable session keys and preserves the current default artifact selection', function () {

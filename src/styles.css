@@ -4796,7 +4796,7 @@ body.ai-mode-active .ai-nav-thread-list {
 body.ai-mode-active .ai-nav-thread-item-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   border-radius: 10px;
   margin-left: calc(var(--thread-depth, 0) * 18px);
@@ -4806,13 +4806,48 @@ body.ai-mode-active .ai-nav-thread-item-row {
 body.ai-mode-active .ai-nav-thread-item-row.child::before {
   content: "";
   position: absolute;
-  left: -10px;
+  left: 2px;
   top: -4px;
   bottom: 50%;
-  width: 10px;
+  width: 8px;
   border-left: 1px solid var(--ai-rail-line);
   border-bottom: 1px solid var(--ai-rail-line);
   border-bottom-left-radius: 6px;
+}
+
+body.ai-mode-active .ai-nav-thread-expander,
+body.ai-mode-active .ai-nav-thread-expander-spacer {
+  width: 18px;
+  height: 24px;
+  flex: 0 0 18px;
+}
+
+body.ai-mode-active .ai-nav-thread-expander {
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ai-rail-faint);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+body.ai-mode-active .ai-nav-thread-expander svg {
+  width: 13px;
+  height: 13px;
+}
+
+body.ai-mode-active .ai-nav-thread-expander.expanded {
+  transform: rotate(90deg);
+}
+
+body.ai-mode-active .ai-nav-thread-expander:hover,
+body.ai-mode-active .ai-nav-thread-expander:focus-visible {
+  background: var(--ai-rail-hover);
+  color: var(--ai-rail-text);
 }
 
 body.ai-mode-active .ai-nav-thread-row {

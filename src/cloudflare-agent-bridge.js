@@ -521,11 +521,19 @@ function normalizeToolStatus(chunk) {
   }
 }
 
+function isSettledToolStatus(status) {
+  return status === 'completed' || status === 'failed';
+}
+
 function buildToolActivityItem(chunk, previous) {
   if (!chunk || !chunk.toolCallId) return null;
 
   var createdAt = previous && previous.createdAt ? previous.createdAt : nowIso();
   var status = normalizeToolStatus(chunk);
+  var updatedAt = nowIso();
+  var completedAt = isSettledToolStatus(status)
+    ? (chunk.completedAt || chunk.finishedAt || chunk.endedAt || (previous && previous.completedAt) || updatedAt)
+    : ((previous && previous.completedAt) || null);
   var toolName = chunk.toolName || (previous && previous.toolName) || null;
   var pushPayload = extractRendererActivityPayload(toolName, chunk.input)
     || extractRendererActivityPayload(toolName, chunk.output)
@@ -566,7 +574,8 @@ function buildToolActivityItem(chunk, previous) {
     rawInput: chunk.input !== undefined ? chunk.input : (previous && previous.rawInput) || null,
     rawOutput: chunk.output !== undefined ? chunk.output : (previous && previous.rawOutput) || null,
     createdAt: createdAt,
-    updatedAt: nowIso(),
+    updatedAt: updatedAt,
+    completedAt: completedAt,
     resultContentType: pushPayload ? pushPayload.contentType : ((previous && previous.resultContentType) || null),
     resultData: pushPayload ? pushPayload.data : ((previous && previous.resultData) || null),
     resultMeta: pushPayload ? pushPayload.meta : ((previous && previous.resultMeta) || null),
@@ -628,9 +637,11 @@ function finalizeWorkNote(threadId, turn, createdAt) {
     turn.activeWorkNoteId = null;
     return;
   }
+  var completedAt = existing.completedAt || createdAt || nowIso();
   var next = Object.assign({}, existing, {
     status: existing.status === 'failed' ? 'failed' : 'completed',
-    updatedAt: createdAt || nowIso(),
+    updatedAt: completedAt,
+    completedAt: completedAt,
   });
   turn.toolItems[next.id] = next;
   turn.activeWorkNoteId = null;

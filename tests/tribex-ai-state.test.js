@@ -2492,7 +2492,7 @@ describe('tribex-ai-state', function () {
     );
   });
 
-  it('keeps the completed work-session duration pinned to the turn finish time', async function () {
+  it('keeps the completed work-session duration pinned to the completed work snapshot', async function () {
     var runtimeHandler = null;
 
     var client = {
@@ -2591,30 +2591,31 @@ describe('tribex-ai-state', function () {
         status: 'completed',
         detail: 'Prepared Rich Content result: Example Architecture Document.',
         createdAt: '2026-04-15T10:41:01.000Z',
-        updatedAt: '2026-04-15T10:41:01.000Z',
+        updatedAt: '2026-04-15T10:41:16.000Z',
+        completedAt: '2026-04-15T10:41:16.000Z',
       },
     });
     runtimeHandler({
       type: 'assistant_finish',
       turnId: 'turn-1',
-      createdAt: '2026-04-15T10:41:03.000Z',
+      createdAt: '2026-04-15T10:42:00.000Z',
       message: {
         id: 'assistant-1',
         role: 'assistant',
         content: 'Done.',
-        createdAt: '2026-04-15T10:41:03.000Z',
+        createdAt: '2026-04-15T10:42:00.000Z',
       },
     });
     runtimeHandler({
       type: 'turn_finish',
       turnId: 'turn-1',
-      createdAt: '2026-04-15T10:41:09.000Z',
+      createdAt: '2026-04-15T10:42:29.000Z',
     });
 
     expect(window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].workSession).toMatchObject({
       status: 'completed',
       startedAt: '2026-04-15T10:41:01.000Z',
-      endedAt: '2026-04-15T10:41:09.000Z',
+      endedAt: '2026-04-15T10:41:16.000Z',
     });
   });
 
@@ -4724,7 +4725,7 @@ describe('tribex-ai-state', function () {
               role: 'assistant',
               turnId: 'turn-1',
               turnOrdinal: 1,
-              createdAt: '2026-04-17T22:20:36.000Z',
+              createdAt: '2026-04-17T23:23:10.000Z',
               parts: [
                 {
                   type: 'tool-subagent_dispatch',
@@ -4733,7 +4734,7 @@ describe('tribex-ai-state', function () {
                   title: 'Subagent Dispatch',
                   state: 'output-available',
                   startedAt: '2026-04-17T22:10:05.000Z',
-                  completedAt: '2026-04-17T22:20:35.000Z',
+                  completedAt: '2026-04-17T22:10:20.000Z',
                   input: {
                     objective: 'Run a bounded subagent task.',
                   },
@@ -4755,7 +4756,7 @@ describe('tribex-ai-state', function () {
               id: 'runtime-assistant-1',
               role: 'assistant',
               content: 'Done.',
-              createdAt: '2026-04-17T22:20:36.000Z',
+              createdAt: '2026-04-17T23:23:10.000Z',
               turnId: 'turn-1',
               turnOrdinal: 1,
             },
@@ -4801,11 +4802,12 @@ describe('tribex-ai-state', function () {
     expect(workSession).toMatchObject({
       status: 'completed',
       startedAt: '2026-04-17T22:10:05.000Z',
-      endedAt: '2026-04-17T22:20:36.000Z',
+      endedAt: '2026-04-17T22:10:20.000Z',
     });
     expect(workSession.items[0]).toMatchObject({
       createdAt: '2026-04-17T22:10:05.000Z',
-      updatedAt: '2026-04-17T22:20:35.000Z',
+      updatedAt: '2026-04-17T22:10:20.000Z',
+      completedAt: '2026-04-17T22:10:20.000Z',
     });
   });
 

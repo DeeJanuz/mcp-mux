@@ -836,9 +836,15 @@
     return Number.isNaN(ms) ? 0 : ms;
   }
 
-  function formatElapsed(startedAt, endedAt) {
+  function formatElapsed(startedAt, endedAt, live) {
     var start = getTimeValue(startedAt);
-    var end = getTimeValue(endedAt) || Date.now();
+    var end = getTimeValue(endedAt);
+    if (!end) {
+      end = live ? Date.now() : (start || Date.now());
+    }
+    if (!start) {
+      start = end || Date.now();
+    }
     var delta = Math.max(1000, end - start);
     var totalSeconds = Math.max(1, Math.round(delta / 1000));
     var minutes = Math.floor(totalSeconds / 60);
@@ -1040,7 +1046,7 @@
     var label = document.createElement('span');
     label.className = 'ai-work-session-label';
     label.textContent = (workSession.status === 'running' ? 'Working for ' : 'Worked for ')
-      + formatElapsed(workSession.startedAt, workSession.endedAt);
+      + formatElapsed(workSession.startedAt, workSession.endedAt, workSession.status === 'running');
     summary.appendChild(label);
 
     if (workSession.items && workSession.items.length) {
@@ -1076,11 +1082,7 @@
     section.appendChild(
       threadState && threadState.showRawResponses
         ? createRawBody(content, 'ai-chat-body ai-run-answer-body')
-        : (
-          answer.isStreaming
-            ? createTextBody(content, 'ai-chat-body ai-run-answer-body')
-            : createMarkdownBody(content, 'ai-chat-body ai-run-answer-body')
-        )
+        : createMarkdownBody(content, 'ai-chat-body ai-run-answer-body')
     );
     return section;
   }
@@ -1428,16 +1430,36 @@
     alerts.className = 'ai-thread-alerts';
     view.appendChild(alerts);
 
+    var hydration = document.createElement('section');
+    hydration.className = 'ai-thread-hydration';
+    hydration.setAttribute('role', 'status');
+    hydration.setAttribute('aria-live', 'polite');
+    hydration.hidden = true;
+    var hydrationCopy = document.createElement('div');
+    hydrationCopy.className = 'ai-thread-hydration-copy';
+    var hydrationKicker = document.createElement('span');
+    hydrationKicker.className = 'ai-thread-hydration-kicker';
+    hydrationKicker.textContent = 'Loading';
+    hydrationCopy.appendChild(hydrationKicker);
+    var hydrationTitle = document.createElement('strong');
+    hydrationTitle.textContent = 'Hydrating thread';
+    hydrationCopy.appendChild(hydrationTitle);
+    hydration.appendChild(hydrationCopy);
+    var hydrationPulse = document.createElement('div');
+    hydrationPulse.className = 'ai-thread-hydration-pulse';
+    for (var pulseIndex = 0; pulseIndex < 3; pulseIndex += 1) {
+      var pulseBar = document.createElement('span');
+      hydrationPulse.appendChild(pulseBar);
+    }
+    hydration.appendChild(hydrationPulse);
+    view.appendChild(hydration);
+
     var results = createResultsShell();
     view.appendChild(results.root);
 
     var layout = document.createElement('div');
     layout.className = 'ai-thread-layout';
     view.appendChild(layout);
-
-    var interruptDock = document.createElement('div');
-    interruptDock.className = 'ai-interrupt-turn-dock';
-    layout.appendChild(interruptDock);
 
     var transcript = document.createElement('section');
     transcript.className = 'ai-chat-log ai-chat-log-standalone ai-run-log';
@@ -1453,6 +1475,13 @@
       scrollToBottom(scrollHost);
     });
     view.appendChild(jumpButton);
+
+    var composer = document.createElement('section');
+    composer.className = 'ai-composer-shell';
+
+    var interruptDock = document.createElement('div');
+    interruptDock.className = 'ai-interrupt-turn-dock';
+    composer.appendChild(interruptDock);
 
     var interrupt = document.createElement('button');
     interrupt.className = 'ai-interrupt-turn';
@@ -1470,9 +1499,6 @@
       });
     });
     interruptDock.appendChild(interrupt);
-
-    var composer = document.createElement('section');
-    composer.className = 'ai-composer-shell';
 
     var textarea = document.createElement('textarea');
     textarea.className = 'ai-composer-input';
@@ -1556,6 +1582,7 @@
       view: view,
       header: header,
       alerts: alerts,
+      hydration: hydration,
       results: results,
       layout: layout,
       transcript: transcript,
@@ -1587,6 +1614,21 @@
       error.innerHTML = '<div><strong>Thread needs attention</strong><p>' + threadContext.error + '</p></div>';
       state.alerts.appendChild(error);
     }
+  }
+
+  function isThreadHydrating(threadContext) {
+    return !!(threadContext && threadContext.loading && !isThreadTurnBusy(threadContext));
+  }
+
+  function updateHydration(state, threadContext) {
+    var hydrating = isThreadHydrating(threadContext);
+    state.view.classList.toggle('ai-thread-is-hydrating', hydrating);
+    state.hydration.hidden = !hydrating;
+    state.layout.hidden = hydrating;
+    if (hydrating) {
+      state.results.root.hidden = true;
+    }
+    return hydrating;
   }
 
   function updateLegacyTranscript(state, model) {
@@ -1814,8 +1856,12 @@
     state.threadId = nextThreadId;
     updateHeader(state, threadContext);
     updateAlerts(state, threadContext);
-    updateResultsShelf(state, threadContext);
-    var changed = updateTranscript(state, threadContext);
+    var hydrating = updateHydration(state, threadContext);
+    var changed = false;
+    if (!hydrating) {
+      updateResultsShelf(state, threadContext);
+      changed = updateTranscript(state, threadContext);
+    }
     updateComposer(state, threadContext, threadChanged);
 
     var afterHeight = state.scrollHost.scrollHeight || beforeHeight;

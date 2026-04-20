@@ -29,6 +29,20 @@
     });
   }
 
+  function getThreadTreeActivity(thread) {
+    var latest = getTimeValue(thread && thread.lastActivityAt);
+    (thread && thread.childThreads || []).forEach(function (childThread) {
+      latest = Math.max(latest, getThreadTreeActivity(childThread));
+    });
+    return latest;
+  }
+
+  function sortThreadTree(threads) {
+    return (threads || []).slice().sort(function (a, b) {
+      return getThreadTreeActivity(b) - getThreadTreeActivity(a);
+    });
+  }
+
   function formatRelativeTime(value) {
     var ms = getTimeValue(value);
     if (!ms) return 'just now';
@@ -78,6 +92,68 @@
     return haystack.indexOf(query) >= 0;
   }
 
+  function cloneThreadForTree(thread) {
+    return Object.assign({}, thread, {
+      childThreads: [],
+    });
+  }
+
+  function buildThreadTree(threads) {
+    var nodesById = {};
+    var roots = [];
+
+    sortThreads(threads).forEach(function (thread) {
+      if (!thread || !thread.id) return;
+      nodesById[thread.id] = cloneThreadForTree(thread);
+    });
+
+    Object.keys(nodesById).forEach(function (threadId) {
+      var node = nodesById[threadId];
+      var parentId = node.parentThreadId || null;
+      var parent = parentId ? nodesById[parentId] : null;
+      if (parent && parent.projectId === node.projectId) {
+        parent.childThreads.push(node);
+      } else {
+        roots.push(node);
+      }
+    });
+
+    function sortChildren(node) {
+      node.childThreads = sortThreadTree(node.childThreads);
+      node.childThreads.forEach(sortChildren);
+      return node;
+    }
+
+    return sortThreadTree(roots).map(sortChildren);
+  }
+
+  function filterThreadTree(project, threads, searchTerm) {
+    var query = String(searchTerm || '').trim();
+    if (!query) return buildThreadTree(threads);
+
+    function filterNode(thread) {
+      var childThreads = (thread.childThreads || []).map(filterNode).filter(Boolean);
+      if (matchesSearch(project, thread, query) || childThreads.length) {
+        return Object.assign({}, thread, {
+          childThreads: childThreads,
+        });
+      }
+      return null;
+    }
+
+    return buildThreadTree(threads).map(filterNode).filter(Boolean);
+  }
+
+  function flattenThreadTree(threads) {
+    var flattened = [];
+    (threads || []).forEach(function visit(thread) {
+      if (!thread) return;
+      flattened.push(thread);
+      (thread.childThreads || []).forEach(visit);
+    });
+    return flattened;
+  }
+
   function buildProjectGroups(projects, threads, activeProjectId, searchTerm) {
     var threadMap = {};
     sortThreads(threads).forEach(function (thread) {
@@ -88,9 +164,8 @@
 
     return sortProjects(projects, activeProjectId)
       .map(function (project) {
-        var filteredThreads = (threadMap[project.id] || []).filter(function (thread) {
-          return matchesSearch(project, thread, searchTerm);
-        });
+        var threadTree = filterThreadTree(project, threadMap[project.id] || [], searchTerm);
+        var filteredThreads = flattenThreadTree(threadTree);
 
         if (!filteredThreads.length && String(searchTerm || '').trim()) {
           return null;
@@ -99,13 +174,16 @@
         return {
           project: project,
           threads: filteredThreads,
+          threadTree: threadTree,
         };
       })
       .filter(Boolean);
   }
 
   window.__tribexAiUtils = {
+    buildThreadTree: buildThreadTree,
     buildProjectGroups: buildProjectGroups,
+    flattenThreadTree: flattenThreadTree,
     formatRelativeTime: formatRelativeTime,
     getTimeValue: getTimeValue,
     initials: initials,

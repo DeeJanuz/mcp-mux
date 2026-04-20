@@ -603,11 +603,17 @@
         var list = document.createElement('div');
         list.className = 'ai-nav-thread-list';
         var showAll = !!expandedThreadLists[group.project.id] || !!String(snapshot.searchTerm || '').trim();
-        var visibleThreads = showAll ? group.threads : group.threads.slice(0, 5);
+        var threadTree = group.threadTree || group.threads || [];
+        var visibleThreads = showAll ? threadTree : threadTree.slice(0, 5);
 
-        visibleThreads.forEach(function (thread) {
+        function renderThreadRow(thread, depth) {
           var row = document.createElement('div');
           row.className = 'ai-nav-thread-item-row' + (snapshot.activeThreadId === thread.id ? ' active' : '');
+          if (depth > 0) row.className += ' child';
+          row.style.setProperty('--thread-depth', String(depth || 0));
+          if (thread.parentThreadId) {
+            row.setAttribute('data-parent-thread-id', thread.parentThreadId);
+          }
 
           var button = document.createElement('button');
           button.className = 'ai-nav-thread-row ai-nav-thread-tree-row' + (snapshot.activeThreadId === thread.id ? ' active' : '');
@@ -650,9 +656,16 @@
           row.appendChild(renameThreadButton);
 
           list.appendChild(row);
+          (thread.childThreads || []).forEach(function (childThread) {
+            renderThreadRow(childThread, depth + 1);
+          });
+        }
+
+        visibleThreads.forEach(function (thread) {
+          renderThreadRow(thread, 0);
         });
 
-        if (group.threads.length > 5) {
+        if (threadTree.length > 5) {
           list.appendChild(createButton('ai-nav-show-more', showAll ? 'Show less' : 'Show more', {
             onClick: function () {
               expandedThreadLists[group.project.id] = !showAll;

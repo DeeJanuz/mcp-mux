@@ -303,8 +303,7 @@ function stringifyPreview(value) {
   if (value == null) return '';
   if (typeof value === 'string') return value;
   try {
-    var json = JSON.stringify(value, null, 2);
-    return json.length > 500 ? json.slice(0, 500) + '...' : json;
+    return JSON.stringify(value, null, 2);
   } catch (_error) {
     return String(value);
   }
@@ -564,6 +563,8 @@ function buildToolActivityItem(chunk, previous) {
     title: chunk.title || (previous && previous.title) || titleCase(chunk.toolName || 'tool'),
     status: status,
     detail: detail,
+    rawInput: chunk.input !== undefined ? chunk.input : (previous && previous.rawInput) || null,
+    rawOutput: chunk.output !== undefined ? chunk.output : (previous && previous.rawOutput) || null,
     createdAt: createdAt,
     updatedAt: nowIso(),
     resultContentType: pushPayload ? pushPayload.contentType : ((previous && previous.resultContentType) || null),

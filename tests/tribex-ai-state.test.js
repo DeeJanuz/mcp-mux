@@ -4535,6 +4535,280 @@ describe('tribex-ai-state', function () {
     );
   });
 
+  it('preserves full runtime tool details in projected work sessions', async function () {
+    vi.useFakeTimers();
+    var longObjective = 'Determine how much wood a woodchuck could chuck if a woodchuck could chuck wood. '.repeat(24)
+      + 'Final untruncated marker.';
+
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'Runtime detail thread',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'Runtime detail thread',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [],
+        });
+      }),
+      syncThreadRuntime: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          messagesSource: 'runtime',
+          rawRuntimeMessages: [
+            {
+              id: 'runtime-user-1',
+              role: 'user',
+              turnId: 'turn-1',
+              turnOrdinal: 1,
+              createdAt: '2026-04-17T22:10:00.000Z',
+              parts: [{ type: 'text', text: 'Dispatch the subagent.' }],
+            },
+            {
+              id: 'runtime-assistant-1',
+              role: 'assistant',
+              turnId: 'turn-1',
+              turnOrdinal: 1,
+              createdAt: '2026-04-17T22:10:02.000Z',
+              parts: [
+                {
+                  type: 'tool-subagent_dispatch',
+                  toolCallId: 'tool-subagent-1',
+                  toolName: 'subagent_dispatch',
+                  title: 'Subagent Dispatch',
+                  state: 'output-available',
+                  input: {
+                    objective: longObjective,
+                  },
+                },
+              ],
+            },
+          ],
+          runtimeMessages: [
+            {
+              id: 'user-1',
+              role: 'user',
+              content: 'Dispatch the subagent.',
+              createdAt: '2026-04-17T22:10:00.000Z',
+              turnId: 'turn-1',
+              turnOrdinal: 1,
+            },
+          ],
+        });
+      }),
+      registerDesktopRelay: vi.fn(function () {
+        return Promise.resolve({ relaySession: { id: 'relay-session-1' }, relayDeviceId: 'device-1' });
+      }),
+      startDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1');
+    await vi.runAllTimersAsync();
+
+    var workItem = window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].workSession.items[0];
+    expect(workItem.detail).toContain('Final untruncated marker.');
+    expect(workItem.detail).not.toContain('...');
+  });
+
+  it('projects cold runtime work durations from tool part timestamps', async function () {
+    vi.useFakeTimers();
+
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'Runtime duration thread',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'Runtime duration thread',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [],
+        });
+      }),
+      syncThreadRuntime: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          messagesSource: 'runtime',
+          rawRuntimeMessages: [
+            {
+              id: 'runtime-user-1',
+              role: 'user',
+              turnId: 'turn-1',
+              turnOrdinal: 1,
+              createdAt: '2026-04-17T22:10:00.000Z',
+              parts: [{ type: 'text', text: 'Run a subagent.' }],
+            },
+            {
+              id: 'runtime-assistant-1',
+              role: 'assistant',
+              turnId: 'turn-1',
+              turnOrdinal: 1,
+              createdAt: '2026-04-17T22:20:36.000Z',
+              parts: [
+                {
+                  type: 'tool-subagent_dispatch',
+                  toolCallId: 'tool-subagent-1',
+                  toolName: 'subagent_dispatch',
+                  title: 'Subagent Dispatch',
+                  state: 'output-available',
+                  startedAt: '2026-04-17T22:10:05.000Z',
+                  completedAt: '2026-04-17T22:20:35.000Z',
+                  input: {
+                    objective: 'Run a bounded subagent task.',
+                  },
+                },
+                { type: 'text', text: 'Done.' },
+              ],
+            },
+          ],
+          runtimeMessages: [
+            {
+              id: 'runtime-user-1',
+              role: 'user',
+              content: 'Run a subagent.',
+              createdAt: '2026-04-17T22:10:00.000Z',
+              turnId: 'turn-1',
+              turnOrdinal: 1,
+            },
+            {
+              id: 'runtime-assistant-1',
+              role: 'assistant',
+              content: 'Done.',
+              createdAt: '2026-04-17T22:20:36.000Z',
+              turnId: 'turn-1',
+              turnOrdinal: 1,
+            },
+          ],
+        });
+      }),
+      registerDesktopRelay: vi.fn(function () {
+        return Promise.resolve({ relaySession: { id: 'relay-session-1' }, relayDeviceId: 'device-1' });
+      }),
+      startDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1');
+    await vi.runAllTimersAsync();
+
+    var workSession = window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].workSession;
+    expect(workSession).toMatchObject({
+      status: 'completed',
+      startedAt: '2026-04-17T22:10:05.000Z',
+      endedAt: '2026-04-17T22:20:36.000Z',
+    });
+    expect(workSession.items[0]).toMatchObject({
+      createdAt: '2026-04-17T22:10:05.000Z',
+      updatedAt: '2026-04-17T22:20:35.000Z',
+    });
+  });
+
   it('keeps multi-turn runs paired correctly after runtime rehydration overlays a text-only snapshot', async function () {
     vi.useFakeTimers();
     window.__renderers = {

@@ -167,6 +167,7 @@
           lastThreadId: null,
           preferredWorkspaceId: null,
           expandedProjectIds: {},
+          expandedThreadIds: {},
         };
       }
       return state.organizationUiById[organizationId];
@@ -274,6 +275,36 @@
     function toggleProjectExpanded(projectId) {
       setProjectExpanded(projectId, !isProjectExpanded(projectId));
       notify();
+    }
+
+    function setThreadExpanded(threadId, expanded) {
+      var thread = getThread(threadId);
+      if (!thread || !thread.organizationId) return;
+      var organizationUi = getOrganizationUi(thread.organizationId);
+      if (!organizationUi) return;
+      organizationUi.expandedThreadIds = organizationUi.expandedThreadIds || {};
+      organizationUi.expandedThreadIds[threadId] = expanded !== false;
+    }
+
+    function toggleThreadExpanded(threadId) {
+      var thread = getThread(threadId);
+      if (!thread || !thread.organizationId) return;
+      var organizationUi = getOrganizationUi(thread.organizationId);
+      if (!organizationUi) return;
+      organizationUi.expandedThreadIds = organizationUi.expandedThreadIds || {};
+      var expanded = organizationUi.expandedThreadIds[threadId] === true;
+      organizationUi.expandedThreadIds[threadId] = !expanded;
+      notify();
+    }
+
+    function expandThreadAncestors(threadId) {
+      var thread = getThread(threadId);
+      var seen = {};
+      while (thread && thread.parentThreadId && !seen[thread.parentThreadId]) {
+        seen[thread.parentThreadId] = true;
+        setThreadExpanded(thread.parentThreadId, true);
+        thread = getThread(thread.parentThreadId);
+      }
     }
 
     function resolveSelectedProjectId() {
@@ -745,6 +776,7 @@
           ? context.activeSession.threadId
           : null,
         projectExpansion: clone(organizationUi ? organizationUi.expandedProjectIds : {}),
+        threadExpansion: clone(organizationUi && organizationUi.expandedThreadIds ? organizationUi.expandedThreadIds : {}),
         streamStatuses: clone(state.streamStatuses),
         relayStatuses: clone(state.relayStates),
       };
@@ -771,6 +803,9 @@
     api.isProjectExpanded = isProjectExpanded;
     api.setProjectExpanded = setProjectExpanded;
     api.toggleProjectExpanded = toggleProjectExpanded;
+    api.setThreadExpanded = setThreadExpanded;
+    api.toggleThreadExpanded = toggleThreadExpanded;
+    api.expandThreadAncestors = expandThreadAncestors;
     api.resolveSelectedProjectId = resolveSelectedProjectId;
     api.resolvePreferredWorkspace = resolvePreferredWorkspace;
     api.ensureProjectForNewThread = ensureProjectForNewThread;

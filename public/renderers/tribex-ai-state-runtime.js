@@ -17,6 +17,19 @@
       return rightTime >= leftTime ? right : left;
     }
 
+    function firstActivityTimestamp(values) {
+      for (var index = 0; index < values.length; index += 1) {
+        var value = values[index];
+        if (value && api.parseActivityTimestamp(value) !== null) return value;
+      }
+      return null;
+    }
+
+    function isSettledActivityStatus(status) {
+      var value = String(status || '').toLowerCase();
+      return value === 'completed' || value === 'success' || value === 'done' || value === 'stored' || value === 'failed' || value === 'error';
+    }
+
     function resolveConversationActivityTimestamp(messages) {
       if (!Array.isArray(messages)) return null;
       return messages.reduce(function (latest, message) {
@@ -608,6 +621,31 @@
         message.inlineDisplay
       );
       var inlineDisplay = displayMode === 'inline';
+      var status = message.status || 'completed';
+      var createdAt = firstActivityTimestamp([
+        message.startedAt,
+        message.startTime,
+        previous && previous.createdAt,
+        message.createdAt,
+      ]) || api.nowIso();
+      var updatedAt = firstActivityTimestamp([
+        message.completedAt,
+        message.finishedAt,
+        message.endedAt,
+        message.updatedAt,
+        message.createdAt,
+        previous && previous.updatedAt,
+      ]) || createdAt;
+      var completedAt = isSettledActivityStatus(status)
+        ? (firstActivityTimestamp([
+            message.completedAt,
+            message.finishedAt,
+            message.endedAt,
+            previous && previous.completedAt,
+            message.updatedAt,
+            message.createdAt,
+          ]) || updatedAt)
+        : ((previous && previous.completedAt) || null);
       return {
         id: message.id || api.randomId('activity'),
         toolCallId: message.id || null,
@@ -615,7 +653,7 @@
         toolName: message.toolName || null,
         resultContentType: resultContentType,
         title: message.summary || window.__tribexAiUtils.titleCase(message.toolName || 'tool'),
-        status: message.status || 'completed',
+        status: status,
         detail: message.detail || '',
         rawInput: message.rawInput !== undefined ? message.rawInput : null,
         rawOutput: message.rawOutput !== undefined ? message.rawOutput : null,
@@ -627,8 +665,9 @@
         toolArgs: message.toolArgs || null,
         turnId: message.turnId || latestTurn.turnId || null,
         turnOrdinal: message.turnOrdinal || latestTurn.turnOrdinal || null,
-        createdAt: message.createdAt || api.nowIso(),
-        updatedAt: message.createdAt || api.nowIso(),
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        completedAt: completedAt,
       };
     }
 
@@ -1051,6 +1090,9 @@
       api.mergeThreadSummary(childSummary);
       if (childSummary.projectId && typeof api.setProjectExpanded === 'function') {
         api.setProjectExpanded(childSummary.projectId, true);
+      }
+      if (typeof api.setThreadExpanded === 'function') {
+        api.setThreadExpanded(parentThreadId, true);
       }
       syncBackgroundChildRuntime(childSummary.id, childSummary);
       return childSummary;

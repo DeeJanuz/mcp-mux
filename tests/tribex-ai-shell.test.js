@@ -73,6 +73,11 @@ function createState(snapshot) {
       current.searchTerm = value;
       if (subscriber) subscriber(current);
     }),
+    setThreadExpanded: vi.fn(function (threadId, expanded) {
+      current.threadExpansion = current.threadExpansion || {};
+      current.threadExpansion[threadId] = expanded !== false;
+      if (subscriber) subscriber(current);
+    }),
     setVerificationInput: vi.fn(function (value) {
       current.integration.verificationInput = value;
       if (subscriber) subscriber(current);
@@ -80,6 +85,7 @@ function createState(snapshot) {
     submitThreadComposer: vi.fn(function () { return Promise.resolve(); }),
     toggleNavigatorCollapsed: vi.fn(),
     toggleProjectExpanded: vi.fn(),
+    toggleThreadExpanded: vi.fn(),
     verifyMagicLink: vi.fn(function () { return Promise.resolve(); }),
     sendMagicLink: vi.fn(function () { return Promise.resolve(); }),
     setActiveSession: vi.fn(),
@@ -284,6 +290,7 @@ describe('tribex-ai-shell', function () {
       projectExpansion: {
         'project-1': true,
       },
+      threadExpansion: {},
       packages: [],
       composer: {
         creatingWorkspace: false,
@@ -316,11 +323,108 @@ describe('tribex-ai-shell', function () {
     window.__tribexAiShell.render();
 
     expect(document.querySelectorAll('.ai-nav-thread-tree-row')).toHaveLength(2);
+    expect(document.querySelector('.ai-nav-thread-expander').getAttribute('aria-expanded')).toBe('true');
     expect(document.querySelector('.ai-nav-thread-item-row.child').getAttribute('data-parent-thread-id')).toBe('thread-parent');
     expect(document.querySelector('.ai-nav-thread-item-row.child .ai-nav-thread-tree-row').textContent).toContain('Finance delegate');
 
+    document.querySelector('.ai-nav-thread-expander').click();
+    expect(state.setThreadExpanded).toHaveBeenCalledWith('thread-parent', false);
+    expect(document.querySelectorAll('.ai-nav-thread-tree-row')).toHaveLength(1);
+
+    state.updateSnapshot(Object.assign({}, snapshot, {
+      threadExpansion: {
+        'thread-parent': true,
+      },
+    }));
     document.querySelector('.ai-nav-thread-item-row.child .ai-nav-thread-tree-row').click();
     expect(state.openThread).toHaveBeenCalledWith('thread-child');
+  });
+
+  it('keeps child threads collapsed until their parent is expanded', function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      searchTerm: '',
+      organizations: [{ id: 'org-1', name: 'Org 1' }],
+      selectedOrganization: { id: 'org-1', name: 'Org 1' },
+      selectedWorkspace: { id: 'workspace-1', name: 'Workspace', packageKey: 'generic' },
+      selectedProject: { id: 'project-1', name: 'Project', workspaceId: 'workspace-1' },
+      projectGroups: [{
+        project: {
+          id: 'project-1',
+          name: 'Project',
+          workspaceName: 'Workspace',
+        },
+        threads: [
+          { id: 'thread-parent', title: 'Coordinator', lastActivityAt: '2026-04-14T20:11:00.000Z' },
+          { id: 'thread-child', parentThreadId: 'thread-parent', title: 'Finance delegate', lastActivityAt: '2026-04-14T20:12:00.000Z' },
+        ],
+        threadTree: [{
+          id: 'thread-parent',
+          title: 'Coordinator',
+          lastActivityAt: '2026-04-14T20:11:00.000Z',
+          childThreads: [{
+            id: 'thread-child',
+            parentThreadId: 'thread-parent',
+            title: 'Finance delegate',
+            lastActivityAt: '2026-04-14T20:12:00.000Z',
+          }],
+        }],
+      }],
+      hasProjects: true,
+      canRunSmokeTest: false,
+      activeProjectId: 'project-1',
+      activeThreadId: null,
+      projectExpansion: {
+        'project-1': true,
+      },
+      threadExpansion: {},
+      packages: [],
+      composer: {
+        creatingWorkspace: false,
+        projectName: '',
+        creatingProject: false,
+        threadProjectId: null,
+        threadTitle: '',
+        threadPersonasByProjectId: {},
+        loadingThreadPersonas: false,
+        threadPersonaError: null,
+        selectedPersonaKey: '',
+        creatingThread: false,
+      },
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    expect(document.querySelectorAll('.ai-nav-thread-tree-row')).toHaveLength(1);
+    expect(document.body.textContent).not.toContain('Finance delegate');
+    expect(document.querySelector('.ai-nav-thread-expander').getAttribute('aria-expanded')).toBe('false');
+
+    state.updateSnapshot(Object.assign({}, snapshot, {
+      threadExpansion: {
+        'thread-parent': true,
+      },
+    }));
+
+    expect(document.querySelectorAll('.ai-nav-thread-tree-row')).toHaveLength(2);
+    expect(document.body.textContent).toContain('Finance delegate');
   });
 
   it('renders collapsible project rows with toolbar project actions', function () {

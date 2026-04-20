@@ -52,6 +52,8 @@
     }
 
     function resolveWorkSessionEndedAt(record, turn, assistantMessage, workItems, startedAt) {
+      var workEndedAt = latestWorkItemTimestamp(workItems);
+      if (workEndedAt) return workEndedAt;
       var turnCompletedAt = record && record.turnCompletedAtById && turn && turn.turnId
         ? record.turnCompletedAtById[turn.turnId] || null
         : null;
@@ -835,15 +837,26 @@
               ? true
               : (stored && stored.displayMode === 'artifact' ? false : undefined)
           );
+          var status = normalizeToolPartStatus(part);
+          var updatedAt = getActivityEndedAt(part, message.createdAt || (existing && existing.updatedAt) || null);
+          var explicitCompletedAt = firstValidTimestamp([
+            part && part.completedAt,
+            part && part.finishedAt,
+            part && part.endedAt,
+          ]);
+          var completedAt = (isCompletedActivityStatus(status) || status === 'failed')
+            ? (explicitCompletedAt || (existing && existing.completedAt) || (stored && stored.completedAt) || updatedAt)
+            : ((existing && existing.completedAt) || (stored && stored.completedAt) || null);
           var item = {
             id: part.toolCallId,
             toolCallId: part.toolCallId,
             toolName: part.toolName || (existing && existing.toolName) || null,
             title: part.title || (existing && existing.title) || window.__tribexAiUtils.titleCase(part.toolName || 'tool'),
-            status: normalizeToolPartStatus(part),
+            status: status,
             detail: buildToolPartDetail(part) || (existing && existing.detail) || '',
             createdAt: (existing && existing.createdAt) || getActivityStartedAt(part, message.createdAt || null),
-            updatedAt: getActivityEndedAt(part, message.createdAt || (existing && existing.updatedAt) || null),
+            updatedAt: updatedAt,
+            completedAt: completedAt,
             turnId: part.turnId || message.turnId || (existing && existing.turnId) || null,
             turnOrdinal: part.turnOrdinal || message.turnOrdinal || (existing && existing.turnOrdinal) || (turnOrdinal || null),
             sortIndex: messageIndex * 100 + partIndex,
@@ -906,6 +919,7 @@
           sessionId: existing.sessionId || item.sessionId || null,
           createdAt: existing.createdAt || item.createdAt,
           updatedAt: item.updatedAt || existing.updatedAt,
+          completedAt: existing.completedAt || item.completedAt || null,
           turnId: existing.turnId || item.turnId,
           turnOrdinal: existing.turnOrdinal || item.turnOrdinal,
         });

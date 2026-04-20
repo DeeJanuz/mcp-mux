@@ -158,6 +158,10 @@
     setAuthEmail: api.setAuthEmail,
     setProjectDraftName: api.setProjectDraftName,
     setSearchTerm: api.setSearchTerm,
+    setThreadExpanded: function (threadId, expanded) {
+      api.setThreadExpanded(threadId, expanded);
+      api.notify();
+    },
     setThreadDraft: api.setThreadDraft,
     setThreadDraftName: api.setThreadDraftName,
     setThreadDraftPersona: api.setThreadDraftPersona,
@@ -167,6 +171,7 @@
     subscribe: api.subscribe,
     submitThreadComposer: api.submitThreadComposer,
     toggleProjectExpanded: api.toggleProjectExpanded,
+    toggleThreadExpanded: api.toggleThreadExpanded,
     closeProjectComposer: api.closeProjectComposer,
     closeProjectRename: api.closeProjectRename,
     closeThreadComposer: api.closeThreadComposer,

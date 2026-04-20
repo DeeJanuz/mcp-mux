@@ -499,6 +499,9 @@
       state.selectedProjectId = thread.projectId || state.selectedProjectId;
       api.rememberOrganizationContext(thread.organizationId, thread.projectId, thread.id, thread.workspaceId);
       api.setProjectExpanded(thread.projectId, true);
+      if (typeof api.expandThreadAncestors === 'function') {
+        api.expandThreadAncestors(thread.id);
+      }
       state.ui.navigatorVisible = true;
 
       var threadUi = api.ensureThreadUi(threadId);

@@ -249,10 +249,11 @@ function closeClientQuietly(client, code, reason) {
 
 function buildChatRequestPayload(input) {
   var existingMessages = Array.isArray(input.messages) ? input.messages : [];
+  var userMessageId = input.userMessageId || input.messageId || randomRequestId();
   return {
     messages: existingMessages.concat([
       {
-        id: input.userMessageId || randomRequestId(),
+        id: userMessageId,
         role: 'user',
         parts: [
           {
@@ -262,6 +263,9 @@ function buildChatRequestPayload(input) {
         ],
       },
     ]),
+    text: String(input.prompt || ''),
+    messageId: userMessageId,
+    waitForStable: input.waitForStable === false ? false : true,
     trigger: 'submit-message',
     validationProfile: input.validationProfile || null,
     relayBridge: input.relayBridge || null,
@@ -1100,6 +1104,9 @@ async function startTurn(input) {
     throw new Error('Runtime connection record is unavailable.');
   }
   if (record.activeTurn) {
+    if (input.waitForStable === false) {
+      return sendQueuedContextMessage(input, client, record);
+    }
     throw new Error('A runtime turn is already active for this thread.');
   }
 
@@ -1169,6 +1176,55 @@ async function startTurn(input) {
   return {
     turnId: requestId,
     done: done,
+  };
+}
+
+function buildQueuedContextMessages(record) {
+  var messages = Array.isArray(record && record.messages) ? record.messages.slice() : [];
+  var turn = record && record.activeTurn ? record.activeTurn : null;
+  if (!turn || !turn.userMessageId || !turn.prompt) return messages;
+
+  var hasActiveUser = messages.some(function (message) {
+    return message && message.id === turn.userMessageId;
+  });
+  if (!hasActiveUser) {
+    messages.push({
+      id: turn.userMessageId,
+      role: 'user',
+      parts: [
+        {
+          type: 'text',
+          text: String(turn.prompt || ''),
+        },
+      ],
+    });
+  }
+  return messages;
+}
+
+function sendQueuedContextMessage(input, client, record) {
+  var requestId = input.turnId || randomRequestId();
+  var userMessageId = input.messageId || input.userMessageId || randomRequestId();
+  var existingMessages = buildQueuedContextMessages(record);
+
+  client.send(JSON.stringify({
+    id: requestId,
+    init: {
+      method: 'POST',
+      body: JSON.stringify(buildChatRequestPayload(Object.assign({}, input, {
+        messages: existingMessages,
+        userMessageId: userMessageId,
+        messageId: userMessageId,
+        waitForStable: false,
+      }))),
+    },
+    type: CHAT_REQUEST_TYPE,
+  }));
+
+  return {
+    turnId: requestId,
+    messageId: userMessageId,
+    queued: true,
   };
 }
 

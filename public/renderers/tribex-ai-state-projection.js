@@ -173,7 +173,16 @@
     function resolveNextTurnOrdinal(record) {
       var snapshotCount = countUserMessages(extractSnapshotMessages(record));
       var lastOrdinal = record && record.lastTurnOrdinal ? record.lastTurnOrdinal : 0;
-      return Math.max(snapshotCount, lastOrdinal) + 1;
+      var historyOrdinal = 0;
+      if (record && record.turnHistoryById) {
+        Object.keys(record.turnHistoryById).forEach(function (key) {
+          var turn = record.turnHistoryById[key];
+          if (turn && turn.turnOrdinal && turn.turnOrdinal > historyOrdinal) {
+            historyOrdinal = turn.turnOrdinal;
+          }
+        });
+      }
+      return Math.max(snapshotCount, lastOrdinal, historyOrdinal) + 1;
     }
 
     function resolveActivityContentType(item) {
@@ -1472,6 +1481,7 @@
     api.countUserMessages = countUserMessages;
     api.getLatestTurnReference = getLatestTurnReference;
     api.resolveNextTurnOrdinal = resolveNextTurnOrdinal;
+    api.ensureTurnEntry = ensureTurnEntry;
     api.resolveActivityContentType = resolveActivityContentType;
     api.getStoredActivityItem = getStoredActivityItem;
     api.resolveActivityDisplayMode = resolveActivityDisplayMode;

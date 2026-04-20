@@ -1379,7 +1379,7 @@
     });
   }
 
-  function isThreadTurnLocked(threadContext) {
+  function isThreadTurnBusy(threadContext) {
     if (!threadContext) return false;
     if (threadContext.pending) return true;
     var activeTurnStatus = threadContext.thread && threadContext.thread.activeTurn
@@ -1435,6 +1435,10 @@
     layout.className = 'ai-thread-layout';
     view.appendChild(layout);
 
+    var interruptDock = document.createElement('div');
+    interruptDock.className = 'ai-interrupt-turn-dock';
+    layout.appendChild(interruptDock);
+
     var transcript = document.createElement('section');
     transcript.className = 'ai-chat-log ai-chat-log-standalone ai-run-log';
     layout.appendChild(transcript);
@@ -1453,7 +1457,7 @@
     var interrupt = document.createElement('button');
     interrupt.className = 'ai-interrupt-turn';
     interrupt.type = 'button';
-    interrupt.textContent = 'Stop';
+    interrupt.textContent = 'Interrupt Agent';
     interrupt.hidden = true;
     interrupt.addEventListener('click', function () {
       if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.interruptThread !== 'function') return;
@@ -1465,7 +1469,7 @@
         }
       });
     });
-    view.appendChild(interrupt);
+    interruptDock.appendChild(interrupt);
 
     var composer = document.createElement('section');
     composer.className = 'ai-composer-shell';
@@ -1556,9 +1560,11 @@
       layout: layout,
       transcript: transcript,
       jumpButton: jumpButton,
+      interruptDock: interruptDock,
       interrupt: interrupt,
       composer: composer,
       textarea: textarea,
+      hint: hint,
       primary: primary,
       lastModeSignature: null,
       threadId: null,
@@ -1754,20 +1760,24 @@
 
   function updateComposer(state, threadContext, threadChanged) {
     var nextThreadId = threadContext.thread && threadContext.thread.id ? threadContext.thread.id : null;
-    var locked = isThreadTurnLocked(threadContext);
+    var busy = isThreadTurnBusy(threadContext);
     state.threadId = nextThreadId;
     state.textarea.value = threadContext.thread && threadContext.thread.ui
       ? (threadContext.thread.ui.draftText || '')
       : '';
-    state.view.classList.toggle('ai-thread-turn-locked', locked);
-    state.composer.classList.toggle('is-busy-hidden', locked);
-    state.composer.setAttribute('aria-hidden', locked ? 'true' : 'false');
-    if ('inert' in state.composer) state.composer.inert = locked;
-    state.interrupt.hidden = !locked;
-    state.interrupt.disabled = !locked;
-    state.textarea.disabled = locked;
-    state.primary.disabled = locked;
-    state.primary.textContent = 'Send';
+    state.view.classList.toggle('ai-thread-turn-busy', busy);
+    state.composer.classList.toggle('is-context-mode', busy);
+    state.composer.removeAttribute('aria-hidden');
+    if ('inert' in state.composer) state.composer.inert = false;
+    state.interruptDock.hidden = !busy;
+    state.interrupt.hidden = !busy;
+    state.interrupt.disabled = !busy;
+    state.textarea.disabled = false;
+    state.primary.disabled = false;
+    state.primary.textContent = busy ? 'Add context' : 'Send';
+    state.hint.textContent = busy
+      ? 'The AI is still working. Your prompt will be added to the chat context and it will take it into account as it continues.'
+      : 'Cmd/Ctrl+Enter to send';
   }
 
   function restoreThreadScroll(state, threadContext, threadChanged) {

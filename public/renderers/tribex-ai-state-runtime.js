@@ -485,6 +485,34 @@
       return detail.activeTurn;
     }
 
+    function queueContextMessage(threadId, prompt, messageId) {
+      var detail = api.ensureThreadDetailRecord(threadId);
+      var createdAt = api.nowIso();
+      var turnOrdinal = api.resolveNextTurnOrdinal(detail);
+      var turnId = messageId || api.randomId('turn');
+      var userMessage = {
+        id: messageId || api.randomId('user'),
+        role: 'user',
+        content: prompt,
+        createdAt: createdAt,
+        pending: true,
+        turnId: turnId,
+        turnOrdinal: turnOrdinal,
+      };
+
+      var turn = api.ensureTurnEntry(detail, turnId, turnOrdinal);
+      if (turn) {
+        turn.status = 'queued';
+        turn.startedAt = createdAt;
+        turn.userMessage = Object.assign({}, userMessage);
+      }
+
+      appendLegacyMessage(detail, userMessage);
+      api.rememberTurnHistory(detail);
+      api.syncThreadSummaryFromRecord(detail);
+      return userMessage;
+    }
+
     function appendLegacyMessage(record, message) {
       if (!record || !message) return;
       var messages = Array.isArray(record.base.messages) ? record.base.messages.slice() : [];
@@ -1017,6 +1045,7 @@
     api.mergeThreadDetail = mergeThreadDetail;
     api.startActiveTurn = startActiveTurn;
     api.queueLocalTurn = queueLocalTurn;
+    api.queueContextMessage = queueContextMessage;
     api.appendLegacyMessage = appendLegacyMessage;
     api.buildCompanionActivityItem = buildCompanionActivityItem;
     api.applySendResult = applySendResult;

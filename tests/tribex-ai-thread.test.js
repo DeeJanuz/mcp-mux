@@ -1194,7 +1194,7 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-jump-latest').hidden).toBe(true);
   });
 
-  it('slides the composer away and shows a centered stop button while the turn is active', async function () {
+  it('keeps the composer visible and shows a floating interrupt pill while the turn is active', async function () {
     var interruptThread = vi.fn(function () { return Promise.resolve(true); });
     window.__tribexAiState = {
       getThreadContext: vi.fn(function () {
@@ -1227,10 +1227,15 @@ describe('tribex-ai-thread', function () {
     loadThread();
     renderThread('thread-1');
 
-    expect(document.querySelector('.ai-view').classList.contains('ai-thread-turn-locked')).toBe(true);
-    expect(document.querySelector('.ai-composer-shell').classList.contains('is-busy-hidden')).toBe(true);
-    expect(document.querySelector('.ai-composer-input').disabled).toBe(true);
+    expect(document.querySelector('.ai-view').classList.contains('ai-thread-turn-busy')).toBe(true);
+    expect(document.querySelector('.ai-composer-shell').classList.contains('is-context-mode')).toBe(true);
+    expect(document.querySelector('.ai-composer-input').disabled).toBe(false);
+    expect(document.querySelector('.ai-primary-btn').disabled).toBe(false);
+    expect(document.querySelector('.ai-primary-btn').textContent).toBe('Add context');
+    expect(document.querySelector('.ai-composer-hint').textContent).toContain('added to the chat context');
+    expect(document.querySelector('.ai-interrupt-turn-dock').hidden).toBe(false);
     expect(document.querySelector('.ai-interrupt-turn').hidden).toBe(false);
+    expect(document.querySelector('.ai-interrupt-turn').textContent).toBe('Interrupt Agent');
 
     document.querySelector('.ai-interrupt-turn').click();
     await Promise.resolve();

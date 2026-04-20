@@ -223,10 +223,11 @@ function createAgentClientCtor(handlers) {
     this.send = vi.fn(function (raw) {
       this.sentPayloads.push(raw);
       var payload = JSON.parse(raw);
+      var handlerResult;
       if (handlers && typeof handlers.onChatRequest === 'function') {
-        handlers.onChatRequest(payload, this);
+        handlerResult = handlers.onChatRequest(payload, this);
       }
-      if (payload && payload.type === 'cf_agent_use_chat_request') {
+      if (handlerResult !== false && payload && payload.type === 'cf_agent_use_chat_request') {
         this.emit('message', {
           data: JSON.stringify({
             type: 'cf_agent_use_chat_response',
@@ -544,6 +545,63 @@ describe('tribex-ai-client', function () {
       summary: 'Hosted execution completed',
       detail: 'Drafted the finance summary.',
     });
+  });
+
+  it('allows queue-only sends while a runtime turn is active', async function () {
+    var requests = [];
+    var FakeAgentClient = createAgentClientCtor({
+      onChatRequest: function (payload) {
+        requests.push(payload);
+        return false;
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var firstTurn = await window.__tribexAiClient.sendMessage('thread-123', 'Start the report', {
+      turnId: 'turn-1',
+    });
+    expect(firstTurn.turnId).toBe('turn-1');
+    firstTurn.done.catch(function () {});
+
+    await expect(window.__tribexAiClient.sendMessage('thread-123', 'Use the newer revenue number.', {
+      turnId: 'turn-2',
+      messageId: 'user-2',
+      waitForStable: false,
+    })).resolves.toMatchObject({
+      turnId: 'turn-2',
+      messageId: 'user-2',
+      queued: true,
+    });
+
+    expect(requests).toHaveLength(2);
+    var queuedBody = JSON.parse(requests[1].init.body);
+    expect(queuedBody).toMatchObject({
+      text: 'Use the newer revenue number.',
+      messageId: 'user-2',
+      waitForStable: false,
+    });
+    expect(queuedBody.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'user-2', role: 'user' }),
+    ]));
   });
 
   it('describes hosted execution start without sandbox language', function () {

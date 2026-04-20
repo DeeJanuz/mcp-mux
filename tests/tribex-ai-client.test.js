@@ -604,6 +604,66 @@ describe('tribex-ai-client', function () {
     ]));
   });
 
+  it('keeps waitForStable=false sends queue-only before active turn state exists', async function () {
+    var requests = [];
+    var FakeAgentClient = createAgentClientCtor({
+      onChatRequest: function (payload) {
+        requests.push(payload);
+        return false;
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    await window.__tribexAiCloudflareBridge.connect({
+      threadId: 'thread-123',
+      connection: createRuntimeSessionEnvelope('thread-123').runtimeSession.connection,
+    });
+
+    await expect(window.__tribexAiClient.sendMessage('thread-123', 'Use the newer revenue number.', {
+      turnId: 'turn-queued',
+      messageId: 'user-queued',
+      waitForStable: false,
+    })).resolves.toMatchObject({
+      turnId: 'turn-queued',
+      messageId: 'user-queued',
+      queued: true,
+    });
+
+    var queuedBody = JSON.parse(requests[0].init.body);
+    expect(queuedBody).toMatchObject({
+      text: 'Use the newer revenue number.',
+      messageId: 'user-queued',
+      waitForStable: false,
+    });
+
+    var activeTurn = await window.__tribexAiClient.sendMessage('thread-123', 'Start after queued context', {
+      turnId: 'turn-active',
+    });
+    expect(activeTurn).toMatchObject({
+      turnId: 'turn-active',
+    });
+    activeTurn.done.catch(function () {});
+  });
+
   it('describes hosted execution start without sandbox language', function () {
     expect(window.__tribexAiClient.normalizeMessage({
       toolName: 'opencode.thread.execution.started',

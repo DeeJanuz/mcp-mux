@@ -730,7 +730,7 @@ describe('tribex-ai-state', function () {
     expect(client.sendMessage).toHaveBeenCalledWith(
       'thread-smoke-1',
       client.buildSmokePrompt.mock.results[0].value,
-      { validationProfile: 'rule-skill-echo' },
+      expect.objectContaining({ validationProfile: 'rule-skill-echo' }),
     );
     expect(window.__companionUtils.openSession).toHaveBeenCalled();
 
@@ -877,6 +877,151 @@ describe('tribex-ai-state', function () {
     relayHandler({ relayId: 'thread-1', type: 'status', status: 'connected' });
     presenceHandler({ heartbeatId: 'thread-1', type: 'status', status: 'running' });
     expect(window.__tribexAiState.getThreadContext('thread-1').relayStatus).toBe('online');
+  });
+
+  it('prefers realtime relay sessions and refreshes on realtime auth expiry', async function () {
+    vi.useFakeTimers();
+    var relayHandler = null;
+    var realtime = {
+      streamUrl: 'https://runtime.example.com/__realtime/relay/relay-session-rt/stream',
+      responseUrl: 'https://runtime.example.com/__realtime/relay/relay-session-rt/response',
+      token: 'realtime-token',
+      tokenExpiresAt: 2000000000,
+    };
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-rt',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'Realtime chat',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-rt',
+          title: 'Realtime chat',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [],
+        });
+      }),
+      ensureRuntimeSession: vi.fn(function () {
+        return Promise.resolve({
+          relay: {
+            session: { id: 'relay-session-rt', deviceId: 'device-rt' },
+            bridge: { relaySessionId: 'relay-session-rt' },
+            realtime: realtime,
+          },
+        });
+      }),
+      registerDesktopRelay: vi.fn(function () {
+        return Promise.resolve({ relaySession: { id: 'legacy-relay' } });
+      }),
+      startDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startRealtimeRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      sendMessage: vi.fn(function () {
+        return Promise.resolve({
+          thread: {
+            id: 'thread-rt',
+            projectId: 'project-1',
+            workspaceId: 'workspace-1',
+            messages: [],
+          },
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function (handler) {
+        relayHandler = handler;
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value.thread || value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-rt');
+    await vi.runAllTimersAsync();
+    var submitPromise = window.__tribexAiState.submitPrompt('thread-rt', 'Use realtime relay.');
+    await vi.runAllTimersAsync();
+    await submitPromise;
+
+    expect(client.ensureRuntimeSession).toHaveBeenCalledWith('thread-rt', {
+      forceRefresh: false,
+    });
+    expect(client.startRealtimeRelayStream).toHaveBeenCalledWith(
+      'thread-rt',
+      'relay-session-rt',
+      realtime,
+    );
+    expect(client.registerDesktopRelay).not.toHaveBeenCalled();
+    expect(client.startDesktopRelayStream).not.toHaveBeenCalled();
+    expect(client.startDesktopPresenceHeartbeat).not.toHaveBeenCalled();
+
+    relayHandler({
+      relayId: 'thread-rt',
+      type: 'data',
+      mode: 'realtime',
+      payload: {
+        type: 'relay.connected',
+        relaySessionId: 'relay-session-rt',
+      },
+    });
+    expect(window.__tribexAiState.getThreadContext('thread-rt').relayStatus).toBe('online');
+
+    relayHandler({
+      relayId: 'thread-rt',
+      type: 'auth_expired',
+      mode: 'realtime',
+      message: 'Realtime relay token expired.',
+    });
+    await vi.runAllTimersAsync();
+    expect(client.ensureRuntimeSession).toHaveBeenLastCalledWith('thread-rt', {
+      forceRefresh: true,
+    });
+    expect(client.startRealtimeRelayStream).toHaveBeenCalledTimes(2);
   });
 
   it('clears the busy indicator when a prompt send times out', async function () {

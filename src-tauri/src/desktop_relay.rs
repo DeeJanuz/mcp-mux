@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
@@ -18,6 +18,24 @@ enum EndpointScope {
 
 const RELAY_TOOL_SNAPSHOT_PATH: &str = "/api/desktop-relay/tools/list";
 const RELAY_TOOL_RESPONSE_PATH: &str = "/api/desktop-relay/tools/response";
+const REALTIME_REQUEST_RUNNING: &str = "running";
+const REALTIME_REQUEST_RESPONDED: &str = "responded";
+const REALTIME_RECONNECT_BASE_MS: u64 = 500;
+const REALTIME_RECONNECT_MAX_MS: u64 = 30_000;
+
+#[derive(Debug)]
+struct RealtimeRelayHttpError {
+    status: Option<u16>,
+    message: String,
+}
+
+#[derive(Debug, Clone)]
+struct RealtimeToolRequest {
+    request: HostedToolRequest,
+    request_id: String,
+    relay_session_id: String,
+    timeout_ms: u64,
+}
 
 fn shorten_error_body(body: &str) -> String {
     let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -26,6 +44,24 @@ fn shorten_error_body(body: &str) -> String {
     } else {
         compact
     }
+}
+
+fn current_unix_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+fn redact_secret(value: &str, secret: &str) -> String {
+    if secret.trim().is_empty() {
+        return value.to_string();
+    }
+    value.replace(secret, "[redacted]")
+}
+
+fn redact_realtime_error(value: &str, token: &str) -> String {
+    shorten_error_body(&redact_secret(value, token))
 }
 
 fn emit_event(app_handle: &AppHandle, event_name: &str, payload: Value) {
@@ -236,6 +272,107 @@ fn build_tool_response_payload(request: &HostedToolRequest, result: Value) -> Va
         "success": !is_error,
         "result": result,
         "error": error,
+    })
+}
+
+fn request_id_to_string(value: Option<&Value>) -> Option<String> {
+    value.and_then(|entry| match entry {
+        Value::String(inner) => {
+            let trimmed = inner.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        _ => None,
+    })
+}
+
+fn result_is_error(result: &Value) -> bool {
+    result
+        .get("isError")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn extract_tool_error_message(result: &Value) -> Option<String> {
+    result
+        .get("content")
+        .and_then(|value| value.as_array())
+        .and_then(|entries| {
+            entries.iter().find_map(|entry| {
+                entry
+                    .get("text")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.to_string())
+            })
+        })
+}
+
+fn build_realtime_tool_response_payload(request_id: &str, result: Value) -> Value {
+    if result_is_error(&result) {
+        return json!({
+            "requestId": request_id,
+            "success": false,
+            "error": extract_tool_error_message(&result)
+                .unwrap_or_else(|| "Hosted desktop relay tool failed.".to_string()),
+        });
+    }
+
+    json!({
+        "requestId": request_id,
+        "success": true,
+        "result": result,
+    })
+}
+
+fn build_realtime_tool_failure_payload(request_id: &str, error: &str) -> Value {
+    json!({
+        "requestId": request_id,
+        "success": false,
+        "error": error,
+    })
+}
+
+fn extract_realtime_tool_request(
+    payload: &Value,
+    fallback_relay_session_id: &str,
+) -> Result<RealtimeToolRequest, String> {
+    if payload.get("type").and_then(|value| value.as_str()) != Some("relay.tool.request") {
+        return Err("Not a realtime relay tool request.".to_string());
+    }
+
+    let request_id = request_id_to_string(payload.get("requestId"))
+        .ok_or_else(|| "Realtime relay request is missing requestId.".to_string())?;
+    let tool_name = extract_string(payload.get("toolName"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Realtime relay request is missing toolName.".to_string())?;
+    let timeout_ms = payload
+        .get("timeoutMs")
+        .and_then(|value| value.as_u64())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "Realtime relay request is missing a positive timeoutMs.".to_string())?;
+
+    let mut request = extract_hosted_tool_request(payload)
+        .ok_or_else(|| "Realtime relay request could not be parsed.".to_string())?;
+    request.method = HostedToolMethod::Call;
+    request.request_id = Some(json!(request_id.clone()));
+    request.tool_name = Some(tool_name);
+    if request.relay_session_id.is_none() {
+        request.relay_session_id = Some(fallback_relay_session_id.to_string());
+    }
+    let relay_session_id = request
+        .relay_session_id
+        .clone()
+        .unwrap_or_else(|| fallback_relay_session_id.to_string());
+
+    Ok(RealtimeToolRequest {
+        request,
+        request_id,
+        relay_session_id,
+        timeout_ms,
     })
 }
 
@@ -640,6 +777,101 @@ pub async fn relay_request(
     scoped_request(state, EndpointScope::Relay, method, path, body, query).await
 }
 
+fn realtime_request_key(relay_session_id: &str, request_id: &str) -> String {
+    format!("{}::{}", relay_session_id, request_id)
+}
+
+fn mark_realtime_request_running(
+    state: &Arc<AppState>,
+    relay_session_id: &str,
+    request_id: &str,
+) -> bool {
+    let key = realtime_request_key(relay_session_id, request_id);
+    let mut requests = state.first_party_ai_realtime_relay_requests.lock().unwrap();
+    if requests.contains_key(&key) {
+        return false;
+    }
+    requests.insert(key, REALTIME_REQUEST_RUNNING.to_string());
+    true
+}
+
+fn mark_realtime_request_responded(
+    state: &Arc<AppState>,
+    relay_session_id: &str,
+    request_id: &str,
+) {
+    let key = realtime_request_key(relay_session_id, request_id);
+    let mut requests = state.first_party_ai_realtime_relay_requests.lock().unwrap();
+    requests.insert(key, REALTIME_REQUEST_RESPONDED.to_string());
+}
+
+fn clear_realtime_requests_for_stream_session(
+    state: &Arc<AppState>,
+    stream_id: &str,
+    relay_session_id: &str,
+) {
+    let previous = {
+        let mut sessions = state
+            .first_party_ai_realtime_relay_stream_sessions
+            .lock()
+            .unwrap();
+        sessions.insert(stream_id.to_string(), relay_session_id.to_string())
+    };
+
+    if let Some(previous) = previous {
+        if previous != relay_session_id {
+            let prefix = format!("{}::", previous);
+            let mut requests = state.first_party_ai_realtime_relay_requests.lock().unwrap();
+            requests.retain(|key, _| !key.starts_with(&prefix));
+        }
+    }
+}
+
+async fn send_realtime_tool_response(
+    client: &reqwest::Client,
+    response_url: &str,
+    token: &str,
+    body: Value,
+) -> Result<Value, RealtimeRelayHttpError> {
+    let response = client
+        .post(response_url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|err| RealtimeRelayHttpError {
+            status: None,
+            message: redact_realtime_error(&format!("Realtime relay response failed: {}", err), token),
+        })?;
+
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(RealtimeRelayHttpError {
+            status: Some(status.as_u16()),
+            message: format!(
+                "Realtime relay response returned HTTP {}: {}",
+                status.as_u16(),
+                redact_realtime_error(&text, token)
+            ),
+        });
+    }
+
+    if text.trim().is_empty() {
+        return Ok(json!({}));
+    }
+
+    serde_json::from_str(&text).map_err(|err| RealtimeRelayHttpError {
+        status: None,
+        message: format!(
+            "Failed to parse realtime relay response: {} ({})",
+            err,
+            redact_realtime_error(&text, token)
+        ),
+    })
+}
+
 pub async fn register_desktop_relay(
     state: &Arc<AppState>,
     app_handle: &AppHandle,
@@ -706,6 +938,519 @@ pub async fn refresh_desktop_relay(
     });
 
     Ok(response)
+}
+
+fn emit_realtime_auth_expired(app_handle: &AppHandle, relay_id: &str, message: &str) {
+    emit_event(
+        app_handle,
+        "first_party_ai_desktop_relay_event",
+        json!({
+            "relayId": relay_id,
+            "type": "auth_expired",
+            "mode": "realtime",
+            "message": message,
+        }),
+    );
+}
+
+async fn respond_to_realtime_tool_request(
+    state: Arc<AppState>,
+    app_handle: AppHandle,
+    event_name: &'static str,
+    relay_id: String,
+    response_url: String,
+    token: String,
+    realtime_request: RealtimeToolRequest,
+) {
+    if !mark_realtime_request_running(
+        &state,
+        &realtime_request.relay_session_id,
+        &realtime_request.request_id,
+    ) {
+        emit_event(
+            &app_handle,
+            event_name,
+            json!({
+                "relayId": relay_id,
+                "type": "data",
+                "payload": {
+                    "type": "relay.tool.request.duplicate",
+                    "requestId": realtime_request.request_id,
+                    "relaySessionId": realtime_request.relay_session_id,
+                    "toolName": realtime_request.request.tool_name,
+                },
+            }),
+        );
+        return;
+    }
+
+    let async_state = Arc::new(TokioMutex::new(AsyncAppState {
+        inner: Arc::clone(&state),
+        app_handle: app_handle.clone(),
+    }));
+    emit_local_tool_event(
+        &async_state,
+        &realtime_request.request,
+        "relay.tool.request.local",
+        None,
+        None,
+    )
+    .await;
+
+    let request_for_response = realtime_request.request.clone();
+    let request_id = realtime_request.request_id.clone();
+    let relay_session_id = realtime_request.relay_session_id.clone();
+    let timeout_ms = realtime_request.timeout_ms;
+    let result = match tokio::time::timeout(
+        Duration::from_millis(timeout_ms),
+        execute_hosted_tool_request_with_async_state(&async_state, realtime_request.request),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => build_tool_error_result("Realtime relay tool request timed out."),
+    };
+
+    let error = if result_is_error(&result) {
+        extract_tool_error_message(&result)
+    } else {
+        None
+    };
+    emit_local_tool_event(
+        &async_state,
+        &request_for_response,
+        "relay.tool.response.local",
+        Some(&result),
+        error.as_deref(),
+    )
+    .await;
+
+    let response_payload = build_realtime_tool_response_payload(&request_id, result);
+    let response_result = send_realtime_tool_response(
+        &state.http_client,
+        &response_url,
+        &token,
+        response_payload,
+    )
+    .await;
+
+    match response_result {
+        Ok(ack) => {
+            mark_realtime_request_responded(&state, &relay_session_id, &request_id);
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool.response.posted",
+                        "requestId": request_id,
+                        "relaySessionId": relay_session_id,
+                        "toolName": request_for_response.tool_name,
+                        "ack": ack,
+                    },
+                }),
+            );
+        }
+        Err(err) if err.status == Some(401) => {
+            emit_realtime_auth_expired(&app_handle, &relay_id, "Realtime relay token expired.");
+        }
+        Err(err) => {
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool_response.error",
+                        "requestId": request_id,
+                        "toolName": request_for_response.tool_name,
+                        "relaySessionId": relay_session_id,
+                        "message": err.message,
+                    },
+                }),
+            );
+        }
+    }
+}
+
+async fn post_realtime_validation_failure(
+    state: Arc<AppState>,
+    app_handle: AppHandle,
+    event_name: &'static str,
+    relay_id: String,
+    response_url: String,
+    token: String,
+    relay_session_id: String,
+    request_id: String,
+    error: String,
+) {
+    let response_payload = build_realtime_tool_failure_payload(&request_id, &error);
+    match send_realtime_tool_response(&state.http_client, &response_url, &token, response_payload).await {
+        Ok(_) => {
+            mark_realtime_request_responded(&state, &relay_session_id, &request_id);
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool.response.posted",
+                        "requestId": request_id,
+                        "relaySessionId": relay_session_id,
+                        "success": false,
+                    },
+                }),
+            );
+        }
+        Err(err) if err.status == Some(401) => {
+            emit_realtime_auth_expired(&app_handle, &relay_id, "Realtime relay token expired.");
+        }
+        Err(err) => emit_event(
+            &app_handle,
+            event_name,
+            json!({
+                "relayId": relay_id,
+                "type": "data",
+                "payload": {
+                    "type": "relay.tool_response.error",
+                    "requestId": request_id,
+                    "relaySessionId": relay_session_id,
+                    "message": err.message,
+                },
+            }),
+        ),
+    }
+}
+
+fn emit_realtime_sse_payload(
+    app_handle: &AppHandle,
+    event_name: &str,
+    relay_id: &str,
+    payload: Value,
+    pending_event_name: Option<&str>,
+) {
+    let mut event_payload = json!({
+        "relayId": relay_id,
+        "type": "data",
+        "mode": "realtime",
+        "payload": payload,
+    });
+    if let Some(event_name_value) = pending_event_name {
+        if !event_name_value.is_empty() {
+            event_payload["sseEvent"] = json!(event_name_value);
+        }
+    }
+    emit_event(app_handle, event_name, event_payload);
+}
+
+fn handle_realtime_sse_payload(
+    state: Arc<AppState>,
+    app_handle: AppHandle,
+    event_name: &'static str,
+    relay_id: String,
+    relay_session_id: String,
+    response_url: String,
+    token: String,
+    payload: Value,
+    sse_event_name: Option<String>,
+) {
+    let should_dispatch = payload.get("type").and_then(|value| value.as_str()) == Some("relay.tool.request");
+    if should_dispatch {
+        match extract_realtime_tool_request(&payload, &relay_session_id) {
+            Ok(realtime_request) => {
+                let state_clone = Arc::clone(&state);
+                let app_handle_task = app_handle.clone();
+                let relay_id_task = relay_id.clone();
+                let response_url_task = response_url.clone();
+                let token_task = token.clone();
+                tokio::spawn(async move {
+                    respond_to_realtime_tool_request(
+                        state_clone,
+                        app_handle_task,
+                        event_name,
+                        relay_id_task,
+                        response_url_task,
+                        token_task,
+                        realtime_request,
+                    )
+                    .await;
+                });
+            }
+            Err(err) => {
+                if let Some(request_id) = request_id_to_string(payload.get("requestId")) {
+                    let state_clone = Arc::clone(&state);
+                    let app_handle_task = app_handle.clone();
+                    let relay_id_task = relay_id.clone();
+                    let response_url_task = response_url.clone();
+                    let token_task = token.clone();
+                    let relay_session_id_task = extract_string(payload.get("relaySessionId"))
+                        .unwrap_or_else(|| relay_session_id.clone());
+                    tokio::spawn(async move {
+                        post_realtime_validation_failure(
+                            state_clone,
+                            app_handle_task,
+                            event_name,
+                            relay_id_task,
+                            response_url_task,
+                            token_task,
+                            relay_session_id_task,
+                            request_id,
+                            err,
+                        )
+                        .await;
+                    });
+                }
+            }
+        }
+    }
+
+    emit_realtime_sse_payload(
+        &app_handle,
+        event_name,
+        &relay_id,
+        payload,
+        sse_event_name.as_deref(),
+    );
+}
+
+pub async fn start_realtime_relay_stream(
+    state: Arc<AppState>,
+    app_handle: AppHandle,
+    stream_id: String,
+    relay_session_id: String,
+    stream_url: String,
+    response_url: String,
+    token: String,
+    token_expires_at: i64,
+) -> Result<(), String> {
+    stop_desktop_relay_stream(&state, &stream_id);
+    clear_realtime_requests_for_stream_session(&state, &stream_id, &relay_session_id);
+
+    reqwest::Url::parse(&stream_url)
+        .map_err(|err| format!("Invalid realtime relay stream URL: {}", err))?;
+    reqwest::Url::parse(&response_url)
+        .map_err(|err| format!("Invalid realtime relay response URL: {}", err))?;
+    if token.trim().is_empty() {
+        return Err("Realtime relay token is required.".to_string());
+    }
+
+    let event_name = "first_party_ai_desktop_relay_event";
+    let client = state.http_client.clone();
+    let app_handle_clone = app_handle.clone();
+    let stream_id_clone = stream_id.clone();
+    let stream_state = Arc::clone(&state);
+
+    let handle = tokio::spawn(async move {
+        let mut attempt: u32 = 0;
+        loop {
+            if current_unix_seconds() >= token_expires_at {
+                emit_realtime_auth_expired(
+                    &app_handle_clone,
+                    &stream_id_clone,
+                    "Realtime relay token expired.",
+                );
+                return;
+            }
+
+            emit_event(
+                &app_handle_clone,
+                event_name,
+                json!({
+                    "relayId": stream_id_clone,
+                    "type": "status",
+                    "mode": "realtime",
+                    "status": "connecting",
+                }),
+            );
+
+            let response = client
+                .get(&stream_url)
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Accept", "text/event-stream")
+                .send()
+                .await;
+
+            let mut response = match response {
+                Ok(response) => response,
+                Err(err) => {
+                    emit_event(
+                        &app_handle_clone,
+                        event_name,
+                        json!({
+                            "relayId": stream_id_clone,
+                            "type": "error",
+                            "mode": "realtime",
+                            "message": redact_realtime_error(
+                                &format!("Failed to connect to realtime relay stream: {}", err),
+                                &token,
+                            ),
+                        }),
+                    );
+                    attempt = attempt.saturating_add(1);
+                    tokio::time::sleep(realtime_backoff(attempt)).await;
+                    continue;
+                }
+            };
+
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+                emit_realtime_auth_expired(
+                    &app_handle_clone,
+                    &stream_id_clone,
+                    "Realtime relay token expired.",
+                );
+                return;
+            }
+
+            if !response.status().is_success() {
+                let status = response.status().as_u16();
+                let body = response.text().await.unwrap_or_default();
+                emit_event(
+                    &app_handle_clone,
+                    event_name,
+                    json!({
+                        "relayId": stream_id_clone,
+                        "type": "error",
+                        "mode": "realtime",
+                        "message": format!(
+                            "Realtime relay stream returned HTTP {}: {}",
+                            status,
+                            redact_realtime_error(&body, &token),
+                        ),
+                    }),
+                );
+                attempt = attempt.saturating_add(1);
+                tokio::time::sleep(realtime_backoff(attempt)).await;
+                continue;
+            }
+
+            attempt = 0;
+            emit_event(
+                &app_handle_clone,
+                event_name,
+                json!({
+                    "relayId": stream_id_clone,
+                    "type": "status",
+                    "mode": "realtime",
+                    "status": "connected",
+                }),
+            );
+
+            let mut buffer = String::new();
+            let mut pending_event_name: Option<String> = None;
+            let mut pending_data_lines: Vec<String> = Vec::new();
+
+            loop {
+                let chunk = match response.chunk().await {
+                    Ok(Some(chunk)) => chunk,
+                    Ok(None) => break,
+                    Err(err) => {
+                        emit_event(
+                            &app_handle_clone,
+                            event_name,
+                            json!({
+                                "relayId": stream_id_clone,
+                                "type": "error",
+                                "mode": "realtime",
+                                "message": redact_realtime_error(
+                                    &format!("Realtime relay stream read failed: {}", err),
+                                    &token,
+                                ),
+                            }),
+                        );
+                        break;
+                    }
+                };
+
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+                while let Some(idx) = buffer.find('\n') {
+                    let line = buffer[..idx].trim_end_matches('\r').to_string();
+                    buffer = buffer[idx + 1..].to_string();
+
+                    if line.is_empty() {
+                        if !pending_data_lines.is_empty() {
+                            let raw_data = pending_data_lines.join("\n");
+                            let payload = parse_json_payload(&raw_data);
+                            handle_realtime_sse_payload(
+                                Arc::clone(&stream_state),
+                                app_handle_clone.clone(),
+                                event_name,
+                                stream_id_clone.clone(),
+                                relay_session_id.clone(),
+                                response_url.clone(),
+                                token.clone(),
+                                payload,
+                                pending_event_name.clone(),
+                            );
+                            pending_data_lines.clear();
+                        }
+                        pending_event_name = None;
+                        continue;
+                    }
+
+                    if line.starts_with(':') {
+                        continue;
+                    }
+
+                    if let Some(event_name_value) = line.strip_prefix("event:") {
+                        let event_name_value = event_name_value.trim();
+                        pending_event_name = if event_name_value.is_empty() {
+                            None
+                        } else {
+                            Some(event_name_value.to_string())
+                        };
+                        continue;
+                    }
+
+                    if let Some(data) = line.strip_prefix("data:") {
+                        pending_data_lines.push(data.trim_start().to_string());
+                    }
+                }
+            }
+
+            if !pending_data_lines.is_empty() {
+                let raw_data = pending_data_lines.join("\n");
+                let payload = parse_json_payload(&raw_data);
+                handle_realtime_sse_payload(
+                    Arc::clone(&stream_state),
+                    app_handle_clone.clone(),
+                    event_name,
+                    stream_id_clone.clone(),
+                    relay_session_id.clone(),
+                    response_url.clone(),
+                    token.clone(),
+                    payload,
+                    pending_event_name.clone(),
+                );
+            }
+
+            emit_event(
+                &app_handle_clone,
+                event_name,
+                json!({
+                    "relayId": stream_id_clone,
+                    "type": "status",
+                    "mode": "realtime",
+                    "status": "closed",
+                }),
+            );
+            attempt = attempt.saturating_add(1);
+            tokio::time::sleep(realtime_backoff(attempt)).await;
+        }
+    });
+
+    let mut streams = state.first_party_ai_desktop_relay_streams.lock().unwrap();
+    streams.insert(stream_id, handle);
+    Ok(())
+}
+
+fn realtime_backoff(attempt: u32) -> Duration {
+    let multiplier = 2_u64.saturating_pow(attempt.saturating_sub(1).min(6));
+    Duration::from_millis((REALTIME_RECONNECT_BASE_MS * multiplier).min(REALTIME_RECONNECT_MAX_MS))
 }
 
 pub async fn start_desktop_relay_stream(
@@ -926,6 +1671,11 @@ pub fn stop_desktop_relay_stream(state: &Arc<AppState>, stream_id: &str) {
     if let Some(handle) = streams.remove(stream_id) {
         handle.abort();
     }
+    let mut sessions = state
+        .first_party_ai_realtime_relay_stream_sessions
+        .lock()
+        .unwrap();
+    sessions.remove(stream_id);
 }
 
 pub async fn start_desktop_presence_heartbeat(
@@ -1119,6 +1869,51 @@ mod tests {
     }
 
     #[test]
+    fn extracts_realtime_relay_tool_requests_with_timeout() {
+        let request = extract_realtime_tool_request(
+            &json!({
+                "type": "relay.tool.request",
+                "requestId": "req-rt-1",
+                "relaySessionId": "relay-session-rt",
+                "workspaceId": "workspace-1",
+                "threadId": "thread-1",
+                "toolName": "rich_content",
+                "toolArgs": {
+                    "title": "Realtime",
+                    "body": "ok"
+                },
+                "timeoutMs": 2500
+            }),
+            "fallback-relay",
+        )
+        .expect("realtime tool request should parse");
+
+        assert_eq!(request.request_id, "req-rt-1");
+        assert_eq!(request.relay_session_id, "relay-session-rt");
+        assert_eq!(request.timeout_ms, 2500);
+        assert_eq!(request.request.tool_name.as_deref(), Some("rich_content"));
+        assert_eq!(request.request.arguments["title"], "Realtime");
+    }
+
+    #[test]
+    fn rejects_realtime_relay_tool_requests_without_positive_timeout() {
+        let error = extract_realtime_tool_request(
+            &json!({
+                "type": "relay.tool.request",
+                "requestId": "req-rt-2",
+                "relaySessionId": "relay-session-rt",
+                "toolName": "rich_content",
+                "toolArgs": {},
+                "timeoutMs": 0
+            }),
+            "fallback-relay",
+        )
+        .expect_err("timeout should be validated");
+
+        assert!(error.contains("timeoutMs"));
+    }
+
+    #[test]
     fn extracts_hosted_tool_requests_from_jsonrpc_tool_name_and_input_payloads() {
         let request = extract_hosted_tool_request(&json!({
             "jsonrpc": "2.0",
@@ -1263,6 +2058,54 @@ mod tests {
         assert_eq!(payload["id"], "req-2");
         assert_eq!(payload["success"], false);
         assert_eq!(payload["error"], "Invalid mermaid block.");
+    }
+
+    #[test]
+    fn builds_realtime_success_and_failure_response_shapes() {
+        let success = build_realtime_tool_response_payload(
+            "req-rt-3",
+            json!({
+                "content": [{ "type": "text", "text": "ok" }]
+            }),
+        );
+        assert_eq!(success["requestId"], "req-rt-3");
+        assert_eq!(success["success"], true);
+        assert_eq!(success["result"]["content"][0]["text"], "ok");
+        assert!(success.get("error").is_none());
+
+        let failure = build_realtime_tool_response_payload(
+            "req-rt-4",
+            build_tool_error_result("Tool failed."),
+        );
+        assert_eq!(failure["requestId"], "req-rt-4");
+        assert_eq!(failure["success"], false);
+        assert_eq!(failure["error"], "Tool failed.");
+        assert!(failure.get("result").is_none());
+    }
+
+    #[test]
+    fn deduplicates_realtime_relay_request_ids_until_session_changes() {
+        let (state, _dir) = test_app_state();
+
+        clear_realtime_requests_for_stream_session(&state, "thread-1", "relay-session-1");
+        assert!(mark_realtime_request_running(&state, "relay-session-1", "req-1"));
+        assert!(!mark_realtime_request_running(&state, "relay-session-1", "req-1"));
+        mark_realtime_request_responded(&state, "relay-session-1", "req-1");
+        assert!(!mark_realtime_request_running(&state, "relay-session-1", "req-1"));
+
+        clear_realtime_requests_for_stream_session(&state, "thread-1", "relay-session-2");
+        assert!(mark_realtime_request_running(&state, "relay-session-1", "req-1"));
+        assert!(mark_realtime_request_running(&state, "relay-session-2", "req-1"));
+    }
+
+    #[test]
+    fn redacts_realtime_tokens_from_error_text() {
+        let message = redact_realtime_error(
+            "Authorization failed for secret-token-value",
+            "secret-token-value",
+        );
+        assert!(!message.contains("secret-token-value"));
+        assert!(message.contains("[redacted]"));
     }
 
     #[test]

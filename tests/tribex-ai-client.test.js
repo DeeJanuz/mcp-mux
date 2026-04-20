@@ -1213,6 +1213,59 @@ describe('tribex-ai-client', function () {
     ]));
   });
 
+  it('keeps realtime runtime sessions off the legacy relay catalog path', async function () {
+    var runtimeEnvelope = createRuntimeSessionEnvelope('thread-123');
+    runtimeEnvelope.relay.realtime = {
+      streamUrl: 'https://runtime.example.com/__realtime/relay/relay-session-1/stream',
+      responseUrl: 'https://runtime.example.com/__realtime/relay/relay-session-1/response',
+      token: 'realtime-token',
+      tokenExpiresAt: 2000000000,
+    };
+    var FakeAgentClient = createAgentClientCtor();
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(runtimeEnvelope);
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request') {
+        return Promise.reject(new Error('Legacy relay catalog should not be called in realtime mode.'));
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var turn = await window.__tribexAiClient.sendMessage('thread-123', 'hello');
+    await turn.done;
+
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      path: '/threads/thread-123/runtime-session',
+    }));
+    expect(invoke).toHaveBeenCalledWith('get_local_mcp_catalog', {});
+    expect(invoke).not.toHaveBeenCalledWith(
+      'first_party_ai_relay_request',
+      expect.objectContaining({ path: '/api/desktop-relay/catalog' }),
+    );
+    expect(JSON.parse(JSON.parse(FakeAgentClient.instances[0].sentPayloads[0]).init.body)).toMatchObject({
+      relayBridge: expect.objectContaining({
+        requestToken: 'relay-token',
+      }),
+      relayCatalog: expect.objectContaining({
+        tools: expect.arrayContaining([
+          expect.objectContaining({ name: 'rich_content' }),
+        ]),
+      }),
+    });
+  });
+
   it('uses runtime-session transcript bootstrap without opening a websocket', async function () {
     var bootstrapMessages = [
       {
@@ -2006,6 +2059,12 @@ describe('tribex-ai-client', function () {
     await window.__tribexAiClient.startDesktopRelayStream('relay-1', '/api/desktop-relay/stream', {
       threadId: 'thread-123',
     });
+    await window.__tribexAiClient.startRealtimeRelayStream('relay-rt', 'relay-session-rt', {
+      streamUrl: 'https://runtime.example.com/__realtime/relay/relay-session-rt/stream',
+      responseUrl: 'https://runtime.example.com/__realtime/relay/relay-session-rt/response',
+      token: 'realtime-token',
+      tokenExpiresAt: 2000000000,
+    });
     await window.__tribexAiClient.startDesktopPresenceHeartbeat(
       'heartbeat-1',
       30,
@@ -2035,7 +2094,15 @@ describe('tribex-ai-client', function () {
         threadId: 'thread-123',
       },
     });
-    expect(invoke).toHaveBeenNthCalledWith(4, 'start_first_party_ai_desktop_presence_heartbeat', {
+    expect(invoke).toHaveBeenNthCalledWith(4, 'start_first_party_ai_realtime_relay_stream', {
+      streamId: 'relay-rt',
+      relaySessionId: 'relay-session-rt',
+      streamUrl: 'https://runtime.example.com/__realtime/relay/relay-session-rt/stream',
+      responseUrl: 'https://runtime.example.com/__realtime/relay/relay-session-rt/response',
+      token: 'realtime-token',
+      tokenExpiresAt: 2000000000,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(5, 'start_first_party_ai_desktop_presence_heartbeat', {
       heartbeatId: 'heartbeat-1',
       path: '/api/desktop-relay/presence',
       intervalSecs: 30,
@@ -2043,10 +2110,10 @@ describe('tribex-ai-client', function () {
         status: 'ONLINE',
       },
     });
-    expect(invoke).toHaveBeenNthCalledWith(5, 'stop_first_party_ai_desktop_relay_stream', {
+    expect(invoke).toHaveBeenNthCalledWith(6, 'stop_first_party_ai_desktop_relay_stream', {
       streamId: 'relay-1',
     });
-    expect(invoke).toHaveBeenNthCalledWith(6, 'stop_first_party_ai_desktop_presence_heartbeat', {
+    expect(invoke).toHaveBeenNthCalledWith(7, 'stop_first_party_ai_desktop_presence_heartbeat', {
       heartbeatId: 'heartbeat-1',
     });
   });

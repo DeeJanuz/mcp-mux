@@ -1208,6 +1208,35 @@
     };
   }
 
+  function normalizeRelayRealtime(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    var streamUrl = typeof raw.streamUrl === 'string' ? raw.streamUrl.trim() : '';
+    var responseUrl = typeof raw.responseUrl === 'string' ? raw.responseUrl.trim() : '';
+    var token = typeof raw.token === 'string' ? raw.token.trim() : '';
+    var tokenExpiresAt = Number(raw.tokenExpiresAt || raw.token_expires_at || 0);
+    if (!streamUrl || !responseUrl || !token || !Number.isFinite(tokenExpiresAt) || tokenExpiresAt <= 0) {
+      return null;
+    }
+    return {
+      streamUrl: streamUrl,
+      responseUrl: responseUrl,
+      token: token,
+      tokenExpiresAt: tokenExpiresAt,
+    };
+  }
+
+  function normalizeRuntimeRelay(raw) {
+    var relay = raw && typeof raw === 'object' ? Object.assign({}, raw) : {};
+    relay.realtime = normalizeRelayRealtime(relay.realtime);
+    return relay;
+  }
+
+  function hasUsableRealtimeRelay(envelope) {
+    var realtime = envelope && envelope.relay ? envelope.relay.realtime : null;
+    if (!realtime) return false;
+    return Date.now() / 1000 < Number(realtime.tokenExpiresAt || 0);
+  }
+
   function normalizeRuntimeSessionEnvelope(raw) {
     raw = raw || {};
     return {
@@ -1219,7 +1248,7 @@
       runtimeSession: raw.runtimeSession || null,
       runtimeMessages: raw.runtimeMessages || null,
       companionSession: raw.companionSession || null,
-      relay: raw.relay || {},
+      relay: normalizeRuntimeRelay(raw.relay),
     };
   }
 
@@ -1298,6 +1327,14 @@
 
   function prepareAgentRuntime(threadId, envelope) {
     return buildLocalRelayCatalog(envelope).then(function (catalog) {
+      if (hasUsableRealtimeRelay(envelope)) {
+        envelope.relay = envelope.relay || {};
+        envelope.relay.catalog = catalog;
+        return connectAgentRuntime(threadId, envelope).then(function () {
+          return envelope;
+        });
+      }
+
       var relaySessionId = envelope.relay && envelope.relay.bridge
         ? envelope.relay.bridge.relaySessionId
         : null;
@@ -1608,7 +1645,9 @@
   }
 
   function sendMessage(threadId, prompt, options) {
-    return ensureAgentRuntime(threadId, { forceRefresh: true }).then(function (envelope) {
+    return ensureAgentRuntime(threadId, {
+      forceRefresh: options && options.forceRuntimeRefresh === false ? false : true,
+    }).then(function (envelope) {
       var override = runtimeOverridesByThread[threadId] || {};
       return getCloudflareBridge().startTurn({
         threadId: threadId,
@@ -1863,6 +1902,17 @@
     });
   }
 
+  function startRealtimeRelayStream(streamId, relaySessionId, realtime) {
+    return invoke('start_first_party_ai_realtime_relay_stream', {
+      streamId: streamId,
+      relaySessionId: relaySessionId,
+      streamUrl: realtime && realtime.streamUrl ? realtime.streamUrl : '',
+      responseUrl: realtime && realtime.responseUrl ? realtime.responseUrl : '',
+      token: realtime && realtime.token ? realtime.token : '',
+      tokenExpiresAt: realtime && realtime.tokenExpiresAt ? Math.floor(Number(realtime.tokenExpiresAt)) : 0,
+    });
+  }
+
   function stopDesktopRelayStream(streamId) {
     return invoke('stop_first_party_ai_desktop_relay_stream', {
       streamId: streamId,
@@ -1944,6 +1994,7 @@
     getWorkspaceFile: getWorkspaceFile,
     getWorkspaceFileBatch: getWorkspaceFileBatch,
     ensureAgentRuntime: ensureAgentRuntime,
+    ensureRuntimeSession: ensureRuntimeSession,
     initWorkspaceFileUpload: initWorkspaceFileUpload,
     listWorkspaceFiles: listWorkspaceFiles,
     listenToRuntimeEvents: listenToRuntimeEvents,
@@ -1974,6 +2025,7 @@
     startCompanionStream: startCompanionStream,
     startDesktopPresenceHeartbeat: startDesktopPresenceHeartbeat,
     startDesktopRelayStream: startDesktopRelayStream,
+    startRealtimeRelayStream: startRealtimeRelayStream,
     stopCompanionStream: stopCompanionStream,
     stopDesktopPresenceHeartbeat: stopDesktopPresenceHeartbeat,
     stopDesktopRelayStream: stopDesktopRelayStream,

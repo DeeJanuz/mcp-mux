@@ -216,7 +216,7 @@
       return 'Smoke Test ' + new Date().toISOString().slice(0, 16).replace('T', ' ');
     }
 
-    function ensureDesktopRelay(threadId) {
+    function ensureDesktopRelay(threadId, options) {
       var thread = api.getThread(threadId);
       if (!thread || !thread.workspaceId || !window.__tribexAiClient) {
         return Promise.resolve(null);
@@ -226,7 +226,14 @@
       api.bindDesktopPresenceListener();
 
       var existing = state.relayStates[threadId];
-      if (existing && (existing.status === 'online' || existing.status === 'connecting')) {
+      var realtimeStillFresh = !existing || !existing.realtimeTokenExpiresAt
+        || Date.now() / 1000 < Number(existing.realtimeTokenExpiresAt || 0);
+      if (
+        !(options && options.forceRefresh) &&
+        existing &&
+        (existing.status === 'online' || existing.status === 'connecting') &&
+        realtimeStillFresh
+      ) {
         return Promise.resolve(existing);
       }
 
@@ -236,20 +243,21 @@
       });
       api.notify();
 
-      return window.__tribexAiClient.registerDesktopRelay({
-        workspaceId: thread.workspaceId,
-        threadId: threadId,
-        deviceKey: 'mcpviews-' + thread.workspaceId,
-        label: 'MCPViews Desktop',
-        platform: 'tauri-desktop',
-        purpose: 'mcp-proxy',
-        metadata: {
-          client: 'mcpviews',
-          source: 'thread-runtime',
-        },
-      })
-        .then(function (relay) {
+      function startLegacyDesktopRelay() {
+        return window.__tribexAiClient.registerDesktopRelay({
+          workspaceId: thread.workspaceId,
+          threadId: threadId,
+          deviceKey: 'mcpviews-' + thread.workspaceId,
+          label: 'MCPViews Desktop',
+          platform: 'tauri-desktop',
+          purpose: 'mcp-proxy',
+          metadata: {
+            client: 'mcpviews',
+            source: 'thread-runtime',
+          },
+        }).then(function (relay) {
           var next = api.updateRelayState(threadId, {
+            mode: 'legacy',
             registration: relay || null,
             relaySessionId: relay && relay.relaySession ? relay.relaySession.id || null : null,
             relayDeviceId: relay && relay.relayDeviceId ? relay.relayDeviceId : null,
@@ -278,6 +286,58 @@
             ),
           ]).then(function () {
             return next;
+          });
+        });
+      }
+
+      function startRealtimeDesktopRelay(envelope) {
+        var relay = envelope && envelope.relay ? envelope.relay : null;
+        var realtime = relay && relay.realtime ? relay.realtime : null;
+        if (!realtime || Date.now() / 1000 >= Number(realtime.tokenExpiresAt || 0)) {
+          return Promise.resolve(null);
+        }
+        var relaySessionId = relay && relay.bridge && relay.bridge.relaySessionId
+          ? relay.bridge.relaySessionId
+          : (relay && relay.session && relay.session.id ? relay.session.id : null);
+        if (!relaySessionId || typeof window.__tribexAiClient.startRealtimeRelayStream !== 'function') {
+          return Promise.resolve(null);
+        }
+
+        if (typeof window.__tribexAiClient.stopDesktopPresenceHeartbeat === 'function') {
+          window.__tribexAiClient.stopDesktopPresenceHeartbeat(threadId).catch(function () {});
+        }
+
+        var next = api.updateRelayState(threadId, {
+          mode: 'realtime',
+          relaySessionId: relaySessionId,
+          relayDeviceId: relay && relay.session ? relay.session.deviceId || null : null,
+          realtimeTokenExpiresAt: realtime.tokenExpiresAt,
+          streamStatus: 'connecting',
+          presenceStatus: null,
+          error: null,
+        });
+        api.notify();
+
+        return window.__tribexAiClient.startRealtimeRelayStream(
+          threadId,
+          relaySessionId,
+          realtime
+        ).then(function () {
+          return next;
+        });
+      }
+
+      var runtimePromise = typeof window.__tribexAiClient.ensureRuntimeSession === 'function'
+        ? window.__tribexAiClient.ensureRuntimeSession(threadId, {
+            forceRefresh: !!(options && options.forceRefresh),
+          })
+        : Promise.resolve(null);
+
+      return runtimePromise
+        .then(function (envelope) {
+          return startRealtimeDesktopRelay(envelope).then(function (started) {
+            if (started) return started;
+            return startLegacyDesktopRelay();
           });
         })
         .catch(function (error) {
@@ -695,6 +755,7 @@
 
                 return window.__tribexAiClient.sendMessage(thread.id, smokePrompt, {
                   validationProfile: smokeKey,
+                  forceRuntimeRefresh: false,
                 });
               })
               .then(function (result) {
@@ -769,6 +830,7 @@
             turnId: turnId,
             messageId: messageId || undefined,
             waitForStable: busy ? false : undefined,
+            forceRuntimeRefresh: false,
           });
         })
         .then(function (turn) {

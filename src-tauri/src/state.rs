@@ -30,7 +30,7 @@ pub struct AppState {
     pub first_party_ai_streams: Mutex<HashMap<String, JoinHandle<()>>>,
     pub first_party_ai_desktop_relay_streams: Mutex<HashMap<String, JoinHandle<()>>>,
     pub first_party_ai_desktop_presence_heartbeats: Mutex<HashMap<String, JoinHandle<()>>>,
-    pub first_party_ai_realtime_relay_requests: Mutex<HashMap<String, String>>,
+    pub first_party_ai_realtime_relay_requests: Mutex<HashMap<String, serde_json::Value>>,
     pub first_party_ai_realtime_relay_stream_sessions: Mutex<HashMap<String, String>>,
     pub auth_dir: PathBuf,
     pub first_party_ai_cookie_store: Arc<CookieStoreMutex>,

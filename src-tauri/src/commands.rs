@@ -581,6 +581,30 @@ pub async fn start_first_party_ai_desktop_relay_stream(
 }
 
 #[tauri::command]
+pub async fn start_first_party_ai_realtime_relay_stream(
+    stream_id: String,
+    relay_session_id: String,
+    stream_url: String,
+    response_url: String,
+    token: String,
+    token_expires_at: i64,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    crate::desktop_relay::start_realtime_relay_stream(
+        state.inner().clone(),
+        app_handle,
+        stream_id,
+        relay_session_id,
+        stream_url,
+        response_url,
+        token,
+        token_expires_at,
+    )
+    .await
+}
+
+#[tauri::command]
 pub fn stop_first_party_ai_desktop_relay_stream(
     stream_id: String,
     state: State<'_, Arc<AppState>>,

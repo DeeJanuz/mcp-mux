@@ -178,6 +178,7 @@ fn main() {
             commands::start_first_party_ai_companion_stream,
             commands::stop_first_party_ai_companion_stream,
             commands::start_first_party_ai_desktop_relay_stream,
+            commands::start_first_party_ai_realtime_relay_stream,
             commands::stop_first_party_ai_desktop_relay_stream,
             commands::start_first_party_ai_desktop_presence_heartbeat,
             commands::stop_first_party_ai_desktop_presence_heartbeat,

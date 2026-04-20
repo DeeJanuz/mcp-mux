@@ -135,6 +135,13 @@
     function resolveRelayUiStatus(relayState) {
       if (!relayState) return null;
       if (relayState.error) return 'error';
+      if (relayState.mode === 'realtime') {
+        if (relayState.streamStatus === 'auth_expired') return 'connecting';
+        if (relayState.lastRelayEventType === 'relay.connected') return 'online';
+        if (relayState.streamStatus === 'connected' || relayState.streamStatus === 'connecting') {
+          return 'connecting';
+        }
+      }
       if (relayState.streamStatus === 'connected' && relayState.presenceStatus === 'running') {
         return 'online';
       }
@@ -276,8 +283,27 @@
     function handleDesktopRelayEvent(event) {
       if (!event || !event.relayId) return;
 
+      if (event.type === 'auth_expired') {
+        updateRelayState(event.relayId, {
+          mode: event.mode || 'realtime',
+          streamStatus: 'auth_expired',
+          error: null,
+        });
+        api.notify();
+        if (typeof api.ensureDesktopRelay === 'function') {
+          api.ensureDesktopRelay(event.relayId, { forceRefresh: true }).catch(function (error) {
+            updateRelayState(event.relayId, {
+              error: error && error.message ? error.message : String(error),
+            });
+            api.notify();
+          });
+        }
+        return;
+      }
+
       if (event.type === 'status') {
         updateRelayState(event.relayId, {
+          mode: event.mode || (state.relayStates[event.relayId] && state.relayStates[event.relayId].mode) || null,
           streamStatus: event.status || 'idle',
           error: null,
         });
@@ -287,6 +313,7 @@
 
       if (event.type === 'error') {
         updateRelayState(event.relayId, {
+          mode: event.mode || (state.relayStates[event.relayId] && state.relayStates[event.relayId].mode) || null,
           streamStatus: 'error',
           error: event.message || 'Desktop relay stream failed.',
         });
@@ -296,9 +323,11 @@
       }
 
       if (event.type === 'data' && event.payload && typeof event.payload === 'object') {
+        var existing = state.relayStates[event.relayId] || {};
         updateRelayState(event.relayId, {
-          relaySessionId: event.payload.relaySessionId || null,
-          relayDeviceId: event.payload.deviceId || null,
+          mode: event.mode || existing.mode || null,
+          relaySessionId: event.payload.relaySessionId || existing.relaySessionId || null,
+          relayDeviceId: event.payload.deviceId || existing.relayDeviceId || null,
           lastRelayEventType: event.payload.type || null,
           error: null,
         });

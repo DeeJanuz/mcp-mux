@@ -1103,10 +1103,10 @@ async function startTurn(input) {
   if (!record) {
     throw new Error('Runtime connection record is unavailable.');
   }
+  if (input.waitForStable === false) {
+    return sendQueuedContextMessage(input, client, record);
+  }
   if (record.activeTurn) {
-    if (input.waitForStable === false) {
-      return sendQueuedContextMessage(input, client, record);
-    }
     throw new Error('A runtime turn is already active for this thread.');
   }
 

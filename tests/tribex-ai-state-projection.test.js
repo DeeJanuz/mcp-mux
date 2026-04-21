@@ -430,4 +430,206 @@ describe('tribex-ai-state projection helpers', function () {
 
     expect(messages.map(function (message) { return message.role; })).toEqual(['user', 'assistant']);
   });
+
+  it('projects stale hydrated running work as completed when the turn is no longer active', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var runs = api.buildRunGroups(
+      { turnHistoryById: {}, turnCompletedAtById: {} },
+      [
+        {
+          id: 'u1',
+          role: 'user',
+          content: 'Run the old task',
+          createdAt: '2026-04-20T10:00:00.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: 'Done.',
+          createdAt: '2026-04-20T12:00:00.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+          isStreaming: false,
+        },
+      ],
+      [
+        {
+          id: 'activity-1',
+          toolName: 'subagent_dispatch',
+          status: 'running',
+          title: 'Subagent Dispatch',
+          createdAt: '2026-04-20T10:00:01.000Z',
+          updatedAt: '2026-04-20T10:00:04.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+      ]
+    );
+
+    expect(runs[0].workSession).toMatchObject({
+      status: 'completed',
+      startedAt: '2026-04-20T10:00:01.000Z',
+      endedAt: '2026-04-20T10:00:04.000Z',
+    });
+  });
+
+  it('keeps active running work sessions live for the current turn', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var runs = api.buildRunGroups(
+      {
+        activeTurn: {
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+          status: 'running',
+        },
+        turnHistoryById: {},
+        turnCompletedAtById: {},
+      },
+      [
+        {
+          id: 'u1',
+          role: 'user',
+          content: 'Run the live task',
+          createdAt: '2026-04-20T10:00:00.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+      ],
+      [
+        {
+          id: 'activity-1',
+          toolName: 'subagent_dispatch',
+          status: 'running',
+          title: 'Subagent Dispatch',
+          createdAt: '2026-04-20T10:00:01.000Z',
+          updatedAt: '2026-04-20T10:00:01.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+      ]
+    );
+
+    expect(runs[0].workSession).toMatchObject({
+      status: 'running',
+      startedAt: '2026-04-20T10:00:01.000Z',
+      endedAt: null,
+    });
+  });
+
+  it('normalizes historical unknown tool parts to completed when the assistant message is final', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var record = {
+      id: 'thread-1',
+      activity: { itemsById: {}, order: [] },
+      runtimeSnapshot: {
+        rawMessages: [
+          {
+            id: 'u1',
+            role: 'user',
+            createdAt: '2026-04-20T10:00:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+            parts: [{ type: 'text', text: 'Run the old task' }],
+          },
+          {
+            id: 'a1',
+            role: 'assistant',
+            createdAt: '2026-04-20T12:00:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+            parts: [
+              {
+                type: 'tool-subagent_dispatch',
+                toolCallId: 'tool-1',
+                toolName: 'subagent_dispatch',
+                startedAt: '2026-04-20T10:00:03.000Z',
+                input: { objective: 'short historical task' },
+              },
+              { type: 'text', text: 'Done.' },
+            ],
+          },
+        ],
+      },
+    };
+
+    var items = api.buildSnapshotActivityItems(record);
+
+    expect(items[0]).toMatchObject({
+      id: 'tool-1',
+      status: 'completed',
+      createdAt: '2026-04-20T10:00:03.000Z',
+      updatedAt: '2026-04-20T10:00:03.000Z',
+    });
+  });
 });

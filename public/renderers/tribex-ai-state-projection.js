@@ -45,6 +45,15 @@
       ]);
     }
 
+    function hasTerminalActivityTimestamp(item) {
+      return !!firstValidTimestamp([
+        item && item.completedAt,
+        item && item.finishedAt,
+        item && item.endedAt,
+        item && item.updatedAt,
+      ]);
+    }
+
     function latestWorkItemTimestamp(workItems) {
       return (workItems || []).reduce(function (latest, item) {
         return maxActivityTimestamp(latest, getActivityEndedAt(item, null));
@@ -64,6 +73,32 @@
         ),
         latestWorkItemTimestamp(workItems)
       ) || startedAt || null;
+    }
+
+    function turnMatchesReference(turn, reference) {
+      if (!turn || !reference) return false;
+      if (turn.turnId && reference.turnId) return turn.turnId === reference.turnId;
+      if (turn.turnOrdinal && reference.turnOrdinal) return turn.turnOrdinal === reference.turnOrdinal;
+      return false;
+    }
+
+    function isActiveTurnForWorkSession(record, turn) {
+      var activeTurn = record && record.activeTurn ? record.activeTurn : null;
+      if (!activeTurn || !turnMatchesReference(turn, activeTurn)) return false;
+      var status = String(activeTurn.status || '').toLowerCase();
+      return status !== 'finalized' && status !== 'failed' && status !== 'completed';
+    }
+
+    function isRunningActivityItem(item) {
+      return !!(item && (item.status === 'running' || item.status === 'needs-approval'));
+    }
+
+    function isWorkSessionLive(record, turn, assistantMessage, workItems) {
+      if (assistantMessage && assistantMessage.isStreaming) return true;
+      if (!isActiveTurnForWorkSession(record, turn)) return false;
+      var activeStatus = String(record.activeTurn.status || '').toLowerCase();
+      if (activeStatus === 'queued' || activeStatus === 'running') return true;
+      return (workItems || []).some(isRunningActivityItem);
     }
 
     function copyMessages(messages) {
@@ -778,11 +813,13 @@
       return nextItem;
     }
 
-    function normalizeToolPartStatus(part) {
+    function normalizeToolPartStatus(part, message) {
       if (!part) return 'running';
       if (part.state === 'output-error' || part.state === 'output-denied') return 'failed';
       if (part.state === 'approval-requested') return 'needs-approval';
       if (part.state === 'output-available') return part.preliminary ? 'running' : 'completed';
+      if (hasTerminalActivityTimestamp(part)) return 'completed';
+      if (message && message.role === 'assistant' && message.isStreaming !== true) return 'completed';
       return 'running';
     }
 
@@ -837,8 +874,18 @@
               ? true
               : (stored && stored.displayMode === 'artifact' ? false : undefined)
           );
-          var status = normalizeToolPartStatus(part);
-          var updatedAt = getActivityEndedAt(part, message.createdAt || (existing && existing.updatedAt) || null);
+          var status = normalizeToolPartStatus(part, message);
+          var createdAt = (existing && existing.createdAt) || getActivityStartedAt(part, message.createdAt || null);
+          var updatedAt = firstValidTimestamp([
+            part && part.completedAt,
+            part && part.finishedAt,
+            part && part.endedAt,
+            part && part.updatedAt,
+            existing && existing.completedAt,
+            stored && stored.completedAt,
+            existing && existing.updatedAt,
+            stored && stored.updatedAt,
+          ]) || createdAt;
           var explicitCompletedAt = firstValidTimestamp([
             part && part.completedAt,
             part && part.finishedAt,
@@ -854,7 +901,7 @@
             title: part.title || (existing && existing.title) || window.__tribexAiUtils.titleCase(part.toolName || 'tool'),
             status: status,
             detail: buildToolPartDetail(part) || (existing && existing.detail) || '',
-            createdAt: (existing && existing.createdAt) || getActivityStartedAt(part, message.createdAt || null),
+            createdAt: createdAt,
             updatedAt: updatedAt,
             completedAt: completedAt,
             turnId: part.turnId || message.turnId || (existing && existing.turnId) || null,
@@ -1063,9 +1110,7 @@
             });
 
             var assistantMessage = turn.assistantMessage ? Object.assign({}, turn.assistantMessage) : null;
-            var hasRunning = turn.status === 'running' || workItems.some(function (item) {
-              return item.status === 'running' || item.status === 'needs-approval';
-            });
+            var hasRunning = isWorkSessionLive(record, turn, assistantMessage, workItems);
             var startedAt = workItems.length
               ? (workItems[0].createdAt || workItems[0].updatedAt || turn.startedAt || (turn.userMessage && turn.userMessage.createdAt) || null)
               : (turn.startedAt || (turn.userMessage && turn.userMessage.createdAt) || null);
@@ -1094,9 +1139,9 @@
                 id: turn.turnId || ('work-session-' + index),
                 turnId: turn.turnId || null,
                 turnOrdinal: turn.turnOrdinal || null,
-                status: hasRunning || (assistantMessage && assistantMessage.isStreaming) ? 'running' : (turn.status === 'failed' ? 'failed' : 'completed'),
+                status: hasRunning ? 'running' : (turn.status === 'failed' ? 'failed' : 'completed'),
                 startedAt: startedAt,
-                endedAt: hasRunning || (assistantMessage && assistantMessage.isStreaming) ? null : endedAt,
+                endedAt: hasRunning ? null : endedAt,
                 items: workItems,
               } : null,
             };
@@ -1216,9 +1261,6 @@
           return !isInlineRendererActivityItem(item);
         });
 
-        var hasRunning = workItems.some(function (item) {
-          return item.status === 'running' || item.status === 'needs-approval';
-        });
         var startedAt = workItems.length
           ? (workItems[0].createdAt || workItems[0].updatedAt || run.userMessage.createdAt || null)
           : null;
@@ -1230,16 +1272,22 @@
           : Object.assign({}, run.userMessage);
         var endedAt = resolveWorkSessionEndedAt(record, Object.assign({}, history || {}, {
           turnId: run.turnId || (history && history.turnId) || null,
+          turnOrdinal: run.turnOrdinal || (history && history.turnOrdinal) || null,
           endedAt: history && history.endedAt ? history.endedAt : null,
         }), assistantMessage, workItems, startedAt);
+        var turnReference = Object.assign({}, history || {}, {
+          turnId: run.turnId || (history && history.turnId) || null,
+          turnOrdinal: run.turnOrdinal || (history && history.turnOrdinal) || null,
+        });
+        var hasRunning = isWorkSessionLive(record, turnReference, assistantMessage, workItems);
         var workSession = workItems.length
           ? {
             id: run.turnId || ('work-session-' + index),
             turnId: run.turnId || null,
             turnOrdinal: run.turnOrdinal || null,
-            status: hasRunning || (assistantMessage && assistantMessage.isStreaming) ? 'running' : 'completed',
+            status: hasRunning ? 'running' : 'completed',
             startedAt: startedAt,
-            endedAt: hasRunning || (assistantMessage && assistantMessage.isStreaming) ? null : endedAt,
+            endedAt: hasRunning ? null : endedAt,
             items: workItems,
           }
           : null;

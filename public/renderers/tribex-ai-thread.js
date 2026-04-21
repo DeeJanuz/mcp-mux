@@ -401,11 +401,54 @@
 
   function cloneInlineRendererData(data) {
     if (!data || typeof data !== 'object') return data;
-    var clone = JSON.parse(JSON.stringify(data));
-    if (clone && typeof clone === 'object' && clone.title) {
-      delete clone.title;
+    return JSON.parse(JSON.stringify(data));
+  }
+
+  function tableHasReviewChanges(table) {
+    if (!table || typeof table !== 'object') return false;
+    var columns = Array.isArray(table.columns) ? table.columns : [];
+    if (columns.some(function (column) { return column && column.change != null; })) {
+      return true;
     }
-    return clone;
+    function rowHasChanges(rows) {
+      return (rows || []).some(function (row) {
+        if (!row || typeof row !== 'object') return false;
+        var cells = row.cells && typeof row.cells === 'object' ? row.cells : {};
+        var hasCellChange = Object.keys(cells).some(function (key) {
+          return cells[key] && cells[key].change != null;
+        });
+        return hasCellChange || rowHasChanges(row.children || []);
+      });
+    }
+    return rowHasChanges(table.rows || []);
+  }
+
+  function shouldRenderInlineReviewControls(item) {
+    if (!item) return false;
+    if (item.reviewRequired || (item.resultMeta && item.resultMeta.reviewRequired)) return true;
+    var data = item.resultData || {};
+    if (data.suggestions && typeof data.suggestions === 'object' && Object.keys(data.suggestions).length > 0) {
+      return true;
+    }
+    return Array.isArray(data.tables) && data.tables.some(tableHasReviewChanges);
+  }
+
+  function getInlineReviewSessionId(item) {
+    if (!item) return null;
+    return item.sessionId
+      || (item.resultMeta && (item.resultMeta.reviewSessionId || item.resultMeta.sessionId))
+      || null;
+  }
+
+  function submitInlineRendererDecision(item, decision) {
+    var reviewSessionId = getInlineReviewSessionId(item);
+    if (!reviewSessionId) {
+      console.warn('[tribex-ai-thread] Unable to submit inline review decision without a review session id.');
+      return;
+    }
+    if (window.__companionUtils && typeof window.__companionUtils.submitDecision === 'function') {
+      window.__companionUtils.submitDecision(reviewSessionId, decision);
+    }
   }
 
   function createInlineRendererItem(item, threadState, groupId, index) {
@@ -413,6 +456,7 @@
     var contentType = item && (item.contentType || item.resultContentType || item.toolName || null);
     var renderer = contentType && window.__renderers ? window.__renderers[contentType] : null;
     var resultId = [groupId || 'run', item && item.id || contentType || 'inline', index].join(':');
+    var reviewRequired = shouldRenderInlineReviewControls(item);
 
     var block = document.createElement('details');
     block.className = 'ai-inline-renderer';
@@ -465,8 +509,10 @@
         cloneInlineRendererData(item.resultData || {}),
         item.resultMeta || {},
         item.toolArgs || {},
-        false,
-        null,
+        reviewRequired,
+        reviewRequired ? function (decision) {
+          submitInlineRendererDecision(item, decision);
+        } : null,
       );
     } else {
       body.appendChild(createTextBody('Unable to render inline result.', 'ai-chat-body'));
@@ -1658,7 +1704,21 @@
   }
 
   function isThreadHydrating(threadContext) {
-    return !!(threadContext && threadContext.loading && !isThreadTurnBusy(threadContext));
+    return !!(
+      threadContext &&
+      threadContext.loading &&
+      !isThreadTurnBusy(threadContext) &&
+      !hasRenderableThreadContent(threadContext)
+    );
+  }
+
+  function hasRenderableThreadContent(threadContext) {
+    var thread = threadContext && threadContext.thread ? threadContext.thread : null;
+    if (!thread) return false;
+    if (Array.isArray(thread.runs) && thread.runs.length > 0) return true;
+    if (Array.isArray(thread.displayMessages) && thread.displayMessages.length > 0) return true;
+    if (Array.isArray(thread.messages) && thread.messages.length > 0) return true;
+    return false;
   }
 
   function updateHydration(state, threadContext) {
@@ -1780,6 +1840,23 @@
     return changed;
   }
 
+  function updateLiveWorkSessionLabels(state, groups) {
+    (groups || []).forEach(function (group) {
+      var workSession = normalizeWorkSessionForDisplay(
+        group.workSession || deriveLegacyWorkSession(group),
+        (group.answer && group.answer.createdAt) || group.latestCreatedAt || null
+      );
+      if (!workSession || workSession.status !== 'running') return;
+      var selector = '.ai-run-group[data-run-id="' + group.id.replace(/"/g, '\\"') + '"]';
+      var node = state.transcript.querySelector(selector);
+      if (!node) return;
+      var label = node.querySelector('.ai-work-session-label');
+      if (label) {
+        label.textContent = 'Working for ' + formatElapsed(workSession.startedAt, workSession.endedAt, true);
+      }
+    });
+  }
+
   function updateTranscript(state, threadContext) {
     var runtimeRuns = threadContext.thread && Array.isArray(threadContext.thread.runs)
       ? threadContext.thread.runs
@@ -1811,9 +1888,6 @@
                   status: group.workSession.status,
                   startedAt: group.workSession.startedAt,
                   endedAt: group.workSession.endedAt,
-                  liveRenderBucket: group.workSession.status === 'running'
-                    ? Math.floor(Date.now() / 1000)
-                    : null,
                   items: (group.workSession.items || []).map(function (item) {
                     return [
                       item.id,
@@ -1838,7 +1912,9 @@
     if (model.mode === 'legacy') {
       return updateLegacyTranscript(state, model);
     }
-    return syncRunGroups(state, model.groups || []);
+    var changed = syncRunGroups(state, model.groups || []);
+    updateLiveWorkSessionLabels(state, model.groups || []);
+    return changed;
   }
 
   function updateComposer(state, threadContext, threadChanged) {

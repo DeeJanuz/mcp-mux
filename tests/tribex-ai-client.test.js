@@ -933,6 +933,33 @@ describe('tribex-ai-client', function () {
     });
   });
 
+  it('does not fabricate current timestamps for hydrated runtime messages without createdAt', function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-21T13:07:43.000Z'));
+
+    expect(window.__tribexAiClient.normalizeRuntimeUiMessage({
+      id: 'runtime-assistant-1',
+      role: 'assistant',
+      parts: [{ type: 'text', text: 'Historical answer.' }],
+    }, 0)).toMatchObject({
+      id: 'runtime-assistant-1',
+      role: 'assistant',
+      content: 'Historical answer.',
+      createdAt: null,
+    });
+
+    var transcript = window.__tribexAiClient.normalizeRuntimeTranscript('thread-1', {
+      messages: [{
+        id: 'runtime-assistant-1',
+        role: 'assistant',
+        parts: [{ type: 'text', text: 'Historical answer.' }],
+      }],
+    });
+
+    expect(transcript.messageActivityAt).toBeNull();
+    expect(transcript.lastActivityAt).toBeNull();
+  });
+
   it('treats assistant_delta companion events as streaming assistant messages and not previews', function () {
     expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
       toolName: 'assistant_delta',

@@ -348,7 +348,7 @@ describe('tribex-ai-thread', function () {
     vi.useRealTimers();
   });
 
-  it('keeps completed work sessions from growing when the end timestamp is missing', function () {
+  it('uses the assistant answer time when a completed work session end timestamp is missing', function () {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-14T20:11:01.000Z'));
 
@@ -398,11 +398,66 @@ describe('tribex-ai-thread', function () {
 
     loadThread();
     renderThread('thread-1');
-    expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Worked for 1s');
+    expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Worked for 20s');
 
     vi.setSystemTime(new Date('2026-04-14T20:12:01.000Z'));
     renderThread('thread-1');
-    expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Worked for 1s');
+    expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Worked for 20s');
+    vi.useRealTimers();
+  });
+
+  it('repairs stale completed work sessions whose end timestamp equals the start timestamp', function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-21T13:07:43.000Z'));
+
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Pinned stale work duration',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Do the work', createdAt: '2026-04-20T20:00:00.000Z' },
+                answer: { id: 'a1', content: 'Done.', createdAt: '2026-04-20T20:10:00.000Z', isStreaming: false },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-20T20:00:10.000Z',
+                  endedAt: '2026-04-20T20:00:10.000Z',
+                  items: [{
+                    id: 'activity-1',
+                    toolName: 'subagent_dispatch',
+                    title: 'Subagent Dispatch',
+                    status: 'completed',
+                    detail: 'Finished.',
+                    createdAt: '2026-04-20T20:00:10.000Z',
+                    updatedAt: '2026-04-20T20:00:10.000Z',
+                  }],
+                },
+              },
+            ],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Worked for 9m 50s');
     vi.useRealTimers();
   });
 

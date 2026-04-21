@@ -1,17 +1,17 @@
 # Technical Debt & Enhancement Log
 
-**Last Updated:** 2026-04-16
+**Last Updated:** 2026-04-21
 **Total Active Issues:** 0
-**Resolved This Month:** 76
+**Resolved This Month:** 77
 
 ---
 
 ## Latest Session Summary
 
-**Last Review:** 2026-04-16 (commit `514e5a9`)
+**Last Review:** 2026-04-21 (commit `e3c0f49`)
 
-- Closed the 3 medium-severity SOLID follow-ups opened during the hosted thread/runtime review of commit `514e5a9`.
-- Current residual risk is ordinary regression risk in the hosted runtime and MCP tool layers, now covered by characterization tests plus full `npm test` and `cargo test` runs.
+- Reviewed the hosted runtime timestamp fix in commit `e3c0f49`; no new SOLID follow-ups were opened.
+- Current residual risk is ordinary regression risk in the hosted runtime projection/display path, covered by focused Vitest coverage for client transcript normalization, state projection, and thread rendering.
 
 ---
 
@@ -36,6 +36,10 @@ _None_
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-04-21 (commit `e3c0f49`)
+
+- **L-022 (resolved):** Preserved persisted runtime message timestamps when hydrated runtime snapshots omit `createdAt`, preventing historical work sessions from inheriting the current clock. Completed hosted work-session durations now pin to terminal work item, assistant answer, or persisted projection timestamps instead of growing after reload. Added focused Vitest coverage for runtime transcript normalization, state projection, and thread rendering.
 
 ### Resolved 2026-04-16 (follow-up to commit `514e5a9`)
 

@@ -406,6 +406,61 @@ describe('tribex-ai-thread', function () {
     vi.useRealTimers();
   });
 
+  it('uses persisted completed timestamps instead of current time for hydrated work sessions', function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-21T13:00:00.000Z'));
+
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Hydrated historical thread',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Do the old work', createdAt: '2026-04-20T20:00:00.000Z' },
+                answer: { id: 'a1', content: 'Done.', createdAt: '2026-04-20T20:10:00.000Z', isStreaming: false },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-20T20:00:10.000Z',
+                  endedAt: '2026-04-20T20:00:13.000Z',
+                  items: [{
+                    id: 'activity-1',
+                    toolName: 'subagent_dispatch',
+                    title: 'Subagent Dispatch',
+                    status: 'completed',
+                    detail: 'Finished.',
+                    createdAt: '2026-04-20T20:00:10.000Z',
+                    updatedAt: '2026-04-20T20:00:13.000Z',
+                  }],
+                },
+              },
+            ],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Worked for 3s');
+    vi.useRealTimers();
+  });
+
   it('shows a hydration pulse instead of partial thread content while loading history', function () {
     var hydrated = false;
     window.__tribexAiState = {

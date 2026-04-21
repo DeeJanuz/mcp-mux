@@ -312,11 +312,8 @@
     );
   }
 
-  function shouldInlineRendererPayload(contentType, meta, sessionId) {
+  function shouldInlineRendererPayload(contentType, meta, _sessionId) {
     if (contentType !== 'rich_content' && contentType !== 'structured_data') {
-      return false;
-    }
-    if (sessionId) {
       return false;
     }
     return !isReviewRequiredMeta(meta);

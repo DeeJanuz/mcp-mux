@@ -375,11 +375,8 @@ function buildRendererPayload(contentType, data, meta, toolArgs, reviewRequired)
   };
 }
 
-function shouldInlineRendererPayload(contentType, meta, reviewRequired, sessionId) {
+function shouldInlineRendererPayload(contentType, meta, reviewRequired, _sessionId) {
   if (contentType !== 'rich_content' && contentType !== 'structured_data') {
-    return false;
-  }
-  if (sessionId) {
     return false;
   }
   if (reviewRequired) {

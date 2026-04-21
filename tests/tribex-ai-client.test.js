@@ -1920,10 +1920,15 @@ describe('tribex-ai-client', function () {
             body: JSON.stringify({
               type: 'tool-input-available',
               toolCallId: 'tool-push-1',
-              toolName: 'rich_content',
+              toolName: 'structured_data',
               input: {
-                title: 'Web App Architecture',
-                body: '# Overview',
+                title: 'Finance Review',
+                tables: [{
+                  id: 'finance-review',
+                  name: 'Finance Review',
+                  columns: [{ id: 'field', name: 'Field' }],
+                  rows: [{ id: 'row-1', cells: { field: { value: 'Revenue' } }, children: [] }],
+                }],
               },
             }),
           }),
@@ -1936,7 +1941,7 @@ describe('tribex-ai-client', function () {
             body: JSON.stringify({
               type: 'tool-output-available',
               toolCallId: 'tool-push-1',
-              toolName: 'rich_content',
+              toolName: 'structured_data',
               output: {
                 status: 'stored',
                 session_id: 'result-session-1',
@@ -1992,14 +1997,19 @@ describe('tribex-ai-client', function () {
       expect.objectContaining({
         type: 'activity_update',
         item: expect.objectContaining({
-          toolName: 'rich_content',
+          toolName: 'structured_data',
+          inlineDisplay: true,
           sessionId: 'result-session-1',
+          resultData: expect.objectContaining({
+            title: 'Finance Review',
+            tables: expect.any(Array),
+          }),
         }),
       }),
       expect.objectContaining({
         type: 'assistant_finish',
         message: expect.objectContaining({
-          content: 'I opened "Web App Architecture" in a background tab for you.',
+          content: 'I added "Finance Review" inline below.',
         }),
       }),
       expect.objectContaining({

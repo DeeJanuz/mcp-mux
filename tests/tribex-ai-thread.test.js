@@ -339,12 +339,16 @@ describe('tribex-ai-thread', function () {
     renderThread('thread-1');
 
     expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Working for 1s');
-    expect(document.querySelector('.ai-work-session').open).toBe(true);
+    var workSession = document.querySelector('.ai-work-session');
+    expect(workSession.open).toBe(false);
+    workSession.open = true;
+    workSession.dispatchEvent(new Event('toggle'));
 
     vi.setSystemTime(new Date('2026-04-14T20:00:13.000Z'));
     vi.advanceTimersByTime(1000);
 
     expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Working for 5s');
+    expect(document.querySelector('.ai-work-session').open).toBe(true);
     vi.useRealTimers();
   });
 
@@ -1284,7 +1288,7 @@ describe('tribex-ai-thread', function () {
 
     var workSession = document.querySelector('.ai-work-session');
     expect(workSession).not.toBeNull();
-    expect(workSession.open).toBe(true);
+    expect(workSession.open).toBe(false);
     expect(document.querySelector('.ai-run-answer-streaming')).not.toBeNull();
 
     streaming = false;

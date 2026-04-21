@@ -850,6 +850,7 @@
 
     removeSession(sessionId);
   }
+  window.__companionUtils.submitDecision = onDecision;
 
   // --- Global citation click handler ---
 

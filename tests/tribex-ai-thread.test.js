@@ -343,12 +343,14 @@ describe('tribex-ai-thread', function () {
     expect(workSession.open).toBe(false);
     workSession.open = true;
     workSession.dispatchEvent(new Event('toggle'));
+    var runGroup = document.querySelector('.ai-run-group');
 
     vi.setSystemTime(new Date('2026-04-14T20:00:13.000Z'));
     vi.advanceTimersByTime(1000);
 
     expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Working for 5s');
     expect(document.querySelector('.ai-work-session').open).toBe(true);
+    expect(document.querySelector('.ai-run-group')).toBe(runGroup);
     vi.useRealTimers();
   });
 
@@ -569,6 +571,63 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-run-answer').textContent).toContain('Ready.');
   });
 
+  it('keeps existing failed work content visible while a thread refresh is loading', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Failed work refresh',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Try the task', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: { id: 'a1', content: '', createdAt: null, isStreaming: false },
+                workSession: {
+                  id: 'work-1',
+                  status: 'failed',
+                  startedAt: '2026-04-14T20:00:01.000Z',
+                  endedAt: '2026-04-14T20:00:04.000Z',
+                  items: [
+                    {
+                      id: 'activity-1',
+                      toolName: 'push_content',
+                      title: 'Push Content',
+                      status: 'failed',
+                      detail: 'Tool failed.',
+                      createdAt: '2026-04-14T20:00:01.000Z',
+                      updatedAt: '2026-04-14T20:00:04.000Z',
+                    },
+                  ],
+                },
+              },
+            ],
+            artifacts: [],
+            messages: [],
+          },
+          loading: true,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-thread-hydration').hidden).toBe(true);
+    expect(document.querySelector('.ai-thread-layout').hidden).toBe(false);
+    expect(document.querySelector('.ai-work-session')).not.toBeNull();
+    expect(document.querySelector('.ai-work-session-summary').textContent).toContain('Failed');
+  });
+
   it('renders grouped runs with inline artifacts and assistant answers beneath tasks', function () {
     window.__tribexAiState = {
       getThreadContext: vi.fn(function () {
@@ -678,6 +737,112 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-inline-renderer')).not.toBeNull();
     expect(document.querySelector('.ai-inline-renderer-title').textContent).toBe('Inline summary');
     expect(window.__renderers.rich_content).toHaveBeenCalled();
+  });
+
+  it('renders inline rich content review proposals with decision controls enabled', function () {
+    var submittedDecision = null;
+    window.__companionUtils.submitDecision = vi.fn(function (sessionId, decision) {
+      submittedDecision = { sessionId: sessionId, decision: decision };
+    });
+    window.__renderers.rich_content = vi.fn(function (container, data, meta, toolArgs, reviewRequired, onDecision) {
+      expect(reviewRequired).toBe(true);
+      expect(typeof onDecision).toBe('function');
+      expect(data.title).toBe('Initiative Creation Proposal');
+      expect(data.suggestions).toHaveProperty('s1');
+      expect(data.tables).toHaveLength(1);
+
+      var accept = document.createElement('button');
+      accept.className = 'suggest-accept-btn';
+      accept.textContent = 'Accept';
+      container.appendChild(accept);
+
+      var reject = document.createElement('button');
+      reject.className = 'suggest-reject-btn';
+      reject.textContent = 'Reject';
+      container.appendChild(reject);
+
+      onDecision({
+        type: 'rich_content_decisions',
+        suggestion_decisions: { s1: { status: 'accept', comment: null } },
+        table_decisions: { proposal: { decisions: { row1: 'accept' }, modifications: {}, additions: {} } },
+      });
+    });
+
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Inline proposal review',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Create an initiative', createdAt: '2026-04-21T20:00:00.000Z' },
+                answer: {
+                  id: 'a1',
+                  content: 'Please review the details below.',
+                  createdAt: '2026-04-21T20:00:05.000Z',
+                  isStreaming: false,
+                  inlineResults: [{
+                    id: 'inline-review-1',
+                    toolName: 'rich_content',
+                    contentType: 'rich_content',
+                    sessionId: 'review-session-1',
+                    reviewRequired: true,
+                    resultMeta: {
+                      reviewRequired: true,
+                      reviewSessionId: 'review-session-1',
+                    },
+                    resultData: {
+                      title: 'Initiative Creation Proposal',
+                      body: 'Approve this {{suggest:id=s1}}\n\n```structured_data:proposal\n```',
+                      suggestions: {
+                        s1: { old: 'draft', new: 'proposal' },
+                      },
+                      tables: [{
+                        id: 'proposal',
+                        name: 'Proposed Initiative',
+                        columns: [{ id: 'name', name: 'Name', change: null }],
+                        rows: [{
+                          id: 'row1',
+                          cells: { name: { value: 'Test Initiative', change: 'add' } },
+                          children: [],
+                        }],
+                      }],
+                    },
+                    createdAt: '2026-04-21T20:00:04.000Z',
+                  }],
+                },
+                workSession: null,
+              },
+            ],
+            artifacts: [],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.suggest-accept-btn')).not.toBeNull();
+    expect(document.querySelector('.suggest-reject-btn')).not.toBeNull();
+    expect(window.__companionUtils.submitDecision).toHaveBeenCalledWith(
+      'review-session-1',
+      expect.objectContaining({ type: 'rich_content_decisions' }),
+    );
+    expect(submittedDecision.decision.suggestion_decisions.s1.status).toBe('accept');
   });
 
   it('renders streaming assistant answers through the markdown path', function () {

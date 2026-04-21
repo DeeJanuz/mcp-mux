@@ -592,7 +592,29 @@ describe('tribex-ai-state projection helpers', function () {
     var record = {
       id: 'thread-1',
       activity: { itemsById: {}, order: [] },
+      turnHistoryById: {},
+      turnCompletedAtById: {},
+      turnOrder: [],
       runtimeSnapshot: {
+        messages: [
+          {
+            id: 'u1',
+            role: 'user',
+            content: 'Run the old task',
+            createdAt: '2026-04-20T10:00:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'Done.',
+            createdAt: '2026-04-20T12:00:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+            isStreaming: false,
+          },
+        ],
         rawMessages: [
           {
             id: 'u1',
@@ -630,6 +652,103 @@ describe('tribex-ai-state projection helpers', function () {
       status: 'completed',
       createdAt: '2026-04-20T10:00:03.000Z',
       updatedAt: '2026-04-20T10:00:03.000Z',
+    });
+
+    api.rebuildTurnHistory(record);
+    var projection = api.buildThreadProjection(record);
+
+    expect(projection.runs[0].workSession).toMatchObject({
+      startedAt: '2026-04-20T10:00:03.000Z',
+      endedAt: '2026-04-20T12:00:00.000Z',
+    });
+  });
+
+  it('keeps persisted message timestamps when hydrated runtime snapshots omit them', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var record = {
+      id: 'thread-1',
+      base: {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Create an old artifact',
+            createdAt: '2026-04-20T20:00:00.000Z',
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'Done.',
+            createdAt: '2026-04-20T20:00:03.000Z',
+            isStreaming: false,
+          },
+        ],
+      },
+      activity: {
+        itemsById: {},
+        order: [],
+      },
+      runtimeSnapshot: {
+        messages: [
+          {
+            id: 'runtime-user-1',
+            role: 'user',
+            content: 'Create an old artifact',
+            createdAt: null,
+          },
+          {
+            id: 'runtime-assistant-1',
+            role: 'assistant',
+            content: 'Done.',
+            createdAt: null,
+            isStreaming: false,
+          },
+        ],
+      },
+      turnHistoryById: {},
+      turnCompletedAtById: {},
+    };
+
+    api.rebuildTurnHistory(record);
+    api.upsertActivityItem(record, {
+      id: 'artifact-1',
+      toolName: 'rich_content',
+      status: 'completed',
+      detail: 'Prepared Rich Content result.',
+      createdAt: '2026-04-20T20:00:01.000Z',
+      updatedAt: '2026-04-20T20:00:02.000Z',
+      turnOrdinal: 1,
+    });
+    var projection = api.buildThreadProjection(record);
+
+    expect(projection.runs[0].user.createdAt).toBe('2026-04-20T20:00:00.000Z');
+    expect(projection.runs[0].answer.createdAt).toBe('2026-04-20T20:00:03.000Z');
+    expect(projection.runs[0].workSession).toMatchObject({
+      startedAt: '2026-04-20T20:00:01.000Z',
+      endedAt: '2026-04-20T20:00:02.000Z',
     });
   });
 });

@@ -855,6 +855,44 @@
     return minutes + 'm ' + seconds + 's';
   }
 
+  function isAfterTimestamp(candidate, startedAt) {
+    var candidateTime = getTimeValue(candidate);
+    if (!candidateTime) return false;
+    var startedTime = getTimeValue(startedAt);
+    return !startedTime || candidateTime > startedTime;
+  }
+
+  function latestWorkItemEnd(items, startedAt) {
+    return (items || []).reduce(function (latest, item) {
+      var candidates = [
+        item && item.completedAt,
+        item && item.finishedAt,
+        item && item.endedAt,
+        item && item.updatedAt,
+      ];
+      var next = candidates.reduce(function (candidateLatest, candidate) {
+        if (!isAfterTimestamp(candidate, startedAt)) return candidateLatest;
+        if (!candidateLatest) return candidate;
+        return Date.parse(candidate) > Date.parse(candidateLatest) ? candidate : candidateLatest;
+      }, null);
+      if (!next) return latest;
+      if (!latest) return next;
+      return Date.parse(next) > Date.parse(latest) ? next : latest;
+    }, null);
+  }
+
+  function normalizeWorkSessionForDisplay(workSession, fallbackEndedAt) {
+    if (!workSession || workSession.status === 'running') return workSession;
+    if (isAfterTimestamp(workSession.endedAt, workSession.startedAt)) return workSession;
+    var repairedEnd = latestWorkItemEnd(workSession.items || [], workSession.startedAt);
+    if (!repairedEnd && isAfterTimestamp(fallbackEndedAt, workSession.startedAt)) {
+      repairedEnd = fallbackEndedAt;
+    }
+    return repairedEnd
+      ? Object.assign({}, workSession, { endedAt: repairedEnd })
+      : workSession;
+  }
+
   function createWorkStatusLabel(status) {
     if (status === 'failed') return 'Failed';
     if (status === 'needs-approval') return 'Needs Approval';
@@ -1010,7 +1048,7 @@
       return Date.parse(item.createdAt) < Date.parse(earliest) ? item.createdAt : earliest;
     }, group.latestCreatedAt || null);
     var lastUpdatedAt = items.reduce(function (latest, item) {
-      var candidate = item.updatedAt || item.createdAt || null;
+      var candidate = latestWorkItemEnd([item], firstCreatedAt) || null;
       if (!candidate) return latest;
       if (!latest) return candidate;
       return Date.parse(candidate) > Date.parse(latest) ? candidate : latest;
@@ -1101,7 +1139,10 @@
     var surface = document.createElement('div');
     surface.className = 'ai-run-group-surface';
 
-    var workSession = group.workSession || deriveLegacyWorkSession(group);
+    var workSession = normalizeWorkSessionForDisplay(
+      group.workSession || deriveLegacyWorkSession(group),
+      (group.answer && group.answer.createdAt) || group.latestCreatedAt || null
+    );
     if (workSession) {
       surface.appendChild(createWorkSessionElement(workSession, group.id, threadState));
     }

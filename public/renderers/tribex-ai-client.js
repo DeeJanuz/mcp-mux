@@ -1187,6 +1187,11 @@
     if ((role !== 'user' && role !== 'assistant') || !text) {
       return null;
     }
+    var createdAt = normalizeTimestamp(pickFirst([
+      raw.createdAt,
+      raw.timestamp,
+      raw.metadata && raw.metadata.createdAt,
+    ], null));
 
     return {
       id: pickFirst([raw.id], 'runtime-message-' + index),
@@ -1204,11 +1209,7 @@
         raw.metadata && raw.metadata.turnOrdinal,
         raw.metadata && raw.metadata.turn_ordinal,
       ], null),
-      createdAt: normalizeTimestamp(pickFirst([
-        raw.createdAt,
-        raw.timestamp,
-        raw.metadata && raw.metadata.createdAt,
-      ], null)) || new Date().toISOString(),
+      createdAt: createdAt || null,
     };
   }
 

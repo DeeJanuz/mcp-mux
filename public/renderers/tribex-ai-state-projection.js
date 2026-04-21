@@ -54,9 +54,36 @@
       ]);
     }
 
+    function getActivityTerminalEndedAt(item, fallback) {
+      var startedAt = getActivityStartedAt(item, null);
+      var startedTime = startedAt ? api.parseActivityTimestamp(startedAt) : null;
+      var explicitEndedAt = firstValidTimestamp([
+        item && item.completedAt,
+        item && item.finishedAt,
+        item && item.endedAt,
+      ]);
+      var explicitEndedTime = explicitEndedAt ? api.parseActivityTimestamp(explicitEndedAt) : null;
+      if (
+        explicitEndedAt &&
+        (startedTime === null || (explicitEndedTime !== null && explicitEndedTime > startedTime))
+      ) {
+        return explicitEndedAt;
+      }
+
+      var updatedAt = firstValidTimestamp([item && item.updatedAt]);
+      var updatedTime = updatedAt ? api.parseActivityTimestamp(updatedAt) : null;
+      if (
+        updatedAt &&
+        (startedTime === null || (updatedTime !== null && updatedTime > startedTime))
+      ) {
+        return updatedAt;
+      }
+      return fallback || null;
+    }
+
     function latestWorkItemTimestamp(workItems) {
       return (workItems || []).reduce(function (latest, item) {
-        return maxActivityTimestamp(latest, getActivityEndedAt(item, null));
+        return maxActivityTimestamp(latest, getActivityTerminalEndedAt(item, null));
       }, null);
     }
 
@@ -482,12 +509,20 @@
     function mergeTurnMessage(turn, message) {
       if (!turn || !message) return;
       if (message.role === 'user') {
+        var previousUserCreatedAt = turn.userMessage && turn.userMessage.createdAt ? turn.userMessage.createdAt : null;
         turn.userMessage = Object.assign({}, turn.userMessage || {}, message);
+        if (!turn.userMessage.createdAt && previousUserCreatedAt) {
+          turn.userMessage.createdAt = previousUserCreatedAt;
+        }
         turn.startedAt = turn.startedAt || message.createdAt || null;
         return;
       }
       if (message.role === 'assistant') {
+        var previousAssistantCreatedAt = turn.assistantMessage && turn.assistantMessage.createdAt ? turn.assistantMessage.createdAt : null;
         turn.assistantMessage = Object.assign({}, turn.assistantMessage || {}, message);
+        if (!turn.assistantMessage.createdAt && previousAssistantCreatedAt) {
+          turn.assistantMessage.createdAt = previousAssistantCreatedAt;
+        }
         turn.endedAt = message.isStreaming ? null : (message.createdAt || turn.endedAt || null);
         if (message.isStreaming) {
           turn.status = 'running';

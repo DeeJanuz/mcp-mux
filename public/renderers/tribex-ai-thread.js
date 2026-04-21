@@ -637,6 +637,34 @@
     ]);
   }
 
+  function getShelfArtifactContentType(candidate) {
+    if (!candidate) return null;
+    var contentType = candidate.contentType || candidate.resultContentType || candidate.toolName || null;
+    return contentType == null ? null : String(contentType).trim().toLowerCase();
+  }
+
+  function isShelfArtifactContentType(contentType) {
+    return contentType === 'rich_content' || contentType === 'structured_data';
+  }
+
+  function hasShelfArtifactReviewFlag(candidate) {
+    if (!candidate) return false;
+    return !!(
+      candidate.reviewRequired ||
+      (candidate.resultMeta && candidate.resultMeta.reviewRequired) ||
+      (candidate.meta && candidate.meta.reviewRequired)
+    );
+  }
+
+  function isRevisitableShelfArtifact(candidate) {
+    return !!(
+      candidate &&
+      candidate.artifactKey &&
+      isShelfArtifactContentType(getShelfArtifactContentType(candidate)) &&
+      !hasShelfArtifactReviewFlag(candidate)
+    );
+  }
+
   function collectInlineArtifactMatchers(thread) {
     var artifactKeys = {};
     var fingerprints = {};
@@ -753,10 +781,11 @@
           contentType: artifact.contentType || null,
           resultData: artifact.data || null,
           resultMeta: artifact.meta || null,
+          reviewRequired: !!artifact.reviewRequired,
           updatedAt: artifact.updatedAt || artifact.createdAt || null,
         };
       }).filter(function (artifact) {
-        return !isInlineDuplicate(artifact);
+        return isRevisitableShelfArtifact(artifact) && !isInlineDuplicate(artifact);
       }).sort(function (left, right) {
         var leftTime = getTimeValue(left.updatedAt);
         var rightTime = getTimeValue(right.updatedAt);
@@ -769,7 +798,9 @@
 
     function register(candidate) {
       if (!candidate || !candidate.artifactKey) return;
+      if (!isRevisitableShelfArtifact(candidate)) return;
       if (isInlineDuplicate(candidate)) return;
+      var contentType = getShelfArtifactContentType(candidate);
       byKey[candidate.artifactKey] = {
         artifactKey: candidate.artifactKey,
         title: candidate.title || candidate.resultTitle || 'Open result',
@@ -780,7 +811,7 @@
           || '',
           120,
         ),
-        contentType: candidate.contentType || candidate.resultContentType || candidate.toolName || null,
+        contentType: contentType,
         updatedAt: candidate.updatedAt || candidate.createdAt || null,
       };
     }
@@ -796,6 +827,9 @@
           title: item.resultTitle || item.title,
           summary: item.detail,
           contentType: item.resultContentType || item.toolName,
+          resultData: item.resultData || null,
+          resultMeta: item.resultMeta || null,
+          reviewRequired: !!item.reviewRequired,
           updatedAt: item.updatedAt || item.createdAt || null,
         });
       });
@@ -808,6 +842,9 @@
         title: item.resultTitle || item.title,
         summary: item.detail,
         contentType: item.resultContentType || item.toolName,
+        resultData: item.resultData || null,
+        resultMeta: item.resultMeta || null,
+        reviewRequired: !!item.reviewRequired,
         updatedAt: item.updatedAt || item.createdAt || null,
       });
     });
@@ -819,6 +856,9 @@
         title: (message.resultData && message.resultData.title) || message.title,
         summary: message.detail || (message.resultData && message.resultData.body) || '',
         contentType: message.contentType || message.toolName || null,
+        resultData: message.resultData || null,
+        resultMeta: message.resultMeta || null,
+        reviewRequired: !!message.reviewRequired,
         updatedAt: message.createdAt || null,
       });
     });
@@ -1247,7 +1287,7 @@
 
     var title = document.createElement('strong');
     title.className = 'ai-thread-results-title';
-    title.textContent = 'Stored renderer outputs';
+    title.textContent = 'Artifacts';
     copy.appendChild(title);
     header.appendChild(copy);
 

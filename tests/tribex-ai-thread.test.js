@@ -129,7 +129,7 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-thread-title-row')).toBeNull();
     expect(document.querySelector('.ai-thread-lede')).toBeNull();
     expect(document.querySelector('.ai-thread-results')).not.toBeNull();
-    expect(document.querySelector('.ai-thread-results').textContent).toContain('Stored renderer outputs');
+    expect(document.querySelector('.ai-thread-results').textContent).toContain('Artifacts');
     expect(document.querySelector('.ai-thread-result-chip')).not.toBeNull();
     expect(document.querySelector('.ai-work-session')).not.toBeNull();
     expect(document.querySelector('.ai-work-session').open).toBe(false);
@@ -1092,7 +1092,7 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-thread-result-chip')).toBeNull();
   });
 
-  it('keeps only non-inline artifacts in the stored results shelf', function () {
+  it('keeps only non-review document and table artifacts in the stored results shelf', function () {
     window.__tribexAiState = {
       getThreadContext: vi.fn(function () {
         return {
@@ -1111,16 +1111,30 @@ describe('tribex-ai-thread', function () {
                   status: 'completed',
                   startedAt: '2026-04-14T20:00:01.000Z',
                   endedAt: '2026-04-14T20:00:04.000Z',
-                  items: [{
-                    id: 'activity-1',
-                    toolName: 'push_review',
-                    title: 'Prepared review packet',
-                    status: 'completed',
-                    detail: 'Stored an approval packet in the drawer.',
-                    createdAt: '2026-04-14T20:00:02.000Z',
-                    updatedAt: '2026-04-14T20:00:04.000Z',
-                    artifactKey: 'artifact-review',
-                  }],
+                  items: [
+                    {
+                      id: 'activity-1',
+                      toolName: 'structured_data',
+                      resultContentType: 'structured_data',
+                      title: 'Prepared review packet',
+                      status: 'completed',
+                      detail: 'Stored an approval packet in the drawer.',
+                      createdAt: '2026-04-14T20:00:02.000Z',
+                      updatedAt: '2026-04-14T20:00:04.000Z',
+                      artifactKey: 'artifact-review',
+                      reviewRequired: true,
+                    },
+                    {
+                      id: 'activity-2',
+                      toolName: 'brokered.thread.execution.started',
+                      title: 'Starting hosted execution',
+                      status: 'completed',
+                      detail: 'Submitting prompt to the hosted runtime.',
+                      createdAt: '2026-04-14T20:00:03.000Z',
+                      updatedAt: '2026-04-14T20:00:03.000Z',
+                      artifactKey: 'artifact-hosted-execution',
+                    },
+                  ],
                 },
                 answer: {
                   id: 'a1',
@@ -1153,7 +1167,29 @@ describe('tribex-ai-thread', function () {
                 artifactKey: 'artifact-review',
                 title: 'Approval packet',
                 contentType: 'structured_data',
+                reviewRequired: true,
                 updatedAt: '2026-04-14T20:00:05.000Z',
+              },
+              {
+                artifactKey: 'artifact-table',
+                title: 'Analysis table',
+                contentType: 'structured_data',
+                data: {
+                  title: 'Analysis table',
+                  tables: [{
+                    id: 'table-1',
+                    name: 'Analysis',
+                    columns: [],
+                    rows: [],
+                  }],
+                },
+                updatedAt: '2026-04-14T20:00:06.000Z',
+              },
+              {
+                artifactKey: 'artifact-search',
+                title: 'Search results',
+                contentType: 'search_results',
+                updatedAt: '2026-04-14T20:00:07.000Z',
               },
             ],
             messages: [],
@@ -1177,7 +1213,119 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-inline-renderer')).not.toBeNull();
     expect(document.querySelector('.ai-thread-results').hidden).toBe(false);
     expect(document.querySelectorAll('.ai-thread-result-chip')).toHaveLength(1);
-    expect(document.querySelector('.ai-thread-result-chip').textContent).toContain('Approval packet');
+    expect(document.querySelector('.ai-thread-result-chip').textContent).toContain('Analysis table');
+    expect(document.querySelector('.ai-thread-results').textContent).not.toContain('Approval packet');
+    expect(document.querySelector('.ai-thread-results').textContent).not.toContain('Starting hosted execution');
+    expect(document.querySelector('.ai-thread-results').textContent).not.toContain('Search results');
+  });
+
+  it('filters fallback activity sources before adding results shelf chips', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Fallback artifact sources',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Create some outputs', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: { id: 'a1', content: 'Done.', createdAt: '2026-04-14T20:00:05.000Z', isStreaming: false },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-14T20:00:01.000Z',
+                  endedAt: '2026-04-14T20:00:04.000Z',
+                  items: [
+                    {
+                      id: 'activity-doc',
+                      toolName: 'rich_content',
+                      title: 'Architecture doc',
+                      status: 'completed',
+                      detail: 'Prepared Rich Content result: Architecture doc.',
+                      artifactKey: 'artifact-doc',
+                      createdAt: '2026-04-14T20:00:02.000Z',
+                    },
+                    {
+                      id: 'activity-hosted',
+                      toolName: 'brokered.thread.execution.started',
+                      title: 'Starting hosted execution',
+                      status: 'completed',
+                      detail: 'Submitting prompt to the hosted runtime.',
+                      artifactKey: 'artifact-hosted',
+                      createdAt: '2026-04-14T20:00:03.000Z',
+                    },
+                  ],
+                },
+              },
+            ],
+            activityItems: [
+              {
+                id: 'activity-table',
+                toolName: 'structured_data',
+                resultContentType: 'structured_data',
+                title: 'Runtime table',
+                status: 'completed',
+                detail: 'Prepared Structured Data result: Runtime table.',
+                artifactKey: 'artifact-table',
+                createdAt: '2026-04-14T20:00:04.000Z',
+              },
+              {
+                id: 'activity-review',
+                toolName: 'structured_data',
+                resultContentType: 'structured_data',
+                title: 'Review table',
+                status: 'completed',
+                artifactKey: 'artifact-review',
+                reviewRequired: true,
+                createdAt: '2026-04-14T20:00:05.000Z',
+              },
+            ],
+            messages: [
+              {
+                id: 'message-search',
+                role: 'tool',
+                toolName: 'search_results',
+                title: 'Search results',
+                artifactKey: 'artifact-search',
+                createdAt: '2026-04-14T20:00:06.000Z',
+              },
+              {
+                id: 'message-review',
+                role: 'tool',
+                toolName: 'rich_content',
+                title: 'Review document',
+                artifactKey: 'artifact-review-doc',
+                resultMeta: { reviewRequired: true },
+                createdAt: '2026-04-14T20:00:07.000Z',
+              },
+            ],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-thread-results').hidden).toBe(false);
+    expect(document.querySelectorAll('.ai-thread-result-chip')).toHaveLength(2);
+    expect(document.querySelector('.ai-thread-results').textContent).toContain('Architecture doc');
+    expect(document.querySelector('.ai-thread-results').textContent).toContain('Runtime table');
+    expect(document.querySelector('.ai-thread-results').textContent).not.toContain('Starting hosted execution');
+    expect(document.querySelector('.ai-thread-results').textContent).not.toContain('Review table');
+    expect(document.querySelector('.ai-thread-results').textContent).not.toContain('Search results');
+    expect(document.querySelector('.ai-thread-results').textContent).not.toContain('Review document');
   });
 
   it('hides metadata-only stored artifacts after rehydration when the same result is already inline', function () {

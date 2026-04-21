@@ -1068,7 +1068,7 @@
     block.className = 'ai-work-session';
     block.setAttribute('data-work-session-id', workSession.id || groupId);
     var remembered = threadState.workSessionOpen[groupId];
-    block.open = remembered === undefined ? workSession.status === 'running' : !!remembered;
+    block.open = remembered === undefined ? false : !!remembered;
     block.addEventListener('toggle', function () {
       threadState.workSessionOpen[groupId] = block.open;
     });

@@ -847,4 +847,152 @@ describe('tribex-ai-state projection helpers', function () {
     expect(projection.runs[0].id).toBe('turn-1');
     expect(projection.runs[0].answer.content).toBe('Done.');
   });
+
+  it('keeps repeated prompt snapshots attached to their original turns', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var record = {
+      id: 'thread-1',
+      base: { messages: [] },
+      activeTurn: {
+        turnId: 'turn-2',
+        turnOrdinal: 2,
+        status: 'finalized',
+        startedAt: '2026-04-20T21:01:00.000Z',
+        userMessage: {
+          id: 'user-live-2',
+          role: 'user',
+          content: 'Repeat this prompt',
+          createdAt: '2026-04-20T21:01:00.000Z',
+          turnId: 'turn-2',
+          turnOrdinal: 2,
+        },
+        assistantMessage: {
+          id: 'assistant-live-2',
+          role: 'assistant',
+          content: 'Second answer.',
+          createdAt: '2026-04-20T21:01:03.000Z',
+          isStreaming: false,
+          turnId: 'turn-2',
+          turnOrdinal: 2,
+        },
+      },
+      activity: {
+        itemsById: {},
+        order: [],
+      },
+      runtimeSnapshot: {
+        messages: [
+          {
+            id: 'runtime-user-1',
+            role: 'user',
+            content: 'Repeat this prompt',
+            createdAt: '2026-04-20T21:00:00.000Z',
+          },
+          {
+            id: 'runtime-assistant-1',
+            role: 'assistant',
+            content: 'First answer.',
+            createdAt: '2026-04-20T21:00:03.000Z',
+            isStreaming: false,
+          },
+          {
+            id: 'runtime-user-2',
+            role: 'user',
+            content: 'Repeat this prompt',
+            createdAt: '2026-04-20T21:01:00.000Z',
+          },
+          {
+            id: 'runtime-assistant-2',
+            role: 'assistant',
+            content: 'Second answer.',
+            createdAt: '2026-04-20T21:01:03.000Z',
+            isStreaming: false,
+          },
+        ],
+      },
+      turnHistoryById: {
+        'id:turn-1': {
+          key: 'id:turn-1',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+          status: 'completed',
+          startedAt: '2026-04-20T21:00:00.000Z',
+          endedAt: '2026-04-20T21:00:03.000Z',
+          userMessage: {
+            id: 'user-history-1',
+            role: 'user',
+            content: 'Repeat this prompt',
+            createdAt: '2026-04-20T21:00:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+          assistantMessage: {
+            id: 'assistant-history-1',
+            role: 'assistant',
+            content: 'First answer.',
+            createdAt: '2026-04-20T21:00:03.000Z',
+            isStreaming: false,
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+          activityItemsById: {},
+          activityOrder: [],
+          resultItemsById: {},
+          resultOrder: [],
+        },
+      },
+      turnOrder: ['id:turn-1'],
+      turnCompletedAtById: {
+        'turn-2': '2026-04-20T21:01:04.000Z',
+      },
+    };
+
+    api.rememberTurnHistory(record);
+    api.rebuildTurnHistory(record);
+    var projection = api.buildThreadProjection(record);
+
+    expect(record.runtimeSnapshot.messages[0]).toMatchObject({
+      turnId: 'turn-1',
+      turnOrdinal: 1,
+    });
+    expect(record.runtimeSnapshot.messages[1]).toMatchObject({
+      turnId: 'turn-1',
+      turnOrdinal: 1,
+    });
+    expect(record.runtimeSnapshot.messages[2]).toMatchObject({
+      turnId: 'turn-2',
+      turnOrdinal: 2,
+    });
+    expect(record.runtimeSnapshot.messages[3]).toMatchObject({
+      turnId: 'turn-2',
+      turnOrdinal: 2,
+    });
+    expect(projection.runs.map(function (run) { return [run.id, run.answer.content]; })).toEqual([
+      ['turn-1', 'First answer.'],
+      ['turn-2', 'Second answer.'],
+    ]);
+  });
 });

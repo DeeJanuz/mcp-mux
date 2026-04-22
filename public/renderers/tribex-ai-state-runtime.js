@@ -57,6 +57,18 @@
       if (candidate.id && message.id && candidate.id === message.id) {
         return true;
       }
+      if (candidate.messageId && message.id && candidate.messageId === message.id) {
+        return true;
+      }
+      if (candidate.id && message.messageId && candidate.id === message.messageId) {
+        return true;
+      }
+      if (candidate.turnId && message.turnId && candidate.turnId !== message.turnId) {
+        return false;
+      }
+      if (candidate.turnOrdinal && message.turnOrdinal && candidate.turnOrdinal !== message.turnOrdinal) {
+        return false;
+      }
       return message.role === candidate.role && message.content === candidate.content;
     }
 

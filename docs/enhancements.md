@@ -2,16 +2,16 @@
 
 **Last Updated:** 2026-04-21
 **Total Active Issues:** 0
-**Resolved This Month:** 77
+**Resolved This Month:** 79
 
 ---
 
 ## Latest Session Summary
 
-**Last Review:** 2026-04-21 (commit `e3c0f49`)
+**Last Review:** 2026-04-21 (commit `edd0c05`)
 
-- Reviewed the hosted runtime timestamp fix in commit `e3c0f49`; no new SOLID follow-ups were opened.
-- Current residual risk is ordinary regression risk in the hosted runtime projection/display path, covered by focused Vitest coverage for client transcript normalization, state projection, and thread rendering.
+- Reviewed the hosted AI chat finish stabilization in commit `edd0c05`; the main streaming-to-finished remount path is covered by focused runtime projection and thread renderer tests.
+- Resolved follow-up **M-044** by making metadata-free runtime snapshot reconciliation consume known turns in order and reject content-only matches when turn references conflict.
 
 ---
 
@@ -36,6 +36,11 @@ _None_
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-04-21 (commit `edd0c05`)
+
+- **M-044 (resolved):** Disambiguated duplicate prompt content during metadata-free runtime snapshot reconciliation. Known turns are consumed in transcript order with explicit identity and timestamp matches preferred before content-only fallback, and active-turn settling now rejects content matches when reconciled turn references conflict. Added projection and runtime regression coverage for repeated prompts.
+- **M-043b (resolved):** Stabilized hosted AI chat finish transitions by preserving turn identity across `assistant_finish`, `turn_finish`, and post-turn `runtime_snapshot` events, and by patching answer streaming/content updates in place instead of replacing the full `.ai-run-group`. Added focused Vitest coverage for stable projected run ids, metadata-free snapshot inheritance, and streaming-to-finished renderer node reuse.
 
 ### Resolved 2026-04-21 (commit `e3c0f49`)
 

@@ -189,6 +189,156 @@ describe('tribex-ai-state runtime helpers', function () {
     })).toHaveLength(1);
   });
 
+  it('does not settle an active repeated prompt from an older runtime snapshot pair', function () {
+    var context = {
+      state: {
+        threadEntitiesById: {},
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: { 'thread-1': true },
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+      runtimeEventUnsubscribers: {},
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(function (summary) {
+        context.state.threadEntitiesById[summary.id] = Object.assign(
+          {},
+          context.state.threadEntitiesById[summary.id] || {},
+          summary,
+        );
+        context.state.threadDetails = context.state.threadEntitiesById;
+        return context.state.threadEntitiesById[summary.id];
+      }),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function (threadId) {
+        return context.state.threadEntitiesById[threadId] || { id: threadId, title: 'Thread' };
+      },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-16T10:01:05.000Z'; },
+      randomId: function (prefix) { return (prefix || 'id') + '-stub'; },
+      ensureThreadUi: vi.fn(),
+      notify: vi.fn(),
+    };
+    window.__tribexAiClient = {
+      normalizeRuntimeTranscript: function (threadId, runtimeMessages) {
+        return {
+          id: threadId,
+          messagesSource: 'runtime',
+          rawRuntimeMessages: runtimeMessages.messages || [],
+          runtimeMessages: (runtimeMessages.messages || []).map(function (message) {
+            return {
+              id: message.id,
+              role: message.role,
+              content: (message.parts || []).map(function (part) { return part.text || ''; }).join(''),
+              createdAt: message.createdAt || null,
+            };
+          }),
+        };
+      },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+    window.__createTribexAiStateRuntime(context, api);
+
+    api.handleRuntimeEvent('thread-1', {
+      type: 'user_accepted',
+      turnId: 'turn-1',
+      turnOrdinal: 1,
+      message: {
+        id: 'user-live-1',
+        role: 'user',
+        content: 'Repeat this prompt',
+        createdAt: '2026-04-16T10:00:00.000Z',
+      },
+      createdAt: '2026-04-16T10:00:00.000Z',
+    });
+    api.handleRuntimeEvent('thread-1', {
+      type: 'assistant_finish',
+      turnId: 'turn-1',
+      message: {
+        id: 'assistant-live-1',
+        role: 'assistant',
+        content: 'First answer.',
+        createdAt: '2026-04-16T10:00:03.000Z',
+        messageId: 'assistant-live-1',
+      },
+      createdAt: '2026-04-16T10:00:03.000Z',
+    });
+    api.handleRuntimeEvent('thread-1', {
+      type: 'turn_finish',
+      turnId: 'turn-1',
+      createdAt: '2026-04-16T10:00:04.000Z',
+    });
+    api.handleRuntimeEvent('thread-1', {
+      type: 'runtime_snapshot',
+      messages: [
+        {
+          id: 'runtime-user-1',
+          role: 'user',
+          parts: [{ type: 'text', text: 'Repeat this prompt' }],
+          createdAt: '2026-04-16T10:00:00.000Z',
+        },
+        {
+          id: 'runtime-assistant-1',
+          role: 'assistant',
+          parts: [{ type: 'text', text: 'First answer.' }],
+          createdAt: '2026-04-16T10:00:03.000Z',
+        },
+      ],
+    });
+
+    api.handleRuntimeEvent('thread-1', {
+      type: 'user_accepted',
+      turnId: 'turn-2',
+      turnOrdinal: 2,
+      message: {
+        id: 'user-live-2',
+        role: 'user',
+        content: 'Repeat this prompt',
+        createdAt: '2026-04-16T10:01:00.000Z',
+      },
+      createdAt: '2026-04-16T10:01:00.000Z',
+    });
+    api.handleRuntimeEvent('thread-1', {
+      type: 'runtime_snapshot',
+      messages: [
+        {
+          id: 'runtime-user-1-again',
+          role: 'user',
+          parts: [{ type: 'text', text: 'Repeat this prompt' }],
+          createdAt: '2026-04-16T10:00:00.000Z',
+        },
+        {
+          id: 'runtime-assistant-1-again',
+          role: 'assistant',
+          parts: [{ type: 'text', text: 'First answer.' }],
+          createdAt: '2026-04-16T10:00:03.000Z',
+        },
+      ],
+    });
+
+    var detail = context.state.threadEntitiesById['thread-1'];
+    var projection = api.buildThreadProjection(detail);
+
+    expect(detail.activeTurn).toMatchObject({
+      turnId: 'turn-2',
+      status: 'queued',
+    });
+    expect(detail.activeTurn.assistantMessage).toBeNull();
+    expect(projection.runs.map(function (run) { return [run.id, run.answer && run.answer.content]; })).toEqual([
+      ['turn-1', 'First answer.'],
+      ['turn-2', ''],
+    ]);
+  });
+
   it('marks active turns failed on runtime connection errors', function () {
     var detail = {
       id: 'thread-1',

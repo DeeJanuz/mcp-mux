@@ -284,6 +284,25 @@
     var answer = buildRunAnswer(group.assistantMessages);
     var tasks = buildRunTasks(group.lifecycleMessages, answer.isStreaming);
     var toolNotes = collapseToolNotes(group.toolNotes);
+    var structuralSignature = JSON.stringify({
+      displayMode: rawMode ? 'raw' : 'rendered',
+      repeatCount: group.repeatCount,
+      prompt: group.user && group.user.content,
+      tasks: tasks.map(function (task) {
+        return [task.id, task.title];
+      }),
+      toolNotes: toolNotes.map(function (note) {
+        return [note.id, note.toolName, note.summary];
+      }),
+      artifacts: group.artifacts.map(function (artifact) {
+        return [
+          artifact.id,
+          artifact.resultContentType || artifact.contentType || artifact.toolName,
+          artifact.resultData && artifact.resultData.title,
+          artifact.resultData && artifact.resultData.body,
+        ];
+      }),
+    });
     return {
       id: group.id || ('run-group-' + index),
       index: index,
@@ -295,6 +314,7 @@
       artifacts: group.artifacts,
       answer: answer,
       isStreaming: answer.isStreaming,
+      structuralSignature: structuralSignature,
       signature: JSON.stringify({
         displayMode: rawMode ? 'raw' : 'rendered',
         repeatCount: group.repeatCount,
@@ -986,6 +1006,57 @@
     return 'Done';
   }
 
+  function getWorkSessionRenderSignature(workSession) {
+    if (!workSession) return '';
+    return JSON.stringify({
+      id: workSession.id || null,
+      status: workSession.status || 'completed',
+      startedAt: workSession.startedAt || null,
+      endedAt: workSession.endedAt || null,
+      items: (workSession.items || []).map(function (item) {
+        return [
+          item && item.id,
+          item && item.toolName,
+          item && item.title,
+          item && item.status,
+          item && item.detail,
+          item && item.artifactKey,
+          item && item.updatedAt,
+        ];
+      }),
+    });
+  }
+
+  function getRunGroupStructuralSignature(group, threadState) {
+    if (group && group.structuralSignature) return group.structuralSignature;
+    return JSON.stringify({
+      displayMode: threadState && threadState.showRawResponses ? 'raw' : 'rendered',
+      id: group && group.id,
+      turnId: group && group.turnId,
+      prompt: group && group.user && group.user.content,
+      inlineResults: group && group.answer && Array.isArray(group.answer.inlineResults)
+        ? group.answer.inlineResults.map(function (item) {
+          return [
+            item.id,
+            item.contentType || item.resultContentType || item.toolName,
+            item.resultData && item.resultData.title,
+            item.resultData && item.resultData.body,
+          ];
+        })
+        : [],
+      workItemIds: group && group.workSession
+        ? (group.workSession.items || []).map(function (item) {
+          return [
+            item.id,
+            item.toolName,
+            item.title,
+            item.artifactKey,
+          ];
+        })
+        : [],
+    });
+  }
+
   function openResultArtifact(threadId, artifactKey) {
     if (!threadId || !artifactKey) return;
     if (window.__tribexAiState && typeof window.__tribexAiState.openThreadArtifact === 'function') {
@@ -1153,6 +1224,7 @@
     var block = document.createElement('details');
     block.className = 'ai-work-session';
     block.setAttribute('data-work-session-id', workSession.id || groupId);
+    block.setAttribute('data-work-session-signature', getWorkSessionRenderSignature(workSession));
     var remembered = threadState.workSessionOpen[groupId];
     block.open = remembered === undefined ? false : !!remembered;
     block.addEventListener('toggle', function () {
@@ -1191,6 +1263,7 @@
   function createRunAnswer(answer, threadState) {
     var section = document.createElement('section');
     section.className = 'ai-run-answer' + (answer.isStreaming ? ' ai-run-answer-streaming' : '');
+    section.setAttribute('data-run-answer-id', answer.id || 'answer');
 
     var header = document.createElement('div');
     header.className = 'ai-run-answer-header';
@@ -1208,6 +1281,10 @@
         ? createRawBody(content, 'ai-chat-body ai-run-answer-body')
         : createMarkdownBody(content, 'ai-chat-body ai-run-answer-body')
     );
+    section.__tribexAiAnswerBodySignature = JSON.stringify([
+      threadState && threadState.showRawResponses ? 'raw' : 'rendered',
+      content,
+    ]);
     return section;
   }
 
@@ -1215,6 +1292,7 @@
     var section = document.createElement('section');
     section.className = 'ai-run-group';
     section.setAttribute('data-run-id', group.id);
+    section.setAttribute('data-run-structure-signature', getRunGroupStructuralSignature(group, threadState));
     section.setAttribute('data-run-signature', group.signature);
 
     var prompt = document.createElement('div');
@@ -1817,6 +1895,119 @@
     return true;
   }
 
+  function getRunGroupWorkSession(group) {
+    return normalizeWorkSessionForDisplay(
+      group.workSession || deriveLegacyWorkSession(group),
+      (group.answer && group.answer.createdAt) || group.latestCreatedAt || null
+    );
+  }
+
+  function getRunGroupSurface(node) {
+    return node ? node.querySelector('.ai-run-group-surface') : null;
+  }
+
+  function insertBeforeFirstInline(surface, node) {
+    var inline = surface.querySelector('.ai-inline-renderer');
+    surface.insertBefore(node, inline || null);
+  }
+
+  function updateRunAnswerElement(section, answer, threadState) {
+    if (!section || !answer) return false;
+    var changed = false;
+    var streaming = !!answer.isStreaming;
+    if (section.classList.contains('ai-run-answer-streaming') !== streaming) {
+      section.classList.toggle('ai-run-answer-streaming', streaming);
+      changed = true;
+    }
+
+    var kicker = section.querySelector('.ai-run-answer-kicker');
+    var nextKicker = streaming ? 'Thinking' : 'Summary';
+    if (kicker && kicker.textContent !== nextKicker) {
+      kicker.textContent = nextKicker;
+      changed = true;
+    }
+
+    var header = section.querySelector('.ai-run-answer-header');
+    var time = section.querySelector('.ai-run-answer-time');
+    var nextTime = answer.createdAt ? window.__tribexAiUtils.formatRelativeTime(answer.createdAt) : '';
+    if (nextTime) {
+      if (!time && header) {
+        time = createMetaLabel('ai-run-answer-time', nextTime);
+        header.appendChild(time);
+        changed = true;
+      } else if (time && time.textContent !== nextTime) {
+        time.textContent = nextTime;
+        changed = true;
+      }
+    } else if (time && time.parentNode) {
+      time.parentNode.removeChild(time);
+      changed = true;
+    }
+
+    var content = answer.content || (streaming ? 'Waiting for response…' : '');
+    var nextBodySignature = JSON.stringify([
+      threadState && threadState.showRawResponses ? 'raw' : 'rendered',
+      content,
+    ]);
+    if (section.__tribexAiAnswerBodySignature !== nextBodySignature) {
+      var body = section.querySelector('.ai-run-answer-body');
+      var nextBody = threadState && threadState.showRawResponses
+        ? createRawBody(content, 'ai-chat-body ai-run-answer-body')
+        : createMarkdownBody(content, 'ai-chat-body ai-run-answer-body');
+      if (body && body.parentNode) {
+        body.parentNode.replaceChild(nextBody, body);
+      } else {
+        section.appendChild(nextBody);
+      }
+      section.__tribexAiAnswerBodySignature = nextBodySignature;
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  function patchRunGroupElement(node, group, threadState) {
+    var surface = getRunGroupSurface(node);
+    if (!surface) return false;
+    var changed = false;
+    var workSession = getRunGroupWorkSession(group);
+    var existingWorkSession = surface.querySelector('.ai-work-session');
+    if (workSession) {
+      var workSignature = getWorkSessionRenderSignature(workSession);
+      if (!existingWorkSession) {
+        var newWork = createWorkSessionElement(workSession, group.id, threadState);
+        var answerNode = surface.querySelector('.ai-run-answer');
+        surface.insertBefore(newWork, answerNode || surface.firstChild || null);
+        changed = true;
+      } else if (existingWorkSession.getAttribute('data-work-session-signature') !== workSignature) {
+        var replacementWork = createWorkSessionElement(workSession, group.id, threadState);
+        surface.replaceChild(replacementWork, existingWorkSession);
+        changed = true;
+      }
+    } else if (existingWorkSession && existingWorkSession.parentNode) {
+      existingWorkSession.parentNode.removeChild(existingWorkSession);
+      changed = true;
+    }
+
+    var wantsAnswer = !!(group.answer && (group.answer.content || group.answer.isStreaming));
+    var existingAnswer = surface.querySelector('.ai-run-answer');
+    if (wantsAnswer) {
+      if (existingAnswer) {
+        changed = updateRunAnswerElement(existingAnswer, group.answer, threadState) || changed;
+      } else {
+        insertBeforeFirstInline(surface, createRunAnswer(group.answer, threadState));
+        changed = true;
+      }
+    } else if (existingAnswer && existingAnswer.parentNode) {
+      existingAnswer.parentNode.removeChild(existingAnswer);
+      changed = true;
+    }
+
+    node.setAttribute('data-run-structure-signature', getRunGroupStructuralSignature(group, threadState));
+    node.setAttribute('data-run-signature', group.signature);
+    return changed;
+  }
+
   function syncRunGroups(state, groups) {
     var used = {};
     var changed = false;
@@ -1849,13 +2040,17 @@
       var existing = state.transcript.querySelector(selector);
       var node = existing;
 
+      var structuralSignature = getRunGroupStructuralSignature(group, state);
+
       if (!existing) {
         node = createRunGroupElement(group, state);
         changed = true;
-      } else if (existing.getAttribute('data-run-signature') !== group.signature) {
+      } else if (existing.getAttribute('data-run-structure-signature') !== structuralSignature) {
         node = createRunGroupElement(group, state);
         state.transcript.replaceChild(node, existing);
         changed = true;
+      } else if (existing.getAttribute('data-run-signature') !== group.signature) {
+        changed = patchRunGroupElement(existing, group, state) || changed;
       }
 
       used[group.id] = true;
@@ -1905,7 +2100,35 @@
       ? {
         mode: 'groups',
         groups: runtimeRuns.map(function (group, index) {
+          var structuralSignature = JSON.stringify({
+            displayMode: state.showRawResponses ? 'raw' : 'rendered',
+            id: group.id,
+            turnId: group.turnId,
+            prompt: group.user && group.user.content,
+            inlineResults: group.answer && Array.isArray(group.answer.inlineResults)
+              ? group.answer.inlineResults.map(function (item) {
+                return [
+                  item.id,
+                  item.contentType || item.resultContentType || item.toolName,
+                  item.resultData && item.resultData.title,
+                  item.resultData && item.resultData.body,
+                ];
+              })
+              : [],
+            workItems: group.workSession
+              ? (group.workSession.items || []).map(function (item) {
+                return [
+                  item.id,
+                  item.toolName,
+                  item.title,
+                  item.artifactKey,
+                ];
+              })
+              : [],
+            index: index,
+          });
           return Object.assign({}, group, {
+            structuralSignature: structuralSignature,
             signature: JSON.stringify({
               displayMode: state.showRawResponses ? 'raw' : 'rendered',
               id: group.id,

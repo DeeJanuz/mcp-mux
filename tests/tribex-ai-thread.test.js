@@ -1612,6 +1612,64 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-run-answer-streaming')).toBeNull();
   });
 
+  it('updates a finished streaming answer in place without remounting the run', function () {
+    var streaming = true;
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Streaming thread',
+            runs: [
+              {
+                id: 'turn-1',
+                turnId: 'turn-1',
+                user: { id: 'u1', role: 'user', content: 'Summarize this', createdAt: '2026-04-14T20:00:00.000Z' },
+                latestCreatedAt: '2026-04-14T20:00:00.000Z',
+                answer: {
+                  id: 'a1',
+                  content: '**Done**',
+                  createdAt: '2026-04-14T20:00:03.000Z',
+                  isStreaming: streaming,
+                  inlineResults: [],
+                },
+                workSession: null,
+              },
+            ],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    var runNode = document.querySelector('.ai-run-group');
+    var answerNode = document.querySelector('.ai-run-answer');
+    var answerBody = document.querySelector('.ai-run-answer-body');
+    expect(answerNode.classList.contains('ai-run-answer-streaming')).toBe(true);
+
+    streaming = false;
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-run-group')).toBe(runNode);
+    expect(document.querySelector('.ai-run-answer')).toBe(answerNode);
+    expect(document.querySelector('.ai-run-answer-body')).toBe(answerBody);
+    expect(answerNode.classList.contains('ai-run-answer-streaming')).toBe(false);
+    expect(document.querySelector('.ai-run-answer-kicker').textContent).toBe('Summary');
+  });
+
   it('falls back to a flat transcript for legacy message ordering', function () {
     window.__tribexAiState = {
       getThreadContext: vi.fn(function () {

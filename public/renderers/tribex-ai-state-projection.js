@@ -241,6 +241,18 @@
       if (candidate.id && message.id && candidate.id === message.id) {
         return true;
       }
+      if (candidate.messageId && message.id && candidate.messageId === message.id) {
+        return true;
+      }
+      if (candidate.id && message.messageId && candidate.id === message.messageId) {
+        return true;
+      }
+      if (candidate.turnId && message.turnId && candidate.turnId !== message.turnId) {
+        return false;
+      }
+      if (candidate.turnOrdinal && message.turnOrdinal && candidate.turnOrdinal !== message.turnOrdinal) {
+        return false;
+      }
       return message.role === candidate.role && message.content === candidate.content;
     }
 
@@ -325,29 +337,41 @@
       };
     }
 
-    function copyKnownTurns(record) {
-      var turns = [];
+    function getTurnReferenceKey(turn) {
+      return buildTurnKey(turn && turn.turnId, turn && turn.turnOrdinal)
+        || (turn && turn.userMessage && (turn.userMessage.id || turn.userMessage.messageId))
+        || null;
+    }
+
+    function copyKnownTurnReferences(record) {
+      var refs = [];
       var seen = {};
 
-      function remember(turn) {
+      function remember(turn, isActive) {
         if (!turn) return;
-        var key = buildTurnKey(turn.turnId, turn.turnOrdinal)
-          || (turn.userMessage && (turn.userMessage.id || turn.userMessage.messageId))
-          || null;
-        if (key && seen[key]) return;
-        if (key) seen[key] = true;
-        turns.push(turn);
-      }
-
-      if (record && record.activeTurn) {
-        remember(record.activeTurn);
+        var key = getTurnReferenceKey(turn);
+        if (key && seen[key]) {
+          if (isActive) seen[key].isActive = true;
+          return;
+        }
+        var ref = {
+          key: key || ('index:' + refs.length),
+          turn: turn,
+          isActive: !!isActive,
+        };
+        if (key) seen[key] = ref;
+        refs.push(ref);
       }
 
       (Array.isArray(record && record.turnOrder) ? record.turnOrder : Object.keys(record && record.turnHistoryById || {})).forEach(function (key) {
-        remember(record.turnHistoryById && record.turnHistoryById[key]);
+        remember(record.turnHistoryById && record.turnHistoryById[key], false);
       });
 
-      return turns;
+      if (record && record.activeTurn) {
+        remember(record.activeTurn, true);
+      }
+
+      return refs;
     }
 
     function applyTurnReference(message, turn) {
@@ -356,64 +380,179 @@
       if (!message.turnOrdinal && turn.turnOrdinal) message.turnOrdinal = turn.turnOrdinal;
     }
 
-    function findTurnForSnapshotUser(record, message) {
-      var turns = copyKnownTurns(record);
-      for (var index = 0; index < turns.length; index += 1) {
-        var turn = turns[index];
-        if (turn && turn.userMessage && messageMatchesCandidate(turn.userMessage, message)) {
-          return turn;
-        }
-      }
-      for (var contentIndex = 0; contentIndex < turns.length; contentIndex += 1) {
-        var candidate = turns[contentIndex];
-        if (
-          candidate &&
-          candidate.userMessage &&
-          candidate.userMessage.content &&
-          candidate.userMessage.content === message.content
-        ) {
-          return candidate;
-        }
+    function markTurnReferenceConsumed(consumed, ref) {
+      if (!consumed || !ref) return;
+      consumed[ref.key] = true;
+    }
+
+    function findAvailableTurnReference(refs, consumed, predicate) {
+      for (var index = 0; index < refs.length; index += 1) {
+        var ref = refs[index];
+        if (!ref || consumed[ref.key]) continue;
+        if (predicate(ref)) return ref;
       }
       return null;
     }
 
-    function findTurnForSnapshotAssistant(record, message, currentTurn) {
+    function messageMatchesExplicitReference(message, candidate) {
+      if (!message || !candidate) return false;
+      if (candidate.messageId && message.messageId && candidate.messageId === message.messageId) return true;
+      if (candidate.id && message.id && candidate.id === message.id) return true;
+      if (candidate.messageId && message.id && candidate.messageId === message.id) return true;
+      if (candidate.id && message.messageId && candidate.id === message.messageId) return true;
+      if (candidate.turnId && message.turnId && candidate.turnId === message.turnId) return true;
+      return !!(
+        candidate.turnOrdinal &&
+        message.turnOrdinal &&
+        candidate.turnOrdinal === message.turnOrdinal &&
+        candidate.role === message.role
+      );
+    }
+
+    function messageTimestampsMatch(message, candidate) {
+      if (!message || !candidate || !message.createdAt || !candidate.createdAt) return false;
+      var messageTime = api.parseActivityTimestamp(message.createdAt);
+      var candidateTime = api.parseActivityTimestamp(candidate.createdAt);
+      return messageTime !== null && candidateTime !== null && messageTime === candidateTime;
+    }
+
+    function getTurnStartTimestamp(turn) {
+      if (!turn) return null;
+      return api.parseActivityTimestamp(
+        (turn.userMessage && turn.userMessage.createdAt) ||
+        turn.startedAt ||
+        null
+      );
+    }
+
+    function setActiveTurnOrdinal(record, turnOrdinal) {
+      if (!record || !record.activeTurn || !turnOrdinal) return;
+      record.activeTurn.turnOrdinal = turnOrdinal;
+      if (record.activeTurn.userMessage) {
+        record.activeTurn.userMessage.turnOrdinal = turnOrdinal;
+      }
+      if (record.activeTurn.assistantMessage) {
+        record.activeTurn.assistantMessage.turnOrdinal = turnOrdinal;
+      }
+      var activeKey = buildTurnKey(record.activeTurn.turnId, null);
+      var stored = activeKey && record.turnHistoryById ? record.turnHistoryById[activeKey] : null;
+      if (!stored) return;
+      stored.turnOrdinal = turnOrdinal;
+      if (stored.userMessage) stored.userMessage.turnOrdinal = turnOrdinal;
+      if (stored.assistantMessage) stored.assistantMessage.turnOrdinal = turnOrdinal;
+    }
+
+    function reconcileActiveTurnOrdinalForSnapshot(record) {
+      if (!record || !record.activeTurn || !record.activeTurn.turnOrdinal) return;
+      var activeTime = getTurnStartTimestamp(record.activeTurn);
+      if (activeTime === null) return;
+      var priorUserCount = 0;
+      (record.runtimeSnapshot && Array.isArray(record.runtimeSnapshot.messages) ? record.runtimeSnapshot.messages : []).forEach(function (message) {
+        if (!message || message.role !== 'user') return;
+        var messageTime = api.parseActivityTimestamp(message.createdAt || null);
+        if (messageTime !== null && messageTime < activeTime) {
+          priorUserCount += 1;
+        }
+      });
+      if (priorUserCount && record.activeTurn.turnOrdinal <= priorUserCount) {
+        setActiveTurnOrdinal(record, priorUserCount + 1);
+      }
+    }
+
+    function turnMessageContentMatches(turnMessage, message) {
+      return !!(
+        turnMessage &&
+        message &&
+        turnMessage.role === message.role &&
+        turnMessage.content &&
+        turnMessage.content === message.content
+      );
+    }
+
+    function findTurnForSnapshotUser(reconciliation, message) {
+      var explicit = findAvailableTurnReference(reconciliation.refs, reconciliation.consumed, function (ref) {
+        return ref.turn && ref.turn.userMessage && messageMatchesExplicitReference(ref.turn.userMessage, message);
+      });
+      if (explicit) {
+        markTurnReferenceConsumed(reconciliation.consumed, explicit);
+        return explicit.turn;
+      }
+
+      var timed = findAvailableTurnReference(reconciliation.refs, reconciliation.consumed, function (ref) {
+        return (
+          ref.turn &&
+          turnMessageContentMatches(ref.turn.userMessage, message) &&
+          messageTimestampsMatch(ref.turn.userMessage, message)
+        );
+      });
+      if (timed) {
+        markTurnReferenceConsumed(reconciliation.consumed, timed);
+        return timed.turn;
+      }
+
+      var content = findAvailableTurnReference(reconciliation.refs, reconciliation.consumed, function (ref) {
+        return ref.turn && turnMessageContentMatches(ref.turn.userMessage, message);
+      });
+      if (content) {
+        markTurnReferenceConsumed(reconciliation.consumed, content);
+        return content.turn;
+      }
+
+      return null;
+    }
+
+    function findTurnForSnapshotAssistant(reconciliation, message, currentTurn) {
       if (currentTurn) return currentTurn;
-      var turns = copyKnownTurns(record);
-      for (var index = 0; index < turns.length; index += 1) {
-        var turn = turns[index];
-        if (turn && turn.assistantMessage && messageMatchesCandidate(turn.assistantMessage, message)) {
-          return turn;
-        }
+
+      var explicit = findAvailableTurnReference(reconciliation.refs, reconciliation.consumed, function (ref) {
+        return ref.turn && ref.turn.assistantMessage && messageMatchesExplicitReference(ref.turn.assistantMessage, message);
+      });
+      if (explicit) {
+        markTurnReferenceConsumed(reconciliation.consumed, explicit);
+        return explicit.turn;
       }
-      for (var contentIndex = 0; contentIndex < turns.length; contentIndex += 1) {
-        var candidate = turns[contentIndex];
-        if (
-          candidate &&
-          candidate.assistantMessage &&
-          candidate.assistantMessage.content &&
-          candidate.assistantMessage.content === message.content
-        ) {
-          return candidate;
-        }
+
+      var timed = findAvailableTurnReference(reconciliation.refs, reconciliation.consumed, function (ref) {
+        return (
+          ref.turn &&
+          turnMessageContentMatches(ref.turn.assistantMessage, message) &&
+          messageTimestampsMatch(ref.turn.assistantMessage, message)
+        );
+      });
+      if (timed) {
+        markTurnReferenceConsumed(reconciliation.consumed, timed);
+        return timed.turn;
       }
+
+      var content = findAvailableTurnReference(reconciliation.refs, reconciliation.consumed, function (ref) {
+        return ref.turn && turnMessageContentMatches(ref.turn.assistantMessage, message);
+      });
+      if (content) {
+        markTurnReferenceConsumed(reconciliation.consumed, content);
+        return content.turn;
+      }
+
       return null;
     }
 
     function reconcileRuntimeSnapshotTurnReferences(record) {
       if (!record || !record.runtimeSnapshot || !Array.isArray(record.runtimeSnapshot.messages)) return;
+      reconcileActiveTurnOrdinalForSnapshot(record);
+      var reconciliation = {
+        refs: copyKnownTurnReferences(record),
+        consumed: {},
+      };
       var currentTurn = null;
 
       record.runtimeSnapshot.messages.forEach(function (message) {
         if (!message || (message.role !== 'user' && message.role !== 'assistant')) return;
         if (message.role === 'user') {
-          currentTurn = findTurnForSnapshotUser(record, message);
+          currentTurn = findTurnForSnapshotUser(reconciliation, message);
           applyTurnReference(message, currentTurn);
           return;
         }
 
-        var assistantTurn = findTurnForSnapshotAssistant(record, message, currentTurn);
+        var assistantTurn = findTurnForSnapshotAssistant(reconciliation, message, currentTurn);
         applyTurnReference(message, assistantTurn);
       });
     }

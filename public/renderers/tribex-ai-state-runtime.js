@@ -418,6 +418,9 @@
           merged.activeTurn.userMessage &&
           api.containsMessage(merged.runtimeSnapshot.messages, merged.activeTurn.userMessage)
         ) {
+          if (typeof api.reconcileRuntimeSnapshotTurnReferences === 'function') {
+            api.reconcileRuntimeSnapshotTurnReferences(merged);
+          }
           var settledAssistant = findSettledAssistantForActiveTurn(merged.runtimeSnapshot.messages, merged.activeTurn);
           if (settledAssistant) {
             merged.activeTurn.assistantMessage = Object.assign({}, settledAssistant, {

@@ -325,6 +325,99 @@
       };
     }
 
+    function copyKnownTurns(record) {
+      var turns = [];
+      var seen = {};
+
+      function remember(turn) {
+        if (!turn) return;
+        var key = buildTurnKey(turn.turnId, turn.turnOrdinal)
+          || (turn.userMessage && (turn.userMessage.id || turn.userMessage.messageId))
+          || null;
+        if (key && seen[key]) return;
+        if (key) seen[key] = true;
+        turns.push(turn);
+      }
+
+      if (record && record.activeTurn) {
+        remember(record.activeTurn);
+      }
+
+      (Array.isArray(record && record.turnOrder) ? record.turnOrder : Object.keys(record && record.turnHistoryById || {})).forEach(function (key) {
+        remember(record.turnHistoryById && record.turnHistoryById[key]);
+      });
+
+      return turns;
+    }
+
+    function applyTurnReference(message, turn) {
+      if (!message || !turn) return;
+      if (!message.turnId && turn.turnId) message.turnId = turn.turnId;
+      if (!message.turnOrdinal && turn.turnOrdinal) message.turnOrdinal = turn.turnOrdinal;
+    }
+
+    function findTurnForSnapshotUser(record, message) {
+      var turns = copyKnownTurns(record);
+      for (var index = 0; index < turns.length; index += 1) {
+        var turn = turns[index];
+        if (turn && turn.userMessage && messageMatchesCandidate(turn.userMessage, message)) {
+          return turn;
+        }
+      }
+      for (var contentIndex = 0; contentIndex < turns.length; contentIndex += 1) {
+        var candidate = turns[contentIndex];
+        if (
+          candidate &&
+          candidate.userMessage &&
+          candidate.userMessage.content &&
+          candidate.userMessage.content === message.content
+        ) {
+          return candidate;
+        }
+      }
+      return null;
+    }
+
+    function findTurnForSnapshotAssistant(record, message, currentTurn) {
+      if (currentTurn) return currentTurn;
+      var turns = copyKnownTurns(record);
+      for (var index = 0; index < turns.length; index += 1) {
+        var turn = turns[index];
+        if (turn && turn.assistantMessage && messageMatchesCandidate(turn.assistantMessage, message)) {
+          return turn;
+        }
+      }
+      for (var contentIndex = 0; contentIndex < turns.length; contentIndex += 1) {
+        var candidate = turns[contentIndex];
+        if (
+          candidate &&
+          candidate.assistantMessage &&
+          candidate.assistantMessage.content &&
+          candidate.assistantMessage.content === message.content
+        ) {
+          return candidate;
+        }
+      }
+      return null;
+    }
+
+    function reconcileRuntimeSnapshotTurnReferences(record) {
+      if (!record || !record.runtimeSnapshot || !Array.isArray(record.runtimeSnapshot.messages)) return;
+      var currentTurn = null;
+
+      record.runtimeSnapshot.messages.forEach(function (message) {
+        if (!message || (message.role !== 'user' && message.role !== 'assistant')) return;
+        if (message.role === 'user') {
+          currentTurn = findTurnForSnapshotUser(record, message);
+          applyTurnReference(message, currentTurn);
+          return;
+        }
+
+        var assistantTurn = findTurnForSnapshotAssistant(record, message, currentTurn);
+        applyTurnReference(message, assistantTurn);
+      });
+    }
+
     function findTurnKeyByOrdinal(record, turnOrdinal) {
       if (!record || !turnOrdinal) return null;
       var keys = Array.isArray(record.turnOrder) ? record.turnOrder : Object.keys(record.turnHistoryById || {});
@@ -1492,6 +1585,7 @@
 
     function rebuildTurnHistory(record) {
       if (!record) return;
+      reconcileRuntimeSnapshotTurnReferences(record);
       var baseTurnOrdinal = 0;
       (record.base && Array.isArray(record.base.messages) ? record.base.messages : []).forEach(function (message, index) {
         if (!message) return;
@@ -1630,6 +1724,7 @@
     api.getCanonicalActivityDisplayMode = getCanonicalActivityDisplayMode;
     api.syncActivityItemToTurn = syncActivityItemToTurn;
     api.rebuildTurnHistory = rebuildTurnHistory;
+    api.reconcileRuntimeSnapshotTurnReferences = reconcileRuntimeSnapshotTurnReferences;
     api.isCompletedActivityStatus = isCompletedActivityStatus;
     api.isRendererBackedActivityItem = isRendererBackedActivityItem;
     api.buildArtifactSessionKey = buildArtifactSessionKey;

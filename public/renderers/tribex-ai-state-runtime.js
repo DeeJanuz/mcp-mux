@@ -222,6 +222,14 @@
           + argumentsData.title
           + '.';
       }
+      var failedReview = payload.success === false && String(payload.toolName || '').toLowerCase() === 'push_review';
+      var resultData = failedReview ? {} : argumentsData;
+      var metaData = failedReview
+        ? Object.assign({}, resultMeta || {}, {
+          reviewRequired: false,
+          reviewFailed: true,
+        })
+        : resultMeta;
       var normalized = window.__tribexAiClient.normalizeMessage({
         id: payload.requestId || payload.id || api.randomId('relay-tool'),
         toolName: payload.toolName,
@@ -229,8 +237,8 @@
         detail: explicitDetail,
         toolArgs: toolArgs,
         result: {
-          data: argumentsData,
-          meta: resultMeta,
+          data: resultData,
+          meta: metaData,
         },
         createdAt: payload.createdAt || api.nowIso(),
       }, 0);
@@ -398,6 +406,11 @@
       if (detail.personaReleaseId) merged.personaReleaseId = detail.personaReleaseId;
       if (detail.persona) merged.persona = detail.persona;
       if (detail.personaRelease) merged.personaRelease = detail.personaRelease;
+      if (detail.activePause !== undefined) {
+        merged.activePause = typeof api.filterContinuedPause === 'function'
+          ? api.filterContinuedPause(detail.id, detail.activePause || null)
+          : detail.activePause || null;
+      }
       if (detail.preview) merged.base.preview = detail.preview;
       var detailMessages = Array.isArray(detail.runtimeMessages)
         ? detail.runtimeMessages
@@ -409,6 +422,17 @@
         merged.base.lastActivityAt = maxActivityTimestamp(merged.base.lastActivityAt, nextActivityAt);
       }
       if (detail.rowState !== undefined) merged.rowState = detail.rowState;
+      if (!merged.activePause && (merged.rowState === 'waiting-on-user' || merged.rowState === 'ready-to-continue')) {
+        merged.rowState = null;
+      }
+      if (merged.activePause && merged.rowState == null) {
+        var pauseStatus = String(merged.activePause.status || '').toUpperCase();
+        if (pauseStatus === 'READY') {
+          merged.rowState = 'ready-to-continue';
+        } else if (pauseStatus === 'BLOCKED' || pauseStatus === 'RESUMING') {
+          merged.rowState = 'waiting-on-user';
+        }
+      }
       if (detail.optimistic !== undefined) merged.optimistic = !!detail.optimistic;
       if (detail.syncing !== undefined) merged.syncing = !!detail.syncing;
       if (detail.lastHydratedAt) merged.lastHydratedAt = detail.lastHydratedAt;
@@ -672,6 +696,8 @@
         detail: message.detail || '',
         rawInput: message.rawInput !== undefined ? message.rawInput : null,
         rawOutput: message.rawOutput !== undefined ? message.rawOutput : null,
+        modelName: message.modelName || message.model_name || message.modelId || message.model_id || message.model || null,
+        modelProvider: message.modelProvider || message.model_provider || message.providerName || message.provider_name || message.provider || null,
         resultData: message.resultData || null,
         resultMeta: resultMeta,
         reviewRequired: reviewRequired,
@@ -851,6 +877,18 @@
       return false;
     }
 
+    function extractPausePayload(payload) {
+      if (!payload || typeof payload !== 'object') return null;
+      var toolName = String(payload.toolName || payload.tool_name || '').toLowerCase();
+      if (toolName.indexOf('thread.pause.') !== 0) return null;
+      var result = payload.result && typeof payload.result === 'object' ? payload.result : {};
+      var data = result.data && typeof result.data === 'object' ? result.data : {};
+      return {
+        toolName: toolName,
+        activePause: data.activePause || data.active_pause || null,
+      };
+    }
+
     function handleStreamEvent(event) {
       if (!event || !event.threadId) return;
 
@@ -894,12 +932,30 @@
         }
       }
 
+      var record = api.ensureThreadDetailRecord(event.threadId);
+      runtimeDriven = !!(record.runtimeSnapshot || record.activeTurn);
+      var pausePayload = extractPausePayload(payload);
+      if (pausePayload) {
+        var normalizedPause = window.__tribexAiClient && typeof window.__tribexAiClient.normalizeThreadPause === 'function'
+          ? window.__tribexAiClient.normalizeThreadPause(pausePayload.activePause)
+          : pausePayload.activePause;
+        record.activePause = typeof api.filterContinuedPause === 'function'
+          ? api.filterContinuedPause(event.threadId, normalizedPause)
+          : normalizedPause;
+        if (record.activePause && String(record.activePause.status || '').toUpperCase() === 'READY') {
+          record.rowState = 'ready-to-continue';
+        } else if (record.activePause) {
+          record.rowState = 'waiting-on-user';
+        } else if (record.rowState === 'waiting-on-user' || record.rowState === 'ready-to-continue') {
+          record.rowState = null;
+        }
+        state.threadErrors[event.threadId] = null;
+        api.notify();
+      }
+
       if (!normalizedMessage) {
         return;
       }
-
-      var record = api.ensureThreadDetailRecord(event.threadId);
-      runtimeDriven = !!(record.runtimeSnapshot || record.activeTurn);
 
       if (normalizedMessage.role === 'tool') {
         var activityItem = buildCompanionActivityItem(normalizedMessage, record);

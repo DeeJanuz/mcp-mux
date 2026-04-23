@@ -538,6 +538,7 @@ fn validate_embedded_structured_data_fence(
 /// Common parameters extracted from push_content / push_review arguments.
 #[derive(Debug)]
 struct PushParams {
+    session_id: Option<String>,
     tool_name: String,
     data: Value,
     meta: Option<Value>,
@@ -559,6 +560,13 @@ fn extract_push_params(arguments: &Value, review: bool) -> Result<PushParams, St
         .or_else(|| infer_renderer_tool_name(&data).map(|value| value.to_string()))
         .ok_or("Missing required parameter: tool_name")?;
     let meta = arguments.get("meta").cloned();
+    let session_id = arguments
+        .get("session_id")
+        .or_else(|| arguments.get("sessionId"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
     let timeout = if review {
         arguments
             .get("timeout")
@@ -568,7 +576,13 @@ fn extract_push_params(arguments: &Value, review: bool) -> Result<PushParams, St
         120
     };
     validate_push_payload(&tool_name, &data)?;
-    Ok(PushParams { tool_name, data, meta, timeout })
+    Ok(PushParams {
+        session_id,
+        tool_name,
+        data,
+        meta,
+        timeout,
+    })
 }
 
 /// Collect renderer and tool rules from all renderers and plugin manifests.

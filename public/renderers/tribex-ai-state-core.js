@@ -67,6 +67,9 @@
     }
 
     function notify() {
+      if (typeof api.syncPausePolling === 'function') {
+        api.syncPausePolling();
+      }
       syncActiveSessionMetadata();
       var snapshot = typeof api.getSnapshot === 'function' ? api.getSnapshot() : null;
       context.listeners.slice().forEach(function (listener) {
@@ -145,6 +148,33 @@
 
     function getThread(threadId) {
       return threadId ? state.threadEntitiesById[threadId] || null : null;
+    }
+
+    function getPauseId(pause) {
+      return pause && pause.id ? String(pause.id) : null;
+    }
+
+    function markPauseContinued(threadId, pauseId) {
+      if (!threadId || !pauseId) return;
+      context.continuedPauseIdsByThread = context.continuedPauseIdsByThread || {};
+      context.continuedPauseIdsByThread[threadId] = String(pauseId);
+    }
+
+    function clearPauseContinued(threadId, pauseId) {
+      if (!threadId || !context.continuedPauseIdsByThread) return;
+      if (!pauseId || context.continuedPauseIdsByThread[threadId] === String(pauseId)) {
+        delete context.continuedPauseIdsByThread[threadId];
+      }
+    }
+
+    function isContinuedPause(threadId, pause) {
+      var pauseId = getPauseId(pause);
+      if (!threadId || !pauseId || !context.continuedPauseIdsByThread) return false;
+      return context.continuedPauseIdsByThread[threadId] === pauseId;
+    }
+
+    function filterContinuedPause(threadId, pause) {
+      return isContinuedPause(threadId, pause) ? null : pause;
     }
 
     function getOrganizationProjects(organizationId) {
@@ -790,6 +820,10 @@
     api.getProject = getProject;
     api.getThread = getThread;
     api.getAllThreads = getAllThreads;
+    api.markPauseContinued = markPauseContinued;
+    api.clearPauseContinued = clearPauseContinued;
+    api.isContinuedPause = isContinuedPause;
+    api.filterContinuedPause = filterContinuedPause;
     api.getWorkspaceProjects = getWorkspaceProjects;
     api.getOrganizationProjects = getOrganizationProjects;
     api.ensureOrganizationUi = ensureOrganizationUi;

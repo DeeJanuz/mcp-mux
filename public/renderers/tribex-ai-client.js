@@ -602,6 +602,46 @@
     };
   }
 
+  function normalizeThreadPauseTask(raw, index) {
+    raw = raw || {};
+    return {
+      id: pickFirst([raw.id], 'pause-task-' + index),
+      kind: pickFirst([raw.kind], 'OTHER'),
+      title: pickFirst([raw.title], 'Action required'),
+      detail: pickFirst([raw.detail], null),
+      status: pickFirst([raw.status], 'PENDING'),
+      actionLabel: pickFirst([raw.actionLabel, raw.action_label], null),
+      actionUrl: pickFirst([raw.actionUrl, raw.action_url], null),
+      completedAt: normalizeTimestamp(pickFirst([raw.completedAt, raw.completed_at], null)),
+      failureReason: pickFirst([raw.failureReason, raw.failure_reason], null),
+      metadata: raw.metadata || {},
+    };
+  }
+
+  function normalizeThreadPause(raw) {
+    raw = raw || {};
+    if (!pickFirst([raw.id], null)) return null;
+    return {
+      id: pickFirst([raw.id], null),
+      threadId: pickFirst([raw.threadId, raw.thread_id], null),
+      targetThreadId: pickFirst([raw.targetThreadId, raw.target_thread_id], null),
+      orchestrationTurnId: pickFirst([raw.orchestrationTurnId, raw.orchestration_turn_id], null),
+      subAgentRunId: pickFirst([raw.subAgentRunId, raw.sub_agent_run_id], null),
+      executionRunId: pickFirst([raw.executionRunId, raw.execution_run_id], null),
+      status: pickFirst([raw.status], null),
+      reasonKind: pickFirst([raw.reasonKind, raw.reason_kind], null),
+      title: pickFirst([raw.title], null),
+      detail: pickFirst([raw.detail], null),
+      progressSummary: pickFirst([raw.progressSummary, raw.progress_summary], null),
+      resumeMode: pickFirst([raw.resumeMode, raw.resume_mode], null),
+      resumePrompt: pickFirst([raw.resumePrompt, raw.resume_prompt], null),
+      tasks: extractArray(raw, ['tasks']).map(normalizeThreadPauseTask),
+      metadata: raw.metadata || {},
+      createdAt: normalizeTimestamp(pickFirst([raw.createdAt, raw.created_at], null)),
+      updatedAt: normalizeTimestamp(pickFirst([raw.updatedAt, raw.updated_at], null)),
+    };
+  }
+
   function normalizeThreadSummary(raw, project, index) {
     raw = raw || {};
     var id = pickFirst([raw.id, raw.threadId], 'thread-' + index);
@@ -738,6 +778,8 @@
         toolArgs: toolArgs,
         resultData: resultData,
         resultMeta: resultMeta,
+        modelName: pickFirst([raw.modelName, raw.model_name, raw.modelId, raw.model_id, raw.model], null),
+        modelProvider: pickFirst([raw.modelProvider, raw.model_provider, raw.providerName, raw.provider_name, raw.provider], null),
         resultContentType: resultContentType,
         artifactKey: resultData && !inlineDisplay
           ? buildLegacyArtifactKey(raw, index, resultContentType)
@@ -820,6 +862,7 @@
       persona: normalizeThreadPersona(raw.persona || thread.persona),
       personaRelease: raw.personaRelease || thread.personaRelease || null,
       personaTestRun: raw.personaTestRun || thread.personaTestRun || null,
+      activePause: normalizeThreadPause(raw.activePause || raw.active_pause || thread.activePause || thread.active_pause || null),
       parentThreadId: pickFirst([
         thread.parentThreadId,
         thread.parent_thread_id,
@@ -1625,6 +1668,33 @@
     ]).then(normalizeThreadDetail);
   }
 
+  function continueThreadPause(threadId, threadPauseId, note) {
+    return requestVariants('POST', [
+      {
+        path: '/threads/' + encodeURIComponent(threadId) + '/pauses/' + encodeURIComponent(threadPauseId) + '/continue',
+        body: note ? { note: String(note) } : {},
+      },
+    ]);
+  }
+
+  function checkThreadPause(threadId, threadPauseId) {
+    return requestVariants('POST', [
+      {
+        path: '/threads/' + encodeURIComponent(threadId) + '/pauses/' + encodeURIComponent(threadPauseId) + '/check',
+        body: {},
+      },
+    ]).then(function (raw) {
+      raw = raw || {};
+      return {
+        threadPause: normalizeThreadPause(raw.threadPause || raw.thread_pause || null),
+        activePause: normalizeThreadPause(raw.activePause || raw.active_pause || null),
+        resumeMode: pickFirst([raw.resumeMode, raw.resume_mode], null),
+        didResume: !!pickFirst([raw.didResume, raw.did_resume], false),
+        targetThreadId: pickFirst([raw.targetThreadId, raw.target_thread_id], null),
+      };
+    });
+  }
+
   function createThread(projectId, title, personaKey) {
     var threadTitle = String(title || 'New chat').trim() || 'New chat';
     return requestVariants('POST', [
@@ -2025,6 +2095,7 @@
     normalizeThreadDetail: normalizeThreadDetail,
     normalizeRuntimeTranscript: normalizeRuntimeTranscript,
     normalizeRuntimeUiMessage: normalizeRuntimeUiMessage,
+    normalizeThreadPause: normalizeThreadPause,
     normalizeThreadSummary: normalizeThreadSummary,
     normalizeMessage: normalizeMessage,
     request: request,
@@ -2039,6 +2110,8 @@
     refreshDesktopRelay: refreshDesktopRelay,
     registerDesktopRelay: registerDesktopRelay,
     runSmokeTest: runSmokeTest,
+    continueThreadPause: continueThreadPause,
+    checkThreadPause: checkThreadPause,
     sendMessage: sendMessage,
     sendMagicLink: sendMagicLink,
     shouldPreviewCompanionPayload: shouldPreviewCompanionPayload,

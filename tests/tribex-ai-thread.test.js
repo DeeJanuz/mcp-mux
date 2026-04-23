@@ -197,6 +197,261 @@ describe('tribex-ai-thread', function () {
     expect(document.querySelector('.ai-run-answer').textContent).toContain('Hi.');
   });
 
+  it('renders a pause card with authenticate and continue actions', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Paused Thread',
+            activePause: {
+              id: 'pause-1',
+              status: 'READY',
+              title: 'Authenticate user@gmail.com to continue',
+              detail: 'The agent needs mailbox access before it can continue.',
+              progressSummary: 'Authentication finished for user@gmail.com. Continue the paused thread when ready.',
+              tasks: [
+                {
+                  id: 'task-1',
+                  title: 'Authenticate user@gmail.com',
+                  detail: 'Complete Gmail sign-in for user@gmail.com.',
+                  status: 'COMPLETED',
+                  actionLabel: 'Authenticate',
+                  actionUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+                },
+              ],
+            },
+            runs: [],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      checkThreadPause: vi.fn(function () { return Promise.resolve(null); }),
+      continueThreadPause: vi.fn(function () { return Promise.resolve(true); }),
+      schedulePauseCheckBurst: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+    vi.useFakeTimers();
+    loadThread();
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-thread-pause-card')).not.toBeNull();
+    expect(document.querySelector('.ai-thread-pause-card').textContent).toContain('Authenticate user@gmail.com to continue');
+    expect(document.querySelector('.ai-thread-status-row').textContent).toContain('Ready To Continue');
+    expect(document.querySelector('.ai-thread-bottom-blocker .ai-thread-pause-card')).not.toBeNull();
+    expect(document.querySelector('.ai-thread-bottom-blocker').compareDocumentPosition(document.querySelector('.ai-composer-shell')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    var buttons = Array.from(document.querySelectorAll('.ai-thread-pause-card button'));
+    expect(buttons.map(function (button) { return button.textContent; })).toContain('Check status');
+    expect(buttons.map(function (button) { return button.textContent; })).toContain('Continue');
+
+    var authenticateLink = document.querySelector('.ai-thread-pause-card a.ai-secondary-btn');
+    expect(authenticateLink).not.toBeNull();
+    expect(authenticateLink.textContent).toBe('Authenticate');
+    expect(authenticateLink.getAttribute('href')).toBe('https://accounts.google.com/o/oauth2/v2/auth');
+    expect(authenticateLink.getAttribute('target')).toBe('_blank');
+    expect(authenticateLink.getAttribute('rel')).toBe('noopener noreferrer');
+    authenticateLink.click();
+    expect(window.__tribexAiState.schedulePauseCheckBurst).toHaveBeenCalledWith('thread-1', 'pause-1');
+    expect(window.__tribexAiState.checkThreadPause).not.toHaveBeenCalled();
+
+    buttons.find(function (button) { return button.textContent === 'Continue'; }).click();
+    expect(window.__tribexAiState.continueThreadPause).toHaveBeenCalledWith('thread-1', 'pause-1');
+  });
+
+  it('renders each work item as a collapsed friendly tool request', function () {
+    var longObjective = 'Inspect the runtime payload and produce a concise operator summary. '.repeat(10)
+      + 'Final raw payload marker.';
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Friendly Work Items',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Run tools', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: { id: 'a1', content: 'Done.', createdAt: '2026-04-14T20:00:08.000Z', isStreaming: false },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-14T20:00:01.000Z',
+                  endedAt: '2026-04-14T20:00:07.000Z',
+                  items: [
+                    {
+                      id: 'activity-1',
+                      toolName: 'subagent_dispatch',
+                      title: 'Subagent Dispatch',
+                      status: 'completed',
+                      toolArgs: {
+                        objective: longObjective,
+                        cwd: '/workspace/app',
+                        meta: {
+                          modelName: 'gpt-5.4',
+                          provider: 'OpenAI',
+                        },
+                      },
+                      createdAt: '2026-04-14T20:00:01.000Z',
+                      updatedAt: '2026-04-14T20:00:03.000Z',
+                    },
+                    {
+                      id: 'activity-2',
+                      toolName: 'rich_content',
+                      resultContentType: 'rich_content',
+                      title: 'Push Content',
+                      status: 'completed',
+                      resultData: {
+                        title: 'Architecture Brief',
+                        body: 'Rendered inline.',
+                      },
+                      createdAt: '2026-04-14T20:00:04.000Z',
+                      updatedAt: '2026-04-14T20:00:05.000Z',
+                      artifactKey: 'artifact-rich',
+                    },
+                    {
+                      id: 'activity-3',
+                      toolName: 'structured_data',
+                      resultContentType: 'structured_data',
+                      title: 'Review Table',
+                      status: 'completed',
+                      reviewRequired: true,
+                      resultData: {
+                        tables: [{
+                          id: 't1',
+                          name: 'Changes',
+                          columns: [{ id: 'name', name: 'Name' }, { id: 'status', name: 'Status' }],
+                          rows: [{ id: 'r1', cells: {}, children: [] }],
+                        }],
+                      },
+                      createdAt: '2026-04-14T20:00:06.000Z',
+                      updatedAt: '2026-04-14T20:00:07.000Z',
+                    },
+                  ],
+                },
+              },
+            ],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      openThreadArtifact: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    var workSession = document.querySelector('.ai-work-session');
+    expect(workSession).not.toBeNull();
+    expect(workSession.open).toBe(false);
+    workSession.open = true;
+    workSession.dispatchEvent(new Event('toggle'));
+
+    var items = document.querySelectorAll('.ai-work-item');
+    expect(items).toHaveLength(3);
+    expect(items[0].tagName).toBe('DETAILS');
+    expect(items[0].open).toBe(false);
+    expect(items[0].querySelector('.ai-work-item-model').textContent).toBe('OpenAI / gpt-5.4');
+    expect(items[0].textContent).toContain('Objective');
+    expect(items[0].textContent).toContain('/workspace/app');
+    var payloads = document.querySelectorAll('.ai-work-payload');
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0].open).toBe(false);
+    expect(payloads[0].querySelector('.ai-work-payload-summary').textContent).toContain('Payload');
+    expect(payloads[0].querySelector('.ai-work-payload-summary').textContent).toContain('3 fields');
+    expect(payloads[0].querySelector('code').textContent).toContain('Final raw payload marker.');
+    expect(items[1].textContent).toContain('Title: Architecture Brief');
+    expect(items[1].textContent).toContain('16 characters');
+    expect(items[2].textContent).toContain('1 table, 1 row, 2 columns, review required');
+
+    document.querySelector('.ai-work-item-link').click();
+    expect(window.__tribexAiState.openThreadArtifact).toHaveBeenCalledWith('thread-1', 'artifact-rich');
+  });
+
+  it('keeps nested work item open state across re-renders', function () {
+    window.__tribexAiState = {
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Daenon Test' },
+          workspace: { name: 'Smoke Workspace' },
+          project: { name: 'Smoke Project' },
+          thread: {
+            id: 'thread-1',
+            title: 'Stable Work Item',
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Run one tool', createdAt: '2026-04-14T20:00:00.000Z' },
+                answer: { id: 'a1', content: 'Done.', createdAt: '2026-04-14T20:00:04.000Z', isStreaming: false },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  startedAt: '2026-04-14T20:00:01.000Z',
+                  endedAt: '2026-04-14T20:00:03.000Z',
+                  items: [{
+                    id: 'activity-1',
+                    toolName: 'subagent_dispatch',
+                    title: 'Subagent Dispatch',
+                    status: 'completed',
+                    toolArgs: { objective: 'Summarize the work.' },
+                    createdAt: '2026-04-14T20:00:01.000Z',
+                    updatedAt: '2026-04-14T20:00:03.000Z',
+                  }],
+                },
+              },
+            ],
+            messages: [],
+          },
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    loadThread();
+    renderThread('thread-1');
+
+    var workSession = document.querySelector('.ai-work-session');
+    workSession.open = true;
+    workSession.dispatchEvent(new Event('toggle'));
+    var item = document.querySelector('.ai-work-item');
+    item.open = true;
+    item.dispatchEvent(new Event('toggle'));
+    var payload = document.querySelector('.ai-work-payload');
+    payload.open = true;
+    payload.dispatchEvent(new Event('toggle'));
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-work-session').open).toBe(true);
+    expect(document.querySelector('.ai-work-item').open).toBe(true);
+    expect(document.querySelector('.ai-work-payload').open).toBe(true);
+  });
+
   it('only shows the raw response toggle in dev mode and swaps assistant markdown for raw text', function () {
     window.__MCPVIEWS_DEV__ = true;
     window.__tribexAiState = {

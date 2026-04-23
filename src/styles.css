@@ -1862,11 +1862,15 @@ html[data-theme] .collapsible-body {
 .ai-secondary-btn,
 .ai-inline-alert-btn,
 .ai-shell-recovery-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 12px;
   border: 1px solid var(--border-default);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  text-decoration: none;
   transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
 }
 
@@ -2170,6 +2174,16 @@ html[data-theme] .collapsible-body {
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   margin-bottom: 18px;
+}
+
+.ai-thread-bottom-blocker {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 18px;
+}
+
+.ai-thread-bottom-blocker:empty {
+  display: none;
 }
 
 .ai-chat-log {
@@ -2969,11 +2983,21 @@ html[data-theme] .collapsible-body {
 }
 
 .ai-work-item {
-  padding: 14px 16px;
+  padding: 0;
 }
 
 .ai-work-item + .ai-work-item {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.ai-work-item-header {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+}
+
+.ai-work-item-header::-webkit-details-marker {
+  display: none;
 }
 
 .ai-work-item-header,
@@ -2999,9 +3023,21 @@ html[data-theme] .collapsible-body {
 }
 
 .ai-work-item-status,
-.ai-work-item-time {
+.ai-work-item-time,
+.ai-work-item-model {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.ai-work-item-model {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-work-item-body {
+  padding: 0 16px 14px;
 }
 
 .ai-work-item-detail {
@@ -3009,6 +3045,85 @@ html[data-theme] .collapsible-body {
   white-space: pre-wrap;
   color: var(--text-secondary);
   line-height: 1.55;
+}
+
+.ai-work-item-fields {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.ai-work-item-field {
+  display: grid;
+  grid-template-columns: minmax(96px, 150px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.ai-work-item-field dt,
+.ai-work-item-field dd {
+  margin: 0;
+}
+
+.ai-work-item-field dt {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-work-item-field dd {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ai-work-payload {
+  margin-top: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ai-work-payload-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-work-payload-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-work-payload-count {
+  color: var(--text-tertiary);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.ai-work-payload-body {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 10px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .ai-work-item-actions,
@@ -3427,6 +3542,15 @@ html[data-theme] .collapsible-body {
   .diff-sidebar-panel { min-width: unset; }
   .diff-sidebar-inner { position: static; }
   .diff-card { position: static !important; margin-bottom: 8px; }
+  .ai-work-item-header,
+  .ai-work-item-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .ai-work-item-field {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
 }
 
 /* === Drawer Stack (cross-renderer invocation) === */
@@ -4264,6 +4388,7 @@ body.ai-mode-session-active .ai-work-session-count,
 body.ai-mode-session-active .ai-work-item-kicker,
 body.ai-mode-session-active .ai-work-item-status,
 body.ai-mode-session-active .ai-work-item-time,
+body.ai-mode-session-active .ai-work-item-model,
 body.ai-mode-session-active .ai-run-answer-time,
 body.ai-mode-session-active .ai-result-reopen-body {
   color: var(--ai-text-soft);
@@ -4287,6 +4412,28 @@ body.ai-mode-session-active .ai-result-reopen-copy strong {
 
 body.ai-mode-session-active .ai-work-item-detail {
   color: var(--ai-text-soft);
+}
+
+body.ai-mode-session-active .ai-work-item-field dt {
+  color: var(--ai-text-faint);
+}
+
+body.ai-mode-session-active .ai-work-item-field dd {
+  color: var(--ai-text-soft);
+}
+
+body.ai-mode-session-active .ai-work-payload {
+  border-color: var(--ai-card-border);
+  background: color-mix(in srgb, var(--ai-thread-surface-strong) 72%, transparent);
+}
+
+body.ai-mode-session-active .ai-work-payload-summary,
+body.ai-mode-session-active .ai-work-payload-body {
+  color: var(--ai-text-soft);
+}
+
+body.ai-mode-session-active .ai-work-payload-count {
+  color: var(--ai-text-faint);
 }
 
 body.ai-mode-session-active .ai-thread-result-chip {
@@ -4323,6 +4470,221 @@ body.ai-mode-session-active .ai-work-session-status-failed {
 body.ai-mode-session-active .ai-work-session-status-needs-approval {
   background: rgba(255, 184, 77, 0.18);
   color: #ffd08a;
+}
+
+.ai-thread-pause-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--border-default) 70%, rgba(194, 115, 31, 0.24));
+  border-radius: 16px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-surface) 94%, rgba(255, 214, 153, 0.08)),
+    color-mix(in srgb, var(--bg-surface-inset, var(--bg-surface)) 96%, rgba(255, 255, 255, 0.04))
+  );
+  box-shadow: 0 10px 28px rgba(89, 54, 12, 0.08);
+}
+
+.ai-thread-pause-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-thread-pause-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: rgba(194, 115, 31, 0.12);
+  color: #8a4a0c;
+}
+
+.ai-thread-pause-badge-ready {
+  background: rgba(34, 139, 34, 0.12);
+  color: #1c6b1c;
+}
+
+.ai-thread-pause-detail,
+.ai-thread-pause-progress {
+  margin: 0;
+  color: var(--text-secondary, #4f5b66);
+}
+
+.ai-thread-pause-progress {
+  font-weight: 600;
+  color: var(--text-primary, #18212a);
+}
+
+.ai-thread-pause-tasks {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-thread-pause-task {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-surface) 90%, rgba(255, 255, 255, 0.18));
+  border: 1px solid color-mix(in srgb, var(--border-default) 72%, rgba(194, 115, 31, 0.18));
+}
+
+.ai-thread-pause-task-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-thread-pause-task-detail,
+.ai-thread-pause-task-failure {
+  font-size: 13px;
+  color: var(--text-secondary, #4f5b66);
+}
+
+.ai-thread-pause-task-failure {
+  color: #b54708;
+}
+
+.ai-thread-pause-task-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.ai-thread-pause-task-status {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #8a4a0c;
+}
+
+.ai-thread-pause-task-status-completed {
+  color: #1c6b1c;
+}
+
+.ai-thread-pause-task-status-failed {
+  color: #b42318;
+}
+
+.ai-thread-pause-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.ai-thread-pause-action-link,
+.ai-thread-pause-footer .ai-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  text-decoration: none;
+}
+
+body.ai-mode-session-active .ai-thread-pause-card {
+  border-color: color-mix(in srgb, var(--ai-card-border) 78%, rgba(255, 184, 77, 0.2));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--ai-thread-surface) 94%, rgba(255, 184, 77, 0.06)),
+    color-mix(in srgb, var(--ai-thread-surface-strong) 96%, transparent)
+  );
+  box-shadow: none;
+}
+
+[data-theme="dark"] .ai-thread-pause-card {
+  border-color: rgba(112, 133, 194, 0.3);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-surface) 94%, rgba(255, 184, 77, 0.05)),
+    color-mix(in srgb, var(--bg-surface-inset, var(--bg-surface)) 97%, rgba(255, 255, 255, 0.02))
+  );
+  box-shadow: none;
+}
+
+[data-theme="dark"] .ai-thread-pause-card strong,
+[data-theme="dark"] .ai-thread-pause-progress {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .ai-thread-pause-detail,
+[data-theme="dark"] .ai-thread-pause-task-detail {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .ai-thread-pause-badge {
+  background: rgba(255, 184, 77, 0.14);
+  color: #ffd08a;
+}
+
+[data-theme="dark"] .ai-thread-pause-badge-ready {
+  background: rgba(108, 214, 143, 0.14);
+  color: #92f0b1;
+}
+
+[data-theme="dark"] .ai-thread-pause-task {
+  background: color-mix(in srgb, var(--bg-surface-inset, var(--bg-surface)) 96%, rgba(255, 255, 255, 0.02));
+  border-color: rgba(112, 133, 194, 0.24);
+}
+
+[data-theme="dark"] .ai-thread-pause-task-status {
+  color: #ffd08a;
+}
+
+[data-theme="dark"] .ai-thread-pause-task-status-completed {
+  color: #92f0b1;
+}
+
+[data-theme="dark"] .ai-thread-pause-task-status-failed,
+[data-theme="dark"] .ai-thread-pause-task-failure {
+  color: #ffafaf;
+}
+
+body.ai-mode-session-active .ai-thread-pause-card strong,
+body.ai-mode-session-active .ai-thread-pause-progress {
+  color: var(--ai-text-strong);
+}
+
+body.ai-mode-session-active .ai-thread-pause-detail,
+body.ai-mode-session-active .ai-thread-pause-task-detail {
+  color: var(--ai-text-soft);
+}
+
+body.ai-mode-session-active .ai-thread-pause-badge {
+  background: rgba(255, 184, 77, 0.14);
+  color: #ffd08a;
+}
+
+body.ai-mode-session-active .ai-thread-pause-badge-ready {
+  background: rgba(108, 214, 143, 0.14);
+  color: #92f0b1;
+}
+
+body.ai-mode-session-active .ai-thread-pause-task {
+  background: color-mix(in srgb, var(--ai-thread-surface-strong) 82%, transparent);
+  border-color: var(--ai-card-border);
+}
+
+body.ai-mode-session-active .ai-thread-pause-task-status {
+  color: #ffd08a;
+}
+
+body.ai-mode-session-active .ai-thread-pause-task-status-completed {
+  color: #92f0b1;
+}
+
+body.ai-mode-session-active .ai-thread-pause-task-status-failed,
+body.ai-mode-session-active .ai-thread-pause-task-failure {
+  color: #ffafaf;
 }
 
 body.ai-mode-session-active .ai-run-answer {

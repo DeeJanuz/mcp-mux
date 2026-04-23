@@ -36,6 +36,7 @@
       api.bindStreamListener();
       api.bindDesktopRelayListener();
       api.bindDesktopPresenceListener();
+      bindWindowResumeListener();
 
       var epoch = nextNavigatorEpoch();
       state.loadingNavigator = true;
@@ -216,6 +217,146 @@
       return 'Smoke Test ' + new Date().toISOString().slice(0, 16).replace('T', ' ');
     }
 
+    function clearPausePollingTimer() {
+      if (context.pausePolling && context.pausePolling.timeoutId) {
+        window.clearTimeout(context.pausePolling.timeoutId);
+        context.pausePolling.timeoutId = null;
+      }
+    }
+
+    function clearPauseBurstTimers() {
+      if (!context.pausePolling || !Array.isArray(context.pausePolling.burstTimeoutIds)) return;
+      context.pausePolling.burstTimeoutIds.forEach(function (timeoutId) {
+        window.clearTimeout(timeoutId);
+      });
+      context.pausePolling.burstTimeoutIds = [];
+    }
+
+    function stopPausePolling() {
+      clearPausePollingTimer();
+      clearPauseBurstTimers();
+      if (!context.pausePolling) return;
+      context.pausePolling.threadId = null;
+      context.pausePolling.intervalMs = 0;
+      context.pausePolling.attempt = 0;
+    }
+
+    function resolvePausePollDelay(attempt) {
+      var delays = [4000, 6500, 10000, 15000];
+      return delays[Math.min(Math.max(Number(attempt) || 0, 0), delays.length - 1)];
+    }
+
+    function refreshPausedActiveThread(options) {
+      if (!context.activeSession || !context.activeSession.threadId) return Promise.resolve(null);
+      var threadId = context.activeSession.threadId;
+      var thread = api.getThread(threadId);
+      if (!thread || !thread.activePause) return Promise.resolve(null);
+      return checkThreadPause(threadId, thread.activePause.id, options).catch(function () {
+        return null;
+      });
+    }
+
+    function schedulePausePolling(threadId, delayMs) {
+      if (!threadId || !context.pausePolling) return;
+      clearPausePollingTimer();
+      context.pausePolling.threadId = threadId;
+      context.pausePolling.intervalMs = delayMs;
+      context.pausePolling.timeoutId = window.setTimeout(function () {
+        context.pausePolling.timeoutId = null;
+        var thread = api.getThread(threadId);
+        if (
+          !thread ||
+          !thread.activePause ||
+          !context.activeSession ||
+          context.activeSession.threadId !== threadId ||
+          String(thread.activePause.status || '').toUpperCase() !== 'BLOCKED'
+        ) {
+          stopPausePolling();
+          return;
+        }
+        Promise.resolve(checkThreadPause(threadId, thread.activePause.id, {
+          silent: true,
+          source: 'poll',
+        }))
+          .catch(function () {
+            return null;
+          })
+          .finally(function () {
+            var current = api.getThread(threadId);
+            if (
+              current &&
+              current.activePause &&
+              context.activeSession &&
+              context.activeSession.threadId === threadId &&
+              String(current.activePause.status || '').toUpperCase() === 'BLOCKED'
+            ) {
+              context.pausePolling.attempt += 1;
+              schedulePausePolling(threadId, resolvePausePollDelay(context.pausePolling.attempt));
+            } else {
+              stopPausePolling();
+            }
+          });
+      }, delayMs);
+    }
+
+    function schedulePauseCheckBurst(threadId, threadPauseId) {
+      if (!threadId || !threadPauseId || !context.pausePolling) return;
+      clearPauseBurstTimers();
+      [1000, 2500, 5000, 9000, 14000].forEach(function (delay) {
+        var timeoutId = window.setTimeout(function () {
+          var thread = api.getThread(threadId);
+          var pauseId = thread && thread.activePause ? thread.activePause.id : threadPauseId;
+          if (api.isContinuedPause && api.isContinuedPause(threadId, { id: pauseId })) return;
+          if (!pauseId) return;
+          Promise.resolve(checkThreadPause(threadId, pauseId, {
+            silent: true,
+            source: 'burst',
+          })).catch(function () {
+            return null;
+          });
+        }, delay);
+        context.pausePolling.burstTimeoutIds.push(timeoutId);
+      });
+    }
+
+    function bindPauseSignalListener() {
+      if (context.pauseSignalListenerBound) return;
+      context.pauseSignalListenerBound = true;
+
+      if (typeof BroadcastChannel !== 'undefined') {
+        try {
+          context.pauseSignalChannel = new BroadcastChannel('tribex-ai-thread-pause');
+          context.pauseSignalChannel.addEventListener('message', function () {
+            refreshPausedActiveThread({ silent: true, source: 'broadcast' });
+          });
+        } catch (error) {
+          context.pauseSignalChannel = null;
+        }
+      }
+
+      window.addEventListener('storage', function (event) {
+        if (event && event.key === 'tribex-ai-thread-pause') {
+          refreshPausedActiveThread({ silent: true, source: 'storage' });
+        }
+      });
+    }
+
+    function bindWindowResumeListener() {
+      if (context.windowResumeListenerBound) return;
+      context.windowResumeListenerBound = true;
+      bindPauseSignalListener();
+
+      window.addEventListener('focus', function () {
+        refreshPausedActiveThread({ silent: true, source: 'focus' });
+      });
+
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') {
+          refreshPausedActiveThread({ silent: true, source: 'visibility' });
+        }
+      });
+    }
+
     function ensureDesktopRelay(threadId, options) {
       var thread = api.getThread(threadId);
       if (!thread || !thread.workspaceId || !window.__tribexAiClient) {
@@ -374,8 +515,24 @@
             api.mergeThreadDetail(detail);
             var merged = api.getThread(threadId);
             if (merged) {
+              if (merged.activePause && api.filterContinuedPause) {
+                merged.activePause = api.filterContinuedPause(threadId, merged.activePause);
+              }
               merged.optimistic = false;
-              merged.rowState = Object.keys(state.pendingThreadIds).indexOf(threadId) >= 0 ? 'pending' : null;
+              if (Object.keys(state.pendingThreadIds).indexOf(threadId) >= 0) {
+                merged.rowState = 'pending';
+              } else if (merged.activePause) {
+                if (!merged.activePause.resumeMode) {
+                  merged.activePause.resumeMode = 'MANUAL';
+                }
+                var pauseStatus = String(merged.activePause.status || '').toUpperCase();
+                merged.rowState = pauseStatus === 'READY'
+                  ? 'ready-to-continue'
+                  : 'waiting-on-user';
+              } else {
+                merged.rowState = null;
+                merged.pauseCheckState = null;
+              }
               merged.syncing = false;
               merged.lastHydratedAt = api.nowIso();
             }
@@ -395,7 +552,18 @@
                   if (runtimeDetail && runtimeDetail.id) {
                     api.mergeThreadDetail(runtimeDetail);
                     var hydrated = api.getThread(threadId);
-                    if (hydrated) hydrated.lastHydratedAt = api.nowIso();
+                    if (hydrated) {
+                      if (hydrated.activePause && api.filterContinuedPause) {
+                        hydrated.activePause = api.filterContinuedPause(threadId, hydrated.activePause);
+                      }
+                      if (!hydrated.activePause && (
+                        hydrated.rowState === 'waiting-on-user' ||
+                        hydrated.rowState === 'ready-to-continue'
+                      )) {
+                        hydrated.rowState = null;
+                      }
+                      hydrated.lastHydratedAt = api.nowIso();
+                    }
                   }
                   return detail;
                 });
@@ -841,17 +1009,30 @@
             api.applySendResult(threadId, turn);
           }
           if (turn && turn.done && typeof turn.done.then === 'function') {
-            turn.done.catch(function (error) {
-              var message = error && error.message ? error.message : String(error);
-              var wasInterrupted = typeof api.shouldSilenceInterruptedFailure === 'function'
-                ? api.shouldSilenceInterruptedFailure(threadId, turn.turnId || null)
-                : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);
-              api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
-                turnId: turn.turnId || turnId,
-                silent: wasInterrupted,
+            turn.done
+              .then(function () {
+                if (!busy) {
+                  delete state.pendingThreadIds[threadId];
+                }
+                var currentThread = api.getThread(threadId);
+                if (currentThread) {
+                  currentThread.rowState = null;
+                }
+                return refreshThread(threadId, true).catch(function () {
+                  return null;
+                });
+              })
+              .catch(function (error) {
+                var message = error && error.message ? error.message : String(error);
+                var wasInterrupted = typeof api.shouldSilenceInterruptedFailure === 'function'
+                  ? api.shouldSilenceInterruptedFailure(threadId, turn.turnId || null)
+                  : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);
+                api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
+                  turnId: turn.turnId || turnId,
+                  silent: wasInterrupted,
+                });
+                api.notify();
               });
-              api.notify();
-            });
           } else if (!busy) {
             delete state.pendingThreadIds[threadId];
             var currentThread = api.getThread(threadId);
@@ -1761,6 +1942,151 @@
       return refreshThread(context.activeSession.threadId, true);
     }
 
+    function syncPausePolling() {
+      var threadId = context.activeSession && context.activeSession.threadId
+        ? context.activeSession.threadId
+        : null;
+      var thread = threadId ? api.getThread(threadId) : null;
+      var activePause = thread && thread.activePause ? thread.activePause : null;
+      if (
+        !threadId ||
+        !activePause ||
+        String(activePause.status || '').toUpperCase() !== 'BLOCKED'
+      ) {
+        stopPausePolling();
+        return;
+      }
+      if (thread.pauseCheckState === 'checking') {
+        return;
+      }
+      if (
+        context.pausePolling &&
+        context.pausePolling.threadId === threadId &&
+        context.pausePolling.timeoutId
+      ) {
+        return;
+      }
+      if (context.pausePolling && context.pausePolling.threadId !== threadId) {
+        stopPausePolling();
+      }
+      schedulePausePolling(threadId, resolvePausePollDelay(context.pausePolling ? context.pausePolling.attempt : 0));
+    }
+
+    function checkThreadPause(threadId, threadPauseId, options) {
+      options = options || {};
+      if (!threadId || !threadPauseId || !window.__tribexAiClient || typeof window.__tribexAiClient.checkThreadPause !== 'function') {
+        return Promise.resolve(null);
+      }
+      state.threadErrors[threadId] = null;
+      var thread = api.getThread(threadId);
+      if (thread) {
+        if (!options.silent) {
+          thread.pauseCheckState = 'checking';
+        }
+      }
+      if (!options.silent) {
+        api.notify();
+      }
+
+      return window.__tribexAiClient.checkThreadPause(threadId, threadPauseId)
+        .then(function (result) {
+          var currentThread = api.getThread(threadId);
+          var activePause = result && result.activePause ? result.activePause : null;
+          if (activePause && api.filterContinuedPause) {
+            activePause = api.filterContinuedPause(threadId, activePause);
+          }
+          if (activePause && !activePause.resumeMode) {
+            activePause.resumeMode = result && result.resumeMode ? result.resumeMode : 'MANUAL';
+          }
+          if (currentThread) {
+            currentThread.pauseCheckState = null;
+            currentThread.activePause = activePause;
+            currentThread.lastHydratedAt = api.nowIso();
+            if (activePause) {
+              currentThread.rowState = String(activePause.status || '').toUpperCase() === 'READY'
+                ? 'ready-to-continue'
+                : 'waiting-on-user';
+            } else if (result && result.didResume) {
+              currentThread.rowState = 'pending';
+            } else if (
+              currentThread.rowState === 'waiting-on-user' ||
+              currentThread.rowState === 'ready-to-continue'
+            ) {
+              currentThread.rowState = null;
+            }
+          }
+          if (result && result.didResume) {
+            stopPausePolling();
+            refreshThread(threadId, true).catch(function () {
+              return null;
+            });
+          } else if (!activePause || String(activePause.status || '').toUpperCase() !== 'BLOCKED') {
+            stopPausePolling();
+          } else if (!(options && options.source === 'poll') && context.pausePolling) {
+            context.pausePolling.attempt = 0;
+          }
+          api.notify();
+          return result;
+        })
+        .catch(function (error) {
+          state.threadErrors[threadId] = error && error.message ? error.message : String(error);
+          var failedThread = api.getThread(threadId);
+          if (failedThread) {
+            failedThread.pauseCheckState = null;
+          }
+          api.notify();
+          throw error;
+        });
+    }
+
+    function continueThreadPause(threadId, threadPauseId, note) {
+      if (!threadId || !threadPauseId || !window.__tribexAiClient || typeof window.__tribexAiClient.continueThreadPause !== 'function') {
+        return Promise.resolve(null);
+      }
+      stopPausePolling();
+      state.threadErrors[threadId] = null;
+      var thread = api.getThread(threadId);
+      var previousPause = thread && thread.activePause ? Object.assign({}, thread.activePause) : null;
+      if (api.markPauseContinued) {
+        api.markPauseContinued(threadId, threadPauseId);
+      }
+      if (thread) {
+        thread.rowState = 'pending';
+        thread.pauseCheckState = null;
+        thread.activePause = null;
+      }
+      api.notify();
+      return window.__tribexAiClient.continueThreadPause(threadId, threadPauseId, note || '')
+        .then(function (result) {
+          var detail = (state.threadDetails && state.threadDetails[threadId])
+            || (state.threadEntitiesById && state.threadEntitiesById[threadId])
+            || null;
+          if (detail) {
+            detail.activePause = null;
+          }
+          var currentThread = api.getThread(threadId);
+          if (currentThread) {
+            currentThread.rowState = 'pending';
+          }
+          refreshThread(threadId, true).catch(function () {});
+          api.notify();
+          return result;
+        })
+        .catch(function (error) {
+          if (api.clearPauseContinued) {
+            api.clearPauseContinued(threadId, threadPauseId);
+          }
+          state.threadErrors[threadId] = error && error.message ? error.message : String(error);
+          var failedThread = api.getThread(threadId);
+          if (failedThread) {
+            failedThread.activePause = previousPause;
+            failedThread.rowState = 'ready-to-continue';
+          }
+          api.notify();
+          throw error;
+        });
+    }
+
     api.refreshNavigator = refreshNavigator;
     api.ensureCompanion = ensureCompanion;
     api.buildSmokeThreadTitle = buildSmokeThreadTitle;
@@ -1790,7 +2116,11 @@
     api.sendMagicLink = sendMagicLink;
     api.verifyMagicLink = verifyMagicLink;
     api.clearConnection = clearConnection;
+    api.checkThreadPause = checkThreadPause;
     api.refreshActiveThread = refreshActiveThread;
+    api.continueThreadPause = continueThreadPause;
+    api.schedulePauseCheckBurst = schedulePauseCheckBurst;
+    api.syncPausePolling = syncPausePolling;
     api.openWorkspaceFileBrowser = openWorkspaceFileBrowser;
     api.closeWorkspaceFileBrowser = closeWorkspaceFileBrowser;
     api.toggleWorkspaceFileBrowser = toggleWorkspaceFileBrowser;

@@ -18,8 +18,37 @@ pub fn get_sessions(state: State<Arc<AppState>>) -> Vec<PreviewSession> {
     sessions.get_all()
 }
 
+async fn post_backend_review_callback(
+    client: reqwest::Client,
+    callback: serde_json::Value,
+    decision: &ReviewDecision,
+) -> Result<(), String> {
+    let Some(url) = callback.get("url").and_then(|value| value.as_str()) else {
+        return Ok(());
+    };
+    let Some(token) = callback.get("token").and_then(|value| value.as_str()) else {
+        return Err("Backend review callback is missing a token.".to_string());
+    };
+    let response = client
+        .post(url)
+        .bearer_auth(token)
+        .json(decision)
+        .send()
+        .await
+        .map_err(|err| format!("Failed to submit backend review callback: {}", err))?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "Backend review callback returned HTTP {}: {}",
+            status, body
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
-pub fn submit_decision(
+pub async fn submit_decision(
     session_id: String,
     decision: String,
     operation_decisions: Option<HashMap<String, String>>,
@@ -28,9 +57,38 @@ pub fn submit_decision(
     additions: Option<serde_json::Value>,
     suggestion_decisions: Option<HashMap<String, serde_json::Value>>,
     table_decisions: Option<HashMap<String, serde_json::Value>>,
-    state: State<Arc<AppState>>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    // Update session state
+    let backend_callback = {
+        let sessions = state.sessions.lock().unwrap();
+        sessions
+            .get(&session_id)
+            .and_then(|session| session.meta.get("backendCallback").cloned())
+    };
+
+    let overall_decision =
+        if operation_decisions.is_some() && decision != "accept" && decision != "reject" {
+            "partial".to_string()
+        } else {
+            decision.clone()
+        };
+
+    let review_decision = ReviewDecision {
+        session_id: session_id.clone(),
+        status: "decision_received".to_string(),
+        decision: Some(overall_decision),
+        operation_decisions: operation_decisions.clone(),
+        comments: comments.clone(),
+        modifications: modifications.clone(),
+        additions: additions.clone(),
+        suggestion_decisions: suggestion_decisions.clone(),
+        table_decisions: table_decisions.clone(),
+    };
+
+    if let Some(callback) = backend_callback {
+        post_backend_review_callback(state.http_client.clone(), callback, &review_decision).await?;
+    }
+
     {
         let mut sessions = state.sessions.lock().unwrap();
         if let Some(session) = sessions.get_mut(&session_id) {
@@ -43,25 +101,6 @@ pub fn submit_decision(
             session.operation_decisions = operation_decisions.clone();
         }
     }
-
-    // Resolve the pending review (unblocks the HTTP response)
-    let overall_decision = if operation_decisions.is_some() && decision != "accept" && decision != "reject" {
-        "partial".to_string()
-    } else {
-        decision
-    };
-
-    let review_decision = ReviewDecision {
-        session_id: session_id.clone(),
-        status: "decision_received".to_string(),
-        decision: Some(overall_decision),
-        operation_decisions,
-        comments,
-        modifications,
-        additions,
-        suggestion_decisions,
-        table_decisions,
-    };
 
     let mut reviews = state.reviews.lock().unwrap();
     reviews.resolve(&session_id, review_decision);

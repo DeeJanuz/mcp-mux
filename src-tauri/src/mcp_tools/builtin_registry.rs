@@ -133,7 +133,11 @@ fn push_review_definition(renderers: &[RendererDef]) -> Value {
                 },
                 "meta": {
                     "type": "object",
-                    "description": "Optional metadata."
+                    "description": "Optional metadata. For backend-owned approvals, may include backendCallback { url, token }."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Optional caller-provided review session id. If omitted, MCPViews generates one."
                 },
                 "timeout": {
                     "type": "integer",

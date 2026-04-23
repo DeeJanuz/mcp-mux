@@ -73,8 +73,17 @@ pub(super) async fn call_push_review(
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<Value, String> {
     let params = super::extract_push_params(&arguments, true)?;
-    let result =
-        store_push(state, params.tool_name, None, params.data, params.meta, true, params.timeout, None).await;
+    let result = store_push(
+        state,
+        params.tool_name,
+        None,
+        params.data,
+        params.meta,
+        true,
+        params.timeout,
+        params.session_id,
+    )
+    .await;
 
     match result {
         ExecutePushResult::Pending { session_id } => Ok(serde_json::json!({
@@ -128,7 +137,7 @@ async fn call_push_impl(
         params.meta,
         review_required,
         params.timeout,
-        None,
+        params.session_id,
     )
     .await;
 

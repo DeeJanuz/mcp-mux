@@ -157,6 +157,7 @@
         personaReleaseId: summary.personaReleaseId || null,
         persona: summary.persona || null,
         personaRelease: summary.personaRelease || null,
+        activePause: summary.activePause || null,
         rowState: summary.rowState || null,
         optimistic: !!summary.optimistic,
         syncing: !!summary.syncing,
@@ -658,6 +659,9 @@
         resultData: cloneValue(item.resultData || null),
         resultMeta: cloneValue(item.resultMeta || null),
         toolArgs: cloneValue(item.toolArgs || null),
+        toolRequest: cloneValue(item.toolRequest || null),
+        modelName: item.modelName || null,
+        modelProvider: item.modelProvider || null,
         rawInput: cloneValue(item.rawInput || null),
         rawOutput: cloneValue(item.rawOutput || null),
       });
@@ -824,6 +828,7 @@
 
     function extractRendererPayloadFromToolPart(toolName, part, existing) {
       if (!part) return existing || null;
+      if (isReviewPermissionFailure(part)) return null;
       var reviewRequired = !!(
         part.reviewRequired ||
         (part.meta && part.meta.reviewRequired) ||
@@ -875,6 +880,35 @@
         };
       }
       return null;
+    }
+
+    function isReviewPermissionFailure(part) {
+      if (!part || typeof part !== 'object') return false;
+      var state = String(part.state || part.status || '').toLowerCase();
+      if (state && state !== 'output-error' && state !== 'output-denied' && state !== 'failed' && state !== 'error') {
+        return false;
+      }
+      var values = [
+        part.error,
+        part.detail,
+        part.summary,
+        part.output,
+        part.result,
+        part.resultData,
+      ];
+      return values.some(function (value) {
+        var text = '';
+        if (typeof value === 'string') {
+          text = value;
+        } else if (value && typeof value === 'object') {
+          try {
+            text = JSON.stringify(value);
+          } catch (_error) {
+            text = '';
+          }
+        }
+        return /push_review/i.test(text) && /not allowed|403|forbidden/i.test(text);
+      });
     }
 
     function buildArtifactSessionKey(threadId, artifactKey) {
@@ -1093,9 +1127,83 @@
     function buildToolPartDetail(part) {
       if (!part) return '';
       if (part.errorText) return String(part.errorText);
-      if (part.output != null) return api.stringifyPreview(part.output);
-      if (part.input != null) return api.stringifyPreview(part.input);
+      if (typeof part.output === 'string') {
+        var trimmed = part.output.trim();
+        if (trimmed && trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[') {
+          return trimmed;
+        }
+      }
       return '';
+    }
+
+    function extractToolPartModelName(part, message, existing, stored) {
+      var metadata = part && (part.providerMetadata || part.provider_metadata || part.metadata || null);
+      var messageMetadata = message && (message.providerMetadata || message.provider_metadata || message.metadata || null);
+      return (part && (
+        part.modelName ||
+        part.model_name ||
+        part.modelId ||
+        part.model_id ||
+        part.model ||
+        part.modelSlug ||
+        part.model_slug
+      ))
+        || (metadata && (
+          metadata.modelName ||
+          metadata.model_name ||
+          metadata.modelId ||
+          metadata.model_id ||
+          metadata.model
+        ))
+        || (message && (
+          message.modelName ||
+          message.model_name ||
+          message.modelId ||
+          message.model_id ||
+          message.model
+        ))
+        || (messageMetadata && (
+          messageMetadata.modelName ||
+          messageMetadata.model_name ||
+          messageMetadata.modelId ||
+          messageMetadata.model_id ||
+          messageMetadata.model
+        ))
+        || (existing && existing.modelName)
+        || (stored && stored.modelName)
+        || null;
+    }
+
+    function extractToolPartModelProvider(part, message, existing, stored) {
+      var metadata = part && (part.providerMetadata || part.provider_metadata || part.metadata || null);
+      var messageMetadata = message && (message.providerMetadata || message.provider_metadata || message.metadata || null);
+      return (part && (
+        part.modelProvider ||
+        part.model_provider ||
+        part.providerName ||
+        part.provider_name ||
+        part.provider
+      ))
+        || (metadata && (
+          metadata.providerName ||
+          metadata.provider_name ||
+          metadata.provider
+        ))
+        || (message && (
+          message.modelProvider ||
+          message.model_provider ||
+          message.providerName ||
+          message.provider_name ||
+          message.provider
+        ))
+        || (messageMetadata && (
+          messageMetadata.providerName ||
+          messageMetadata.provider_name ||
+          messageMetadata.provider
+        ))
+        || (existing && existing.modelProvider)
+        || (stored && stored.modelProvider)
+        || null;
     }
 
     function buildSnapshotActivityItems(record) {
@@ -1168,6 +1276,11 @@
             title: part.title || (existing && existing.title) || window.__tribexAiUtils.titleCase(part.toolName || 'tool'),
             status: status,
             detail: buildToolPartDetail(part) || (existing && existing.detail) || '',
+            rawInput: part.input !== undefined ? cloneValue(part.input) : ((existing && existing.rawInput) || (stored && stored.rawInput) || null),
+            rawOutput: part.output !== undefined ? cloneValue(part.output) : ((existing && existing.rawOutput) || (stored && stored.rawOutput) || null),
+            toolRequest: part.input !== undefined ? cloneValue(part.input) : ((existing && existing.toolRequest) || (stored && stored.toolRequest) || null),
+            modelName: extractToolPartModelName(part, message, existing, stored),
+            modelProvider: extractToolPartModelProvider(part, message, existing, stored),
             createdAt: createdAt,
             updatedAt: updatedAt,
             completedAt: completedAt,
@@ -1178,7 +1291,9 @@
             resultContentType: contentType,
             resultData: rendererPayload ? rendererPayload.data : ((existing && existing.resultData) || (stored && stored.resultData) || null),
             resultMeta: rendererPayload ? rendererPayload.meta : ((existing && existing.resultMeta) || (stored && stored.resultMeta) || null),
-            toolArgs: rendererPayload ? rendererPayload.toolArgs : ((existing && existing.toolArgs) || (stored && stored.toolArgs) || null),
+            toolArgs: rendererPayload
+              ? (rendererPayload.toolArgs || part.toolArgs || part.tool_args || part.input || null)
+              : (part.toolArgs || part.tool_args || part.input || (existing && existing.toolArgs) || (stored && stored.toolArgs) || null),
             reviewRequired: reviewRequired,
             displayMode: displayMode,
             inlineDisplay: displayMode === 'inline',
@@ -1230,6 +1345,11 @@
           resultData: existing.resultData || item.resultData || null,
           resultMeta: existing.resultMeta || item.resultMeta || null,
           toolArgs: existing.toolArgs || item.toolArgs || null,
+          toolRequest: existing.toolRequest || item.toolRequest || null,
+          rawInput: existing.rawInput || item.rawInput || null,
+          rawOutput: existing.rawOutput || item.rawOutput || null,
+          modelName: existing.modelName || item.modelName || null,
+          modelProvider: existing.modelProvider || item.modelProvider || null,
           sessionId: existing.sessionId || item.sessionId || null,
           createdAt: existing.createdAt || item.createdAt,
           updatedAt: item.updatedAt || existing.updatedAt,

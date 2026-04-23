@@ -350,6 +350,339 @@
     return text.length > maxLength ? text.slice(0, maxLength - 3) + '...' : text;
   }
 
+  function isRecord(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  function humanizeKey(value) {
+    return String(value || '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/^./, function (match) { return match.toUpperCase(); });
+  }
+
+  function formatCountLabel(count, singular, plural) {
+    return count + ' ' + (count === 1 ? singular : (plural || singular + 's'));
+  }
+
+  function summarizeCompactValue(value) {
+    if (value === null || value === undefined || value === '') return '';
+    if (typeof value === 'string') return createSummaryText(value.replace(/\s+/g, ' '), 180);
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) return formatCountLabel(value.length, 'item');
+    if (isRecord(value)) {
+      var keys = Object.keys(value);
+      return keys.length ? formatCountLabel(keys.length, 'field') : 'Empty object';
+    }
+    return '';
+  }
+
+  function formatModelLabel(item) {
+    if (!item) return '';
+
+    function readModelCandidate(value, depth) {
+      if (!value || depth > 3) return { model: null, provider: null };
+      if (typeof value !== 'object') return { model: null, provider: null };
+      var directModel = value.modelName || value.model || value.modelId || value.model_id || value.modelSlug || value.model_slug || null;
+      var directProvider = value.modelProvider || value.provider || value.providerName || value.provider_name || null;
+      if (directModel || directProvider) {
+        return {
+          model: directModel || null,
+          provider: directProvider || null,
+        };
+      }
+
+      var nestedKeys = [
+        'metadata',
+        'meta',
+        'providerMetadata',
+        'provider_metadata',
+        'toolArgs',
+        'tool_args',
+        'toolRequest',
+        'tool_request',
+        'input',
+        'output',
+        'result',
+        'data',
+        'subAgentRun',
+        'sub_agent_run',
+        'childThread',
+        'child_thread',
+      ];
+      for (var keyIndex = 0; keyIndex < nestedKeys.length; keyIndex += 1) {
+        var nestedKey = nestedKeys[keyIndex];
+        if (!Object.prototype.hasOwnProperty.call(value, nestedKey)) continue;
+        var nestedCandidate = readModelCandidate(value[nestedKey], depth + 1);
+        if (nestedCandidate.model || nestedCandidate.provider) {
+          return nestedCandidate;
+        }
+      }
+
+      return { model: null, provider: null };
+    }
+
+    var topLevel = readModelCandidate(item, 0);
+    var model = topLevel.model;
+    var provider = topLevel.provider;
+    if (!model && !provider) {
+      [
+        item.resultMeta,
+        item.toolArgs,
+        item.toolRequest,
+        item.rawInput,
+        item.rawOutput,
+        item.resultData,
+      ].some(function (candidate) {
+        var found = readModelCandidate(candidate, 0);
+        if (found.model || found.provider) {
+          model = found.model;
+          provider = found.provider;
+          return true;
+        }
+        return false;
+      });
+    }
+    if (model && provider) return provider + ' / ' + model;
+    return model || provider || '';
+  }
+
+  function maybeParseJsonObject(value) {
+    if (typeof value !== 'string') return null;
+    var trimmed = value.trim();
+    if (!trimmed || (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[')) return null;
+    try {
+      var parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function appendWorkField(fields, label, value) {
+    var summary = summarizeCompactValue(value);
+    if (!summary) return;
+    fields.push({ label: label, value: summary });
+  }
+
+  function collectPreferredWorkFields(source, fields, seen) {
+    if (!isRecord(source)) return;
+    [
+      'objective',
+      'prompt',
+      'command',
+      'cmd',
+      'cwd',
+      'path',
+      'relativePath',
+      'title',
+      'threadId',
+      'thread_id',
+      'sessionId',
+      'session_id',
+    ].forEach(function (key) {
+      if (!Object.prototype.hasOwnProperty.call(source, key)) return;
+      appendWorkField(fields, humanizeKey(key), source[key]);
+      seen[key] = true;
+    });
+  }
+
+  function collectAdditionalWorkFields(source, fields, seen) {
+    if (!isRecord(source)) return;
+    Object.keys(source).some(function (key) {
+      if (seen[key]) return false;
+      var value = source[key];
+      if (value === null || value === undefined || value === '') return false;
+      appendWorkField(fields, humanizeKey(key), value);
+      seen[key] = true;
+      return fields.length >= 6;
+    });
+  }
+
+  function collectStructuredRowCount(rows) {
+    return (rows || []).reduce(function (total, row) {
+      return total + 1 + collectStructuredRowCount(row && row.children);
+    }, 0);
+  }
+
+  function getStructuredDataSummary(data) {
+    var tables = data && Array.isArray(data.tables) ? data.tables : [];
+    if (!tables.length) return '';
+    var rowCount = 0;
+    var columnCount = 0;
+    tables.forEach(function (table) {
+      rowCount += collectStructuredRowCount(table && table.rows);
+      columnCount = Math.max(columnCount, Array.isArray(table && table.columns) ? table.columns.length : 0);
+    });
+    var parts = [
+      formatCountLabel(tables.length, 'table'),
+      formatCountLabel(rowCount, 'row'),
+      formatCountLabel(columnCount, 'column'),
+    ];
+    return parts.join(', ');
+  }
+
+  function getRichContentSummary(data) {
+    if (!isRecord(data)) return '';
+    var parts = [];
+    if (data.title) parts.push('Title: ' + summarizeCompactValue(data.title));
+    if (typeof data.body === 'string') {
+      parts.push(formatCountLabel(data.body.length, 'character'));
+    }
+    if (Array.isArray(data.tables) && data.tables.length) {
+      parts.push(formatCountLabel(data.tables.length, 'table'));
+    }
+    if (isRecord(data.suggestions)) {
+      parts.push(formatCountLabel(Object.keys(data.suggestions).length, 'suggestion'));
+    }
+    return parts.join(', ');
+  }
+
+  function getRendererWorkSummary(item) {
+    var contentType = item && (item.resultContentType || item.contentType || item.toolName || null);
+    var data = item && item.resultData;
+    var summary = '';
+    if (contentType === 'structured_data') {
+      summary = getStructuredDataSummary(data);
+    } else if (contentType === 'rich_content') {
+      summary = getRichContentSummary(data);
+    }
+    if (item && item.reviewRequired) {
+      summary = summary ? summary + ', review required' : 'Review required';
+    }
+    return summary;
+  }
+
+  function createWorkFieldList(fields) {
+    var list = document.createElement('dl');
+    list.className = 'ai-work-item-fields';
+    fields.forEach(function (field) {
+      var row = document.createElement('div');
+      row.className = 'ai-work-item-field';
+      var term = document.createElement('dt');
+      term.textContent = field.label;
+      var detail = document.createElement('dd');
+      detail.textContent = field.value;
+      row.appendChild(term);
+      row.appendChild(detail);
+      list.appendChild(row);
+    });
+    return list;
+  }
+
+  function summarizePayload(value) {
+    if (value === null || value === undefined || value === '') return '';
+    if (Array.isArray(value)) return formatCountLabel(value.length, 'item');
+    if (isRecord(value)) return formatCountLabel(Object.keys(value).length, 'field');
+    if (typeof value === 'string') {
+      var parsed = maybeParseJsonObject(value);
+      if (parsed) return summarizePayload(parsed);
+      return formatCountLabel(value.length, 'character');
+    }
+    return summarizeCompactValue(value);
+  }
+
+  function stringifyPayload(value) {
+    if (value === null || value === undefined || value === '') return '';
+    if (typeof value === 'string') {
+      var parsed = maybeParseJsonObject(value);
+      if (parsed) {
+        try {
+          return JSON.stringify(parsed, null, 2);
+        } catch (_error) {
+          return value;
+        }
+      }
+      return value;
+    }
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (_error) {
+      return String(value);
+    }
+  }
+
+  function getWorkItemPayload(item) {
+    if (!item) return null;
+    var parsedDetail = maybeParseJsonObject(item.detail);
+    var candidates = [
+      item.toolRequest,
+      item.rawInput,
+      parsedDetail,
+      item.toolArgs,
+      item.rawOutput,
+    ];
+    for (var index = 0; index < candidates.length; index += 1) {
+      var candidate = candidates[index];
+      if (candidate !== null && candidate !== undefined && candidate !== '') {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function createPayloadDisclosure(item, threadState, payloadKey) {
+    var payload = getWorkItemPayload(item);
+    if (payload === null || payload === undefined || payload === '') return null;
+    var block = document.createElement('details');
+    block.className = 'ai-work-payload';
+    var remembered = threadState && threadState.workPayloadOpen
+      ? threadState.workPayloadOpen[payloadKey]
+      : undefined;
+    block.open = remembered === undefined ? false : !!remembered;
+    block.addEventListener('toggle', function () {
+      if (threadState && threadState.workPayloadOpen) {
+        threadState.workPayloadOpen[payloadKey] = block.open;
+      }
+    });
+
+    var summary = document.createElement('summary');
+    summary.className = 'ai-work-payload-summary';
+    var label = document.createElement('span');
+    label.textContent = 'Payload';
+    var count = document.createElement('span');
+    count.className = 'ai-work-payload-count';
+    count.textContent = summarizePayload(payload);
+    summary.appendChild(label);
+    if (count.textContent) {
+      summary.appendChild(count);
+    }
+    block.appendChild(summary);
+
+    var pre = document.createElement('pre');
+    pre.className = 'ai-work-payload-body';
+    var code = document.createElement('code');
+    code.textContent = stringifyPayload(payload);
+    pre.appendChild(code);
+    block.appendChild(pre);
+    return block;
+  }
+
+  function buildWorkItemFields(item) {
+    var fields = [];
+    var seen = {};
+    var rendererSummary = getRendererWorkSummary(item);
+    if (rendererSummary) {
+      appendWorkField(fields, 'Result', rendererSummary);
+    }
+    collectPreferredWorkFields(item && item.toolArgs, fields, seen);
+    collectPreferredWorkFields(item && item.toolRequest, fields, seen);
+    collectPreferredWorkFields(item && item.resultMeta, fields, seen);
+    collectAdditionalWorkFields(item && item.toolArgs, fields, seen);
+    collectAdditionalWorkFields(item && item.toolRequest, fields, seen);
+
+    if (item && item.detail) {
+      var parsed = maybeParseJsonObject(item.detail);
+      if (!parsed) {
+        appendWorkField(fields, 'Detail', item.detail);
+      }
+    }
+
+    return fields;
+  }
+
   function countMarkdownListItems(body) {
     if (!body) return 0;
     var matches = String(body).match(/^\s*(?:[-*+]\s+|\d+\.\s+)/gm);
@@ -445,6 +778,7 @@
 
   function shouldRenderInlineReviewControls(item) {
     if (!item) return false;
+    if (!getInlineReviewSessionId(item)) return false;
     if (item.reviewRequired || (item.resultMeta && item.resultMeta.reviewRequired)) return true;
     var data = item.resultData || {};
     if (data.suggestions && typeof data.suggestions === 'object' && Object.keys(data.suggestions).length > 0) {
@@ -476,6 +810,13 @@
     var contentType = item && (item.contentType || item.resultContentType || item.toolName || null);
     var renderer = contentType && window.__renderers ? window.__renderers[contentType] : null;
     var resultId = [groupId || 'run', item && item.id || contentType || 'inline', index].join(':');
+    var reviewIntended = !!(
+      item &&
+      (item.reviewRequired ||
+      (item.resultMeta && item.resultMeta.reviewRequired) ||
+      (item.resultData && item.resultData.suggestions) ||
+      (item.resultData && Array.isArray(item.resultData.tables) && item.resultData.tables.some(tableHasReviewChanges)))
+    );
     var reviewRequired = shouldRenderInlineReviewControls(item);
 
     var block = document.createElement('details');
@@ -534,6 +875,12 @@
           submitInlineRendererDecision(item, decision);
         } : null,
       );
+      if (reviewIntended && !reviewRequired) {
+        body.appendChild(createTextBody(
+          'Review controls are unavailable because no active review session was created for this result.',
+          'ai-chat-body ai-inline-review-warning'
+        ));
+      }
     } else {
       body.appendChild(createTextBody('Unable to render inline result.', 'ai-chat-body'));
     }
@@ -1022,6 +1369,16 @@
           item && item.detail,
           item && item.artifactKey,
           item && item.updatedAt,
+          item && item.toolArgs,
+          item && item.toolRequest,
+          item && item.resultData,
+          item && item.resultMeta,
+          item && item.resultContentType,
+          item && item.reviewRequired,
+          item && item.modelName,
+          item && item.modelProvider,
+          item && item.rawInput,
+          item && item.rawOutput,
         ];
       }),
     });
@@ -1080,11 +1437,24 @@
     }
   }
 
-  function createWorkActivityItem(item, threadId) {
-    var row = document.createElement('article');
+  function createWorkActivityItem(item, threadId, threadState, groupId) {
+    var row = document.createElement('details');
     row.className = 'ai-work-item';
+    var itemKey = [
+      groupId || 'work',
+      item && (item.id || item.toolCallId || item.title || item.toolName) || 'item',
+    ].join(':');
+    var remembered = threadState && threadState.workItemOpen
+      ? threadState.workItemOpen[itemKey]
+      : undefined;
+    row.open = remembered === undefined ? false : !!remembered;
+    row.addEventListener('toggle', function () {
+      if (threadState && threadState.workItemOpen) {
+        threadState.workItemOpen[itemKey] = row.open;
+      }
+    });
 
-    var header = document.createElement('div');
+    var header = document.createElement('summary');
     header.className = 'ai-work-item-header';
 
     var copy = document.createElement('div');
@@ -1103,6 +1473,14 @@
     var meta = document.createElement('div');
     meta.className = 'ai-work-item-meta';
 
+    var modelLabel = formatModelLabel(item);
+    if (modelLabel) {
+      var model = document.createElement('span');
+      model.className = 'ai-work-item-model';
+      model.textContent = modelLabel;
+      meta.appendChild(model);
+    }
+
     var status = document.createElement('span');
     status.className = 'ai-work-item-status ai-work-item-status-' + (item.status || 'completed');
     status.textContent = createWorkStatusLabel(item.status);
@@ -1118,8 +1496,19 @@
     header.appendChild(meta);
     row.appendChild(header);
 
-    if (item.detail) {
-      row.appendChild(createTextBody(item.detail, 'ai-work-item-detail'));
+    var body = document.createElement('div');
+    body.className = 'ai-work-item-body';
+
+    var fields = buildWorkItemFields(item);
+    var payload = createPayloadDisclosure(item, threadState, itemKey + ':payload');
+    if (fields.length) {
+      body.appendChild(createWorkFieldList(fields));
+    } else if (!payload) {
+      body.appendChild(createTextBody('No additional request details.', 'ai-work-item-detail'));
+    }
+
+    if (payload) {
+      body.appendChild(payload);
     }
 
     if (item.artifactKey) {
@@ -1134,9 +1523,10 @@
         openResultArtifact(threadId, item.artifactKey);
       });
       resultRow.appendChild(openLink);
-      row.appendChild(resultRow);
+      body.appendChild(resultRow);
     }
 
+    row.appendChild(body);
     return row;
   }
 
@@ -1160,6 +1550,16 @@
       title: note.summary || window.__tribexAiUtils.titleCase(note.toolName || 'note'),
       status: note.status || 'completed',
       detail: note.detail || '',
+      toolArgs: note.toolArgs || null,
+      toolRequest: note.toolRequest || null,
+      resultData: note.resultData || null,
+      resultMeta: note.resultMeta || null,
+      resultContentType: note.resultContentType || note.contentType || null,
+      reviewRequired: !!note.reviewRequired,
+      modelName: note.modelName || note.model || null,
+      modelProvider: note.modelProvider || note.provider || null,
+      rawInput: note.rawInput || null,
+      rawOutput: note.rawOutput || null,
       createdAt: note.createdAt || null,
       updatedAt: note.createdAt || null,
       artifactKey: note.artifactKey || null,
@@ -1173,6 +1573,15 @@
       title: (message.resultData && message.resultData.title) || 'Result ready',
       status: 'completed',
       detail: summarizeArtifactBody(message.resultData),
+      toolArgs: message.toolArgs || null,
+      resultData: message.resultData || null,
+      resultMeta: message.resultMeta || null,
+      resultContentType: message.resultContentType || message.contentType || message.toolName || null,
+      reviewRequired: !!message.reviewRequired,
+      modelName: message.modelName || message.model || null,
+      modelProvider: message.modelProvider || message.provider || null,
+      rawInput: message.rawInput || null,
+      rawOutput: message.rawOutput || null,
       createdAt: message.createdAt || null,
       updatedAt: message.createdAt || null,
       artifactKey: message.artifactKey || null,
@@ -1253,7 +1662,7 @@
     var body = document.createElement('div');
     body.className = 'ai-work-session-body';
     (workSession.items || []).forEach(function (item) {
-      body.appendChild(createWorkActivityItem(item, threadState.threadId));
+      body.appendChild(createWorkActivityItem(item, threadState.threadId, threadState, groupId));
     });
     block.appendChild(body);
 
@@ -1321,6 +1730,149 @@
 
     section.appendChild(surface);
     return section;
+  }
+
+  function createThreadPauseStatusLabel(activePause) {
+    if (!activePause) return null;
+    var status = String(activePause.status || '').toUpperCase();
+    if (status === 'READY') return 'Ready To Continue';
+    if (status === 'RESUMING') return 'Resuming';
+    return 'Waiting On You';
+  }
+
+  function createThreadPauseCard(state, thread) {
+    if (!thread || !thread.activePause) return null;
+    var activePause = thread.activePause;
+    var isChecking = thread.pauseCheckState === 'checking';
+    var resumeMode = String(activePause.resumeMode || 'MANUAL').toUpperCase();
+    var card = document.createElement('section');
+    card.className = 'ai-thread-pause-card';
+
+    var header = document.createElement('div');
+    header.className = 'ai-thread-pause-header';
+    var title = document.createElement('strong');
+    title.textContent = activePause.title || 'Action required';
+    header.appendChild(title);
+    var badge = document.createElement('span');
+    badge.className = 'ai-thread-pause-badge ai-thread-pause-badge-' + String(activePause.status || 'blocked').toLowerCase();
+    badge.textContent = createThreadPauseStatusLabel(activePause) || 'Waiting On You';
+    header.appendChild(badge);
+    card.appendChild(header);
+
+    if (activePause.detail) {
+      var detail = document.createElement('p');
+      detail.className = 'ai-thread-pause-detail';
+      detail.textContent = activePause.detail;
+      card.appendChild(detail);
+    }
+
+    if (activePause.progressSummary) {
+      var progress = document.createElement('p');
+      progress.className = 'ai-thread-pause-progress';
+      progress.textContent = activePause.progressSummary;
+      card.appendChild(progress);
+    }
+
+    if (Array.isArray(activePause.tasks) && activePause.tasks.length) {
+      var list = document.createElement('div');
+      list.className = 'ai-thread-pause-tasks';
+      activePause.tasks.forEach(function (task) {
+        var row = document.createElement('div');
+        row.className = 'ai-thread-pause-task';
+        var copy = document.createElement('div');
+        copy.className = 'ai-thread-pause-task-copy';
+        var taskTitle = document.createElement('strong');
+        taskTitle.textContent = task.title || 'Required step';
+        copy.appendChild(taskTitle);
+        if (task.detail) {
+          var taskDetail = document.createElement('div');
+          taskDetail.className = 'ai-thread-pause-task-detail';
+          taskDetail.textContent = task.detail;
+          copy.appendChild(taskDetail);
+        }
+        if (task.failureReason) {
+          var taskFailure = document.createElement('div');
+          taskFailure.className = 'ai-thread-pause-task-failure';
+          taskFailure.textContent = task.failureReason;
+          copy.appendChild(taskFailure);
+        }
+        row.appendChild(copy);
+
+        var actions = document.createElement('div');
+        actions.className = 'ai-thread-pause-task-actions';
+        if (task.actionUrl) {
+          var open = document.createElement('a');
+          open.className = 'ai-secondary-btn ai-thread-pause-action-link';
+          open.textContent = task.actionLabel || 'Open Link';
+          open.href = task.actionUrl;
+          open.target = '_blank';
+          open.rel = 'noopener noreferrer';
+          open.addEventListener('click', function () {
+            if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.checkThreadPause !== 'function') {
+              return;
+            }
+            if (typeof window.__tribexAiState.schedulePauseCheckBurst === 'function') {
+              window.__tribexAiState.schedulePauseCheckBurst(state.threadId, activePause.id);
+            } else {
+              Promise.resolve(window.__tribexAiState.checkThreadPause(state.threadId, activePause.id, {
+                silent: true,
+                source: 'auth-click',
+              })).catch(function () {});
+            }
+          });
+          actions.appendChild(open);
+        }
+        var taskStatus = document.createElement('span');
+        taskStatus.className = 'ai-thread-pause-task-status ai-thread-pause-task-status-' + String(task.status || 'PENDING').toLowerCase();
+        taskStatus.textContent = String(task.status || 'PENDING').replace(/_/g, ' ');
+        actions.appendChild(taskStatus);
+        row.appendChild(actions);
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+    }
+
+    var footer = document.createElement('div');
+    footer.className = 'ai-thread-pause-footer';
+    var checkButton = document.createElement('button');
+    checkButton.type = 'button';
+    checkButton.className = 'ai-secondary-btn';
+    checkButton.textContent = isChecking ? 'Checking...' : 'Check status';
+    checkButton.disabled = isChecking;
+    checkButton.addEventListener('click', function () {
+      if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.checkThreadPause !== 'function') {
+        return;
+      }
+      checkButton.disabled = true;
+      Promise.resolve(window.__tribexAiState.checkThreadPause(state.threadId, activePause.id))
+        .catch(function () {})
+        .finally(function () {
+          checkButton.disabled = false;
+        });
+    });
+    footer.appendChild(checkButton);
+
+    if (String(activePause.status || '').toUpperCase() === 'READY' && resumeMode !== 'AUTO') {
+      var continueButton = document.createElement('button');
+      continueButton.type = 'button';
+      continueButton.className = 'ai-primary-btn';
+      continueButton.textContent = 'Continue';
+      continueButton.addEventListener('click', function () {
+        if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.continueThreadPause !== 'function') {
+          return;
+        }
+        continueButton.disabled = true;
+        Promise.resolve(window.__tribexAiState.continueThreadPause(state.threadId, activePause.id))
+          .catch(function () {})
+          .finally(function () {
+            continueButton.disabled = false;
+          });
+      });
+      footer.appendChild(continueButton);
+    }
+    card.appendChild(footer);
+
+    return card;
   }
 
   function createHeaderShell() {
@@ -1523,6 +2075,11 @@
     );
     appendHeaderMeta(
       headerState.statusRow,
+      'ai-thread-status-pill',
+      createThreadPauseStatusLabel(threadContext.thread && threadContext.thread.activePause)
+    );
+    appendHeaderMeta(
+      headerState.statusRow,
       'ai-thread-status-pill ai-thread-status-time',
       threadContext.thread && threadContext.thread.lastActivityAt
         ? window.__tribexAiUtils.formatRelativeTime(threadContext.thread.lastActivityAt)
@@ -1670,6 +2227,10 @@
     transcript.className = 'ai-chat-log ai-chat-log-standalone ai-run-log';
     layout.appendChild(transcript);
 
+    var blocker = document.createElement('div');
+    blocker.className = 'ai-thread-bottom-blocker';
+    view.appendChild(blocker);
+
     var jumpButton = document.createElement('button');
     jumpButton.className = 'ai-jump-latest';
     jumpButton.type = 'button';
@@ -1791,6 +2352,7 @@
       results: results,
       layout: layout,
       transcript: transcript,
+      blocker: blocker,
       jumpButton: jumpButton,
       interruptDock: interruptDock,
       interrupt: interrupt,
@@ -1802,6 +2364,8 @@
       threadId: null,
       lastRenderedThreadId: null,
       workSessionOpen: {},
+      workItemOpen: {},
+      workPayloadOpen: {},
       inlineResultOpen: {},
       showRawResponses: false,
       liveTickId: null,
@@ -1818,6 +2382,16 @@
       error.className = 'ai-inline-alert ai-inline-alert-warning';
       error.innerHTML = '<div><strong>Thread needs attention</strong><p>' + threadContext.error + '</p></div>';
       state.alerts.appendChild(error);
+    }
+  }
+
+  function updateThreadBlocker(state, threadContext) {
+    state.blocker.innerHTML = '';
+    if (threadContext.thread && threadContext.thread.activePause) {
+      var pauseCard = createThreadPauseCard(state, threadContext.thread);
+      if (pauseCard) {
+        state.blocker.appendChild(pauseCard);
+      }
     }
   }
 
@@ -2242,6 +2816,7 @@
       updateResultsShelf(state, threadContext);
       changed = updateTranscript(state, threadContext);
     }
+    updateThreadBlocker(state, threadContext);
     updateComposer(state, threadContext, threadChanged);
 
     var afterHeight = state.scrollHost.scrollHeight || beforeHeight;

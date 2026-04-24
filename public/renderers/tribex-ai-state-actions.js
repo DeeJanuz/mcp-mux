@@ -1152,6 +1152,7 @@
         .catch(function (error) {
           var message = error && error.message ? error.message : String(error);
           if (busy) {
+            clearPendingOperation(threadId, operationId);
             state.threadErrors[threadId] = message;
             var busyThread = api.getThread(threadId);
             if (busyThread) busyThread.rowState = null;

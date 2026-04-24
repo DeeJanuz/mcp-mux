@@ -63,6 +63,7 @@
       loadingNavigator: false,
       loadingThreadIds: {},
       pendingThreadIds: {},
+      pendingThreadOperations: {},
       interruptedThreadIds: {},
       companionKeys: {},
       lastCompanionSequences: {},

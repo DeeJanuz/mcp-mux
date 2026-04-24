@@ -1042,7 +1042,7 @@ describe('tribex-ai-state', function () {
     expect(client.startRealtimeRelayStream).toHaveBeenCalledTimes(2);
   });
 
-  it('clears the busy indicator when a prompt send times out', async function () {
+  it('keeps the active operation guarded when a prompt send times out', async function () {
     var client = {
       getConfig: vi.fn(function () {
         return Promise.resolve({ configured: true });
@@ -1122,12 +1122,17 @@ describe('tribex-ai-state', function () {
     var threadContext = window.__tribexAiState.getThreadContext('thread-1');
 
     expect(submitted).toBe(false);
-    expect(threadContext.pending).toBe(false);
-    expect(threadContext.error).toBe('Runtime connection timed out.');
-    expect(threadContext.thread.activeTurn.status).toBe('failed');
+    expect(threadContext.pending).toBe(true);
+    expect(threadContext.error).toBeNull();
+    expect(threadContext.thread.activeTurn.status).toBe('reconnecting');
+    expect(threadContext.thread.activeTurn.deliveryUncertain).toBe(true);
     expect(window.__companionUtils.updateSessionMetadata).toHaveBeenLastCalledWith('session-1', {
-      busyIndicator: null,
+      busyIndicator: expect.objectContaining({ kind: 'line-pulse', status: 'busy' }),
     });
+
+    var duplicateSubmitted = await window.__tribexAiState.submitPrompt('thread-1', 'This will time out');
+    expect(duplicateSubmitted).toBe(false);
+    expect(client.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it('interrupts an active prompt and unlocks the thread without leaving the pulse running', async function () {
@@ -1326,7 +1331,7 @@ describe('tribex-ai-state', function () {
     expect(threadContext.error).toBeNull();
     expect(threadContext.thread.activeTurn).toMatchObject({
       turnId: activeTurnId,
-      status: 'queued',
+      status: 'sending',
     });
     expect(threadContext.thread.activeTurn.userMessage.pending).toBe(true);
   });
@@ -1438,7 +1443,7 @@ describe('tribex-ai-state', function () {
     var threadContext = window.__tribexAiState.getThreadContext('thread-1');
     expect(threadContext.thread.activeTurn).toMatchObject({
       turnId: activeTurnId,
-      status: 'queued',
+      status: 'sending',
       userMessage: expect.objectContaining({
         content: 'Start the report',
       }),
@@ -4160,12 +4165,20 @@ describe('tribex-ai-state', function () {
         return Promise.resolve({
           id: 'thread-1',
           messagesSource: 'runtime',
-          messages: [{
-            id: 'assistant-live-1',
-            role: 'assistant',
-            content: 'Continuing after authentication.',
-            createdAt: '2026-04-23T23:45:00.000Z',
-          }],
+          messages: [
+            {
+              id: 'resume-user-1',
+              role: 'user',
+              content: 'The user finished authenticating user@gmail.com. Continue the task from where you left off.',
+              createdAt: '2026-04-23T23:44:59.000Z',
+            },
+            {
+              id: 'assistant-live-1',
+              role: 'assistant',
+              content: 'Continuing after authentication.',
+              createdAt: '2026-04-23T23:45:00.000Z',
+            },
+          ],
           activePause: stalePause,
         });
       }),
@@ -4197,13 +4210,31 @@ describe('tribex-ai-state', function () {
 
     expect(window.__tribexAiState.getThreadContext('thread-1').thread.activePause).toMatchObject({ id: 'pause-1' });
 
-    await window.__tribexAiState.continueThreadPause('thread-1', 'pause-1');
-    await Promise.resolve();
-    await Promise.resolve();
+    var continuePromise = window.__tribexAiState.continueThreadPause('thread-1', 'pause-1');
+    var duringResume = window.__tribexAiState.getThreadContext('thread-1');
+    expect(duringResume.pending).toBe(true);
+    expect(duringResume.thread.activeTurn).toMatchObject({
+      status: 'running',
+      resumePending: true,
+      resumedFromPauseId: 'pause-1',
+    });
+    expect(window.__companionUtils.updateSessionMetadata).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({
+        busyIndicator: expect.objectContaining({ kind: 'line-pulse', status: 'busy' }),
+      }),
+    );
+
+    await continuePromise;
+    for (var resumeFlush = 0; resumeFlush < 6; resumeFlush += 1) {
+      await Promise.resolve();
+    }
 
     var afterContinue = window.__tribexAiState.getThreadContext('thread-1').thread;
     expect(afterContinue.activePause).toBeNull();
     expect(afterContinue.rowState).not.toBe('ready-to-continue');
+    expect(window.__tribexAiState.getThreadContext('thread-1').pending).toBe(false);
+    expect(afterContinue.activeTurn).toBeNull();
 
     await window.__tribexAiState.checkThreadPause('thread-1', 'pause-1');
     expect(window.__tribexAiState.getThreadContext('thread-1').thread.activePause).toBeNull();
@@ -4239,6 +4270,367 @@ describe('tribex-ai-state', function () {
       },
     });
     expect(window.__tribexAiState.getThreadContext('thread-1').thread.activePause).toMatchObject({ id: 'pause-2' });
+  });
+
+  it('keeps the thread busy after continue while only the resume handoff has arrived', async function () {
+    var streamHandler = null;
+    var runtimeSyncCount = 0;
+    var stalePause = {
+      id: 'pause-1',
+      status: 'READY',
+      title: 'Authenticate user@gmail.com to continue',
+      progressSummary: 'Authentication finished.',
+      tasks: [],
+    };
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([
+          { id: 'thread-1', projectId: 'project-1', workspaceId: 'workspace-1', organizationId: 'org-1', title: 'Existing chat', activePause: stalePause },
+        ]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          organizationId: 'org-1',
+          title: 'Existing chat',
+          messages: [],
+          activePause: stalePause,
+          rowState: 'ready-to-continue',
+        });
+      }),
+      checkThreadPause: vi.fn(function () {
+        return Promise.resolve({ activePause: stalePause, didResume: false, resumeMode: 'MANUAL' });
+      }),
+      continueThreadPause: vi.fn(function () {
+        return Promise.resolve({ ok: true });
+      }),
+      syncThreadRuntime: vi.fn(function () {
+        runtimeSyncCount += 1;
+        return Promise.resolve({
+          id: 'thread-1',
+          messagesSource: 'runtime',
+          messages: runtimeSyncCount < 2
+            ? [{
+              id: 'resume-user-1',
+              role: 'user',
+              content: 'The user finished authenticating user@gmail.com. Continue the task from where you left off.',
+              createdAt: '2026-04-23T23:44:59.000Z',
+            }]
+            : [
+              {
+                id: 'resume-user-1',
+                role: 'user',
+                content: 'The user finished authenticating user@gmail.com. Continue the task from where you left off.',
+                createdAt: '2026-04-23T23:44:59.000Z',
+              },
+              {
+                id: 'assistant-live-1',
+                role: 'assistant',
+                content: 'Continuing after authentication.',
+                createdAt: '2026-04-23T23:45:10.000Z',
+              },
+            ],
+          activePause: stalePause,
+        });
+      }),
+      listenToStreamEvents: vi.fn(function (handler) {
+        streamHandler = handler;
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value.thread || value; },
+      normalizeThreadPause: function (value) { return value; },
+      normalizeMessage: function (value) {
+        if (value && value.role) return value;
+        return null;
+      },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await window.__tribexAiState.continueThreadPause('thread-1', 'pause-1');
+    for (var resumeFlush = 0; resumeFlush < 6; resumeFlush += 1) {
+      await Promise.resolve();
+    }
+
+    var context = window.__tribexAiState.getThreadContext('thread-1');
+    expect(context.thread.activePause).toBeNull();
+    expect(context.pending).toBe(true);
+    expect(context.thread.activeTurn).toMatchObject({
+      status: 'running',
+      resumePending: true,
+      userMessage: expect.objectContaining({
+        content: 'The user finished authenticating user@gmail.com. Continue the task from where you left off.',
+      }),
+    });
+    expect(context.thread.runs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        answer: expect.objectContaining({ isStreaming: true }),
+      }),
+    ]));
+    expect(window.__companionUtils.updateSessionMetadata).toHaveBeenCalledWith(
+      'session-1',
+      expect.objectContaining({
+        busyIndicator: expect.objectContaining({ kind: 'line-pulse', status: 'busy' }),
+      }),
+    );
+
+    streamHandler({
+      threadId: 'thread-1',
+      type: 'data',
+      payload: {
+        sequence: 20,
+        toolName: 'thread.pause.resolved',
+        result: { data: { activePause: null } },
+      },
+    });
+    for (var resolvedFlush = 0; resolvedFlush < 20; resolvedFlush += 1) {
+      await Promise.resolve();
+    }
+
+    var afterResolved = window.__tribexAiState.getThreadContext('thread-1');
+    expect(runtimeSyncCount).toBeGreaterThanOrEqual(2);
+    expect(afterResolved.pending).toBe(false);
+    expect(afterResolved.thread.activeTurn).toBeNull();
+    expect(afterResolved.thread.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: 'Continuing after authentication.' }),
+    ]));
+  });
+
+  it('drops a hydrated completed auth pause when newer assistant output exists', async function () {
+    var staleCompletedAuthPause = {
+      id: 'pause-1',
+      status: 'READY',
+      reasonKind: 'AUTHENTICATION',
+      title: 'Authenticate user@gmail.com to continue',
+      detail: 'Authentication is complete for user@gmail.com.',
+      progressSummary: 'Authentication finished for user@gmail.com. Continue the paused thread when ready.',
+      updatedAt: '2026-04-23T23:00:00.000Z',
+      tasks: [
+        {
+          id: 'task-1',
+          kind: 'AUTH',
+          status: 'COMPLETED',
+          title: 'Authenticate user@gmail.com',
+          actionUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+          completedAt: '2026-04-23T23:00:00.000Z',
+        },
+      ],
+    };
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([
+          {
+            id: 'thread-1',
+            projectId: 'project-1',
+            workspaceId: 'workspace-1',
+            organizationId: 'org-1',
+            title: 'Existing chat',
+            rowState: 'ready-to-continue',
+            messageActivityAt: '2026-04-23T23:30:00.000Z',
+            activePause: staleCompletedAuthPause,
+          },
+        ]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          organizationId: 'org-1',
+          title: 'Existing chat',
+          rowState: 'ready-to-continue',
+          messages: [{
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'I have successfully logged out and cleared the authorization.',
+            createdAt: '2026-04-23T23:30:00.000Z',
+          }],
+          activePause: staleCompletedAuthPause,
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value.thread || value; },
+      normalizeThreadPause: function (value) { return value; },
+      normalizeMessage: function (value) {
+        if (value && value.role) return value;
+        return null;
+      },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    var summary = window.__tribexAiState.getThreadContext('thread-1').thread;
+    expect(summary.activePause).toBeNull();
+    expect(summary.rowState).toBeNull();
+
+    window.__tribexAiState.openThread('thread-1');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    var hydrated = window.__tribexAiState.getThreadContext('thread-1').thread;
+    expect(hydrated.activePause).toBeNull();
+    expect(hydrated.rowState).toBeNull();
+    expect(hydrated.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: 'I have successfully logged out and cleared the authorization.' }),
+    ]));
+  });
+
+  it('keeps a freshly completed auth pause visible when there is no newer assistant output', async function () {
+    var readyPause = {
+      id: 'pause-1',
+      status: 'READY',
+      reasonKind: 'AUTHENTICATION',
+      title: 'Authenticate user@gmail.com to continue',
+      updatedAt: '2026-04-23T23:00:00.000Z',
+      tasks: [
+        {
+          id: 'task-1',
+          kind: 'AUTH',
+          status: 'COMPLETED',
+          title: 'Authenticate user@gmail.com',
+          completedAt: '2026-04-23T23:00:00.000Z',
+        },
+      ],
+    };
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([
+          {
+            id: 'thread-1',
+            projectId: 'project-1',
+            workspaceId: 'workspace-1',
+            organizationId: 'org-1',
+            title: 'Existing chat',
+            activePause: readyPause,
+          },
+        ]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          organizationId: 'org-1',
+          title: 'Existing chat',
+          messages: [],
+          activePause: readyPause,
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value.thread || value; },
+      normalizeThreadPause: function (value) { return value; },
+      normalizeMessage: function (value) {
+        if (value && value.role) return value;
+        return null;
+      },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
+    expect(thread.activePause).toMatchObject({ id: 'pause-1', status: 'READY' });
+    expect(thread.rowState).toBe('ready-to-continue');
   });
 
   it('refreshes a paused active thread when the window regains focus', async function () {

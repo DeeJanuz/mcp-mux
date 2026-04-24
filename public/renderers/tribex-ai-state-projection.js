@@ -1837,7 +1837,14 @@
       mergeTurnMessage(turn, record.activeTurn.userMessage ? Object.assign({}, record.activeTurn.userMessage) : null);
       if (record.activeTurn.assistantMessage) {
         mergeTurnMessage(turn, Object.assign({}, record.activeTurn.assistantMessage));
-      } else if (record.activeTurn.status === 'running' || record.activeTurn.status === 'queued') {
+      } else if (
+        record.activeTurn.status === 'running' ||
+        record.activeTurn.status === 'queued' ||
+        record.activeTurn.status === 'accepted' ||
+        record.activeTurn.status === 'sending' ||
+        record.activeTurn.status === 'reconnecting' ||
+        record.activeTurn.status === 'unknown_delivery'
+      ) {
         turn.assistantMessage = null;
       }
     }

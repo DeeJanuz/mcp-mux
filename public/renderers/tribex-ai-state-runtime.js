@@ -147,6 +147,130 @@
       return null;
     }
 
+    function collectRecordMessages(record) {
+      var messages = [];
+      function append(list) {
+        if (!Array.isArray(list)) return;
+        list.forEach(function (message) {
+          if (!message || (message.role !== 'user' && message.role !== 'assistant')) return;
+          if (api.containsMessage && api.containsMessage(messages, message)) return;
+          messages.push(message);
+        });
+      }
+
+      append(record && record.base ? record.base.messages : null);
+      append(record && record.runtimeSnapshot ? record.runtimeSnapshot.messages : null);
+      return messages;
+    }
+
+    function isResumeUserMessage(message) {
+      if (!message || message.role !== 'user') return false;
+      var content = String(message.content || '').toLowerCase();
+      return (
+        content.indexOf('finished authenticating') >= 0 ||
+        content.indexOf('continue the task from where you left off') >= 0 ||
+        content.indexOf('continue the paused thread') >= 0
+      );
+    }
+
+    function compareMessageActivity(left, right) {
+      if (!left) return right || null;
+      if (!right) return left || null;
+      var leftTime = api.parseActivityTimestamp(left.createdAt);
+      var rightTime = api.parseActivityTimestamp(right.createdAt);
+      if (leftTime !== null && rightTime !== null && rightTime >= leftTime) return right;
+      if (leftTime === null && rightTime !== null) return right;
+      return left;
+    }
+
+    function findResumeUserMessage(record, activeTurn) {
+      var messages = collectRecordMessages(record).filter(function (message) {
+        return message && message.role === 'user';
+      });
+      if (!messages.length) return null;
+
+      var startedAt = activeTurn && activeTurn.startedAt ? api.parseActivityTimestamp(activeTurn.startedAt) : null;
+      var newestExplicitResume = null;
+      var newestAfterStart = null;
+
+      messages.forEach(function (message) {
+        if (isResumeUserMessage(message)) {
+          newestExplicitResume = compareMessageActivity(newestExplicitResume, message);
+        }
+        var messageTime = api.parseActivityTimestamp(message.createdAt);
+        if (startedAt !== null && messageTime !== null && messageTime + 5000 >= startedAt) {
+          newestAfterStart = compareMessageActivity(newestAfterStart, message);
+        }
+      });
+
+      return newestExplicitResume || newestAfterStart || null;
+    }
+
+    function attachResumeUserMessage(record) {
+      if (!record || !record.activeTurn || !record.activeTurn.resumePending || record.activeTurn.userMessage) {
+        return false;
+      }
+
+      var userMessage = findResumeUserMessage(record, record.activeTurn);
+      if (!userMessage) return false;
+
+      var turnId = record.activeTurn.turnId || userMessage.turnId || api.randomId('resume-turn');
+      var turnOrdinal = userMessage.turnOrdinal || record.activeTurn.turnOrdinal || api.resolveNextTurnOrdinal(record);
+      record.activeTurn.turnId = turnId;
+      record.activeTurn.turnOrdinal = turnOrdinal;
+      record.activeTurn.userMessage = Object.assign({}, userMessage, {
+        pending: false,
+        turnId: userMessage.turnId || turnId,
+        turnOrdinal: turnOrdinal,
+      });
+      if (record.activeTurn.assistantMessage) {
+        record.activeTurn.assistantMessage.turnId = turnId;
+        record.activeTurn.assistantMessage.turnOrdinal = turnOrdinal;
+      }
+      api.rememberTurnHistory(record);
+      return true;
+    }
+
+    function findLatestAssistantAfterResume(record) {
+      if (!record || !record.activeTurn || !record.activeTurn.resumePending) return null;
+      var startedAt = record.activeTurn.startedAt ? api.parseActivityTimestamp(record.activeTurn.startedAt) : null;
+      return collectRecordMessages(record).reduce(function (latest, message) {
+        if (!message || message.role !== 'assistant' || message.isStreaming) return latest;
+        if (!message.content) return latest;
+        var messageTime = api.parseActivityTimestamp(message.createdAt);
+        if (startedAt !== null && messageTime !== null && messageTime + 5000 < startedAt) return latest;
+        return compareMessageActivity(latest, message);
+      }, null);
+    }
+
+    function reconcileResumePendingTurn(record) {
+      if (!record || !record.activeTurn || !record.activeTurn.resumePending) return false;
+
+      attachResumeUserMessage(record);
+      var settledAssistant = record.activeTurn.userMessage
+        ? findSettledAssistantForActiveTurn(collectRecordMessages(record), record.activeTurn)
+        : findLatestAssistantAfterResume(record);
+
+      if (!settledAssistant || settledAssistant.isStreaming || !settledAssistant.content) {
+        return false;
+      }
+
+      record.activeTurn.assistantMessage = Object.assign({}, settledAssistant, {
+        turnId: record.activeTurn.turnId || settledAssistant.turnId || null,
+        turnOrdinal: record.activeTurn.turnOrdinal || settledAssistant.turnOrdinal || null,
+        isStreaming: false,
+      });
+      record.activeTurn.status = 'finalized';
+      record.activeTurn.resumePending = false;
+      if (record.activeTurn.turnId) {
+        record.turnCompletedAtById = record.turnCompletedAtById || {};
+        record.turnCompletedAtById[record.activeTurn.turnId] = settledAssistant.createdAt || api.nowIso();
+      }
+      delete state.pendingThreadIds[record.id];
+      api.rememberTurnHistory(record);
+      return true;
+    }
+
     function bindStreamListener() {
       if (context.streamListenerBound || !window.__tribexAiClient || typeof window.__tribexAiClient.listenToStreamEvents !== 'function') {
         return;
@@ -406,10 +530,10 @@
       if (detail.personaReleaseId) merged.personaReleaseId = detail.personaReleaseId;
       if (detail.persona) merged.persona = detail.persona;
       if (detail.personaRelease) merged.personaRelease = detail.personaRelease;
+      var incomingActivePause = null;
+      var hasIncomingActivePause = detail.activePause !== undefined;
       if (detail.activePause !== undefined) {
-        merged.activePause = typeof api.filterContinuedPause === 'function'
-          ? api.filterContinuedPause(detail.id, detail.activePause || null)
-          : detail.activePause || null;
+        incomingActivePause = detail.activePause || null;
       }
       if (detail.preview) merged.base.preview = detail.preview;
       var detailMessages = Array.isArray(detail.runtimeMessages)
@@ -420,6 +544,14 @@
         var nextActivityAt = conversationActivityAt || detail.messageActivityAt || detail.lastActivityAt;
         merged.messageActivityAt = maxActivityTimestamp(merged.messageActivityAt, nextActivityAt);
         merged.base.lastActivityAt = maxActivityTimestamp(merged.base.lastActivityAt, nextActivityAt);
+      }
+      if (hasIncomingActivePause) {
+        merged.activePause = typeof api.filterContinuedPause === 'function'
+          ? api.filterContinuedPause(detail.id, incomingActivePause, Object.assign({}, merged, {
+            messages: detailMessages,
+            runtimeMessages: Array.isArray(detail.runtimeMessages) ? detail.runtimeMessages : null,
+          }))
+          : incomingActivePause;
       }
       if (detail.rowState !== undefined) merged.rowState = detail.rowState;
       if (!merged.activePause && (merged.rowState === 'waiting-on-user' || merged.rowState === 'ready-to-continue')) {
@@ -465,9 +597,11 @@
               isStreaming: false,
             });
             merged.activeTurn.status = 'finalized';
+            delete state.pendingThreadIds[detail.id];
             api.rememberTurnHistory(merged);
           }
         }
+        reconcileResumePendingTurn(merged);
         merged.lastTurnOrdinal = Math.max(
           merged.lastTurnOrdinal || 0,
           api.countUserMessages(merged.runtimeSnapshot.messages)
@@ -499,6 +633,16 @@
       return merged;
     }
 
+    function applyOperationMetadata(activeTurn, source) {
+      if (!activeTurn || !source) return;
+      activeTurn.operationId = source.operationId || activeTurn.operationId || null;
+      activeTurn.clientMessageId = source.clientMessageId || source.messageId || activeTurn.clientMessageId || null;
+      activeTurn.contentFingerprint = source.contentFingerprint || activeTurn.contentFingerprint || null;
+      activeTurn.lastKnownEventSequence = source.lastKnownEventSequence || activeTurn.lastKnownEventSequence || null;
+      activeTurn.lastPresenceAt = source.lastPresenceAt || activeTurn.lastPresenceAt || api.nowIso();
+      activeTurn.presenceLabel = source.presenceLabel || activeTurn.presenceLabel || null;
+    }
+
     function startActiveTurn(threadId, event) {
       var detail = api.ensureThreadDetailRecord(threadId);
       var existing = detail.activeTurn;
@@ -524,11 +668,13 @@
       detail.activeTurn = {
         turnId: event.turnId || (existing && existing.turnId) || api.randomId('turn'),
         turnOrdinal: turnOrdinal,
-        status: 'queued',
+        status: event.status || 'queued',
         userMessage: userMessage,
         assistantMessage: existing && existing.assistantMessage ? existing.assistantMessage : null,
         startedAt: event.createdAt || (existing && existing.startedAt) || api.nowIso(),
       };
+      applyOperationMetadata(detail.activeTurn, existing);
+      applyOperationMetadata(detail.activeTurn, event);
       if (detail.activeTurn.userMessage) {
         detail.activeTurn.userMessage.turnId = detail.activeTurn.turnId;
         detail.activeTurn.userMessage.turnOrdinal = detail.activeTurn.turnOrdinal;
@@ -550,7 +696,7 @@
       return detail;
     }
 
-    function queueLocalTurn(threadId, prompt, turnId) {
+    function queueLocalTurn(threadId, prompt, turnId, operation) {
       var detail = api.ensureThreadDetailRecord(threadId);
       var createdAt = api.nowIso();
       var turnOrdinal = api.resolveNextTurnOrdinal(detail);
@@ -558,9 +704,9 @@
       detail.activeTurn = {
         turnId: turnId || api.randomId('turn'),
         turnOrdinal: turnOrdinal,
-        status: 'queued',
+        status: 'sending',
         userMessage: {
-          id: api.randomId('user'),
+          id: operation && operation.clientMessageId ? operation.clientMessageId : api.randomId('user'),
           role: 'user',
           content: prompt,
           createdAt: createdAt,
@@ -570,7 +716,10 @@
         },
         assistantMessage: null,
         startedAt: createdAt,
+        presenceLabel: 'Sending message',
+        lastPresenceAt: createdAt,
       };
+      applyOperationMetadata(detail.activeTurn, operation);
       detail.activeTurn.userMessage.turnId = detail.activeTurn.turnId;
       detail.base.preview = prompt;
       detail.messageActivityAt = maxActivityTimestamp(detail.messageActivityAt, createdAt);
@@ -580,7 +729,63 @@
       return detail.activeTurn;
     }
 
-    function queueContextMessage(threadId, prompt, messageId) {
+    function markPauseResumePending(threadId, pause, note) {
+      if (!threadId) return null;
+      state.pendingThreadIds = state.pendingThreadIds || {};
+      var detail = api.ensureThreadDetailRecord(threadId);
+      var createdAt = api.nowIso();
+      var existing = detail.activeTurn;
+      var turnId = (existing && existing.turnId) || api.randomId('resume-turn');
+      var turnOrdinal = (existing && existing.turnOrdinal) || api.resolveNextTurnOrdinal(detail);
+
+      detail.activeTurn = {
+        turnId: turnId,
+        turnOrdinal: turnOrdinal,
+        status: 'running',
+        userMessage: null,
+        assistantMessage: {
+          id: api.randomId('runtime-assistant'),
+          role: 'assistant',
+          content: '',
+          createdAt: createdAt,
+          isStreaming: true,
+          messageId: null,
+          turnId: turnId,
+          turnOrdinal: turnOrdinal,
+        },
+        startedAt: createdAt,
+        resumePending: true,
+        resumedFromPauseId: pause && pause.id ? pause.id : null,
+        resumeNote: note || '',
+      };
+
+      attachResumeUserMessage(detail);
+      state.pendingThreadIds[threadId] = true;
+      api.rememberTurnHistory(detail);
+      api.syncThreadSummaryFromRecord(detail);
+      return detail.activeTurn;
+    }
+
+    function clearPauseResumePending(threadId, pauseId) {
+      if (!threadId) return null;
+      state.pendingThreadIds = state.pendingThreadIds || {};
+      var detail = (state.threadDetails && state.threadDetails[threadId])
+        || (state.threadEntitiesById && state.threadEntitiesById[threadId])
+        || null;
+      delete state.pendingThreadIds[threadId];
+      if (
+        detail &&
+        detail.activeTurn &&
+        detail.activeTurn.resumePending &&
+        (!pauseId || !detail.activeTurn.resumedFromPauseId || detail.activeTurn.resumedFromPauseId === pauseId)
+      ) {
+        detail.activeTurn = null;
+        api.syncThreadSummaryFromRecord(detail);
+      }
+      return detail;
+    }
+
+    function queueContextMessage(threadId, prompt, messageId, operation) {
       var detail = api.ensureThreadDetailRecord(threadId);
       var createdAt = api.nowIso();
       var turnOrdinal = api.resolveNextTurnOrdinal(detail);
@@ -594,6 +799,10 @@
         turnId: turnId,
         turnOrdinal: turnOrdinal,
       };
+      if (operation) {
+        userMessage.operationId = operation.operationId || null;
+        userMessage.contentFingerprint = operation.contentFingerprint || null;
+      }
 
       var turn = api.ensureTurnEntry(detail, turnId, turnOrdinal);
       if (turn) {
@@ -606,6 +815,41 @@
       api.rememberTurnHistory(detail);
       api.syncThreadSummaryFromRecord(detail);
       return userMessage;
+    }
+
+    function markActiveTurnUncertain(threadId, message, options) {
+      if (!threadId) return null;
+      var detail = (state.threadDetails && state.threadDetails[threadId])
+        || (state.threadEntitiesById && state.threadEntitiesById[threadId])
+        || null;
+      state.pendingThreadIds = state.pendingThreadIds || {};
+      state.threadErrors = state.threadErrors || {};
+      state.pendingThreadIds[threadId] = true;
+      state.threadErrors[threadId] = null;
+      if (!detail) return null;
+
+      if (!detail.activeTurn) {
+        detail.activeTurn = {
+          turnId: options && options.turnId ? options.turnId : null,
+          status: 'unknown_delivery',
+          userMessage: null,
+          assistantMessage: null,
+          startedAt: api.nowIso(),
+        };
+      }
+      if (options && options.turnId && !detail.activeTurn.turnId) {
+        detail.activeTurn.turnId = options.turnId;
+      }
+      detail.activeTurn.status = 'reconnecting';
+      detail.activeTurn.deliveryUncertain = true;
+      detail.activeTurn.presenceLabel = 'Connection timed out. Checking whether the run is still active.';
+      detail.activeTurn.lastPresenceAt = api.nowIso();
+      detail.activeTurn.lastError = message || 'Runtime connection timed out.';
+      applyOperationMetadata(detail.activeTurn, options || null);
+      detail.rowState = 'pending';
+      api.rememberTurnHistory(detail);
+      api.syncThreadSummaryFromRecord(detail);
+      return detail;
     }
 
     function appendLegacyMessage(record, message) {
@@ -940,7 +1184,7 @@
           ? window.__tribexAiClient.normalizeThreadPause(pausePayload.activePause)
           : pausePayload.activePause;
         record.activePause = typeof api.filterContinuedPause === 'function'
-          ? api.filterContinuedPause(event.threadId, normalizedPause)
+          ? api.filterContinuedPause(event.threadId, normalizedPause, record)
           : normalizedPause;
         if (record.activePause && String(record.activePause.status || '').toUpperCase() === 'READY') {
           record.rowState = 'ready-to-continue';
@@ -948,6 +1192,12 @@
           record.rowState = 'waiting-on-user';
         } else if (record.rowState === 'waiting-on-user' || record.rowState === 'ready-to-continue') {
           record.rowState = null;
+        }
+        if (!record.activePause && (
+          pausePayload.toolName === 'thread.pause.resolved' ||
+          pausePayload.toolName === 'thread.pause.resuming'
+        )) {
+          syncBackgroundThreadRuntime(event.threadId, record);
         }
         state.threadErrors[event.threadId] = null;
         api.notify();
@@ -1113,7 +1363,7 @@
       });
     }
 
-    function syncBackgroundChildRuntime(threadId, seed) {
+    function syncBackgroundThreadRuntime(threadId, seed) {
       if (!threadId || !window.__tribexAiClient) return;
       context.backgroundRuntimeSyncs = context.backgroundRuntimeSyncs || {};
       if (context.backgroundRuntimeSyncs[threadId]) return;
@@ -1154,6 +1404,10 @@
         });
     }
 
+    function syncBackgroundChildRuntime(threadId, seed) {
+      syncBackgroundThreadRuntime(threadId, seed);
+    }
+
     function registerSubAgentChildThread(parentThreadId, item) {
       var payload = extractSubAgentPayload(item);
       var childSummary = normalizeSubAgentChildThread(parentThreadId, payload);
@@ -1181,10 +1435,17 @@
 
       if (event.type === 'error') {
         detail.connection.runtimeError = event.error || 'Runtime connection failed.';
-        failActiveTurnLocally(threadId, detail.connection.runtimeError, {
-          turnId: event.turnId || null,
-          silent: shouldSilenceInterruptedFailure(threadId, event.turnId || null),
-        });
+        if (/runtime connection timed out/i.test(String(detail.connection.runtimeError || ''))) {
+          markActiveTurnUncertain(threadId, detail.connection.runtimeError, {
+            turnId: event.turnId || null,
+            operationId: event.operationId || null,
+          });
+        } else {
+          failActiveTurnLocally(threadId, detail.connection.runtimeError, {
+            turnId: event.turnId || null,
+            silent: shouldSilenceInterruptedFailure(threadId, event.turnId || null),
+          });
+        }
         api.notify();
         return;
       }
@@ -1211,6 +1472,13 @@
 
       if (event.type === 'turn_start') {
         state.threadErrors[threadId] = null;
+        if (detail.activeTurn) {
+          detail.activeTurn.status = detail.activeTurn.status === 'sending' ? 'accepted' : detail.activeTurn.status;
+          detail.activeTurn.presenceLabel = 'Accepted by runtime';
+          detail.activeTurn.lastPresenceAt = event.createdAt || api.nowIso();
+          applyOperationMetadata(detail.activeTurn, event);
+          api.rememberTurnHistory(detail);
+        }
         api.notify();
         return;
       }
@@ -1241,6 +1509,8 @@
           message.content = event.content || ((message.content || '') + (event.delta || ''));
           message.isStreaming = true;
           activeTurn.status = 'running';
+          activeTurn.presenceLabel = 'Assistant is responding';
+          activeTurn.lastPresenceAt = event.createdAt || api.nowIso();
         });
         api.notify();
         return;
@@ -1264,6 +1534,11 @@
       }
 
       if ((event.type === 'activity_update' || event.type === 'work_note_update') && event.item) {
+        if (detail.activeTurn) {
+          detail.activeTurn.status = 'running';
+          detail.activeTurn.presenceLabel = event.item.summary || event.item.title || 'Tool activity';
+          detail.activeTurn.lastPresenceAt = event.createdAt || api.nowIso();
+        }
         var normalizedActivityItem = buildCompanionActivityItem(Object.assign({
           role: 'tool',
         }, event.item), detail);
@@ -1319,6 +1594,9 @@
           api.rememberTurnHistory(detail);
         }
         delete state.pendingThreadIds[threadId];
+        if (state.pendingThreadOperations && detail.activeTurn && detail.activeTurn.operationId) {
+          delete state.pendingThreadOperations[threadId];
+        }
         state.threadErrors[threadId] = null;
         api.syncThreadSummaryFromRecord(detail);
         api.notify();
@@ -1335,6 +1613,9 @@
     api.mergeThreadDetail = mergeThreadDetail;
     api.startActiveTurn = startActiveTurn;
     api.queueLocalTurn = queueLocalTurn;
+    api.markActiveTurnUncertain = markActiveTurnUncertain;
+    api.markPauseResumePending = markPauseResumePending;
+    api.clearPauseResumePending = clearPauseResumePending;
     api.queueContextMessage = queueContextMessage;
     api.appendLegacyMessage = appendLegacyMessage;
     api.buildCompanionActivityItem = buildCompanionActivityItem;

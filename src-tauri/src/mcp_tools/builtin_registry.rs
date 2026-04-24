@@ -133,7 +133,11 @@ fn push_review_definition(renderers: &[RendererDef]) -> Value {
                 },
                 "meta": {
                     "type": "object",
-                    "description": "Optional metadata. For backend-owned approvals, may include backendCallback { url, token }."
+                    "description": "Optional renderer metadata. Sensitive backend callback credentials are stripped server-side and are never exposed to renderers."
+                },
+                "backend_callback": {
+                    "type": "object",
+                    "description": "Optional backend-owned approval callback configuration with url and token. Stored server-side only; never exposed to renderers."
                 },
                 "session_id": {
                     "type": "string",

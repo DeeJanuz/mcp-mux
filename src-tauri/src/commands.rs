@@ -9,7 +9,7 @@ use crate::renderer_scanner::RendererInfo;
 
 use crate::http_server::AsyncAppState;
 use crate::review::ReviewDecision;
-use crate::session::PreviewSession;
+use crate::session::{sanitize_renderer_meta, PreviewSession};
 use crate::state::AppState;
 
 #[tauri::command]
@@ -47,6 +47,70 @@ async fn post_backend_review_callback(
     Ok(())
 }
 
+fn build_review_decision(
+    session_id: String,
+    decision: String,
+    operation_decisions: Option<HashMap<String, String>>,
+    comments: Option<HashMap<String, String>>,
+    modifications: Option<HashMap<String, String>>,
+    additions: Option<serde_json::Value>,
+    suggestion_decisions: Option<HashMap<String, serde_json::Value>>,
+    table_decisions: Option<HashMap<String, serde_json::Value>>,
+) -> ReviewDecision {
+    let overall_decision =
+        if operation_decisions.is_some() && decision != "accept" && decision != "reject" {
+            "partial".to_string()
+        } else {
+            decision.clone()
+        };
+
+    ReviewDecision {
+        session_id,
+        status: "decision_received".to_string(),
+        decision: Some(overall_decision),
+        operation_decisions,
+        comments,
+        modifications,
+        additions,
+        suggestion_decisions,
+        table_decisions,
+    }
+}
+
+fn resolve_local_review_decision(
+    state: &Arc<AppState>,
+    session_id: &str,
+    decision: &str,
+    operation_decisions: Option<HashMap<String, String>>,
+    review_decision: ReviewDecision,
+) -> Option<serde_json::Value> {
+    let backend_callback = {
+        let mut sessions = state.sessions.lock().unwrap();
+        sessions.get_mut(session_id).map(|session| {
+            let callback = session
+                .backend_callback
+                .clone()
+                .or_else(|| session.meta.get("backendCallback").cloned())
+                .or_else(|| session.meta.get("backend_callback").cloned());
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            session.meta = sanitize_renderer_meta(session.meta.clone());
+            session.decided_at = Some(now);
+            session.decision = Some(decision.to_string());
+            session.operation_decisions = operation_decisions;
+            callback
+        })
+    }
+    .flatten();
+
+    let mut reviews = state.reviews.lock().unwrap();
+    reviews.resolve(session_id, review_decision);
+
+    backend_callback
+}
+
 #[tauri::command]
 pub async fn submit_decision(
     session_id: String,
@@ -59,51 +123,27 @@ pub async fn submit_decision(
     table_decisions: Option<HashMap<String, serde_json::Value>>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    let backend_callback = {
-        let sessions = state.sessions.lock().unwrap();
-        sessions
-            .get(&session_id)
-            .and_then(|session| session.meta.get("backendCallback").cloned())
-    };
-
-    let overall_decision =
-        if operation_decisions.is_some() && decision != "accept" && decision != "reject" {
-            "partial".to_string()
-        } else {
-            decision.clone()
-        };
-
-    let review_decision = ReviewDecision {
-        session_id: session_id.clone(),
-        status: "decision_received".to_string(),
-        decision: Some(overall_decision),
-        operation_decisions: operation_decisions.clone(),
-        comments: comments.clone(),
-        modifications: modifications.clone(),
-        additions: additions.clone(),
-        suggestion_decisions: suggestion_decisions.clone(),
-        table_decisions: table_decisions.clone(),
-    };
+    let review_decision = build_review_decision(
+        session_id.clone(),
+        decision.clone(),
+        operation_decisions.clone(),
+        comments,
+        modifications,
+        additions,
+        suggestion_decisions,
+        table_decisions,
+    );
+    let backend_callback = resolve_local_review_decision(
+        state.inner(),
+        &session_id,
+        &decision,
+        operation_decisions,
+        review_decision.clone(),
+    );
 
     if let Some(callback) = backend_callback {
         post_backend_review_callback(state.http_client.clone(), callback, &review_decision).await?;
     }
-
-    {
-        let mut sessions = state.sessions.lock().unwrap();
-        if let Some(session) = sessions.get_mut(&session_id) {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            session.decided_at = Some(now);
-            session.decision = Some(decision.clone());
-            session.operation_decisions = operation_decisions.clone();
-        }
-    }
-
-    let mut reviews = state.reviews.lock().unwrap();
-    reviews.resolve(&session_id, review_decision);
 
     Ok(())
 }
@@ -925,6 +965,72 @@ mod tests {
         let health = get_health();
         assert_eq!(health["status"], "ok");
         assert!(health["version"].is_string());
+    }
+
+    #[test]
+    fn resolve_local_review_decision_records_before_backend_callback_delivery() {
+        let (state, _dir) = test_app_state();
+        let session_id = "review-session-1";
+        let callback = serde_json::json!({
+            "url": "https://example.test/reviews/1",
+            "token": "secret-token"
+        });
+
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            sessions.set(PreviewSession {
+                session_id: session_id.to_string(),
+                tool_name: "structured_data".to_string(),
+                tool_args: serde_json::json!({}),
+                content_type: "structured_data".to_string(),
+                data: serde_json::json!({ "tables": [] }),
+                meta: serde_json::json!({
+                    "reviewRequired": true,
+                    "backendCallback": callback
+                }),
+                backend_callback: Some(callback.clone()),
+                review_required: true,
+                timeout_secs: Some(120),
+                created_at: 1,
+                decided_at: None,
+                decision: None,
+                operation_decisions: None,
+            });
+        }
+        let receiver = {
+            let mut reviews = state.reviews.lock().unwrap();
+            reviews.add_pending(session_id.to_string())
+        };
+
+        let review_decision = build_review_decision(
+            session_id.to_string(),
+            "accept".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let extracted_callback = resolve_local_review_decision(
+            &state,
+            session_id,
+            "accept",
+            None,
+            review_decision,
+        );
+
+        assert_eq!(extracted_callback, Some(callback));
+
+        let sessions = state.sessions.lock().unwrap();
+        let session = sessions.get(session_id).unwrap();
+        assert_eq!(session.decision.as_deref(), Some("accept"));
+        assert!(session.decided_at.is_some());
+        assert!(session.meta.get("backendCallback").is_none());
+
+        let resolved = receiver.borrow().clone().unwrap();
+        assert_eq!(resolved.decision.as_deref(), Some("accept"));
     }
 
     #[test]

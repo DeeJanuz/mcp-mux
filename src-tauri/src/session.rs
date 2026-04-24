@@ -15,6 +15,8 @@ pub struct PreviewSession {
     pub data: serde_json::Value,
     #[serde(default)]
     pub meta: serde_json::Value,
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub backend_callback: Option<serde_json::Value>,
     #[serde(default)]
     pub review_required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -26,6 +28,38 @@ pub struct PreviewSession {
     pub decision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_decisions: Option<HashMap<String, String>>,
+}
+
+fn take_backend_callback(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+) -> Option<serde_json::Value> {
+    map.remove("backendCallback")
+        .or_else(|| map.remove("backend_callback"))
+}
+
+pub fn split_renderer_meta(
+    meta: Option<serde_json::Value>,
+) -> (serde_json::Value, Option<serde_json::Value>) {
+    match meta {
+        Some(serde_json::Value::Object(mut map)) => {
+            let backend_callback = take_backend_callback(&mut map);
+            (serde_json::Value::Object(map), backend_callback)
+        }
+        Some(_) | None => (serde_json::Value::Object(Default::default()), None),
+    }
+}
+
+pub fn sanitize_renderer_meta(meta: serde_json::Value) -> serde_json::Value {
+    split_renderer_meta(Some(meta)).0
+}
+
+impl PreviewSession {
+    pub fn renderer_snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.meta = sanitize_renderer_meta(snapshot.meta);
+        snapshot.backend_callback = None;
+        snapshot
+    }
 }
 
 struct SessionEntry {
@@ -64,7 +98,10 @@ impl SessionStore {
     }
 
     pub fn get_all(&self) -> Vec<PreviewSession> {
-        self.entries.values().map(|e| e.session.clone()).collect()
+        self.entries
+            .values()
+            .map(|e| e.session.renderer_snapshot())
+            .collect()
     }
 
     pub fn delete(&mut self, id: &str) -> Option<PreviewSession> {
@@ -78,5 +115,63 @@ impl SessionStore {
             .retain(|_, e| e.inserted_at.elapsed() < SESSION_TTL);
         before - self.entries.len()
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_renderer_meta_removes_backend_callback_secrets() {
+        let (meta, callback) = split_renderer_meta(Some(serde_json::json!({
+            "label": "Review",
+            "backendCallback": {
+                "url": "https://example.test/reviews/1",
+                "token": "secret-token"
+            }
+        })));
+
+        assert_eq!(meta["label"], "Review");
+        assert!(meta.get("backendCallback").is_none());
+        assert_eq!(
+            callback.unwrap()["token"],
+            serde_json::Value::String("secret-token".to_string())
+        );
+    }
+
+    #[test]
+    fn renderer_snapshot_does_not_serialize_backend_callback() {
+        let session = PreviewSession {
+            session_id: "session-1".to_string(),
+            tool_name: "structured_data".to_string(),
+            tool_args: serde_json::json!({}),
+            content_type: "structured_data".to_string(),
+            data: serde_json::json!({ "tables": [] }),
+            meta: serde_json::json!({
+                "reviewRequired": true,
+                "backendCallback": {
+                    "url": "https://example.test/reviews/1",
+                    "token": "secret-token"
+                }
+            }),
+            backend_callback: Some(serde_json::json!({
+                "url": "https://example.test/reviews/1",
+                "token": "secret-token"
+            })),
+            review_required: true,
+            timeout_secs: Some(120),
+            created_at: 1,
+            decided_at: None,
+            decision: None,
+            operation_decisions: None,
+        };
+
+        let snapshot = session.renderer_snapshot();
+        let serialized = serde_json::to_value(snapshot).unwrap();
+
+        assert!(serialized.get("backendCallback").is_none());
+        assert!(serialized.get("backend_callback").is_none());
+        assert!(serialized["meta"].get("backendCallback").is_none());
+        assert_eq!(serialized["meta"]["reviewRequired"], true);
+    }
 }

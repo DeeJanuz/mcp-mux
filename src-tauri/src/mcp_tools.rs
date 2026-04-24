@@ -545,6 +545,21 @@ struct PushParams {
     timeout: u64,
 }
 
+fn attach_backend_callback_meta(
+    meta: Option<Value>,
+    callback: Option<Value>,
+) -> Option<Value> {
+    let Some(callback) = callback else {
+        return meta;
+    };
+    let mut map = match meta {
+        Some(Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+    map.insert("backendCallback".to_string(), callback);
+    Some(Value::Object(map))
+}
+
 /// Extract the common parameters shared by `call_push_review` and `call_push_impl`.
 /// When `review` is true, timeout defaults to 120; when false, timeout is always 120.
 fn extract_push_params(arguments: &Value, review: bool) -> Result<PushParams, String> {
@@ -559,7 +574,13 @@ fn extract_push_params(arguments: &Value, review: bool) -> Result<PushParams, St
         .map(|value| value.to_string())
         .or_else(|| infer_renderer_tool_name(&data).map(|value| value.to_string()))
         .ok_or("Missing required parameter: tool_name")?;
-    let meta = arguments.get("meta").cloned();
+    let meta = attach_backend_callback_meta(
+        arguments.get("meta").cloned(),
+        arguments
+            .get("backend_callback")
+            .or_else(|| arguments.get("backendCallback"))
+            .cloned(),
+    );
     let session_id = arguments
         .get("session_id")
         .or_else(|| arguments.get("sessionId"))
@@ -3181,6 +3202,30 @@ mod tests {
         assert_eq!(params.data, serde_json::json!({"title": "Hello"}));
         assert_eq!(params.meta, Some(serde_json::json!({"key": "val"})));
         assert_eq!(params.timeout, 60);
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_backend_callback_outside_renderer_meta() {
+        let args = serde_json::json!({
+            "tool_name": "structured_data",
+            "data": {"tables": []},
+            "meta": {"key": "val"},
+            "backend_callback": {
+                "url": "https://example.test/reviews/1",
+                "token": "secret-token"
+            }
+        });
+        let params = extract_push_params(&args, true).unwrap();
+        assert_eq!(
+            params.meta,
+            Some(serde_json::json!({
+                "key": "val",
+                "backendCallback": {
+                    "url": "https://example.test/reviews/1",
+                    "token": "secret-token"
+                }
+            }))
+        );
     }
 
     #[test]

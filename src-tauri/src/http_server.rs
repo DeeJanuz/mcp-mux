@@ -22,7 +22,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::mcp;
 use crate::plugin::PluginRegistry;
 use crate::review::ReviewDecision;
-use crate::session::PreviewSession;
+use crate::session::{sanitize_renderer_meta, split_renderer_meta, PreviewSession};
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,7 +276,9 @@ fn append_streaming_session_data(
     }
 
     existing.data = serde_json::Value::Object(next_data);
-    existing.meta = merge_json_objects(Some(existing.meta.clone()), incoming_meta);
+    let (incoming_meta, _) = split_renderer_meta(incoming_meta);
+    existing.meta = merge_json_objects(Some(existing.meta.clone()), Some(incoming_meta));
+    existing.meta = sanitize_renderer_meta(existing.meta.clone());
     if let Some(tool_args) = incoming_tool_args {
         existing.tool_args = merge_json_objects(Some(existing.tool_args.clone()), Some(tool_args));
     }
@@ -309,6 +311,7 @@ pub async fn store_push(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64;
+    let (renderer_meta, backend_callback) = split_renderer_meta(meta);
 
     let session = PreviewSession {
         session_id: session_id.clone(),
@@ -316,7 +319,8 @@ pub async fn store_push(
         tool_args: tool_args.unwrap_or(serde_json::Value::Object(Default::default())),
         content_type,
         data,
-        meta: meta.unwrap_or(serde_json::Value::Object(Default::default())),
+        meta: renderer_meta,
+        backend_callback,
         review_required,
         timeout_secs: if review_required { Some(timeout_secs) } else { None },
         created_at: now,
@@ -363,7 +367,8 @@ async fn store_preview_session(
     }
 
     // Emit to WebView
-    let _ = state_guard.app_handle.emit("push_preview", &session);
+    let snapshot = session.renderer_snapshot();
+    let _ = state_guard.app_handle.emit("push_preview", &snapshot);
 
     // Show and focus the window
     if let Some(window) = state_guard.app_handle.get_webview_window("main") {
@@ -427,7 +432,10 @@ async fn append_streaming_push(
                     "title": title,
                     "body": chunk,
                 }),
-                meta: meta.unwrap_or(serde_json::json!({ "streaming": true })),
+                meta: sanitize_renderer_meta(
+                    meta.unwrap_or(serde_json::json!({ "streaming": true })),
+                ),
+                backend_callback: None,
                 review_required: false,
                 timeout_secs: None,
                 created_at: now,
@@ -1374,6 +1382,7 @@ mod tests {
             meta: serde_json::json!({
                 "streaming": true
             }),
+            backend_callback: None,
             review_required: false,
             timeout_secs: None,
             created_at: 1,

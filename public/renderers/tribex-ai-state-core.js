@@ -20,7 +20,13 @@
       var activeTurnStatus = detail && detail.activeTurn
         ? String(detail.activeTurn.status || '').toLowerCase()
         : '';
-      var activeTurnBusy = activeTurnStatus === 'queued' || activeTurnStatus === 'running';
+      var activeTurnBusy = (
+        activeTurnStatus === 'accepted' ||
+        activeTurnStatus === 'queued' ||
+        activeTurnStatus === 'running' ||
+        activeTurnStatus === 'reconnecting' ||
+        activeTurnStatus === 'unknown_delivery'
+      );
       var runs = [];
       if (detail && Array.isArray(detail.runs)) {
         runs = detail.runs;
@@ -173,8 +179,109 @@
       return context.continuedPauseIdsByThread[threadId] === pauseId;
     }
 
-    function filterContinuedPause(threadId, pause) {
-      return isContinuedPause(threadId, pause) ? null : pause;
+    function normalizePauseStatus(value) {
+      return String(value || '').trim().toUpperCase();
+    }
+
+    function isTerminalPauseTaskStatus(value) {
+      var status = normalizePauseStatus(value);
+      return (
+        status === 'COMPLETED' ||
+        status === 'COMPLETE' ||
+        status === 'DONE' ||
+        status === 'SUCCESS' ||
+        status === 'SUCCEEDED' ||
+        status === 'FAILED' ||
+        status === 'ERROR' ||
+        status === 'CANCELED' ||
+        status === 'CANCELLED' ||
+        status === 'SKIPPED'
+      );
+    }
+
+    function isAuthenticationPause(pause) {
+      if (!pause) return false;
+      var reason = String(pause.reasonKind || pause.reason_kind || '').toLowerCase();
+      if (reason.indexOf('auth') >= 0 || reason.indexOf('oauth') >= 0) return true;
+      var values = [
+        pause.title,
+        pause.detail,
+        pause.progressSummary,
+        pause.resumePrompt,
+      ];
+      (Array.isArray(pause.tasks) ? pause.tasks : []).forEach(function (task) {
+        values.push(task && task.kind);
+        values.push(task && task.title);
+        values.push(task && task.detail);
+        values.push(task && task.actionUrl);
+        values.push(task && task.actionLabel);
+      });
+      return values.some(function (value) {
+        var text = String(value || '').toLowerCase();
+        return !!(
+          text.indexOf('authenticat') >= 0 ||
+          text.indexOf('authorization') >= 0 ||
+          text.indexOf('sign in') >= 0 ||
+          text.indexOf('sign-in') >= 0 ||
+          text.indexOf('oauth') >= 0 ||
+          text.indexOf('gmail') >= 0 ||
+          text.indexOf('accounts.google') >= 0
+        );
+      });
+    }
+
+    function getPauseActivityTimestamp(pause) {
+      if (!pause) return null;
+      var latest = maxActivityTimestamp(
+        maxActivityTimestamp(pause.completedAt || null, pause.updatedAt || null),
+        pause.createdAt || null
+      );
+      (Array.isArray(pause.tasks) ? pause.tasks : []).forEach(function (task) {
+        latest = maxActivityTimestamp(latest, task && task.completedAt ? task.completedAt : null);
+        latest = maxActivityTimestamp(latest, task && task.updatedAt ? task.updatedAt : null);
+      });
+      return latest;
+    }
+
+    function getSourceMessageActivity(source) {
+      if (!source) return null;
+      var latest = maxActivityTimestamp(
+        maxActivityTimestamp(source.messageActivityAt || null, source.lastActivityAt || null),
+        source.base && source.base.lastActivityAt ? source.base.lastActivityAt : null
+      );
+      var messages = [];
+      if (Array.isArray(source.messages)) messages = messages.concat(source.messages);
+      if (Array.isArray(source.runtimeMessages)) messages = messages.concat(source.runtimeMessages);
+      if (source.base && Array.isArray(source.base.messages)) messages = messages.concat(source.base.messages);
+      messages.forEach(function (message) {
+        if (!message || (message.role !== 'user' && message.role !== 'assistant')) return;
+        latest = maxActivityTimestamp(latest, message.createdAt || message.updatedAt || null);
+      });
+      return latest;
+    }
+
+    function isResolvedHydratedAuthPause(threadId, pause, source) {
+      if (!threadId || !pause || !source) return false;
+      var pauseStatus = normalizePauseStatus(pause.status);
+      if (pauseStatus !== 'READY' && pauseStatus !== 'COMPLETED' && pauseStatus !== 'COMPLETE' && pauseStatus !== 'DONE') {
+        return false;
+      }
+      if (!isAuthenticationPause(pause)) return false;
+      var tasks = Array.isArray(pause.tasks) ? pause.tasks : [];
+      if (!tasks.length || !tasks.every(function (task) { return isTerminalPauseTaskStatus(task && task.status); })) {
+        return false;
+      }
+      var pauseActivity = getPauseActivityTimestamp(pause);
+      var messageActivity = getSourceMessageActivity(source);
+      var pauseTime = parseActivityTimestamp(pauseActivity);
+      var messageTime = parseActivityTimestamp(messageActivity);
+      return pauseTime !== null && messageTime !== null && messageTime > pauseTime;
+    }
+
+    function filterContinuedPause(threadId, pause, source) {
+      if (!pause) return null;
+      if (isContinuedPause(threadId, pause)) return null;
+      return isResolvedHydratedAuthPause(threadId, pause, source) ? null : pause;
     }
 
     function getOrganizationProjects(organizationId) {
@@ -442,6 +549,12 @@
       }
       if (next.messageActivityAt) {
         next.lastActivityAt = maxActivityTimestamp(next.lastActivityAt, next.messageActivityAt);
+      }
+      if (next.activePause && typeof filterContinuedPause === 'function') {
+        next.activePause = filterContinuedPause(next.id, next.activePause, next);
+      }
+      if (!next.activePause && (next.rowState === 'waiting-on-user' || next.rowState === 'ready-to-continue')) {
+        next.rowState = null;
       }
       if (!next.ui) {
         next.ui = {

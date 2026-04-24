@@ -273,6 +273,10 @@ function buildChatRequestPayload(input) {
     personaOverride: input.personaOverride || null,
     personaTestRunId: input.personaTestRunId || null,
     telemetryToken: input.telemetryToken || null,
+    operationId: input.operationId || null,
+    clientMessageId: input.clientMessageId || input.messageId || userMessageId,
+    contentFingerprint: input.contentFingerprint || null,
+    lastKnownEventSequence: input.lastKnownEventSequence || null,
   };
 }
 
@@ -1135,6 +1139,8 @@ async function startTurn(input) {
   record.activeTurn = {
     requestId: requestId,
     turnId: requestId,
+    operationId: input.operationId || null,
+    contentFingerprint: input.contentFingerprint || null,
     prompt: String(input.prompt || ''),
     startedAt: createdAt,
     messageId: 'assistant-' + requestId,
@@ -1156,12 +1162,18 @@ async function startTurn(input) {
   bus.emit(input.threadId, {
     type: 'turn_start',
     turnId: requestId,
+    operationId: input.operationId || null,
+    clientMessageId: input.clientMessageId || input.messageId || userMessageId,
+    contentFingerprint: input.contentFingerprint || null,
     prompt: String(input.prompt || ''),
     createdAt: createdAt,
   });
   bus.emit(input.threadId, {
     type: 'user_accepted',
     turnId: requestId,
+    operationId: input.operationId || null,
+    clientMessageId: input.clientMessageId || input.messageId || userMessageId,
+    contentFingerprint: input.contentFingerprint || null,
     message: {
       id: userMessageId,
       role: 'user',
@@ -1184,6 +1196,7 @@ async function startTurn(input) {
 
   return {
     turnId: requestId,
+    operationId: input.operationId || null,
     done: done,
   };
 }

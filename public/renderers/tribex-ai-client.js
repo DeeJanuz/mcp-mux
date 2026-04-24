@@ -1752,6 +1752,10 @@
         telemetryToken: override.telemetryToken || null,
         turnId: options && options.turnId ? options.turnId : null,
         messageId: options && options.messageId ? options.messageId : null,
+        operationId: options && options.operationId ? options.operationId : null,
+        clientMessageId: options && options.clientMessageId ? options.clientMessageId : null,
+        contentFingerprint: options && options.contentFingerprint ? options.contentFingerprint : null,
+        lastKnownEventSequence: options && options.lastKnownEventSequence ? options.lastKnownEventSequence : null,
         waitForStable: options && options.waitForStable === false ? false : undefined,
       });
     });

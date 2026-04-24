@@ -59,6 +59,7 @@
             state.threadDetails = state.threadEntitiesById;
             state.loadingThreadIds = {};
             state.pendingThreadIds = {};
+            state.pendingThreadOperations = {};
             state.interruptedThreadIds = {};
             return null;
           }
@@ -78,6 +79,7 @@
             state.threadDetails = state.threadEntitiesById;
             state.loadingThreadIds = {};
             state.pendingThreadIds = {};
+            state.pendingThreadOperations = {};
             state.interruptedThreadIds = {};
             return null;
           }
@@ -516,7 +518,7 @@
             var merged = api.getThread(threadId);
             if (merged) {
               if (merged.activePause && api.filterContinuedPause) {
-                merged.activePause = api.filterContinuedPause(threadId, merged.activePause);
+                merged.activePause = api.filterContinuedPause(threadId, merged.activePause, merged);
               }
               merged.optimistic = false;
               if (Object.keys(state.pendingThreadIds).indexOf(threadId) >= 0) {
@@ -554,7 +556,7 @@
                     var hydrated = api.getThread(threadId);
                     if (hydrated) {
                       if (hydrated.activePause && api.filterContinuedPause) {
-                        hydrated.activePause = api.filterContinuedPause(threadId, hydrated.activePause);
+                        hydrated.activePause = api.filterContinuedPause(threadId, hydrated.activePause, hydrated);
                       }
                       if (!hydrated.activePause && (
                         hydrated.rowState === 'waiting-on-user' ||
@@ -951,7 +953,13 @@
       var activeTurnStatus = detail && detail.activeTurn
         ? String(detail.activeTurn.status || '').toLowerCase()
         : '';
-      if (activeTurnStatus === 'queued' || activeTurnStatus === 'running') {
+      if (
+        activeTurnStatus === 'accepted' ||
+        activeTurnStatus === 'queued' ||
+        activeTurnStatus === 'running' ||
+        activeTurnStatus === 'reconnecting' ||
+        activeTurnStatus === 'unknown_delivery'
+      ) {
         return true;
       }
 
@@ -971,12 +979,94 @@
       });
     }
 
+    function normalizePromptFingerprintContent(prompt) {
+      return String(prompt || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+    }
+
+    function hashPromptFingerprint(value) {
+      var text = String(value || '');
+      var hash = 2166136261;
+      for (var index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index);
+        hash = Math.imul(hash, 16777619);
+      }
+      return 'fp_' + (hash >>> 0).toString(16);
+    }
+
+    function buildContentFingerprint(threadId, prompt) {
+      return hashPromptFingerprint([threadId || '', normalizePromptFingerprintContent(prompt)].join(':'));
+    }
+
+    function rememberPendingOperation(threadId, operation) {
+      if (!threadId || !operation) return;
+      state.pendingThreadOperations = state.pendingThreadOperations || {};
+      state.pendingThreadOperations[threadId] = Object.assign({}, operation, {
+        expiresAt: operation.expiresAt || new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      });
+    }
+
+    function clearPendingOperation(threadId, operationId) {
+      if (!threadId || !state.pendingThreadOperations) return;
+      var existing = state.pendingThreadOperations[threadId];
+      if (!existing) return;
+      if (operationId && existing.operationId && existing.operationId !== operationId) return;
+      delete state.pendingThreadOperations[threadId];
+    }
+
+    function findDuplicatePendingOperation(threadId, prompt) {
+      if (!threadId || !state.pendingThreadOperations) return null;
+      var existing = state.pendingThreadOperations[threadId];
+      if (!existing || !existing.contentFingerprint) return null;
+      if (existing.expiresAt && Date.parse(existing.expiresAt) <= Date.now()) {
+        delete state.pendingThreadOperations[threadId];
+        return null;
+      }
+      var fingerprint = buildContentFingerprint(threadId, prompt);
+      return existing.contentFingerprint === fingerprint ? existing : null;
+    }
+
+    function markDuplicateSubmit(threadId, operation) {
+      var detail = (state.threadDetails && state.threadDetails[threadId])
+        || (state.threadEntitiesById && state.threadEntitiesById[threadId])
+        || null;
+      state.threadErrors[threadId] = null;
+      state.pendingThreadIds[threadId] = true;
+      if (detail && detail.activeTurn) {
+        detail.activeTurn.operationId = detail.activeTurn.operationId || operation.operationId || null;
+        detail.activeTurn.presenceLabel = 'Already running. Checking status.';
+        detail.activeTurn.lastPresenceAt = api.nowIso();
+        api.rememberTurnHistory(detail);
+        api.syncThreadSummaryFromRecord(detail);
+      }
+      api.notify();
+    }
+
+    function isRuntimeConnectionTimeout(message) {
+      return /runtime connection timed out/i.test(String(message || ''));
+    }
+
     function submitPrompt(threadId, prompt) {
       var trimmed = String(prompt || '').trim();
       if (!trimmed) return Promise.resolve(false);
+      var duplicateOperation = findDuplicatePendingOperation(threadId, trimmed);
+      if (duplicateOperation) {
+        markDuplicateSubmit(threadId, duplicateOperation);
+        return Promise.resolve(false);
+      }
       var turnId = api.randomId('turn');
       var busy = isThreadBusy(threadId);
-      var messageId = busy ? api.randomId('user') : null;
+      var messageId = api.randomId('user');
+      var operationId = api.randomId('operation');
+      var contentFingerprint = buildContentFingerprint(threadId, trimmed);
+      var operation = {
+        operationId: operationId,
+        clientMessageId: messageId,
+        contentFingerprint: contentFingerprint,
+        startedAt: api.nowIso(),
+      };
       var thread = api.getThread(threadId);
       if (thread) {
         thread.rowState = 'pending';
@@ -988,10 +1078,11 @@
       state.threadErrors[threadId] = null;
       api.bindRuntimeBridge(threadId);
       if (busy && typeof api.queueContextMessage === 'function') {
-        api.queueContextMessage(threadId, trimmed, messageId);
+        api.queueContextMessage(threadId, trimmed, messageId, operation);
       } else {
-        api.queueLocalTurn(threadId, trimmed, turnId);
+        api.queueLocalTurn(threadId, trimmed, turnId, operation);
       }
+      rememberPendingOperation(threadId, operation);
       api.setThreadDraft(threadId, '');
       api.notify();
 
@@ -1000,6 +1091,9 @@
           return window.__tribexAiClient.sendMessage(threadId, trimmed, {
             turnId: turnId,
             messageId: messageId || undefined,
+            operationId: operationId,
+            clientMessageId: messageId,
+            contentFingerprint: contentFingerprint,
             waitForStable: busy ? false : undefined,
             forceRuntimeRefresh: false,
           });
@@ -1014,6 +1108,7 @@
                 if (!busy) {
                   delete state.pendingThreadIds[threadId];
                 }
+                clearPendingOperation(threadId, operationId);
                 var currentThread = api.getThread(threadId);
                 if (currentThread) {
                   currentThread.rowState = null;
@@ -1027,14 +1122,23 @@
                 var wasInterrupted = typeof api.shouldSilenceInterruptedFailure === 'function'
                   ? api.shouldSilenceInterruptedFailure(threadId, turn.turnId || null)
                   : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);
-                api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
-                  turnId: turn.turnId || turnId,
-                  silent: wasInterrupted,
-                });
+                if (!wasInterrupted && isRuntimeConnectionTimeout(message) && typeof api.markActiveTurnUncertain === 'function') {
+                  api.markActiveTurnUncertain(threadId, message, {
+                    turnId: turn.turnId || turnId,
+                    operationId: operationId,
+                  });
+                } else {
+                  clearPendingOperation(threadId, operationId);
+                  api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
+                    turnId: turn.turnId || turnId,
+                    silent: wasInterrupted,
+                  });
+                }
                 api.notify();
               });
           } else if (!busy) {
             delete state.pendingThreadIds[threadId];
+            clearPendingOperation(threadId, operationId);
             var currentThread = api.getThread(threadId);
             if (currentThread) currentThread.rowState = null;
             api.notify();
@@ -1057,10 +1161,18 @@
           var wasInterrupted = typeof api.shouldSilenceInterruptedFailure === 'function'
             ? api.shouldSilenceInterruptedFailure(threadId, turnId)
             : !!(state.interruptedThreadIds && state.interruptedThreadIds[threadId]);
-          api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
-            turnId: turnId,
-            silent: wasInterrupted,
-          });
+          if (!wasInterrupted && isRuntimeConnectionTimeout(message) && typeof api.markActiveTurnUncertain === 'function') {
+            api.markActiveTurnUncertain(threadId, message, {
+              turnId: turnId,
+              operationId: operationId,
+            });
+          } else {
+            clearPendingOperation(threadId, operationId);
+            api.failActiveTurnLocally(threadId, wasInterrupted ? 'Stopped by user.' : message, {
+              turnId: turnId,
+              silent: wasInterrupted,
+            });
+          }
           api.notify();
           return false;
         });
@@ -1444,6 +1556,7 @@
         state.threadEntitiesById = {};
         state.threadDetails = state.threadEntitiesById;
         state.pendingThreadIds = {};
+        state.pendingThreadOperations = {};
         state.loadingThreadIds = {};
         state.interruptedThreadIds = {};
         state.relayStates = {};
@@ -1993,7 +2106,7 @@
           var currentThread = api.getThread(threadId);
           var activePause = result && result.activePause ? result.activePause : null;
           if (activePause && api.filterContinuedPause) {
-            activePause = api.filterContinuedPause(threadId, activePause);
+            activePause = api.filterContinuedPause(threadId, activePause, currentThread);
           }
           if (activePause && !activePause.resumeMode) {
             activePause.resumeMode = result && result.resumeMode ? result.resumeMode : 'MANUAL';
@@ -2055,6 +2168,12 @@
         thread.pauseCheckState = null;
         thread.activePause = null;
       }
+      api.bindRuntimeBridge(threadId);
+      if (typeof api.markPauseResumePending === 'function') {
+        api.markPauseResumePending(threadId, previousPause || { id: threadPauseId }, note || '');
+      } else {
+        state.pendingThreadIds[threadId] = true;
+      }
       api.notify();
       return window.__tribexAiClient.continueThreadPause(threadId, threadPauseId, note || '')
         .then(function (result) {
@@ -2075,6 +2194,11 @@
         .catch(function (error) {
           if (api.clearPauseContinued) {
             api.clearPauseContinued(threadId, threadPauseId);
+          }
+          if (typeof api.clearPauseResumePending === 'function') {
+            api.clearPauseResumePending(threadId, threadPauseId);
+          } else {
+            delete state.pendingThreadIds[threadId];
           }
           state.threadErrors[threadId] = error && error.message ? error.message : String(error);
           var failedThread = api.getThread(threadId);

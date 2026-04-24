@@ -2078,6 +2078,17 @@
       'ai-thread-status-pill',
       createThreadPauseStatusLabel(threadContext.thread && threadContext.thread.activePause)
     );
+    var activeTurn = threadContext.thread && threadContext.thread.activeTurn ? threadContext.thread.activeTurn : null;
+    var activeTurnLabel = activeTurn && activeTurn.presenceLabel
+      ? activeTurn.presenceLabel
+      : activeTurn && activeTurn.status
+        ? 'Turn ' + window.__tribexAiUtils.titleCase(String(activeTurn.status).replace(/_/g, ' '))
+        : null;
+    appendHeaderMeta(
+      headerState.statusRow,
+      'ai-thread-status-pill',
+      activeTurnLabel
+    );
     appendHeaderMeta(
       headerState.statusRow,
       'ai-thread-status-pill ai-thread-status-time',
@@ -2149,7 +2160,13 @@
     var activeTurnStatus = threadContext.thread && threadContext.thread.activeTurn
       ? String(threadContext.thread.activeTurn.status || '').toLowerCase()
       : '';
-    if (activeTurnStatus === 'queued' || activeTurnStatus === 'running') return true;
+    if (
+      activeTurnStatus === 'accepted' ||
+      activeTurnStatus === 'queued' ||
+      activeTurnStatus === 'running' ||
+      activeTurnStatus === 'reconnecting' ||
+      activeTurnStatus === 'unknown_delivery'
+    ) return true;
     var runs = threadContext.thread && Array.isArray(threadContext.thread.runs)
       ? threadContext.thread.runs
       : [];

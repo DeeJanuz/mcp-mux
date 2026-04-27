@@ -12,13 +12,88 @@
     if (candidate === undefined || candidate === null) return null;
     if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
       if (Object.prototype.hasOwnProperty.call(candidate, 'value') || Object.prototype.hasOwnProperty.call(candidate, 'change')) {
-        return candidate;
+        return {
+          value: candidate.value,
+          change: normalizeChange(candidate.change)
+        };
       }
     }
     return {
       value: candidate,
       change: null,
     };
+  }
+
+  function normalizeChange(value) {
+    if (value === 'add' || value === 'delete' || value === 'update') return value;
+    return null;
+  }
+
+  function normalizeCells(cells, columns) {
+    if (!Array.isArray(cells)) return cells && typeof cells === 'object' ? cells : {};
+    var normalized = {};
+    var columnIds = (columns || []).map(function (column) {
+      return column && column.id;
+    });
+    cells.forEach(function (cell, index) {
+      var candidate = cell && typeof cell === 'object' ? cell : { value: cell };
+      var columnId = candidate.columnId || candidate.column_id || candidate.id || columnIds[index];
+      if (!columnId) return;
+      normalized[columnId] = {
+        value: candidate.value,
+        change: normalizeChange(candidate.change)
+      };
+    });
+    return normalized;
+  }
+
+  function normalizeRows(rows, columns) {
+    if (!Array.isArray(rows)) return [];
+    return rows.map(function (row, index) {
+      var source = row && typeof row === 'object' ? row : {};
+      var normalized = {};
+      Object.keys(source).forEach(function (key) {
+        normalized[key] = source[key];
+      });
+      normalized.id = source.id || 'row_' + String(index + 1);
+      normalized.cells = normalizeCells(source.cells, columns);
+      normalized.children = normalizeRows(source.children, columns);
+      return normalized;
+    });
+  }
+
+  function normalizeColumns(columns) {
+    if (!Array.isArray(columns)) return [];
+    return columns.map(function (column, index) {
+      var source = column && typeof column === 'object' ? column : {};
+      var id = source.id || normalizeColumnKey(source.name) || 'column_' + String(index + 1);
+      return {
+        id: id,
+        name: source.name || id,
+        change: normalizeChange(source.change)
+      };
+    });
+  }
+
+  function normalizeStructuredData(data) {
+    if (!data || typeof data !== 'object') return data;
+    var normalized = {};
+    Object.keys(data).forEach(function (key) {
+      normalized[key] = data[key];
+    });
+    normalized.tables = Array.isArray(data.tables) ? data.tables.map(function (table, index) {
+      var source = table && typeof table === 'object' ? table : {};
+      var columns = normalizeColumns(source.columns);
+      var id = source.id || 'table_' + String(index + 1);
+      var tableName = source.name || source.title || id;
+      return {
+        id: id,
+        name: tableName,
+        columns: columns,
+        rows: normalizeRows(source.rows, columns)
+      };
+    }) : [];
+    return normalized;
   }
 
   function resolveCell(row, colId, columnName) {
@@ -144,12 +219,8 @@
   }
 
   function setAllRowDecisions(row, state, decision) {
-    if (row.cells) {
-      Object.keys(row.cells).forEach(function (colId) {
-        if (row.cells[colId].change) {
-          state.decisions[row.id] = decision;
-        }
-      });
+    if (row && row.id) {
+      state.decisions[row.id] = decision;
     }
     if (row.children) {
       row.children.forEach(function (child) {
@@ -241,6 +312,7 @@
 
   window.__structuredDataUtils = {
     resolveCell: resolveCell,
+    normalizeStructuredData: normalizeStructuredData,
     getCellValue: getCellValue,
     getCellChange: getCellChange,
     flattenRows: flattenRows,

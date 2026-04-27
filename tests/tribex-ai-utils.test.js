@@ -36,6 +36,21 @@ describe('tribex-ai-utils', function () {
     expect(utils.matchesSearch(project, thread, 'missing')).toBe(false);
   });
 
+  it('formats internal runtime labels into user-facing text', function () {
+    var rawTitle = 'Email Inbox Summarizer: Analyze accountId=cmobypfhy0000l904abcd1234, provider=GMAIL, emailAddress=user@example.com';
+    var rawPrompt = 'The user submitted a review decision for session archive_review_cmobypfhy0000l904abcd1234. Call await_review with session_id=archive_review_cmobypfhy0000l904abcd1234.';
+    var delegatePrompt = 'Analyze accountId=cmobypfhy0000l904abcd1234, provider=GMAIL, emailAddress=user@example.com, receivedAfter=2026-04-26T02:19:30Z, receivedBefore=2026-04-27T02:19:30Z, inInboxOnly=true. Call user_email_search with that accountId and date range, call email item, and do not mutate email.';
+
+    expect(utils.formatThreadTitleForDisplay(rawTitle)).toBe('Email Inbox Summarizer');
+    expect(utils.sanitizeDisplayText(rawPrompt)).not.toContain('archive_review_');
+    expect(utils.sanitizeDisplayText(rawPrompt)).not.toContain('session_id');
+    expect(utils.isSyntheticReviewResumeContent(rawPrompt)).toBe(true);
+    expect(utils.sanitizeDisplayText(delegatePrompt)).toBe('Checking the connected mailbox for the requested time window. No email changes are made in this step.');
+    expect(utils.formatActivityTitleForDisplay({ title: 'Get Tool Instructions' })).toBe('Preparing available actions');
+    expect(utils.formatActivityTitleForDisplay({ title: 'User Email Accounts List' })).toBe('Checking connected mailboxes');
+    expect(utils.formatActivityTitleForDisplay({ title: 'User Email Search' })).toBe('Searching mailbox');
+  });
+
   it('builds project groups with sorted threads and search filtering', function () {
     var groups = utils.buildProjectGroups(
       [

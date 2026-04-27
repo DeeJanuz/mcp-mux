@@ -42,6 +42,7 @@
   var buildDecisionPayload = sdu.buildDecisionPayload;
   var applyBulkDecision = sdu.applyBulkDecision;
   var buildCsvString = sdu.buildCsvString;
+  var normalizeStructuredData = sdu.normalizeStructuredData || function (value) { return value; };
 
   // ── 1. CSS Injection ──
 
@@ -80,7 +81,12 @@
       '.sd-decision-toggle[data-decision-state="undecided"] button:hover { color: var(--text-secondary); border-color: var(--border-default); }',
       '.sd-decision-accept { background: var(--color-success-bg) !important; color: var(--color-success-text) !important; border-color: var(--color-success) !important; }',
       '.sd-decision-reject { background: var(--color-error-bg) !important; color: var(--color-error-text) !important; border-color: var(--color-error) !important; }',
-      '.sd-submit-bar { position: sticky; bottom: 0; background: var(--glass-bg-heavy); backdrop-filter: blur(var(--glass-blur)); border-top: 1px solid var(--glass-border); padding: var(--space-3) var(--space-4); display: flex; gap: var(--space-2); justify-content: flex-end; align-items: center; margin-top: var(--space-4); border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg); }',
+      '.sd-submit-bar { position: sticky; top: 0; z-index: var(--z-sticky); background: var(--glass-bg-heavy); backdrop-filter: blur(var(--glass-blur)); border: 1px solid var(--glass-border); padding: var(--space-3) var(--space-4); display: flex; gap: var(--space-2); justify-content: flex-end; align-items: center; margin: 0 0 var(--space-3); border-radius: var(--border-radius-lg); }',
+      '.sd-submit-bar[data-submit-state="submitting"], .sd-submit-bar[data-submit-state="submitted"] { justify-content: space-between; }',
+      '.sd-submit-status { margin-right: auto; font-family: var(--font-sans); font-size: var(--text-small); color: var(--text-secondary); }',
+      '.sd-submit-bar[data-submit-state="submitted"] .sd-submit-status { color: var(--color-success-text); }',
+      '.sd-submit-bar[data-submit-state="error"] .sd-submit-status { color: var(--color-error-text); }',
+      '.sd-submit-bar button:disabled, .sd-container[data-review-submitted="true"] button:disabled { opacity: 0.65; cursor: default; }',
       '.sd-cell-editor { font-family: var(--font-sans); font-size: var(--text-body); color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--color-info); border-radius: var(--border-radius-sm); padding: var(--space-1) var(--space-2); width: 100%; box-sizing: border-box; outline: none; }',
       '.sd-empty { font-family: var(--font-sans); font-size: var(--text-body); color: var(--text-tertiary); padding: var(--space-6); text-align: center; }',
       '.sd-row-rejected { opacity: 0.4; }',
@@ -146,17 +152,57 @@
     state.decisions[key] = decision;
   }
 
+  function shortLabel(value, fallback) {
+    var text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) text = fallback || 'item';
+    return text.length > 96 ? text.slice(0, 93) + '...' : text;
+  }
+
+  function getRowReviewLabel(row, columns) {
+    if (!row || !row.cells) return 'row';
+    var preferredIds = ['subject', 'title', 'name', 'summary', 'from', 'account'];
+    for (var i = 0; i < preferredIds.length; i += 1) {
+      var preferred = preferredIds[i];
+      if (row.cells[preferred]) {
+        return shortLabel(getCellValue(row, preferred, preferred), row.id || 'row');
+      }
+    }
+    columns = columns || [];
+    for (var colIndex = 0; colIndex < columns.length; colIndex += 1) {
+      var col = columns[colIndex];
+      var value = getCellValue(row, col.id, col.name);
+      if (String(value || '').trim()) return shortLabel(value, row.id || 'row');
+    }
+    return shortLabel(row.id, 'row');
+  }
+
+  function getTableReviewLabel(tableData) {
+    return shortLabel((tableData && (tableData.name || tableData.id)) || 'table', 'table');
+  }
+
+  function getReviewScopeLabel(tables, title) {
+    if (title) return shortLabel(title, 'review');
+    if (!tables || !tables.length) return 'review';
+    if (tables.length === 1) return getTableReviewLabel(tables[0]);
+    return shortLabel(tables.length + ' tables', 'review');
+  }
+
   function buildDecisionToggle(key, state, rerenderFn, opts) {
+    opts = opts || {};
     var wrapper = document.createElement('span');
     wrapper.className = 'sd-decision-toggle';
     var currentDecision = getDecisionState(state.decisions[key]);
     wrapper.setAttribute('data-decision-state', currentDecision);
+    wrapper.setAttribute('data-decision-key', key);
 
     var acceptBtn = document.createElement('button');
     acceptBtn.type = 'button';
     acceptBtn.textContent = '\u2713';
     acceptBtn.title = opts.acceptTitle || 'Accept';
+    acceptBtn.setAttribute('aria-label', opts.acceptAriaLabel || opts.acceptTitle || 'Accept');
     acceptBtn.setAttribute('aria-pressed', currentDecision === 'accept' ? 'true' : 'false');
+    acceptBtn.setAttribute('data-decision-key', key);
+    acceptBtn.setAttribute('data-decision-action', 'accept');
     if (currentDecision === 'accept') acceptBtn.classList.add('sd-decision-accept');
     acceptBtn.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -168,7 +214,10 @@
     rejectBtn.type = 'button';
     rejectBtn.textContent = '\u2717';
     rejectBtn.title = opts.rejectTitle || 'Reject';
+    rejectBtn.setAttribute('aria-label', opts.rejectAriaLabel || opts.rejectTitle || 'Reject');
     rejectBtn.setAttribute('aria-pressed', currentDecision === 'reject' ? 'true' : 'false');
+    rejectBtn.setAttribute('data-decision-key', key);
+    rejectBtn.setAttribute('data-decision-action', 'reject');
     if (currentDecision === 'reject') rejectBtn.classList.add('sd-decision-reject');
     rejectBtn.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -229,7 +278,12 @@
 
       // Column decision toggle in review mode (for added or deleted columns)
       if (reviewRequired && (col.change === 'add' || col.change === 'delete')) {
-        th.appendChild(buildDecisionToggle('col:' + col.id, state, rerenderFn, { acceptTitle: 'Accept column', rejectTitle: 'Reject column' }));
+        th.appendChild(buildDecisionToggle('col:' + col.id, state, rerenderFn, {
+          acceptTitle: 'Accept column',
+          rejectTitle: 'Reject column',
+          acceptAriaLabel: 'Accept column: ' + shortLabel(col.name || col.id, 'column'),
+          rejectAriaLabel: 'Reject column: ' + shortLabel(col.name || col.id, 'column'),
+        }));
       }
 
       tr.appendChild(th);
@@ -318,12 +372,13 @@
       if (reviewRequired) {
         var decTd = document.createElement('td');
         decTd.className = 'sd-td';
-        var hasChange = columns.some(function (col) {
-          return getCellChange(row, col.id, col.name) != null;
-        });
-        if (hasChange) {
-          decTd.appendChild(buildDecisionToggle(row.id, state, rerenderFn, { acceptTitle: 'Accept', rejectTitle: 'Reject' }));
-        }
+        var rowLabel = getRowReviewLabel(row, columns);
+        decTd.appendChild(buildDecisionToggle(row.id, state, rerenderFn, {
+          acceptTitle: 'Accept row',
+          rejectTitle: 'Reject row',
+          acceptAriaLabel: 'Accept row: ' + rowLabel,
+          rejectAriaLabel: 'Reject row: ' + rowLabel,
+        }));
         tr.appendChild(decTd);
       }
 
@@ -404,6 +459,8 @@
 
       var tableAcceptAll = document.createElement('button');
       tableAcceptAll.textContent = 'Accept All';
+      tableAcceptAll.title = 'Accept all rows in ' + getTableReviewLabel(tableData);
+      tableAcceptAll.setAttribute('aria-label', 'Accept all rows in ' + getTableReviewLabel(tableData));
       tableAcceptAll.style.cssText = 'padding: var(--space-1) var(--space-2); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-xs);';
       tableAcceptAll.addEventListener('click', function () {
         var tempStates = {};
@@ -414,6 +471,8 @@
 
       var tableRejectAll = document.createElement('button');
       tableRejectAll.textContent = 'Reject All';
+      tableRejectAll.title = 'Reject all rows in ' + getTableReviewLabel(tableData);
+      tableRejectAll.setAttribute('aria-label', 'Reject all rows in ' + getTableReviewLabel(tableData));
       tableRejectAll.style.cssText = 'padding: var(--space-1) var(--space-2); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-xs);';
       tableRejectAll.addEventListener('click', function () {
         var tempStates = {};
@@ -508,9 +567,19 @@
     });
   }
 
-  function buildSubmitBar(tables, states, tableContainers, onDecision) {
+  function buildSubmitBar(tables, states, tableContainers, onDecision, reviewTitle) {
     var bar = document.createElement('div');
     bar.className = 'sd-submit-bar';
+    bar.setAttribute('data-submit-state', 'idle');
+
+    var submitState = 'idle';
+    var controls = [];
+    var rerenderQueued = false;
+
+    var status = document.createElement('span');
+    status.className = 'sd-submit-status';
+    status.textContent = '';
+    bar.appendChild(status);
 
     function rerenderAllTables() {
       tableContainers.forEach(function (tc) {
@@ -518,30 +587,86 @@
       });
     }
 
+    function scheduleRerenderAllTables() {
+      if (rerenderQueued) return;
+      rerenderQueued = true;
+      var run = function () {
+        rerenderQueued = false;
+        rerenderAllTables();
+      };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(run);
+      else window.setTimeout(run, 0);
+    }
+
+    function setControlsDisabled(disabled) {
+      controls.forEach(function (control) {
+        control.disabled = !!disabled;
+      });
+    }
+
+    function setTableSubmittedState(submitted) {
+      tableContainers.forEach(function (tc) {
+        tc.setAttribute('data-review-submitted', submitted ? 'true' : 'false');
+        Array.from(tc.querySelectorAll('button')).forEach(function (button) {
+          button.disabled = !!submitted;
+        });
+      });
+    }
+
+    function setSubmitState(nextState, message) {
+      submitState = nextState;
+      bar.setAttribute('data-submit-state', nextState);
+      status.textContent = message || '';
+      setControlsDisabled(nextState === 'submitting' || nextState === 'submitted');
+      setTableSubmittedState(nextState === 'submitting' || nextState === 'submitted');
+    }
+
     var acceptAllBtn = document.createElement('button');
     acceptAllBtn.textContent = 'Accept All';
+    acceptAllBtn.title = 'Accept all decisions in ' + getReviewScopeLabel(tables, reviewTitle);
+    acceptAllBtn.setAttribute('aria-label', 'Accept all decisions in ' + getReviewScopeLabel(tables, reviewTitle));
     acceptAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-small);';
     acceptAllBtn.addEventListener('click', function () {
+      if (submitState === 'submitting' || submitState === 'submitted') return;
       applyBulkDecision(tables, states, 'accept');
-      rerenderAllTables();
+      scheduleRerenderAllTables();
     });
 
     var rejectAllBtn = document.createElement('button');
     rejectAllBtn.textContent = 'Reject All';
+    rejectAllBtn.title = 'Reject all decisions in ' + getReviewScopeLabel(tables, reviewTitle);
+    rejectAllBtn.setAttribute('aria-label', 'Reject all decisions in ' + getReviewScopeLabel(tables, reviewTitle));
     rejectAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-small);';
     rejectAllBtn.addEventListener('click', function () {
+      if (submitState === 'submitting' || submitState === 'submitted') return;
       applyBulkDecision(tables, states, 'reject');
-      rerenderAllTables();
+      scheduleRerenderAllTables();
     });
 
     var submitBtn = document.createElement('button');
     submitBtn.textContent = 'Submit Decisions';
+    submitBtn.title = 'Submit decisions for ' + getReviewScopeLabel(tables, reviewTitle);
+    submitBtn.setAttribute('aria-label', 'Submit decisions for ' + getReviewScopeLabel(tables, reviewTitle));
     submitBtn.style.cssText = 'padding: var(--space-2) var(--space-4); border-radius: var(--border-radius-sm); border: 1px solid var(--color-info); background: var(--color-info); color: white; cursor: pointer; font-size: var(--text-small); font-weight: var(--weight-semibold);';
     submitBtn.addEventListener('click', function () {
+      if (submitState === 'submitting' || submitState === 'submitted') return;
       var payload = buildDecisionPayload(tables, states);
-      if (onDecision) onDecision(payload);
+      setSubmitState('submitting', 'Decision submitted. Resuming agent...');
+      var result = null;
+      try {
+        result = onDecision ? onDecision(payload) : null;
+      } catch (error) {
+        setSubmitState('error', error && error.message ? error.message : 'Review submission failed.');
+        return;
+      }
+      Promise.resolve(result).then(function () {
+        setSubmitState('submitted', 'Decision confirmed. Agent is applying changes.');
+      }).catch(function (error) {
+        setSubmitState('error', error && error.message ? error.message : 'Review submission failed.');
+      });
     });
 
+    controls.push(acceptAllBtn, rejectAllBtn, submitBtn);
     bar.appendChild(acceptAllBtn);
     bar.appendChild(rejectAllBtn);
     bar.appendChild(submitBtn);
@@ -612,6 +737,7 @@
   function renderStructuredData(container, data, meta, toolArgs, reviewRequired, onDecision) {
     container.innerHTML = '';
     injectStyles();
+    data = normalizeStructuredData(data);
 
     if (!data || !data.tables || !data.tables.length) {
       var empty = document.createElement('div');
@@ -633,17 +759,18 @@
 
     var states = {};
     var tableContainers = [];
+    var submitBar = null;
+    if (reviewRequired && onDecision) {
+      submitBar = buildSubmitBar(data.tables, states, tableContainers, onDecision, data.title);
+      container.appendChild(submitBar);
+    }
+
     data.tables.forEach(function (tableData) {
       states[tableData.id] = createTableState(tableData);
       var tableContainer = buildTableContainer(tableData, states[tableData.id], reviewRequired, onDecision);
       tableContainers.push(tableContainer);
       container.appendChild(tableContainer);
     });
-
-    if (reviewRequired && onDecision) {
-      var submitBar = buildSubmitBar(data.tables, states, tableContainers, onDecision);
-      container.appendChild(submitBar);
-    }
   }
 
   window.__renderers.structured_data = renderStructuredData;

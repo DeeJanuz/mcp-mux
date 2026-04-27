@@ -22,6 +22,7 @@ mod state;
 #[cfg(test)]
 mod test_utils;
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use state::AppState;
 use tauri::{
@@ -50,9 +51,66 @@ fn build_csp(extra_origins: &[String]) -> String {
     )
 }
 
+fn insert_csp_origin(origins: &mut BTreeSet<String>, value: &str) {
+    let Ok(url) = url::Url::parse(value) else {
+        return;
+    };
+    let scheme = url.scheme();
+    if !matches!(scheme, "http" | "https" | "ws" | "wss") {
+        return;
+    }
+    let authority = url.authority();
+    if authority.is_empty() {
+        return;
+    }
+
+    origins.insert(format!("{scheme}://{authority}"));
+
+    let websocket_scheme = match scheme {
+        "http" => Some("ws"),
+        "https" => Some("wss"),
+        "ws" => Some("ws"),
+        "wss" => Some("wss"),
+        _ => None,
+    };
+    if let Some(ws_scheme) = websocket_scheme {
+        origins.insert(format!("{ws_scheme}://{authority}"));
+    }
+
+    if let Some(host) = url.host_str() {
+        if host.eq_ignore_ascii_case("tribexai.com") || host.ends_with(".tribexai.com") {
+            origins.insert("https://*.tribexai.com".to_string());
+            origins.insert("wss://*.tribexai.com".to_string());
+        }
+    }
+}
+
+fn first_party_ai_csp_origins_from_settings(
+    settings: &mcpviews_shared::settings::FirstPartyAiSettings,
+) -> Vec<String> {
+    let mut origins = BTreeSet::new();
+    for value in [
+        settings.base_url.as_deref(),
+        settings.relay_base_url.as_deref(),
+        settings.device_base_url.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        insert_csp_origin(&mut origins, value);
+    }
+    origins.into_iter().collect()
+}
+
+fn first_party_ai_csp_origins() -> Vec<String> {
+    first_party_ai_csp_origins_from_settings(&first_party_ai::load_settings())
+}
+
 fn csp_request_hook(state: Arc<AppState>) -> impl Fn(tauri::http::Request<Vec<u8>>, &mut tauri::http::Response<std::borrow::Cow<'static, [u8]>>) + Send + Sync + 'static {
     move |_req, resp| {
-        let origins = state.plugin_csp_origins();
+        let mut origins: BTreeSet<String> = state.plugin_csp_origins().into_iter().collect();
+        origins.extend(first_party_ai_csp_origins());
+        let origins = origins.into_iter().collect::<Vec<_>>();
         let csp = build_csp(&origins);
         resp.headers_mut().insert(
             "content-security-policy",
@@ -349,5 +407,45 @@ mod tests {
         assert!(csp.contains("script-src 'self' 'unsafe-inline' 'unsafe-eval'"));
         assert!(csp.contains("font-src 'self' https://fonts.gstatic.com"));
         assert!(csp.contains("img-src 'self' data: blob:"));
+    }
+
+    #[test]
+    fn test_first_party_ai_csp_origins_include_websocket_and_tribex_runtime_wildcards() {
+        let settings = mcpviews_shared::settings::FirstPartyAiSettings {
+            base_url: Some("https://dev.app.tribexai.com".to_string()),
+            relay_base_url: Some("https://dev.app.tribexai.com".to_string()),
+            device_base_url: None,
+            relay_token: None,
+            relay_token_expires_at: None,
+            relay_device_id: None,
+            auth_url: None,
+            token_url: None,
+            client_id: None,
+        };
+
+        let origins = first_party_ai_csp_origins_from_settings(&settings);
+        assert!(origins.contains(&"https://dev.app.tribexai.com".to_string()));
+        assert!(origins.contains(&"wss://dev.app.tribexai.com".to_string()));
+        assert!(origins.contains(&"https://*.tribexai.com".to_string()));
+        assert!(origins.contains(&"wss://*.tribexai.com".to_string()));
+    }
+
+    #[test]
+    fn test_first_party_ai_csp_origins_include_custom_websocket_origin() {
+        let settings = mcpviews_shared::settings::FirstPartyAiSettings {
+            base_url: Some("http://127.0.0.1:8787".to_string()),
+            relay_base_url: None,
+            device_base_url: None,
+            relay_token: None,
+            relay_token_expires_at: None,
+            relay_device_id: None,
+            auth_url: None,
+            token_url: None,
+            client_id: None,
+        };
+
+        let origins = first_party_ai_csp_origins_from_settings(&settings);
+        assert!(origins.contains(&"http://127.0.0.1:8787".to_string()));
+        assert!(origins.contains(&"ws://127.0.0.1:8787".to_string()));
     }
 }

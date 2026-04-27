@@ -8,7 +8,11 @@
     "dev:frontend": "vite",
     "build:frontend": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:ai-debug-loop": "vitest run tests/tribex-ai-thread-debug-loop.test.js --reporter verbose",
+    "debug:native-build": "node scripts/native-build-ui-debug-loop.mjs",
+    "debug:ai-visual-loop": "node scripts/tribex-ai-visual-debug-loop.mjs",
+    "debug:ai-browser-harness": "node scripts/tribex-ai-browser-harness-url.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

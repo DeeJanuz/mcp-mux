@@ -23,6 +23,14 @@
       return next;
     }
 
+    function displayThreadTitle(thread, fallback) {
+      var title = thread && thread.title;
+      if (window.__tribexAiUtils && typeof window.__tribexAiUtils.formatThreadTitleForDisplay === 'function') {
+        return window.__tribexAiUtils.formatThreadTitleForDisplay(title, fallback || 'Thread');
+      }
+      return String(title || fallback || 'Thread');
+    }
+
     function isThreadStale(threadId) {
       var thread = api.getThread(threadId);
       if (!thread) return true;
@@ -689,10 +697,10 @@
         sessionKey: 'tribex-ai-thread-' + threadId,
         toolName: 'AI Workspace',
         contentType: 'tribex_ai_thread',
-        data: { title: thread.title },
+        data: { title: displayThreadTitle(thread, 'Thread') },
         meta: {
           aiView: 'thread',
-          headerTitle: thread.title,
+          headerTitle: displayThreadTitle(thread, 'Thread'),
           projectId: thread.projectId,
           threadId: threadId,
           busyIndicator: null,
@@ -1020,6 +1028,10 @@
       if (!threadId || !state.pendingThreadOperations) return null;
       var existing = state.pendingThreadOperations[threadId];
       if (!existing || !existing.contentFingerprint) return null;
+      if (!isThreadBusy(threadId)) {
+        delete state.pendingThreadOperations[threadId];
+        return null;
+      }
       if (existing.expiresAt && Date.parse(existing.expiresAt) <= Date.now()) {
         delete state.pendingThreadOperations[threadId];
         return null;
@@ -1202,6 +1214,10 @@
         turnId: interruptedTurnId,
         silent: true,
       });
+      clearPendingOperation(
+        targetThreadId,
+        detail && detail.activeTurn ? detail.activeTurn.operationId || null : null
+      );
       api.notify();
       return Promise.resolve(true);
     }

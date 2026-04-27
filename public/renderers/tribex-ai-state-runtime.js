@@ -30,6 +30,72 @@
       return value === 'completed' || value === 'success' || value === 'done' || value === 'stored' || value === 'failed' || value === 'error';
     }
 
+    function isDelegatedThreadPause(activePause) {
+      if (!activePause) return false;
+      var values = [
+        activePause.reasonKind,
+        activePause.reason_kind,
+        activePause.kind,
+        activePause.type,
+        activePause.category,
+      ];
+      var metadata = activePause.metadata && typeof activePause.metadata === 'object'
+        ? activePause.metadata
+        : {};
+      values.push(
+        metadata.reasonKind,
+        metadata.reason_kind,
+        metadata.pauseKind,
+        metadata.pause_kind,
+        metadata.pauseType,
+        metadata.pause_type,
+        metadata.mode,
+        metadata.waitingOn,
+        metadata.waiting_on,
+        metadata.source
+      );
+      if (Array.isArray(activePause.tasks)) {
+        activePause.tasks.forEach(function (task) {
+          if (!task) return;
+          values.push(task.kind, task.type);
+          var taskMetadata = task.metadata && typeof task.metadata === 'object'
+            ? task.metadata
+            : {};
+          values.push(taskMetadata.kind, taskMetadata.type, taskMetadata.source);
+        });
+      }
+
+      return values.some(function (value) {
+        var normalized = String(value || '').toLowerCase().replace(/[\s_]+/g, '-');
+        return (
+          normalized === 'delegated-work' ||
+          normalized === 'delegated' ||
+          normalized === 'sub-agent' ||
+          normalized === 'subagent' ||
+          normalized === 'listen' ||
+          normalized === 'agent-listen' ||
+          normalized === 'sub-agent-listen' ||
+          normalized.indexOf('sub-agent') >= 0 ||
+          normalized.indexOf('subagent') >= 0
+        );
+      });
+    }
+
+    function clearDelegatedPausePending(threadId, record) {
+      if (!threadId || !record) return;
+      state.pendingThreadIds = state.pendingThreadIds || {};
+      delete state.pendingThreadIds[threadId];
+      if (record.activeTurn && record.activeTurn.userMessage) {
+        record.activeTurn.userMessage.pending = false;
+      }
+      if (record.rowState === 'pending') {
+        record.rowState = null;
+      }
+      if (state.pendingThreadOperations) {
+        delete state.pendingThreadOperations[threadId];
+      }
+    }
+
     function resolveConversationActivityTimestamp(messages) {
       if (!Array.isArray(messages)) return null;
       return messages.reduce(function (latest, message) {
@@ -553,6 +619,11 @@
           }))
           : incomingActivePause;
       }
+      if (Array.isArray(detail.pendingHumanInputs)) {
+        merged.pendingHumanInputs = detail.pendingHumanInputs.slice();
+      } else if (hasIncomingActivePause && !merged.activePause) {
+        merged.pendingHumanInputs = [];
+      }
       if (detail.rowState !== undefined) merged.rowState = detail.rowState;
       if (!merged.activePause && (merged.rowState === 'waiting-on-user' || merged.rowState === 'ready-to-continue')) {
         merged.rowState = null;
@@ -565,9 +636,15 @@
           merged.rowState = 'waiting-on-user';
         }
       }
+      if (merged.activePause && isDelegatedThreadPause(merged.activePause)) {
+        clearDelegatedPausePending(detail.id, merged);
+      }
       if (detail.optimistic !== undefined) merged.optimistic = !!detail.optimistic;
       if (detail.syncing !== undefined) merged.syncing = !!detail.syncing;
       if (detail.lastHydratedAt) merged.lastHydratedAt = detail.lastHydratedAt;
+      if ((detail.workflowProjection || detail.workflow_projection) && typeof api.applyWorkflowProjection === 'function') {
+        api.applyWorkflowProjection(merged, detail.workflowProjection || detail.workflow_projection);
+      }
 
       if (detail.messagesSource === 'runtime') {
         merged.runtimeSnapshot = {
@@ -729,8 +806,9 @@
       return detail.activeTurn;
     }
 
-    function markPauseResumePending(threadId, pause, note) {
+    function markPauseResumePending(threadId, pause, note, options) {
       if (!threadId) return null;
+      options = options || {};
       state.pendingThreadIds = state.pendingThreadIds || {};
       var detail = api.ensureThreadDetailRecord(threadId);
       var createdAt = api.nowIso();
@@ -754,6 +832,9 @@
           turnOrdinal: turnOrdinal,
         },
         startedAt: createdAt,
+        presenceLabel: options.presenceLabel || 'Continuing thread',
+        presenceDetail: options.presenceDetail || null,
+        lastPresenceAt: createdAt,
         resumePending: true,
         resumedFromPauseId: pause && pause.id ? pause.id : null,
         resumeNote: note || '',
@@ -1083,6 +1164,85 @@
       return detail;
     }
 
+    function activeTurnHasAssistantContent(activeTurn) {
+      return !!(
+        activeTurn &&
+        activeTurn.assistantMessage &&
+        typeof activeTurn.assistantMessage.content === 'string' &&
+        activeTurn.assistantMessage.content.trim()
+      );
+    }
+
+    function completeActiveTurnFromLocalOutput(threadId, detail, event) {
+      if (!detail || !detail.activeTurn || !activeTurnHasAssistantContent(detail.activeTurn)) return false;
+      var completedAt = (event && event.createdAt) || api.nowIso();
+      if (detail.activeTurn.turnId) {
+        detail.turnCompletedAtById = detail.turnCompletedAtById || {};
+        detail.turnCompletedAtById[detail.activeTurn.turnId] = completedAt;
+      }
+      detail.activeTurn.status = 'finalized';
+      detail.activeTurn.presenceLabel = 'Completed';
+      detail.activeTurn.lastPresenceAt = completedAt;
+      if (detail.activeTurn.assistantMessage) {
+        detail.activeTurn.assistantMessage.isStreaming = false;
+      }
+      delete state.pendingThreadIds[threadId];
+      if (state.pendingThreadOperations && detail.activeTurn.operationId) {
+        delete state.pendingThreadOperations[threadId];
+      }
+      state.threadErrors[threadId] = null;
+      detail.rowState = null;
+      api.rememberTurnHistory(detail);
+      api.reconcileActiveTurn(detail);
+      api.syncThreadSummaryFromRecord(detail);
+      return true;
+    }
+
+    function applyRuntimePresence(threadId, event) {
+      var detail = api.ensureThreadDetailRecord(threadId);
+      var activeTurn = detail.activeTurn;
+      if (!activeTurn) {
+        activeTurn = {
+          turnId: event.turnId || null,
+          turnOrdinal: null,
+          status: 'running',
+          userMessage: null,
+          assistantMessage: null,
+          startedAt: event.createdAt || api.nowIso(),
+        };
+        detail.activeTurn = activeTurn;
+      }
+
+      var phase = String(event.phase || event.status || '').toLowerCase();
+      var status = 'running';
+      if (phase === 'accepted') status = 'accepted';
+      if (phase === 'queued') status = 'queued';
+      if (phase === 'completed') status = 'finalized';
+      if (phase === 'failed') status = 'failed';
+      activeTurn.status = status;
+      activeTurn.presencePhase = phase || null;
+      activeTurn.presenceLabel = event.label || window.__tribexAiUtils.titleCase(String(phase || 'running').replace(/_/g, ' '));
+      activeTurn.presenceDetail = event.detail || null;
+      activeTurn.lastPresenceAt = event.createdAt || api.nowIso();
+      applyOperationMetadata(activeTurn, event);
+
+      if (status === 'finalized') {
+        completeActiveTurnFromLocalOutput(threadId, detail, event);
+      } else if (status === 'failed') {
+        failActiveTurnLocally(threadId, event.detail || event.label || 'Runtime turn failed.', {
+          turnId: event.turnId || null,
+          completedAt: event.createdAt || null,
+        });
+      } else {
+        state.pendingThreadIds[threadId] = true;
+        state.threadErrors[threadId] = null;
+        detail.rowState = 'pending';
+        api.rememberTurnHistory(detail);
+        api.syncThreadSummaryFromRecord(detail);
+      }
+      return detail;
+    }
+
     function shouldSilenceInterruptedFailure(threadId, turnId) {
       if (!threadId || !state.interruptedThreadIds || !state.interruptedThreadIds[threadId]) return false;
       var marker = state.interruptedThreadIds[threadId];
@@ -1124,12 +1284,16 @@
     function extractPausePayload(payload) {
       if (!payload || typeof payload !== 'object') return null;
       var toolName = String(payload.toolName || payload.tool_name || '').toLowerCase();
-      if (toolName.indexOf('thread.pause.') !== 0) return null;
+      if (toolName.indexOf('thread.pause.') !== 0 && toolName !== 'thread.delegated_work.waiting') return null;
       var result = payload.result && typeof payload.result === 'object' ? payload.result : {};
       var data = result.data && typeof result.data === 'object' ? result.data : {};
+      var toolArgs = payload.toolArgs && typeof payload.toolArgs === 'object'
+        ? payload.toolArgs
+        : (payload.tool_args && typeof payload.tool_args === 'object' ? payload.tool_args : {});
       return {
         toolName: toolName,
         activePause: data.activePause || data.active_pause || null,
+        threadPauseId: data.threadPauseId || data.thread_pause_id || toolArgs.threadPauseId || toolArgs.thread_pause_id || null,
       };
     }
 
@@ -1193,10 +1357,24 @@
         } else if (record.rowState === 'waiting-on-user' || record.rowState === 'ready-to-continue') {
           record.rowState = null;
         }
+        if (record.activePause && isDelegatedThreadPause(record.activePause)) {
+          clearDelegatedPausePending(event.threadId, record);
+        }
+        if (!record.activePause) {
+          record.pendingHumanInputs = [];
+        }
         if (!record.activePause && (
           pausePayload.toolName === 'thread.pause.resolved' ||
           pausePayload.toolName === 'thread.pause.resuming'
         )) {
+          if (pausePayload.toolName === 'thread.pause.resuming' && !record.activeTurn) {
+            markPauseResumePending(
+              event.threadId,
+              { id: pausePayload.threadPauseId || null },
+              '',
+              { presenceLabel: 'Agent thinking' }
+            );
+          }
           syncBackgroundThreadRuntime(event.threadId, record);
         }
         state.threadErrors[event.threadId] = null;
@@ -1423,12 +1601,49 @@
       return childSummary;
     }
 
+    function applyRuntimeWorkflowProjection(detail, event) {
+      if (!detail || !event) return false;
+      var projection = event.workflowProjection || event.workflow_projection || null;
+      if (!projection) return false;
+      if (typeof api.applyWorkflowProjection !== 'function') return false;
+      api.applyWorkflowProjection(detail, projection);
+      return true;
+    }
+
     function handleRuntimeEvent(threadId, event) {
       if (!threadId || !event) return;
       var detail = api.ensureThreadDetailRecord(threadId);
+      var appliedWorkflowProjection = applyRuntimeWorkflowProjection(detail, event);
+      if (appliedWorkflowProjection && event.type !== 'runtime_snapshot') {
+        api.syncThreadSummaryFromRecord(detail);
+      }
 
       if (event.type === 'status') {
         detail.connection.runtimeStatus = event.status || 'idle';
+        api.notify();
+        return;
+      }
+
+      if (event.type === 'runtime_diagnostic') {
+        detail.connection.runtimeDiagnostics = Array.isArray(detail.connection.runtimeDiagnostics)
+          ? detail.connection.runtimeDiagnostics.slice(-11)
+          : [];
+        detail.connection.runtimeDiagnostics.push({
+          stage: event.stage || 'unknown',
+          createdAt: event.createdAt || api.nowIso(),
+          elapsedMs: typeof event.elapsedMs === 'number' ? event.elapsedMs : null,
+          timeoutMs: typeof event.timeoutMs === 'number' ? event.timeoutMs : null,
+          connection: event.connection || null,
+          error: event.error || null,
+          turnId: event.turnId || null,
+          operationId: event.operationId || null,
+        });
+        detail.connection.lastRuntimeDiagnostic = detail.connection.runtimeDiagnostics[detail.connection.runtimeDiagnostics.length - 1];
+        if (detail.activeTurn) {
+          detail.activeTurn.lastRuntimeDiagnostic = detail.connection.lastRuntimeDiagnostic;
+          applyOperationMetadata(detail.activeTurn, event);
+          api.rememberTurnHistory(detail);
+        }
         api.notify();
         return;
       }
@@ -1461,11 +1676,21 @@
 
       if (event.type === 'runtime_snapshot') {
         if (window.__tribexAiClient && typeof window.__tribexAiClient.normalizeRuntimeTranscript === 'function') {
-          mergeThreadDetail(window.__tribexAiClient.normalizeRuntimeTranscript(threadId, {
+          var runtimeDetail = window.__tribexAiClient.normalizeRuntimeTranscript(threadId, {
             messages: event.messages || [],
-          }));
+          });
+          if (event.workflowProjection || event.workflow_projection) {
+            runtimeDetail.workflowProjection = event.workflowProjection || event.workflow_projection;
+          }
+          mergeThreadDetail(runtimeDetail);
         }
         state.threadErrors[threadId] = null;
+        api.notify();
+        return;
+      }
+
+      if (event.type === 'workflow_projection') {
+        api.syncThreadSummaryFromRecord(detail);
         api.notify();
         return;
       }
@@ -1533,6 +1758,12 @@
         return;
       }
 
+      if (event.type === 'runtime_presence') {
+        applyRuntimePresence(threadId, event);
+        api.notify();
+        return;
+      }
+
       if ((event.type === 'activity_update' || event.type === 'work_note_update') && event.item) {
         if (detail.activeTurn) {
           detail.activeTurn.status = 'running';
@@ -1567,6 +1798,17 @@
 
       if (event.type === 'turn_error') {
         detail.connection.runtimeError = event.error || 'Runtime turn failed.';
+        if (completeActiveTurnFromLocalOutput(threadId, detail, event)) {
+          api.notify();
+          return;
+        }
+        if (detail.activeTurn) {
+          detail.activeTurn.status = 'checking_result';
+          detail.activeTurn.presenceLabel = 'Checking result';
+          detail.activeTurn.lastPresenceAt = event.createdAt || api.nowIso();
+          detail.activeTurn.lastError = detail.connection.runtimeError;
+          api.rememberTurnHistory(detail);
+        }
         failActiveTurnLocally(threadId, detail.connection.runtimeError, {
           turnId: event.turnId || null,
           completedAt: event.createdAt || null,
@@ -1582,13 +1824,13 @@
         } else if (detail.activeTurn && detail.activeTurn.turnId) {
           detail.turnCompletedAtById[detail.activeTurn.turnId] = event.createdAt || api.nowIso();
         }
-        if (detail.activeTurn && (!detail.activeTurn.turnId || detail.activeTurn.turnId === event.turnId)) {
+        if (detail.activeTurn && (!event.turnId || !detail.activeTurn.turnId || detail.activeTurn.turnId === event.turnId)) {
           detail.lastTurnId = detail.activeTurn.turnId || detail.lastTurnId || null;
           detail.lastTurnOrdinal = detail.activeTurn.turnOrdinal || detail.lastTurnOrdinal || 0;
           if (detail.activeTurn.assistantMessage) {
             detail.activeTurn.assistantMessage.isStreaming = false;
           }
-          if (detail.activeTurn.status !== 'failed') {
+          if (detail.activeTurn.status !== 'failed' || activeTurnHasAssistantContent(detail.activeTurn)) {
             detail.activeTurn.status = 'finalized';
           }
           api.rememberTurnHistory(detail);
@@ -1598,6 +1840,12 @@
           delete state.pendingThreadOperations[threadId];
         }
         state.threadErrors[threadId] = null;
+        api.syncThreadSummaryFromRecord(detail);
+        api.notify();
+        return;
+      }
+
+      if (appliedWorkflowProjection) {
         api.syncThreadSummaryFromRecord(detail);
         api.notify();
       }

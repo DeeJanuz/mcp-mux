@@ -1,48 +1,43 @@
-// @ts-nocheck
-/* Hosted workspace thread renderer */
+// @ts-check
+/* Codex-like hosted workspace thread renderer */
 
 (function () {
   'use strict';
 
-  function isLifecycleToolName(toolName) {
-    var value = String(toolName || '');
-    return /^brokered\.thread\.execution\./.test(value) || /^opencode\.thread\.execution\./.test(value);
+  var containerState = new WeakMap();
+
+  function cx() {
+    return Array.prototype.slice.call(arguments).filter(Boolean).join(' ');
   }
 
-  function isRenderableArtifact(message) {
-    var contentType = message && (message.resultContentType || message.contentType || message.toolName || null);
-    return !!(
-      message &&
-      message.role === 'tool' &&
-      message.resultData &&
-      contentType &&
-      window.__renderers &&
-      typeof window.__renderers[contentType] === 'function'
-    );
+  function createEl(tag, className, text) {
+    var el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined && text !== null) el.textContent = String(text);
+    return el;
   }
 
-  function createTextBody(content, className) {
-    var body = document.createElement('div');
-    body.className = className;
-    body.textContent = content || '';
-    return body;
+  function createButton(className, label, onClick, options) {
+    var button = createEl('button', className, label);
+    button.type = 'button';
+    if (options && options.title) button.title = options.title;
+    if (options && options.disabled) button.disabled = true;
+    if (options && options.ariaLabel) button.setAttribute('aria-label', options.ariaLabel);
+    if (typeof onClick === 'function') button.addEventListener('click', onClick);
+    return button;
   }
 
-  function createMarkdownBody(content, className) {
-    var body = document.createElement('div');
-    body.className = className;
+  function renderMarkdown(content, className) {
+    var body = createEl('div', className);
     if (
       window.__companionUtils &&
       typeof window.__companionUtils.renderMarkdown === 'function'
     ) {
-      var markdown = window.__companionUtils.renderMarkdown(content || '');
-      if (markdown) {
-        body.appendChild(markdown);
-        if (
-          window.__companionUtils &&
-          typeof window.__companionUtils.renderMermaidBlocks === 'function'
-        ) {
-          window.__companionUtils.renderMermaidBlocks(markdown);
+      var rendered = window.__companionUtils.renderMarkdown(content || '');
+      if (rendered) {
+        body.appendChild(rendered);
+        if (typeof window.__companionUtils.renderMermaidBlocks === 'function') {
+          window.__companionUtils.renderMermaidBlocks(rendered);
         }
         return body;
       }
@@ -51,2826 +46,855 @@
     return body;
   }
 
-  function createRawBody(content, className) {
-    var body = document.createElement('pre');
-    body.className = (className ? className + ' ' : '') + 'rc-raw-markdown';
-    var code = document.createElement('code');
-    code.textContent = content || '';
-    body.appendChild(code);
-    return body;
-  }
-
-  function isDevModeEnabled() {
-    return !!window.__MCPVIEWS_DEV__;
-  }
-
-  function buildLegacyBlocks(messages) {
-    return (messages || []).map(function (message) {
-      if (!message) return null;
-      return {
-        type: isRenderableArtifact(message)
-          ? 'artifact'
-          : message.role === 'tool'
-            ? 'tool'
-            : 'chat',
-        message: message,
-      };
-    }).filter(Boolean);
-  }
-
-  function createRunGroup(userMessage, index) {
-    return {
-      id: userMessage.id || ('run-group-' + index),
-      user: userMessage,
-      repeatCount: 1,
-      latestCreatedAt: userMessage.createdAt || null,
-      lifecycleMessages: [],
-      toolNotes: [],
-      artifacts: [],
-      assistantMessages: [],
-    };
-  }
-
-  function buildRunGroups(messages, rawMode) {
-    var groups = [];
-    var current = null;
-    var shouldFallbackToLegacy = false;
-
-    (messages || []).forEach(function (message, index) {
-      if (!message) return;
-
-      if (message.role === 'user') {
-        if (
-          current &&
-          current.user &&
-          current.user.content === message.content &&
-          !current.lifecycleMessages.length &&
-          !current.toolNotes.length &&
-          !current.artifacts.length &&
-          !current.assistantMessages.length
-        ) {
-          current.repeatCount += 1;
-          current.latestCreatedAt = message.createdAt || current.latestCreatedAt;
-          return;
-        }
-
-        current = createRunGroup(message, index);
-        groups.push(current);
-        return;
-      }
-
-      if (!current) {
-        shouldFallbackToLegacy = true;
-        return;
-      }
-
-      if (message.role === 'tool' && isLifecycleToolName(message.toolName)) {
-        current.lifecycleMessages.push(message);
-        return;
-      }
-
-      if (isRenderableArtifact(message)) {
-        current.artifacts.push(message);
-        return;
-      }
-
-      if (message.role === 'tool') {
-        current.toolNotes.push(message);
-        return;
-      }
-
-      if (message.role === 'assistant') {
-        current.assistantMessages.push(message);
-        return;
-      }
-    });
-
-    if (!groups.length || shouldFallbackToLegacy) {
-      return {
-        mode: 'legacy',
-        blocks: buildLegacyBlocks(messages),
-      };
+  function formatTime(value) {
+    if (!value) return '';
+    if (window.__tribexAiUtils && typeof window.__tribexAiUtils.formatRelativeTime === 'function') {
+      return window.__tribexAiUtils.formatRelativeTime(value);
     }
-
-    return {
-      mode: 'groups',
-      groups: groups.map(function (group, index) {
-        return enrichRunGroup(group, index, rawMode);
-      }),
-    };
+    return String(value);
   }
 
-  function deriveTaskStatus(message) {
-    var toolName = String(message.toolName || '');
-    var status = String(message.status || '').toLowerCase();
-
-    if (toolName.indexOf('.failed') >= 0 || status === 'blocked' || status === 'error') {
-      return 'failed';
+  function titleCase(value) {
+    if (window.__tribexAiUtils && typeof window.__tribexAiUtils.titleCase === 'function') {
+      return window.__tribexAiUtils.titleCase(value);
     }
-    if (toolName.indexOf('.started') >= 0) {
-      return 'running';
-    }
-    if (toolName.indexOf('.completed') >= 0 || toolName.indexOf('.session.created') >= 0 || toolName.indexOf('.session_created') >= 0) {
-      return 'completed';
-    }
-    return 'completed';
-  }
-
-  function buildRunTasks(messages, answerStreaming) {
-    var tasks = [];
-
-    (messages || []).forEach(function (message, index) {
-      var toolName = String(message.toolName || '');
-      var status = deriveTaskStatus(message);
-      var lastTask = tasks.length ? tasks[tasks.length - 1] : null;
-
-      if (toolName.indexOf('.completed') >= 0 && lastTask && lastTask.status === 'running') {
-        lastTask.status = 'completed';
-        if (message.detail) {
-          lastTask.detail = lastTask.detail
-            ? (lastTask.detail + '\n\n' + message.detail)
-            : message.detail;
-        }
-        lastTask.createdAt = message.createdAt || lastTask.createdAt;
-        return;
-      }
-
-      if (toolName.indexOf('.failed') >= 0 && lastTask && lastTask.status === 'running') {
-        lastTask.status = 'failed';
-        if (message.summary) {
-          lastTask.title = message.summary;
-        }
-        if (message.detail) {
-          lastTask.detail = lastTask.detail
-            ? (lastTask.detail + '\n\n' + message.detail)
-            : message.detail;
-        }
-        lastTask.createdAt = message.createdAt || lastTask.createdAt;
-        return;
-      }
-
-      tasks.push({
-        id: message.id || ((message.toolName || 'task') + '-' + index),
-        title: message.summary || window.__tribexAiUtils.titleCase(message.toolName || 'task'),
-        detail: message.detail || '',
-        status: status,
-        open: false,
-        createdAt: message.createdAt || null,
-      });
-    });
-
-    return tasks.map(function (task, index) {
-      var isLastTask = index === tasks.length - 1;
-      return {
-        id: task.id,
-        title: task.title,
-        detail: task.detail,
-        status: task.status,
-        open: task.status === 'running' || task.status === 'failed' || (answerStreaming && isLastTask),
-        createdAt: task.createdAt,
-      };
+    return String(value || '').replace(/[._-]+/g, ' ').replace(/\b\w/g, function (match) {
+      return match.toUpperCase();
     });
   }
 
-  function buildRunAnswer(messages) {
-    var contentParts = [];
-    var latestCreatedAt = null;
-    var isStreaming = false;
-
-    (messages || []).forEach(function (message) {
-      if (!message) return;
-      if (message.content) contentParts.push(message.content);
-      latestCreatedAt = message.createdAt || latestCreatedAt;
-      if (message.isStreaming) isStreaming = true;
-    });
-
-    return {
-      content: contentParts.join('\n\n'),
-      createdAt: latestCreatedAt,
-      isStreaming: isStreaming,
-    };
-  }
-
-  function toolNoteKey(message) {
-    return JSON.stringify([
-      message && message.toolName,
-      message && message.summary,
-      message && message.detail,
-      message && message.status,
-    ]);
-  }
-
-  function collapseToolNotes(messages) {
-    var collapsed = [];
-
-    (messages || []).forEach(function (message) {
-      if (!message) return;
-
-      var previous = collapsed.length ? collapsed[collapsed.length - 1] : null;
-      if (previous && toolNoteKey(previous) === toolNoteKey(message)) {
-        collapsed[collapsed.length - 1] = Object.assign({}, previous, message, {
-          createdAt: message.createdAt || previous.createdAt,
-        });
-        return;
-      }
-
-      collapsed.push(message);
-    });
-
-    return collapsed;
-  }
-
-  function enrichRunGroup(group, index, rawMode) {
-    var answer = buildRunAnswer(group.assistantMessages);
-    var tasks = buildRunTasks(group.lifecycleMessages, answer.isStreaming);
-    var toolNotes = collapseToolNotes(group.toolNotes);
-    var structuralSignature = JSON.stringify({
-      displayMode: rawMode ? 'raw' : 'rendered',
-      repeatCount: group.repeatCount,
-      prompt: group.user && group.user.content,
-      tasks: tasks.map(function (task) {
-        return [task.id, task.title];
-      }),
-      toolNotes: toolNotes.map(function (note) {
-        return [note.id, note.toolName, note.summary];
-      }),
-      artifacts: group.artifacts.map(function (artifact) {
-        return [
-          artifact.id,
-          artifact.resultContentType || artifact.contentType || artifact.toolName,
-          artifact.resultData && artifact.resultData.title,
-          artifact.resultData && artifact.resultData.body,
-        ];
-      }),
-    });
-    return {
-      id: group.id || ('run-group-' + index),
-      index: index,
-      user: group.user,
-      repeatCount: group.repeatCount,
-      latestCreatedAt: group.latestCreatedAt,
-      tasks: tasks,
-      toolNotes: toolNotes,
-      artifacts: group.artifacts,
-      answer: answer,
-      isStreaming: answer.isStreaming,
-      structuralSignature: structuralSignature,
-      signature: JSON.stringify({
-        displayMode: rawMode ? 'raw' : 'rendered',
-        repeatCount: group.repeatCount,
-        prompt: group.user && group.user.content,
-        tasks: tasks.map(function (task) {
-          return [task.id, task.status, task.detail, task.open];
-        }),
-        toolNotes: toolNotes.map(function (note) {
-          return [note.id, note.summary, note.detail, note.status];
-        }),
-        artifacts: group.artifacts.map(function (artifact) {
-          return [
-            artifact.id,
-            artifact.resultData && artifact.resultData.title,
-            artifact.resultData && artifact.resultData.body,
-          ];
-        }),
-        answer: [answer.content, answer.isStreaming],
-      }),
-    };
-  }
-
-  function createMetaLabel(className, value) {
-    var label = document.createElement('span');
-    label.className = className;
-    label.textContent = value;
-    return label;
-  }
-
-  function createSummaryText(value, maxLength) {
-    var text = typeof value === 'string' ? value.trim() : '';
-    if (!text) return '';
-    return text.length > maxLength ? text.slice(0, maxLength - 3) + '...' : text;
-  }
-
-  function isRecord(value) {
-    return !!value && typeof value === 'object' && !Array.isArray(value);
-  }
-
-  function humanizeKey(value) {
-    return String(value || '')
-      .replace(/[_-]+/g, ' ')
-      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-      .trim()
-      .replace(/\s+/g, ' ')
-      .replace(/^./, function (match) { return match.toUpperCase(); });
-  }
-
-  function formatCountLabel(count, singular, plural) {
-    return count + ' ' + (count === 1 ? singular : (plural || singular + 's'));
-  }
-
-  function summarizeCompactValue(value) {
-    if (value === null || value === undefined || value === '') return '';
-    if (typeof value === 'string') return createSummaryText(value.replace(/\s+/g, ' '), 180);
-    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-    if (Array.isArray(value)) return formatCountLabel(value.length, 'item');
-    if (isRecord(value)) {
-      var keys = Object.keys(value);
-      return keys.length ? formatCountLabel(keys.length, 'field') : 'Empty object';
+  function displayText(value, fallback) {
+    var text = String(value || '');
+    if (window.__tribexAiUtils && typeof window.__tribexAiUtils.sanitizeDisplayText === 'function') {
+      text = window.__tribexAiUtils.sanitizeDisplayText(text);
     }
-    return '';
+    return text || fallback || '';
   }
 
-  function formatModelLabel(item) {
-    if (!item) return '';
-
-    function readModelCandidate(value, depth) {
-      if (!value || depth > 3) return { model: null, provider: null };
-      if (typeof value !== 'object') return { model: null, provider: null };
-      var directModel = value.modelName || value.model || value.modelId || value.model_id || value.modelSlug || value.model_slug || null;
-      var directProvider = value.modelProvider || value.provider || value.providerName || value.provider_name || null;
-      if (directModel || directProvider) {
-        return {
-          model: directModel || null,
-          provider: directProvider || null,
-        };
-      }
-
-      var nestedKeys = [
-        'metadata',
-        'meta',
-        'providerMetadata',
-        'provider_metadata',
-        'toolArgs',
-        'tool_args',
-        'toolRequest',
-        'tool_request',
-        'input',
-        'output',
-        'result',
-        'data',
-        'subAgentRun',
-        'sub_agent_run',
-        'childThread',
-        'child_thread',
-      ];
-      for (var keyIndex = 0; keyIndex < nestedKeys.length; keyIndex += 1) {
-        var nestedKey = nestedKeys[keyIndex];
-        if (!Object.prototype.hasOwnProperty.call(value, nestedKey)) continue;
-        var nestedCandidate = readModelCandidate(value[nestedKey], depth + 1);
-        if (nestedCandidate.model || nestedCandidate.provider) {
-          return nestedCandidate;
-        }
-      }
-
-      return { model: null, provider: null };
+  function displayThreadTitle(value, fallback) {
+    if (window.__tribexAiUtils && typeof window.__tribexAiUtils.formatThreadTitleForDisplay === 'function') {
+      return window.__tribexAiUtils.formatThreadTitleForDisplay(value, fallback);
     }
+    return displayText(value, fallback || 'Thread');
+  }
 
-    var topLevel = readModelCandidate(item, 0);
-    var model = topLevel.model;
-    var provider = topLevel.provider;
-    if (!model && !provider) {
-      [
-        item.resultMeta,
-        item.toolArgs,
-        item.toolRequest,
-        item.rawInput,
-        item.rawOutput,
-        item.resultData,
-      ].some(function (candidate) {
-        var found = readModelCandidate(candidate, 0);
-        if (found.model || found.provider) {
-          model = found.model;
-          provider = found.provider;
-          return true;
-        }
-        return false;
-      });
+  function displayActivityTitle(item) {
+    if (window.__tribexAiUtils && typeof window.__tribexAiUtils.formatActivityTitleForDisplay === 'function') {
+      return window.__tribexAiUtils.formatActivityTitleForDisplay(item);
     }
-    if (model && provider) return provider + ' / ' + model;
-    return model || provider || '';
+    return displayText(item && (item.title || item.summary), titleCase(item && item.kind || 'Work activity'));
   }
 
-  function maybeParseJsonObject(value) {
-    if (typeof value !== 'string') return null;
-    var trimmed = value.trim();
-    if (!trimmed || (trimmed.charAt(0) !== '{' && trimmed.charAt(0) !== '[')) return null;
-    try {
-      var parsed = JSON.parse(trimmed);
-      return parsed && typeof parsed === 'object' ? parsed : null;
-    } catch (_error) {
-      return null;
+  function isSyntheticReviewResumeMessage(message) {
+    if (!message) return false;
+    if (window.__tribexAiUtils && typeof window.__tribexAiUtils.isSyntheticReviewResumeContent === 'function') {
+      return window.__tribexAiUtils.isSyntheticReviewResumeContent(message.content);
     }
+    return /^The user submitted a review decision for session\b/i.test(String(message.content || '').trim());
   }
 
-  function appendWorkField(fields, label, value) {
-    var summary = summarizeCompactValue(value);
-    if (!summary) return;
-    fields.push({ label: label, value: summary });
-  }
-
-  function collectPreferredWorkFields(source, fields, seen) {
-    if (!isRecord(source)) return;
-    [
-      'objective',
-      'prompt',
-      'command',
-      'cmd',
-      'cwd',
-      'path',
-      'relativePath',
-      'title',
-      'threadId',
-      'thread_id',
-      'sessionId',
-      'session_id',
-    ].forEach(function (key) {
-      if (!Object.prototype.hasOwnProperty.call(source, key)) return;
-      appendWorkField(fields, humanizeKey(key), source[key]);
-      seen[key] = true;
-    });
-  }
-
-  function collectAdditionalWorkFields(source, fields, seen) {
-    if (!isRecord(source)) return;
-    Object.keys(source).some(function (key) {
-      if (seen[key]) return false;
-      var value = source[key];
-      if (value === null || value === undefined || value === '') return false;
-      appendWorkField(fields, humanizeKey(key), value);
-      seen[key] = true;
-      return fields.length >= 6;
-    });
-  }
-
-  function collectStructuredRowCount(rows) {
-    return (rows || []).reduce(function (total, row) {
-      return total + 1 + collectStructuredRowCount(row && row.children);
-    }, 0);
-  }
-
-  function getStructuredDataSummary(data) {
-    var tables = data && Array.isArray(data.tables) ? data.tables : [];
-    if (!tables.length) return '';
-    var rowCount = 0;
-    var columnCount = 0;
-    tables.forEach(function (table) {
-      rowCount += collectStructuredRowCount(table && table.rows);
-      columnCount = Math.max(columnCount, Array.isArray(table && table.columns) ? table.columns.length : 0);
-    });
-    var parts = [
-      formatCountLabel(tables.length, 'table'),
-      formatCountLabel(rowCount, 'row'),
-      formatCountLabel(columnCount, 'column'),
-    ];
-    return parts.join(', ');
-  }
-
-  function getRichContentSummary(data) {
-    if (!isRecord(data)) return '';
-    var parts = [];
-    if (data.title) parts.push('Title: ' + summarizeCompactValue(data.title));
-    if (typeof data.body === 'string') {
-      parts.push(formatCountLabel(data.body.length, 'character'));
-    }
-    if (Array.isArray(data.tables) && data.tables.length) {
-      parts.push(formatCountLabel(data.tables.length, 'table'));
-    }
-    if (isRecord(data.suggestions)) {
-      parts.push(formatCountLabel(Object.keys(data.suggestions).length, 'suggestion'));
-    }
-    return parts.join(', ');
-  }
-
-  function getRendererWorkSummary(item) {
-    var contentType = item && (item.resultContentType || item.contentType || item.toolName || null);
-    var data = item && item.resultData;
-    var summary = '';
-    if (contentType === 'structured_data') {
-      summary = getStructuredDataSummary(data);
-    } else if (contentType === 'rich_content') {
-      summary = getRichContentSummary(data);
-    }
-    if (item && item.reviewRequired) {
-      summary = summary ? summary + ', review required' : 'Review required';
-    }
-    return summary;
-  }
-
-  function createWorkFieldList(fields) {
-    var list = document.createElement('dl');
-    list.className = 'ai-work-item-fields';
-    fields.forEach(function (field) {
-      var row = document.createElement('div');
-      row.className = 'ai-work-item-field';
-      var term = document.createElement('dt');
-      term.textContent = field.label;
-      var detail = document.createElement('dd');
-      detail.textContent = field.value;
-      row.appendChild(term);
-      row.appendChild(detail);
-      list.appendChild(row);
-    });
-    return list;
-  }
-
-  function summarizePayload(value) {
-    if (value === null || value === undefined || value === '') return '';
-    if (Array.isArray(value)) return formatCountLabel(value.length, 'item');
-    if (isRecord(value)) return formatCountLabel(Object.keys(value).length, 'field');
-    if (typeof value === 'string') {
-      var parsed = maybeParseJsonObject(value);
-      if (parsed) return summarizePayload(parsed);
-      return formatCountLabel(value.length, 'character');
-    }
-    return summarizeCompactValue(value);
-  }
-
-  function stringifyPayload(value) {
-    if (value === null || value === undefined || value === '') return '';
-    if (typeof value === 'string') {
-      var parsed = maybeParseJsonObject(value);
-      if (parsed) {
-        try {
-          return JSON.stringify(parsed, null, 2);
-        } catch (_error) {
-          return value;
-        }
-      }
-      return value;
-    }
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch (_error) {
-      return String(value);
-    }
-  }
-
-  function getWorkItemPayload(item) {
-    if (!item) return null;
-    var parsedDetail = maybeParseJsonObject(item.detail);
-    var candidates = [
-      item.toolRequest,
-      item.rawInput,
-      parsedDetail,
-      item.toolArgs,
-      item.rawOutput,
-    ];
-    for (var index = 0; index < candidates.length; index += 1) {
-      var candidate = candidates[index];
-      if (candidate !== null && candidate !== undefined && candidate !== '') {
-        return candidate;
-      }
+  function getActiveThreadId(data, _meta, toolArgs) {
+    if (toolArgs && (toolArgs.threadId || toolArgs.thread_id)) return toolArgs.threadId || toolArgs.thread_id;
+    if (data && (data.threadId || data.thread_id)) return data.threadId || data.thread_id;
+    if (
+      window.__companionUtils &&
+      typeof window.__companionUtils.getActiveSession === 'function'
+    ) {
+      var active = window.__companionUtils.getActiveSession();
+      var session = active && active.session ? active.session : null;
+      var meta = session && session.meta ? session.meta : {};
+      return meta.threadId || meta.thread_id || null;
     }
     return null;
   }
 
-  function createPayloadDisclosure(item, threadState, payloadKey) {
-    var payload = getWorkItemPayload(item);
-    if (payload === null || payload === undefined || payload === '') return null;
-    var block = document.createElement('details');
-    block.className = 'ai-work-payload';
-    var remembered = threadState && threadState.workPayloadOpen
-      ? threadState.workPayloadOpen[payloadKey]
-      : undefined;
-    block.open = remembered === undefined ? false : !!remembered;
-    block.addEventListener('toggle', function () {
-      if (threadState && threadState.workPayloadOpen) {
-        threadState.workPayloadOpen[payloadKey] = block.open;
-      }
-    });
-
-    var summary = document.createElement('summary');
-    summary.className = 'ai-work-payload-summary';
-    var label = document.createElement('span');
-    label.textContent = 'Payload';
-    var count = document.createElement('span');
-    count.className = 'ai-work-payload-count';
-    count.textContent = summarizePayload(payload);
-    summary.appendChild(label);
-    if (count.textContent) {
-      summary.appendChild(count);
+  function getState(container, threadId) {
+    var existing = containerState.get(container);
+    if (existing) {
+      existing.threadId = threadId || existing.threadId;
+      return existing;
     }
-    block.appendChild(summary);
-
-    var pre = document.createElement('pre');
-    pre.className = 'ai-work-payload-body';
-    var code = document.createElement('code');
-    code.textContent = stringifyPayload(payload);
-    pre.appendChild(code);
-    block.appendChild(pre);
-    return block;
-  }
-
-  function buildWorkItemFields(item) {
-    var fields = [];
-    var seen = {};
-    var rendererSummary = getRendererWorkSummary(item);
-    if (rendererSummary) {
-      appendWorkField(fields, 'Result', rendererSummary);
-    }
-    collectPreferredWorkFields(item && item.toolArgs, fields, seen);
-    collectPreferredWorkFields(item && item.toolRequest, fields, seen);
-    collectPreferredWorkFields(item && item.resultMeta, fields, seen);
-    collectAdditionalWorkFields(item && item.toolArgs, fields, seen);
-    collectAdditionalWorkFields(item && item.toolRequest, fields, seen);
-
-    if (item && item.detail) {
-      var parsed = maybeParseJsonObject(item.detail);
-      if (!parsed) {
-        appendWorkField(fields, 'Detail', item.detail);
-      }
-    }
-
-    return fields;
-  }
-
-  function countMarkdownListItems(body) {
-    if (!body) return 0;
-    var matches = String(body).match(/^\s*(?:[-*+]\s+|\d+\.\s+)/gm);
-    return matches ? matches.length : 0;
-  }
-
-  function collectStructuredRowStats(rows, depth, stats) {
-    (rows || []).forEach(function (row) {
-      stats.rowCount += 1;
-      stats.maxDepth = Math.max(stats.maxDepth, depth);
-      collectStructuredRowStats(row && row.children, depth + 1, stats);
-    });
-  }
-
-  function getStructuredDataStats(data) {
-    var tables = data && Array.isArray(data.tables) ? data.tables : [];
-    var stats = {
-      tableCount: tables.length,
-      rowCount: 0,
-      columnCount: 0,
-      maxDepth: 0,
+    var state = {
+      threadId: threadId,
+      expandedGroups: {},
+      drawerOpen: false,
+      selectedArtifactKey: null,
+      diagnosticsOpen: false,
+      draftText: '',
+      reviewCards: {},
+      timelineScrollTop: null,
+      timelineWasNearBottom: false,
+      lastBlockerSignature: null,
+      renderScheduled: false,
+      lastRenderSignature: null,
+      unsubscribe: null,
+      textarea: null,
+      render: null,
     };
-
-    tables.forEach(function (table) {
-      var columns = Array.isArray(table && table.columns) ? table.columns : [];
-      stats.columnCount = Math.max(stats.columnCount, columns.length);
-      collectStructuredRowStats(table && table.rows, 0, stats);
-    });
-
-    return stats;
-  }
-
-  function getInlineRendererDescriptor(item) {
-    var contentType = item && (item.contentType || item.resultContentType || item.toolName || null);
-    var data = item && item.resultData ? item.resultData : {};
-    var title = data && data.title
-      ? data.title
-      : item && item.resultTitle
-        ? item.resultTitle
-        : item && item.title
-          ? item.title
-          : contentType
-            ? window.__tribexAiUtils.titleCase(String(contentType).replace(/_/g, ' '))
-            : 'Inline result';
-
-    if (contentType === 'structured_data') {
-      var structuredStats = getStructuredDataStats(data);
-      return {
-        title: title,
-        badge: 'table',
-        summary: structuredStats.tableCount > 1
-          ? structuredStats.tableCount + ' tables'
-          : (structuredStats.rowCount || 0) + ' rows, ' + structuredStats.columnCount + ' columns',
-        shouldCollapse: structuredStats.rowCount > 10 || structuredStats.columnCount > 6 || structuredStats.maxDepth > 2,
-      };
-    }
-
-    var body = data && typeof data.body === 'string' ? data.body : '';
-    var tables = data && Array.isArray(data.tables) ? data.tables : [];
-    return {
-      title: title,
-      badge: 'rich content',
-      summary: tables.length >= 2
-        ? tables.length + ' tables'
-        : (body && body.length > 1200 ? 'long markdown' : createSummaryText(body, 80) || 'inline markdown'),
-      shouldCollapse: body.length > 1200 || countMarkdownListItems(body) > 12 || tables.length >= 2,
-    };
-  }
-
-  function cloneInlineRendererData(data) {
-    if (!data || typeof data !== 'object') return data;
-    return JSON.parse(JSON.stringify(data));
-  }
-
-  function tableHasReviewChanges(table) {
-    if (!table || typeof table !== 'object') return false;
-    var columns = Array.isArray(table.columns) ? table.columns : [];
-    if (columns.some(function (column) { return column && column.change != null; })) {
-      return true;
-    }
-    function rowHasChanges(rows) {
-      return (rows || []).some(function (row) {
-        if (!row || typeof row !== 'object') return false;
-        var cells = row.cells && typeof row.cells === 'object' ? row.cells : {};
-        var hasCellChange = Object.keys(cells).some(function (key) {
-          return cells[key] && cells[key].change != null;
-        });
-        return hasCellChange || rowHasChanges(row.children || []);
-      });
-    }
-    return rowHasChanges(table.rows || []);
-  }
-
-  function shouldRenderInlineReviewControls(item) {
-    if (!item) return false;
-    if (!getInlineReviewSessionId(item)) return false;
-    if (item.reviewRequired || (item.resultMeta && item.resultMeta.reviewRequired)) return true;
-    var data = item.resultData || {};
-    if (data.suggestions && typeof data.suggestions === 'object' && Object.keys(data.suggestions).length > 0) {
-      return true;
-    }
-    return Array.isArray(data.tables) && data.tables.some(tableHasReviewChanges);
-  }
-
-  function getInlineReviewSessionId(item) {
-    if (!item) return null;
-    return item.sessionId
-      || (item.resultMeta && (item.resultMeta.reviewSessionId || item.resultMeta.sessionId))
-      || null;
-  }
-
-  function submitInlineRendererDecision(item, decision) {
-    var reviewSessionId = getInlineReviewSessionId(item);
-    if (!reviewSessionId) {
-      console.warn('[tribex-ai-thread] Unable to submit inline review decision without a review session id.');
-      return;
-    }
-    if (window.__companionUtils && typeof window.__companionUtils.submitDecision === 'function') {
-      window.__companionUtils.submitDecision(reviewSessionId, decision);
-    }
-  }
-
-  function createInlineRendererItem(item, threadState, groupId, index) {
-    var descriptor = getInlineRendererDescriptor(item);
-    var contentType = item && (item.contentType || item.resultContentType || item.toolName || null);
-    var renderer = contentType && window.__renderers ? window.__renderers[contentType] : null;
-    var resultId = [groupId || 'run', item && item.id || contentType || 'inline', index].join(':');
-    var reviewIntended = !!(
-      item &&
-      (item.reviewRequired ||
-      (item.resultMeta && item.resultMeta.reviewRequired) ||
-      (item.resultData && item.resultData.suggestions) ||
-      (item.resultData && Array.isArray(item.resultData.tables) && item.resultData.tables.some(tableHasReviewChanges)))
-    );
-    var reviewRequired = shouldRenderInlineReviewControls(item);
-
-    var block = document.createElement('details');
-    block.className = 'ai-inline-renderer';
-    block.setAttribute('data-inline-result-id', resultId);
-    var remembered = threadState.inlineResultOpen[resultId];
-    block.open = remembered === undefined ? !descriptor.shouldCollapse : !!remembered;
-    block.addEventListener('toggle', function () {
-      threadState.inlineResultOpen[resultId] = block.open;
-    });
-
-    var summary = document.createElement('summary');
-    summary.className = 'ai-inline-renderer-summary';
-
-    var copy = document.createElement('div');
-    copy.className = 'ai-inline-renderer-copy';
-
-    var headerRow = document.createElement('div');
-    headerRow.className = 'ai-inline-renderer-header';
-    headerRow.appendChild(createMetaLabel('ai-inline-renderer-badge', descriptor.badge));
-
-    var title = document.createElement('strong');
-    title.className = 'ai-inline-renderer-title';
-    title.textContent = descriptor.title;
-    headerRow.appendChild(title);
-    copy.appendChild(headerRow);
-
-    if (descriptor.summary) {
-      var meta = document.createElement('div');
-      meta.className = 'ai-inline-renderer-meta';
-      meta.textContent = descriptor.summary;
-      copy.appendChild(meta);
-    }
-
-    summary.appendChild(copy);
-
-    if (item && (item.updatedAt || item.createdAt)) {
-      summary.appendChild(createMetaLabel(
-        'ai-inline-renderer-time',
-        window.__tribexAiUtils.formatRelativeTime(item.updatedAt || item.createdAt)
-      ));
-    }
-
-    block.appendChild(summary);
-
-    var body = document.createElement('div');
-    body.className = 'ai-inline-renderer-body';
-    if (typeof renderer === 'function') {
-      renderer(
-        body,
-        cloneInlineRendererData(item.resultData || {}),
-        item.resultMeta || {},
-        item.toolArgs || {},
-        reviewRequired,
-        reviewRequired ? function (decision) {
-          submitInlineRendererDecision(item, decision);
-        } : null,
-      );
-      if (reviewIntended && !reviewRequired) {
-        body.appendChild(createTextBody(
-          'Review controls are unavailable because no active review session was created for this result.',
-          'ai-chat-body ai-inline-review-warning'
-        ));
-      }
-    } else {
-      body.appendChild(createTextBody('Unable to render inline result.', 'ai-chat-body'));
-    }
-    block.appendChild(body);
-
-    return block;
-  }
-
-  function createPromptBlock(message, repeatCount, latestCreatedAt) {
-    var row = document.createElement('article');
-    row.className = 'ai-turn-prompt';
-
-    var metaRow = document.createElement('div');
-    metaRow.className = 'ai-turn-meta-row';
-    metaRow.appendChild(createMetaLabel('ai-turn-role', 'You'));
-
-    if (repeatCount > 1) {
-      metaRow.appendChild(createMetaLabel('ai-turn-repeat', repeatCount + ' attempts'));
-    }
-
-    if (latestCreatedAt) {
-      metaRow.appendChild(createMetaLabel('ai-turn-time', window.__tribexAiUtils.formatRelativeTime(latestCreatedAt)));
-    }
-
-    row.appendChild(metaRow);
-    row.appendChild(createTextBody(message.content || '', 'ai-turn-prompt-body ai-chat-body'));
-    return row;
-  }
-
-  function createToolNote(message) {
-    if (!message.detail) {
-      var simple = document.createElement('article');
-      simple.className = 'ai-tool-note';
-
-      var simpleHeader = document.createElement('div');
-      simpleHeader.className = 'ai-tool-note-header';
-
-      var simpleTitle = document.createElement('strong');
-      simpleTitle.textContent = message.summary || window.__tribexAiUtils.titleCase(message.toolName || 'tool');
-      simpleHeader.appendChild(simpleTitle);
-
-      if (message.createdAt) {
-        var simpleTime = document.createElement('span');
-        simpleTime.className = 'ai-tool-note-time';
-        simpleTime.textContent = window.__tribexAiUtils.formatRelativeTime(message.createdAt);
-        simpleHeader.appendChild(simpleTime);
-      }
-
-      simple.appendChild(simpleHeader);
-      return simple;
-    }
-
-    var row = document.createElement('details');
-    row.className = 'ai-tool-note';
-
-    var header = document.createElement('summary');
-    header.className = 'ai-tool-note-header ai-tool-note-summary';
-
-    var title = document.createElement('strong');
-    title.textContent = message.summary || window.__tribexAiUtils.titleCase(message.toolName || 'tool');
-    header.appendChild(title);
-
-    if (message.createdAt) {
-      var time = document.createElement('span');
-      time.className = 'ai-tool-note-time';
-      time.textContent = window.__tribexAiUtils.formatRelativeTime(message.createdAt);
-      header.appendChild(time);
-    }
-
-    row.appendChild(header);
-    row.appendChild(createTextBody(message.detail, 'ai-tool-note-body'));
-
-    return row;
-  }
-
-  function summarizeArtifactBody(resultData) {
-    var body = resultData && typeof resultData.body === 'string' ? resultData.body.trim() : '';
-    if (!body && resultData && Array.isArray(resultData.tables) && resultData.tables.length) {
-      return resultData.tables.length === 1
-        ? '1 table is available in a separate result tab.'
-        : resultData.tables.length + ' tables are available in a separate result tab.';
-    }
-    if (!body) return 'A renderer-backed result is available in a separate result tab.';
-    return createSummaryText(body, 140);
-  }
-
-  function buildArtifactMatchFingerprint(candidate) {
-    if (!candidate) return null;
-    var contentType = candidate.contentType || candidate.resultContentType || candidate.toolName || null;
-    var title = candidate.title
-      || candidate.resultTitle
-      || (candidate.resultMeta && candidate.resultMeta.headerTitle)
-      || (candidate.resultData && candidate.resultData.title)
-      || null;
-    var body = candidate.summary
-      || candidate.detail
-      || (candidate.resultMeta && candidate.resultMeta.summary)
-      || (candidate.resultData && candidate.resultData.body)
-      || null;
-
-    if (!contentType && !title && !body) return null;
-    return JSON.stringify([
-      contentType || '',
-      title || '',
-      createSummaryText(body || '', 120),
-    ]);
-  }
-
-  function buildArtifactTitleKey(candidate) {
-    if (!candidate) return null;
-    var contentType = candidate.contentType || candidate.resultContentType || candidate.toolName || null;
-    var title = candidate.title
-      || candidate.resultTitle
-      || (candidate.resultMeta && candidate.resultMeta.headerTitle)
-      || (candidate.resultData && candidate.resultData.title)
-      || null;
-    if (!contentType && !title) return null;
-    return JSON.stringify([
-      String(contentType || '').trim().toLowerCase(),
-      String(title || '').trim().toLowerCase(),
-    ]);
-  }
-
-  function getShelfArtifactContentType(candidate) {
-    if (!candidate) return null;
-    var contentType = candidate.contentType || candidate.resultContentType || candidate.toolName || null;
-    return contentType == null ? null : String(contentType).trim().toLowerCase();
-  }
-
-  function isShelfArtifactContentType(contentType) {
-    return contentType === 'rich_content' || contentType === 'structured_data';
-  }
-
-  function hasShelfArtifactReviewFlag(candidate) {
-    if (!candidate) return false;
-    return !!(
-      candidate.reviewRequired ||
-      (candidate.resultMeta && candidate.resultMeta.reviewRequired) ||
-      (candidate.meta && candidate.meta.reviewRequired)
-    );
-  }
-
-  function isRevisitableShelfArtifact(candidate) {
-    return !!(
-      candidate &&
-      candidate.artifactKey &&
-      isShelfArtifactContentType(getShelfArtifactContentType(candidate)) &&
-      !hasShelfArtifactReviewFlag(candidate)
-    );
-  }
-
-  function collectInlineArtifactMatchers(thread) {
-    var artifactKeys = {};
-    var fingerprints = {};
-    var activityIds = {};
-    var turnKeys = {};
-    var titleKeys = {};
-    var runs = thread && Array.isArray(thread.runs) ? thread.runs : [];
-
-    runs.forEach(function (run) {
-      var inlineResults = run && run.answer && Array.isArray(run.answer.inlineResults)
-        ? run.answer.inlineResults
-        : [];
-      inlineResults.forEach(function (item) {
-        if (!item) return;
-        if (item.artifactKey) {
-          artifactKeys[item.artifactKey] = true;
-        }
-        var activityId = item.id
-          || item.toolCallId
-          || (item.resultMeta && item.resultMeta.activityId)
-          || null;
-        if (activityId) {
-          activityIds[String(activityId)] = true;
-        }
-        var turnId = item.turnId || (item.resultMeta && item.resultMeta.turnId) || null;
-        var turnOrdinal = item.turnOrdinal || (item.resultMeta && item.resultMeta.turnOrdinal) || null;
-        var contentType = item.contentType || item.resultContentType || item.toolName || null;
-        var title = item.title
-          || item.resultTitle
-          || (item.resultMeta && item.resultMeta.headerTitle)
-          || (item.resultData && item.resultData.title)
-          || null;
-        if ((turnId || turnOrdinal) && (contentType || title)) {
-          turnKeys[JSON.stringify([
-            turnId || '',
-            turnOrdinal || '',
-            contentType || '',
-            title || '',
-          ])] = true;
-        }
-        var titleKey = buildArtifactTitleKey(item);
-        if (titleKey) {
-          titleKeys[titleKey] = true;
-        }
-        var fingerprint = buildArtifactMatchFingerprint(item);
-        if (fingerprint) {
-          fingerprints[fingerprint] = true;
-        }
-      });
-    });
-
-    return {
-      artifactKeys: artifactKeys,
-      fingerprints: fingerprints,
-      activityIds: activityIds,
-      turnKeys: turnKeys,
-      titleKeys: titleKeys,
-    };
-  }
-
-  function collectReopenableArtifacts(thread) {
-    var inlineMatchers = collectInlineArtifactMatchers(thread);
-
-    function isInlineDuplicate(candidate) {
-      if (!candidate) return false;
-      if (candidate.artifactKey && inlineMatchers.artifactKeys[candidate.artifactKey]) {
-        return true;
-      }
-      var activityId = candidate.id
-        || candidate.toolCallId
-        || (candidate.resultMeta && candidate.resultMeta.activityId)
-        || null;
-      if (activityId && inlineMatchers.activityIds[String(activityId)]) {
-        return true;
-      }
-      var turnId = candidate.turnId || (candidate.resultMeta && candidate.resultMeta.turnId) || null;
-      var turnOrdinal = candidate.turnOrdinal || (candidate.resultMeta && candidate.resultMeta.turnOrdinal) || null;
-      var contentType = candidate.contentType || candidate.resultContentType || candidate.toolName || null;
-      var title = candidate.title
-        || candidate.resultTitle
-        || (candidate.resultMeta && candidate.resultMeta.headerTitle)
-        || (candidate.resultData && candidate.resultData.title)
-        || null;
-      if ((turnId || turnOrdinal) && (contentType || title)) {
-        var turnKey = JSON.stringify([
-          turnId || '',
-          turnOrdinal || '',
-          contentType || '',
-          title || '',
-        ]);
-        if (inlineMatchers.turnKeys[turnKey]) {
-          return true;
-        }
-      }
-      var titleKey = buildArtifactTitleKey(candidate);
-      if (titleKey && inlineMatchers.titleKeys[titleKey]) {
-        return true;
-      }
-      var fingerprint = buildArtifactMatchFingerprint(candidate);
-      return !!(fingerprint && inlineMatchers.fingerprints[fingerprint]);
-    }
-
-    if (thread && Array.isArray(thread.artifacts) && thread.artifacts.length) {
-      return thread.artifacts.slice().map(function (artifact) {
-        return {
-          artifactKey: artifact.artifactKey,
-          title: artifact.title || 'Open result',
-          summary: createSummaryText(
-            (artifact.data && artifact.data.body)
-            || (artifact.meta && artifact.meta.summary)
-            || '',
-            120,
-          ),
-          contentType: artifact.contentType || null,
-          resultData: artifact.data || null,
-          resultMeta: artifact.meta || null,
-          reviewRequired: !!artifact.reviewRequired,
-          updatedAt: artifact.updatedAt || artifact.createdAt || null,
-        };
-      }).filter(function (artifact) {
-        return isRevisitableShelfArtifact(artifact) && !isInlineDuplicate(artifact);
-      }).sort(function (left, right) {
-        var leftTime = getTimeValue(left.updatedAt);
-        var rightTime = getTimeValue(right.updatedAt);
-        if (leftTime !== rightTime) return rightTime - leftTime;
-        return String(left.title || '').localeCompare(String(right.title || ''));
-      });
-    }
-
-    var byKey = {};
-
-    function register(candidate) {
-      if (!candidate || !candidate.artifactKey) return;
-      if (!isRevisitableShelfArtifact(candidate)) return;
-      if (isInlineDuplicate(candidate)) return;
-      var contentType = getShelfArtifactContentType(candidate);
-      byKey[candidate.artifactKey] = {
-        artifactKey: candidate.artifactKey,
-        title: candidate.title || candidate.resultTitle || 'Open result',
-        summary: createSummaryText(
-          candidate.summary
-          || candidate.detail
-          || (candidate.resultData && candidate.resultData.body)
-          || '',
-          120,
-        ),
-        contentType: contentType,
-        updatedAt: candidate.updatedAt || candidate.createdAt || null,
-      };
-    }
-
-    var runs = thread && Array.isArray(thread.runs) ? thread.runs : [];
-    runs.forEach(function (run) {
-      var items = run && run.workSession && Array.isArray(run.workSession.items)
-        ? run.workSession.items
-        : [];
-      items.forEach(function (item) {
-        register({
-          artifactKey: item.artifactKey,
-          title: item.resultTitle || item.title,
-          summary: item.detail,
-          contentType: item.resultContentType || item.toolName,
-          resultData: item.resultData || null,
-          resultMeta: item.resultMeta || null,
-          reviewRequired: !!item.reviewRequired,
-          updatedAt: item.updatedAt || item.createdAt || null,
-        });
-      });
-    });
-
-    var activityItems = thread && Array.isArray(thread.activityItems) ? thread.activityItems : [];
-    activityItems.forEach(function (item) {
-      register({
-        artifactKey: item.artifactKey,
-        title: item.resultTitle || item.title,
-        summary: item.detail,
-        contentType: item.resultContentType || item.toolName,
-        resultData: item.resultData || null,
-        resultMeta: item.resultMeta || null,
-        reviewRequired: !!item.reviewRequired,
-        updatedAt: item.updatedAt || item.createdAt || null,
-      });
-    });
-
-    var messages = thread && Array.isArray(thread.messages) ? thread.messages : [];
-    messages.forEach(function (message) {
-      register({
-        artifactKey: message.artifactKey,
-        title: (message.resultData && message.resultData.title) || message.title,
-        summary: message.detail || (message.resultData && message.resultData.body) || '',
-        contentType: message.contentType || message.toolName || null,
-        resultData: message.resultData || null,
-        resultMeta: message.resultMeta || null,
-        reviewRequired: !!message.reviewRequired,
-        updatedAt: message.createdAt || null,
-      });
-    });
-
-    return Object.keys(byKey)
-      .map(function (key) {
-        return byKey[key];
-      })
-      .sort(function (left, right) {
-        var leftTime = getTimeValue(left.updatedAt);
-        var rightTime = getTimeValue(right.updatedAt);
-        if (leftTime !== rightTime) return rightTime - leftTime;
-        return String(left.title || '').localeCompare(String(right.title || ''));
-      });
-  }
-
-  function createArtifactReopenItem(message, threadId) {
-    var row = document.createElement('article');
-    row.className = 'ai-result-reopen';
-
-    var header = document.createElement('div');
-    header.className = 'ai-result-reopen-header';
-
-    var copy = document.createElement('div');
-    copy.className = 'ai-result-reopen-copy';
-    copy.appendChild(createMetaLabel('ai-result-reopen-kicker', 'Result ready'));
-
-    var title = document.createElement('strong');
-    title.textContent = (message.resultData && message.resultData.title) || 'Open result in slide-out';
-    copy.appendChild(title);
-    header.appendChild(copy);
-
-    if (message.createdAt) {
-      header.appendChild(createMetaLabel('ai-result-reopen-time', window.__tribexAiUtils.formatRelativeTime(message.createdAt)));
-    }
-
-    row.appendChild(header);
-    row.appendChild(createTextBody(summarizeArtifactBody(message.resultData), 'ai-result-reopen-body'));
-
-    if (message.artifactKey) {
-      var actions = document.createElement('div');
-      actions.className = 'ai-result-reopen-actions';
-
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'ai-work-item-link';
-      button.textContent = 'Reopen result';
-      button.addEventListener('click', function () {
-        openResultArtifact(threadId, message.artifactKey);
-      });
-      actions.appendChild(button);
-      row.appendChild(actions);
-    }
-
-    return row;
-  }
-
-  function getTimeValue(value) {
-    if (!value) return 0;
-    var ms = Date.parse(value);
-    return Number.isNaN(ms) ? 0 : ms;
-  }
-
-  function formatElapsed(startedAt, endedAt, live) {
-    var start = getTimeValue(startedAt);
-    var end = getTimeValue(endedAt);
-    if (!end) {
-      end = live ? Date.now() : (start || Date.now());
-    }
-    if (!start) {
-      start = end || Date.now();
-    }
-    var delta = Math.max(1000, end - start);
-    var totalSeconds = Math.max(1, Math.round(delta / 1000));
-    var minutes = Math.floor(totalSeconds / 60);
-    var seconds = totalSeconds % 60;
-
-    if (minutes <= 0) return totalSeconds + 's';
-    if (seconds === 0) return minutes + 'm';
-    return minutes + 'm ' + seconds + 's';
-  }
-
-  function isAfterTimestamp(candidate, startedAt) {
-    var candidateTime = getTimeValue(candidate);
-    if (!candidateTime) return false;
-    var startedTime = getTimeValue(startedAt);
-    return !startedTime || candidateTime > startedTime;
-  }
-
-  function latestWorkItemEnd(items, startedAt) {
-    return (items || []).reduce(function (latest, item) {
-      var candidates = [
-        item && item.completedAt,
-        item && item.finishedAt,
-        item && item.endedAt,
-        item && item.updatedAt,
-      ];
-      var next = candidates.reduce(function (candidateLatest, candidate) {
-        if (!isAfterTimestamp(candidate, startedAt)) return candidateLatest;
-        if (!candidateLatest) return candidate;
-        return Date.parse(candidate) > Date.parse(candidateLatest) ? candidate : candidateLatest;
-      }, null);
-      if (!next) return latest;
-      if (!latest) return next;
-      return Date.parse(next) > Date.parse(latest) ? next : latest;
-    }, null);
-  }
-
-  function normalizeWorkSessionForDisplay(workSession, fallbackEndedAt) {
-    if (!workSession || workSession.status === 'running') return workSession;
-    if (isAfterTimestamp(workSession.endedAt, workSession.startedAt)) return workSession;
-    var repairedEnd = latestWorkItemEnd(workSession.items || [], workSession.startedAt);
-    if (!repairedEnd && isAfterTimestamp(fallbackEndedAt, workSession.startedAt)) {
-      repairedEnd = fallbackEndedAt;
-    }
-    return repairedEnd
-      ? Object.assign({}, workSession, { endedAt: repairedEnd })
-      : workSession;
-  }
-
-  function createWorkStatusLabel(status) {
-    if (status === 'failed') return 'Failed';
-    if (status === 'needs-approval') return 'Needs Approval';
-    if (status === 'running') return 'Running';
-    return 'Done';
-  }
-
-  function getWorkSessionRenderSignature(workSession) {
-    if (!workSession) return '';
-    return JSON.stringify({
-      id: workSession.id || null,
-      status: workSession.status || 'completed',
-      startedAt: workSession.startedAt || null,
-      endedAt: workSession.endedAt || null,
-      items: (workSession.items || []).map(function (item) {
-        return [
-          item && item.id,
-          item && item.toolName,
-          item && item.title,
-          item && item.status,
-          item && item.detail,
-          item && item.artifactKey,
-          item && item.updatedAt,
-          item && item.toolArgs,
-          item && item.toolRequest,
-          item && item.resultData,
-          item && item.resultMeta,
-          item && item.resultContentType,
-          item && item.reviewRequired,
-          item && item.modelName,
-          item && item.modelProvider,
-          item && item.rawInput,
-          item && item.rawOutput,
-        ];
-      }),
-    });
-  }
-
-  function getRunGroupStructuralSignature(group, threadState) {
-    if (group && group.structuralSignature) return group.structuralSignature;
-    return JSON.stringify({
-      displayMode: threadState && threadState.showRawResponses ? 'raw' : 'rendered',
-      id: group && group.id,
-      turnId: group && group.turnId,
-      prompt: group && group.user && group.user.content,
-      inlineResults: group && group.answer && Array.isArray(group.answer.inlineResults)
-        ? group.answer.inlineResults.map(function (item) {
-          return [
-            item.id,
-            item.contentType || item.resultContentType || item.toolName,
-            item.resultData && item.resultData.title,
-            item.resultData && item.resultData.body,
-          ];
-        })
-        : [],
-      workItemIds: group && group.workSession
-        ? (group.workSession.items || []).map(function (item) {
-          return [
-            item.id,
-            item.toolName,
-            item.title,
-            item.artifactKey,
-          ];
-        })
-        : [],
-    });
-  }
-
-  function openResultArtifact(threadId, artifactKey) {
-    if (!threadId || !artifactKey) return;
-    if (window.__tribexAiState && typeof window.__tribexAiState.openThreadArtifact === 'function') {
-      window.__tribexAiState.openThreadArtifact(threadId, artifactKey);
-      return;
-    }
-    if (window.__tribexAiState && typeof window.__tribexAiState.selectThreadArtifact === 'function') {
-      window.__tribexAiState.selectThreadArtifact(threadId, artifactKey);
-      return;
-    }
-    var activeSession = window.__companionUtils && typeof window.__companionUtils.getActiveSession === 'function'
-      ? window.__companionUtils.getActiveSession()
-      : null;
-    if (
-      activeSession &&
-      activeSession.sessionId &&
-      window.__companionUtils &&
-      typeof window.__companionUtils.selectThreadArtifact === 'function'
-    ) {
-      window.__companionUtils.selectThreadArtifact(activeSession.sessionId, threadId, artifactKey);
-    }
-  }
-
-  function createWorkActivityItem(item, threadId, threadState, groupId) {
-    var row = document.createElement('details');
-    row.className = 'ai-work-item';
-    var itemKey = [
-      groupId || 'work',
-      item && (item.id || item.toolCallId || item.title || item.toolName) || 'item',
-    ].join(':');
-    var remembered = threadState && threadState.workItemOpen
-      ? threadState.workItemOpen[itemKey]
-      : undefined;
-    row.open = remembered === undefined ? false : !!remembered;
-    row.addEventListener('toggle', function () {
-      if (threadState && threadState.workItemOpen) {
-        threadState.workItemOpen[itemKey] = row.open;
-      }
-    });
-
-    var header = document.createElement('summary');
-    header.className = 'ai-work-item-header';
-
-    var copy = document.createElement('div');
-    copy.className = 'ai-work-item-copy';
-
-    var kicker = document.createElement('span');
-    kicker.className = 'ai-work-item-kicker';
-    kicker.textContent = item.toolName ? window.__tribexAiUtils.titleCase(item.toolName) : 'Runtime activity';
-    copy.appendChild(kicker);
-
-    var title = document.createElement('strong');
-    title.textContent = item.title || 'Runtime activity';
-    copy.appendChild(title);
-    header.appendChild(copy);
-
-    var meta = document.createElement('div');
-    meta.className = 'ai-work-item-meta';
-
-    var modelLabel = formatModelLabel(item);
-    if (modelLabel) {
-      var model = document.createElement('span');
-      model.className = 'ai-work-item-model';
-      model.textContent = modelLabel;
-      meta.appendChild(model);
-    }
-
-    var status = document.createElement('span');
-    status.className = 'ai-work-item-status ai-work-item-status-' + (item.status || 'completed');
-    status.textContent = createWorkStatusLabel(item.status);
-    meta.appendChild(status);
-
-    if (item.updatedAt || item.createdAt) {
-      var time = document.createElement('span');
-      time.className = 'ai-work-item-time';
-      time.textContent = window.__tribexAiUtils.formatRelativeTime(item.updatedAt || item.createdAt);
-      meta.appendChild(time);
-    }
-
-    header.appendChild(meta);
-    row.appendChild(header);
-
-    var body = document.createElement('div');
-    body.className = 'ai-work-item-body';
-
-    var fields = buildWorkItemFields(item);
-    var payload = createPayloadDisclosure(item, threadState, itemKey + ':payload');
-    if (fields.length) {
-      body.appendChild(createWorkFieldList(fields));
-    } else if (!payload) {
-      body.appendChild(createTextBody('No additional request details.', 'ai-work-item-detail'));
-    }
-
-    if (payload) {
-      body.appendChild(payload);
-    }
-
-    if (item.artifactKey) {
-      var resultRow = document.createElement('div');
-      resultRow.className = 'ai-work-item-actions';
-
-      var openLink = document.createElement('button');
-      openLink.type = 'button';
-      openLink.className = 'ai-work-item-link';
-      openLink.textContent = 'Open result';
-      openLink.addEventListener('click', function () {
-        openResultArtifact(threadId, item.artifactKey);
-      });
-      resultRow.appendChild(openLink);
-      body.appendChild(resultRow);
-    }
-
-    row.appendChild(body);
-    return row;
-  }
-
-  function createWorkItemFromTask(task) {
-    return {
-      id: task.id,
-      toolName: 'runtime_task',
-      title: task.title || 'Runtime task',
-      status: task.status || 'completed',
-      detail: task.detail || '',
-      createdAt: task.createdAt || null,
-      updatedAt: task.createdAt || null,
-      artifactKey: null,
-    };
-  }
-
-  function createWorkItemFromNote(note) {
-    return {
-      id: note.id || ('note-' + note.summary),
-      toolName: note.toolName || 'runtime_note',
-      title: note.summary || window.__tribexAiUtils.titleCase(note.toolName || 'note'),
-      status: note.status || 'completed',
-      detail: note.detail || '',
-      toolArgs: note.toolArgs || null,
-      toolRequest: note.toolRequest || null,
-      resultData: note.resultData || null,
-      resultMeta: note.resultMeta || null,
-      resultContentType: note.resultContentType || note.contentType || null,
-      reviewRequired: !!note.reviewRequired,
-      modelName: note.modelName || note.model || null,
-      modelProvider: note.modelProvider || note.provider || null,
-      rawInput: note.rawInput || null,
-      rawOutput: note.rawOutput || null,
-      createdAt: note.createdAt || null,
-      updatedAt: note.createdAt || null,
-      artifactKey: note.artifactKey || null,
-    };
-  }
-
-  function createWorkItemFromArtifact(message) {
-    return {
-      id: message.id || 'result',
-      toolName: message.toolName || 'rich_content',
-      title: (message.resultData && message.resultData.title) || 'Result ready',
-      status: 'completed',
-      detail: summarizeArtifactBody(message.resultData),
-      toolArgs: message.toolArgs || null,
-      resultData: message.resultData || null,
-      resultMeta: message.resultMeta || null,
-      resultContentType: message.resultContentType || message.contentType || message.toolName || null,
-      reviewRequired: !!message.reviewRequired,
-      modelName: message.modelName || message.model || null,
-      modelProvider: message.modelProvider || message.provider || null,
-      rawInput: message.rawInput || null,
-      rawOutput: message.rawOutput || null,
-      createdAt: message.createdAt || null,
-      updatedAt: message.createdAt || null,
-      artifactKey: message.artifactKey || null,
-    };
-  }
-
-  function deriveLegacyWorkSession(group) {
-    var items = [];
-    (group.tasks || []).forEach(function (task) {
-      items.push(createWorkItemFromTask(task));
-    });
-    (group.toolNotes || []).forEach(function (note) {
-      items.push(createWorkItemFromNote(note));
-    });
-    (group.artifacts || []).forEach(function (artifact) {
-      items.push(createWorkItemFromArtifact(artifact));
-    });
-
-    if (!items.length) return null;
-
-    var isRunning = !!group.isStreaming || items.some(function (item) {
-      return item.status === 'running' || item.status === 'needs-approval';
-    });
-    var isFailed = !isRunning && items.some(function (item) {
-      return item.status === 'failed';
-    });
-    var firstCreatedAt = items.reduce(function (earliest, item) {
-      if (!item.createdAt) return earliest;
-      if (!earliest) return item.createdAt;
-      return Date.parse(item.createdAt) < Date.parse(earliest) ? item.createdAt : earliest;
-    }, group.latestCreatedAt || null);
-    var lastUpdatedAt = items.reduce(function (latest, item) {
-      var candidate = latestWorkItemEnd([item], firstCreatedAt) || null;
-      if (!candidate) return latest;
-      if (!latest) return candidate;
-      return Date.parse(candidate) > Date.parse(latest) ? candidate : latest;
-    }, (group.answer && group.answer.createdAt) || group.latestCreatedAt || null);
-
-    return {
-      id: group.id + '-work',
-      status: isRunning ? 'running' : (isFailed ? 'failed' : 'completed'),
-      startedAt: firstCreatedAt,
-      endedAt: isRunning ? null : lastUpdatedAt,
-      items: items,
-    };
-  }
-
-  function createWorkSessionElement(workSession, groupId, threadState) {
-    var block = document.createElement('details');
-    block.className = 'ai-work-session';
-    block.setAttribute('data-work-session-id', workSession.id || groupId);
-    block.setAttribute('data-work-session-signature', getWorkSessionRenderSignature(workSession));
-    var remembered = threadState.workSessionOpen[groupId];
-    block.open = remembered === undefined ? false : !!remembered;
-    block.addEventListener('toggle', function () {
-      threadState.workSessionOpen[groupId] = block.open;
-    });
-
-    var summary = document.createElement('summary');
-    summary.className = 'ai-work-session-summary';
-
-    summary.appendChild(createMetaLabel(
-      'ai-work-session-status ai-work-session-status-' + (workSession.status || 'completed'),
-      createWorkStatusLabel(workSession.status || 'completed')
-    ));
-
-    var label = document.createElement('span');
-    label.className = 'ai-work-session-label';
-    label.textContent = (workSession.status === 'running' ? 'Working for ' : 'Worked for ')
-      + formatElapsed(workSession.startedAt, workSession.endedAt, workSession.status === 'running');
-    summary.appendChild(label);
-
-    if (workSession.items && workSession.items.length) {
-      summary.appendChild(createMetaLabel('ai-work-session-count', workSession.items.length + ' items'));
-    }
-    block.appendChild(summary);
-
-    var body = document.createElement('div');
-    body.className = 'ai-work-session-body';
-    (workSession.items || []).forEach(function (item) {
-      body.appendChild(createWorkActivityItem(item, threadState.threadId, threadState, groupId));
-    });
-    block.appendChild(body);
-
-    return block;
-  }
-
-  function createRunAnswer(answer, threadState) {
-    var section = document.createElement('section');
-    section.className = 'ai-run-answer' + (answer.isStreaming ? ' ai-run-answer-streaming' : '');
-    section.setAttribute('data-run-answer-id', answer.id || 'answer');
-
-    var header = document.createElement('div');
-    header.className = 'ai-run-answer-header';
-
-    header.appendChild(createMetaLabel('ai-run-answer-kicker', answer.isStreaming ? 'Thinking' : 'Summary'));
-
-    if (answer.createdAt) {
-      header.appendChild(createMetaLabel('ai-run-answer-time', window.__tribexAiUtils.formatRelativeTime(answer.createdAt)));
-    }
-
-    section.appendChild(header);
-    var content = answer.content || (answer.isStreaming ? 'Waiting for response…' : '');
-    section.appendChild(
-      threadState && threadState.showRawResponses
-        ? createRawBody(content, 'ai-chat-body ai-run-answer-body')
-        : createMarkdownBody(content, 'ai-chat-body ai-run-answer-body')
-    );
-    section.__tribexAiAnswerBodySignature = JSON.stringify([
-      threadState && threadState.showRawResponses ? 'raw' : 'rendered',
-      content,
-    ]);
-    return section;
-  }
-
-  function createRunGroupElement(group, threadState) {
-    var section = document.createElement('section');
-    section.className = 'ai-run-group';
-    section.setAttribute('data-run-id', group.id);
-    section.setAttribute('data-run-structure-signature', getRunGroupStructuralSignature(group, threadState));
-    section.setAttribute('data-run-signature', group.signature);
-
-    var prompt = document.createElement('div');
-    prompt.className = 'ai-run-group-prompt';
-    prompt.appendChild(createPromptBlock(group.user, group.repeatCount, group.latestCreatedAt));
-    section.appendChild(prompt);
-
-    var surface = document.createElement('div');
-    surface.className = 'ai-run-group-surface';
-
-    var workSession = normalizeWorkSessionForDisplay(
-      group.workSession || deriveLegacyWorkSession(group),
-      (group.answer && group.answer.createdAt) || group.latestCreatedAt || null
-    );
-    if (workSession) {
-      surface.appendChild(createWorkSessionElement(workSession, group.id, threadState));
-    }
-
-    if (group.answer.content || group.answer.isStreaming) {
-      surface.appendChild(createRunAnswer(group.answer, threadState));
-    }
-
-    (group.answer && Array.isArray(group.answer.inlineResults) ? group.answer.inlineResults : []).forEach(function (item, index) {
-      surface.appendChild(createInlineRendererItem(item, threadState, group.id, index));
-    });
-
-    section.appendChild(surface);
-    return section;
-  }
-
-  function createThreadPauseStatusLabel(activePause) {
-    if (!activePause) return null;
-    var status = String(activePause.status || '').toUpperCase();
-    if (status === 'READY') return 'Ready To Continue';
-    if (status === 'RESUMING') return 'Resuming';
-    return 'Waiting On You';
-  }
-
-  function createThreadPauseCard(state, thread) {
-    if (!thread || !thread.activePause) return null;
-    var activePause = thread.activePause;
-    var isChecking = thread.pauseCheckState === 'checking';
-    var resumeMode = String(activePause.resumeMode || 'MANUAL').toUpperCase();
-    var card = document.createElement('section');
-    card.className = 'ai-thread-pause-card';
-
-    var header = document.createElement('div');
-    header.className = 'ai-thread-pause-header';
-    var title = document.createElement('strong');
-    title.textContent = activePause.title || 'Action required';
-    header.appendChild(title);
-    var badge = document.createElement('span');
-    badge.className = 'ai-thread-pause-badge ai-thread-pause-badge-' + String(activePause.status || 'blocked').toLowerCase();
-    badge.textContent = createThreadPauseStatusLabel(activePause) || 'Waiting On You';
-    header.appendChild(badge);
-    card.appendChild(header);
-
-    if (activePause.detail) {
-      var detail = document.createElement('p');
-      detail.className = 'ai-thread-pause-detail';
-      detail.textContent = activePause.detail;
-      card.appendChild(detail);
-    }
-
-    if (activePause.progressSummary) {
-      var progress = document.createElement('p');
-      progress.className = 'ai-thread-pause-progress';
-      progress.textContent = activePause.progressSummary;
-      card.appendChild(progress);
-    }
-
-    if (Array.isArray(activePause.tasks) && activePause.tasks.length) {
-      var list = document.createElement('div');
-      list.className = 'ai-thread-pause-tasks';
-      activePause.tasks.forEach(function (task) {
-        var row = document.createElement('div');
-        row.className = 'ai-thread-pause-task';
-        var copy = document.createElement('div');
-        copy.className = 'ai-thread-pause-task-copy';
-        var taskTitle = document.createElement('strong');
-        taskTitle.textContent = task.title || 'Required step';
-        copy.appendChild(taskTitle);
-        if (task.detail) {
-          var taskDetail = document.createElement('div');
-          taskDetail.className = 'ai-thread-pause-task-detail';
-          taskDetail.textContent = task.detail;
-          copy.appendChild(taskDetail);
-        }
-        if (task.failureReason) {
-          var taskFailure = document.createElement('div');
-          taskFailure.className = 'ai-thread-pause-task-failure';
-          taskFailure.textContent = task.failureReason;
-          copy.appendChild(taskFailure);
-        }
-        row.appendChild(copy);
-
-        var actions = document.createElement('div');
-        actions.className = 'ai-thread-pause-task-actions';
-        if (task.actionUrl) {
-          var open = document.createElement('a');
-          open.className = 'ai-secondary-btn ai-thread-pause-action-link';
-          open.textContent = task.actionLabel || 'Open Link';
-          open.href = task.actionUrl;
-          open.target = '_blank';
-          open.rel = 'noopener noreferrer';
-          open.addEventListener('click', function () {
-            if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.checkThreadPause !== 'function') {
-              return;
-            }
-            if (typeof window.__tribexAiState.schedulePauseCheckBurst === 'function') {
-              window.__tribexAiState.schedulePauseCheckBurst(state.threadId, activePause.id);
-            } else {
-              Promise.resolve(window.__tribexAiState.checkThreadPause(state.threadId, activePause.id, {
-                silent: true,
-                source: 'auth-click',
-              })).catch(function () {});
-            }
-          });
-          actions.appendChild(open);
-        }
-        var taskStatus = document.createElement('span');
-        taskStatus.className = 'ai-thread-pause-task-status ai-thread-pause-task-status-' + String(task.status || 'PENDING').toLowerCase();
-        taskStatus.textContent = String(task.status || 'PENDING').replace(/_/g, ' ');
-        actions.appendChild(taskStatus);
-        row.appendChild(actions);
-        list.appendChild(row);
-      });
-      card.appendChild(list);
-    }
-
-    var footer = document.createElement('div');
-    footer.className = 'ai-thread-pause-footer';
-    var checkButton = document.createElement('button');
-    checkButton.type = 'button';
-    checkButton.className = 'ai-secondary-btn';
-    checkButton.textContent = isChecking ? 'Checking...' : 'Check status';
-    checkButton.disabled = isChecking;
-    checkButton.addEventListener('click', function () {
-      if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.checkThreadPause !== 'function') {
-        return;
-      }
-      checkButton.disabled = true;
-      Promise.resolve(window.__tribexAiState.checkThreadPause(state.threadId, activePause.id))
-        .catch(function () {})
-        .finally(function () {
-          checkButton.disabled = false;
-        });
-    });
-    footer.appendChild(checkButton);
-
-    if (String(activePause.status || '').toUpperCase() === 'READY' && resumeMode !== 'AUTO') {
-      var continueButton = document.createElement('button');
-      continueButton.type = 'button';
-      continueButton.className = 'ai-primary-btn';
-      continueButton.textContent = 'Continue';
-      continueButton.addEventListener('click', function () {
-        if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.continueThreadPause !== 'function') {
-          return;
-        }
-        continueButton.disabled = true;
-        Promise.resolve(window.__tribexAiState.continueThreadPause(state.threadId, activePause.id))
-          .catch(function () {})
-          .finally(function () {
-            continueButton.disabled = false;
-          });
-      });
-      footer.appendChild(continueButton);
-    }
-    card.appendChild(footer);
-
-    return card;
-  }
-
-  function createHeaderShell() {
-    var header = document.createElement('section');
-    header.className = 'ai-thread-header ai-thread-header-minimal';
-
-    var topRow = document.createElement('div');
-    topRow.className = 'ai-thread-meta-row';
-
-    var breadcrumb = document.createElement('p');
-    breadcrumb.className = 'ai-thread-breadcrumb';
-    topRow.appendChild(breadcrumb);
-
-    var title = document.createElement('h1');
-    title.className = 'ai-thread-title';
-    topRow.appendChild(title);
-    header.appendChild(topRow);
-
-    var statusRow = document.createElement('div');
-    statusRow.className = 'ai-thread-status-row';
-    header.appendChild(statusRow);
-
-    return {
-      root: header,
-      breadcrumb: breadcrumb,
-      title: title,
-      statusRow: statusRow,
-    };
-  }
-
-  function createResultsShell() {
-    var section = document.createElement('section');
-    section.className = 'ai-thread-results';
-    section.hidden = true;
-
-    var header = document.createElement('div');
-    header.className = 'ai-thread-results-header';
-
-    var copy = document.createElement('div');
-    copy.className = 'ai-thread-results-copy';
-    copy.appendChild(createMetaLabel('ai-thread-results-kicker', 'Results'));
-
-    var title = document.createElement('strong');
-    title.className = 'ai-thread-results-title';
-    title.textContent = 'Artifacts';
-    copy.appendChild(title);
-    header.appendChild(copy);
-
-    var count = document.createElement('span');
-    count.className = 'ai-thread-results-count';
-    header.appendChild(count);
-
-    section.appendChild(header);
-
-    var list = document.createElement('div');
-    list.className = 'ai-thread-results-list';
-    section.appendChild(list);
-
-    return {
-      root: section,
-      count: count,
-      list: list,
-    };
-  }
-
-  function createResultChip(artifact, threadId, active) {
-    var button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'ai-thread-result-chip' + (active ? ' is-active' : '');
-    button.addEventListener('click', function () {
-      openResultArtifact(threadId, artifact.artifactKey);
-    });
-
-    var title = document.createElement('strong');
-    title.className = 'ai-thread-result-chip-title';
-    title.textContent = artifact.title || 'Open result';
-    button.appendChild(title);
-
-    if (artifact.summary) {
-      var summary = document.createElement('span');
-      summary.className = 'ai-thread-result-chip-summary';
-      summary.textContent = artifact.summary;
-      button.appendChild(summary);
-    }
-
-    var meta = document.createElement('span');
-    meta.className = 'ai-thread-result-chip-meta';
-    meta.textContent = artifact.contentType
-      ? String(artifact.contentType).replace(/_/g, ' ')
-      : 'renderer result';
-    button.appendChild(meta);
-
-    return button;
-  }
-
-  function updateResultsShelf(state, threadContext) {
-    if (!state.results) return;
-    var thread = threadContext && threadContext.thread ? threadContext.thread : null;
-    var artifacts = collectReopenableArtifacts(thread);
-    state.results.root.hidden = !artifacts.length;
-    state.results.list.innerHTML = '';
-
-    if (!artifacts.length) {
-      state.results.count.textContent = '';
-      return;
-    }
-
-    state.results.count.textContent = artifacts.length === 1 ? '1 result' : artifacts.length + ' results';
-    var activeKey = thread && thread.ui && thread.ui.selectedArtifactKey
-      ? thread.ui.selectedArtifactKey
-      : (thread && thread.artifactDrawer ? thread.artifactDrawer.selectedArtifactKey || null : null);
-    artifacts.forEach(function (artifact) {
-      state.results.list.appendChild(createResultChip(artifact, state.threadId, artifact.artifactKey === activeKey));
-    });
-  }
-
-  function appendHeaderMeta(container, className, value) {
-    if (!value) return;
-    container.appendChild(createMetaLabel(className, value));
-  }
-
-  function rerenderActiveThread(state) {
-    if (
-      !state ||
-      !state.threadId ||
-      !window.__tribexAiState ||
-      typeof window.__tribexAiState.getThreadContext !== 'function'
-    ) {
-      return;
-    }
-
-    var threadContext = window.__tribexAiState.getThreadContext(state.threadId);
-    if (!threadContext || !threadContext.thread) return;
-    renderThread(state, threadContext);
-  }
-
-  function createDevToggle(state) {
-    var toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'ai-thread-dev-toggle' + (state.showRawResponses ? ' is-active' : '');
-    toggle.textContent = 'Raw responses';
-    toggle.title = state.showRawResponses ? 'Showing raw assistant response text' : 'Show raw assistant response text';
-    toggle.setAttribute('aria-pressed', state.showRawResponses ? 'true' : 'false');
-    toggle.addEventListener('click', function () {
-      state.showRawResponses = !state.showRawResponses;
-      rerenderActiveThread(state);
-    });
-    return toggle;
-  }
-
-  function createRenameButton(state) {
-    var button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'ai-thread-rename-button';
-    button.textContent = 'Rename';
-    button.title = 'Rename this chat';
-    button.addEventListener('click', function () {
-      if (
-        !window.__tribexAiState ||
-        typeof window.__tribexAiState.openThreadRename !== 'function' ||
-        !state.threadId
-      ) {
-        return;
-      }
-      window.__tribexAiState.openThreadRename(state.threadId).catch(function () {});
-    });
-    return button;
-  }
-
-  function updateHeader(state, threadContext) {
-    var headerState = state.header;
-    headerState.breadcrumb.textContent = [
-      threadContext.organization && threadContext.organization.name,
-      threadContext.project && threadContext.project.name,
-    ].filter(Boolean).join(' / ') || ((threadContext.organization && threadContext.organization.name) || 'Hosted organization');
-
-    headerState.title.textContent = (threadContext.thread && threadContext.thread.title) || 'Thread';
-
-    headerState.statusRow.innerHTML = '';
-    if (threadContext.thread && threadContext.thread.persona) {
-      appendHeaderMeta(
-        headerState.statusRow,
-        'ai-thread-status-pill',
-        threadContext.thread.persona.displayName
-        || threadContext.thread.persona.name
-        || threadContext.thread.persona.key
-        || 'Persona'
-      );
-    }
-
-    appendHeaderMeta(
-      headerState.statusRow,
-      'ai-thread-status-pill',
-      threadContext.streamStatus ? 'Stream ' + window.__tribexAiUtils.titleCase(threadContext.streamStatus) : null
-    );
-    appendHeaderMeta(
-      headerState.statusRow,
-      'ai-thread-status-pill',
-      threadContext.relayStatus ? 'Relay ' + window.__tribexAiUtils.titleCase(threadContext.relayStatus) : null
-    );
-    appendHeaderMeta(
-      headerState.statusRow,
-      'ai-thread-status-pill',
-      createThreadPauseStatusLabel(threadContext.thread && threadContext.thread.activePause)
-    );
-    var activeTurn = threadContext.thread && threadContext.thread.activeTurn ? threadContext.thread.activeTurn : null;
-    var activeTurnLabel = activeTurn && activeTurn.presenceLabel
-      ? activeTurn.presenceLabel
-      : activeTurn && activeTurn.status
-        ? 'Turn ' + window.__tribexAiUtils.titleCase(String(activeTurn.status).replace(/_/g, ' '))
-        : null;
-    appendHeaderMeta(
-      headerState.statusRow,
-      'ai-thread-status-pill',
-      activeTurnLabel
-    );
-    appendHeaderMeta(
-      headerState.statusRow,
-      'ai-thread-status-pill ai-thread-status-time',
-      threadContext.thread && threadContext.thread.lastActivityAt
-        ? window.__tribexAiUtils.formatRelativeTime(threadContext.thread.lastActivityAt)
-        : null
-    );
-
-    if (
-      state.threadId &&
-      window.__tribexAiState &&
-      typeof window.__tribexAiState.openThreadRename === 'function'
-    ) {
-      headerState.statusRow.appendChild(createRenameButton(state));
-    }
-
-    if (isDevModeEnabled()) {
-      headerState.statusRow.appendChild(createDevToggle(state));
-    }
-  }
-
-  function getScrollHost(container) {
-    return container.closest('.session-scroll') || container;
-  }
-
-  function isNearBottom(scrollHost) {
-    var remaining = (scrollHost.scrollHeight || 0) - ((scrollHost.scrollTop || 0) + (scrollHost.clientHeight || 0));
-    return remaining < 72;
-  }
-
-  function scrollToBottom(scrollHost) {
-    var max = Math.max(0, (scrollHost.scrollHeight || 0) - (scrollHost.clientHeight || 0));
-    if (typeof scrollHost.scrollTo === 'function') {
-      scrollHost.scrollTo({ top: max, behavior: 'auto' });
-    }
-    scrollHost.scrollTop = max;
-  }
-
-  function updateJumpButton(state, visible) {
-    if (!state.jumpButton) return;
-    state.jumpButton.hidden = !visible;
-    state.jumpButton.classList.toggle('is-visible', !!visible);
-  }
-
-  function clearLiveTick(state) {
-    if (!state || !state.liveTickId) return;
-    window.clearTimeout(state.liveTickId);
-    state.liveTickId = null;
-  }
-
-  function hasLiveRunState(threadContext) {
-    if (!threadContext) return false;
-    if (threadContext.pending || threadContext.loading) return true;
-    var runs = threadContext.thread && Array.isArray(threadContext.thread.runs)
-      ? threadContext.thread.runs
-      : [];
-    return runs.some(function (run) {
-      return !!(
-        run &&
-        ((run.answer && run.answer.isStreaming) ||
-        (run.workSession && run.workSession.status === 'running'))
-      );
-    });
-  }
-
-  function isThreadTurnBusy(threadContext) {
-    if (!threadContext) return false;
-    if (threadContext.pending) return true;
-    var activeTurnStatus = threadContext.thread && threadContext.thread.activeTurn
-      ? String(threadContext.thread.activeTurn.status || '').toLowerCase()
-      : '';
-    if (
-      activeTurnStatus === 'accepted' ||
-      activeTurnStatus === 'queued' ||
-      activeTurnStatus === 'running' ||
-      activeTurnStatus === 'reconnecting' ||
-      activeTurnStatus === 'unknown_delivery'
-    ) return true;
-    var runs = threadContext.thread && Array.isArray(threadContext.thread.runs)
-      ? threadContext.thread.runs
-      : [];
-    return runs.some(function (run) {
-      return !!(
-        run &&
-        ((run.answer && run.answer.isStreaming) ||
-        (run.workSession && run.workSession.status === 'running'))
-      );
-    });
-  }
-
-  function scheduleLiveTick(state) {
-    if (!state || state.liveTickId || !state.threadId) return;
-    state.liveTickId = window.setTimeout(function () {
-      state.liveTickId = null;
-      if (!window.__tribexAiState || typeof window.__tribexAiState.getThreadContext !== 'function' || !state.threadId) {
-        return;
-      }
-      var nextContext = window.__tribexAiState.getThreadContext(state.threadId);
-      if (!nextContext || !nextContext.thread) {
-        return;
-      }
-      renderThread(state, nextContext);
-    }, 1000);
-  }
-
-  function ensureShell(container) {
-    var state = container.__tribexAiThreadState;
-    if (state) return state;
-
-    var scrollHost = getScrollHost(container);
-    var view = document.createElement('div');
-    view.className = 'ai-view ai-thread-view';
-
-    var header = createHeaderShell();
-    view.appendChild(header.root);
-
-    var alerts = document.createElement('div');
-    alerts.className = 'ai-thread-alerts';
-    view.appendChild(alerts);
-
-    var hydration = document.createElement('section');
-    hydration.className = 'ai-thread-hydration';
-    hydration.setAttribute('role', 'status');
-    hydration.setAttribute('aria-live', 'polite');
-    hydration.hidden = true;
-    var hydrationCopy = document.createElement('div');
-    hydrationCopy.className = 'ai-thread-hydration-copy';
-    var hydrationKicker = document.createElement('span');
-    hydrationKicker.className = 'ai-thread-hydration-kicker';
-    hydrationKicker.textContent = 'Loading';
-    hydrationCopy.appendChild(hydrationKicker);
-    var hydrationTitle = document.createElement('strong');
-    hydrationTitle.textContent = 'Hydrating thread';
-    hydrationCopy.appendChild(hydrationTitle);
-    hydration.appendChild(hydrationCopy);
-    var hydrationPulse = document.createElement('div');
-    hydrationPulse.className = 'ai-thread-hydration-pulse';
-    for (var pulseIndex = 0; pulseIndex < 3; pulseIndex += 1) {
-      var pulseBar = document.createElement('span');
-      hydrationPulse.appendChild(pulseBar);
-    }
-    hydration.appendChild(hydrationPulse);
-    view.appendChild(hydration);
-
-    var results = createResultsShell();
-    view.appendChild(results.root);
-
-    var layout = document.createElement('div');
-    layout.className = 'ai-thread-layout';
-    view.appendChild(layout);
-
-    var transcript = document.createElement('section');
-    transcript.className = 'ai-chat-log ai-chat-log-standalone ai-run-log';
-    layout.appendChild(transcript);
-
-    var blocker = document.createElement('div');
-    blocker.className = 'ai-thread-bottom-blocker';
-    view.appendChild(blocker);
-
-    var jumpButton = document.createElement('button');
-    jumpButton.className = 'ai-jump-latest';
-    jumpButton.type = 'button';
-    jumpButton.textContent = 'Jump to latest';
-    jumpButton.hidden = true;
-    jumpButton.addEventListener('click', function () {
-      updateJumpButton(state, false);
-      scrollToBottom(scrollHost);
-    });
-    view.appendChild(jumpButton);
-
-    var composer = document.createElement('section');
-    composer.className = 'ai-composer-shell';
-
-    var interruptDock = document.createElement('div');
-    interruptDock.className = 'ai-interrupt-turn-dock';
-    composer.appendChild(interruptDock);
-
-    var interrupt = document.createElement('button');
-    interrupt.className = 'ai-interrupt-turn';
-    interrupt.type = 'button';
-    interrupt.textContent = 'Interrupt Agent';
-    interrupt.hidden = true;
-    interrupt.addEventListener('click', function () {
-      if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.interruptThread !== 'function') return;
-      interrupt.disabled = true;
-      Promise.resolve(window.__tribexAiState.interruptThread(state.threadId)).finally(function () {
-        interrupt.disabled = false;
-        if (state.textarea && typeof state.textarea.focus === 'function') {
-          state.textarea.focus();
-        }
-      });
-    });
-    interruptDock.appendChild(interrupt);
-
-    var textarea = document.createElement('textarea');
-    textarea.className = 'ai-composer-input';
-    textarea.placeholder = 'Ask the hosted sandbox to do something...';
-    composer.appendChild(textarea);
-
-    var footer = document.createElement('div');
-    footer.className = 'ai-composer-footer';
-
-    var hint = document.createElement('div');
-    hint.className = 'ai-composer-hint';
-    hint.textContent = 'Cmd/Ctrl+Enter to send';
-    footer.appendChild(hint);
-
-    var actions = document.createElement('div');
-    actions.className = 'ai-actions-row';
-
-    var refresh = document.createElement('button');
-    refresh.className = 'ai-secondary-btn';
-    refresh.type = 'button';
-    refresh.textContent = 'Refresh';
-    refresh.addEventListener('click', function () {
-      window.__tribexAiState.refreshActiveThread();
-    });
-    actions.appendChild(refresh);
-
-    var primary = document.createElement('button');
-    primary.className = 'ai-primary-btn';
-    primary.type = 'button';
-    primary.addEventListener('click', function () {
-      if (!state.threadId) return;
-      var prompt = textarea.value;
-      window.__tribexAiState.submitPrompt(state.threadId, prompt).then(function (submitted) {
-        if (submitted) textarea.value = '';
-      });
-    });
-    actions.appendChild(primary);
-
-    footer.appendChild(actions);
-    composer.appendChild(footer);
-    view.appendChild(composer);
-
-    textarea.addEventListener('keydown', function (event) {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !primary.disabled) {
-        primary.click();
-      }
-    });
-
-    textarea.addEventListener('input', function (event) {
-      if (
-        state.threadId &&
-        window.__tribexAiState &&
-        typeof window.__tribexAiState.setThreadDraft === 'function'
-      ) {
-        window.__tribexAiState.setThreadDraft(state.threadId, event.target.value);
-      }
-    });
-
-    scrollHost.addEventListener('scroll', function () {
-      if (
-        state.threadId &&
-        window.__tribexAiState &&
-        typeof window.__tribexAiState.rememberThreadScroll === 'function'
-      ) {
-        window.__tribexAiState.rememberThreadScroll(state.threadId, {
-          scrollTop: scrollHost.scrollTop || 0,
-          wasNearBottom: isNearBottom(scrollHost),
-        });
-      }
-      if (isNearBottom(scrollHost)) {
-        updateJumpButton(state, false);
-      }
-    });
-
-    container.innerHTML = '';
-    container.appendChild(view);
-
-    state = {
-      container: container,
-      scrollHost: scrollHost,
-      view: view,
-      header: header,
-      alerts: alerts,
-      hydration: hydration,
-      results: results,
-      layout: layout,
-      transcript: transcript,
-      blocker: blocker,
-      jumpButton: jumpButton,
-      interruptDock: interruptDock,
-      interrupt: interrupt,
-      composer: composer,
-      textarea: textarea,
-      hint: hint,
-      primary: primary,
-      lastModeSignature: null,
-      threadId: null,
-      lastRenderedThreadId: null,
-      workSessionOpen: {},
-      workItemOpen: {},
-      workPayloadOpen: {},
-      inlineResultOpen: {},
-      showRawResponses: false,
-      liveTickId: null,
-    };
-
-    container.__tribexAiThreadState = state;
+    containerState.set(container, state);
     return state;
   }
 
-  function updateAlerts(state, threadContext) {
-    state.alerts.innerHTML = '';
-    if (threadContext.error) {
-      var error = document.createElement('section');
-      error.className = 'ai-inline-alert ai-inline-alert-warning';
-      error.innerHTML = '<div><strong>Thread needs attention</strong><p>' + threadContext.error + '</p></div>';
-      state.alerts.appendChild(error);
-    }
-  }
-
-  function updateThreadBlocker(state, threadContext) {
-    state.blocker.innerHTML = '';
-    if (threadContext.thread && threadContext.thread.activePause) {
-      var pauseCard = createThreadPauseCard(state, threadContext.thread);
-      if (pauseCard) {
-        state.blocker.appendChild(pauseCard);
-      }
-    }
-  }
-
-  function isThreadHydrating(threadContext) {
-    return !!(
-      threadContext &&
-      threadContext.loading &&
-      !isThreadTurnBusy(threadContext) &&
-      !hasRenderableThreadContent(threadContext)
-    );
-  }
-
-  function hasRenderableThreadContent(threadContext) {
-    var thread = threadContext && threadContext.thread ? threadContext.thread : null;
-    if (!thread) return false;
-    if (Array.isArray(thread.runs) && thread.runs.length > 0) return true;
-    if (Array.isArray(thread.displayMessages) && thread.displayMessages.length > 0) return true;
-    if (Array.isArray(thread.messages) && thread.messages.length > 0) return true;
-    return false;
-  }
-
-  function updateHydration(state, threadContext) {
-    var hydrating = isThreadHydrating(threadContext);
-    state.view.classList.toggle('ai-thread-is-hydrating', hydrating);
-    state.hydration.hidden = !hydrating;
-    state.layout.hidden = hydrating;
-    if (hydrating) {
-      state.results.root.hidden = true;
-    }
-    return hydrating;
-  }
-
-  function updateLegacyTranscript(state, model) {
-    var signature = JSON.stringify(model.blocks.map(function (block) {
-      return [block.type, block.message && block.message.id, block.message && block.message.content, block.message && block.message.toolName];
-    }).concat([[state.showRawResponses ? 'raw' : 'rendered']]));
-    if (state.lastModeSignature === 'legacy:' + signature) return false;
-
-    if (state.lastModeSignature && state.lastModeSignature.indexOf('groups:') === 0) {
-      state.transcript.innerHTML = '';
-    }
-
-    state.transcript.innerHTML = '';
-
-    if (!model.blocks.length) {
-      var empty = document.createElement('div');
-      empty.className = 'ai-thread-empty';
-      empty.innerHTML = '<strong>No messages yet</strong><p>Start the conversation and the hosted thread will appear here.</p>';
-      state.transcript.appendChild(empty);
-    } else {
-      model.blocks.forEach(function (block) {
-        if (block.type === 'chat') {
-          if (block.message.role === 'user') {
-            state.transcript.appendChild(createPromptBlock(block.message, 1, block.message.createdAt || null));
-          } else {
-            state.transcript.appendChild(createRunAnswer({
-              content: block.message.content || '',
-              createdAt: block.message.createdAt || null,
-              isStreaming: !!block.message.isStreaming,
-            }, state));
-          }
-          return;
-        }
-
-        if (block.type === 'artifact') {
-          state.transcript.appendChild(createArtifactReopenItem(block.message, state.threadId));
-          return;
-        }
-
-        state.transcript.appendChild(createToolNote(block.message));
-      });
-    }
-
-    state.lastModeSignature = 'legacy:' + signature;
-    return true;
-  }
-
-  function getRunGroupWorkSession(group) {
-    return normalizeWorkSessionForDisplay(
-      group.workSession || deriveLegacyWorkSession(group),
-      (group.answer && group.answer.createdAt) || group.latestCreatedAt || null
-    );
-  }
-
-  function getRunGroupSurface(node) {
-    return node ? node.querySelector('.ai-run-group-surface') : null;
-  }
-
-  function insertBeforeFirstInline(surface, node) {
-    var inline = surface.querySelector('.ai-inline-renderer');
-    surface.insertBefore(node, inline || null);
-  }
-
-  function updateRunAnswerElement(section, answer, threadState) {
-    if (!section || !answer) return false;
-    var changed = false;
-    var streaming = !!answer.isStreaming;
-    if (section.classList.contains('ai-run-answer-streaming') !== streaming) {
-      section.classList.toggle('ai-run-answer-streaming', streaming);
-      changed = true;
-    }
-
-    var kicker = section.querySelector('.ai-run-answer-kicker');
-    var nextKicker = streaming ? 'Thinking' : 'Summary';
-    if (kicker && kicker.textContent !== nextKicker) {
-      kicker.textContent = nextKicker;
-      changed = true;
-    }
-
-    var header = section.querySelector('.ai-run-answer-header');
-    var time = section.querySelector('.ai-run-answer-time');
-    var nextTime = answer.createdAt ? window.__tribexAiUtils.formatRelativeTime(answer.createdAt) : '';
-    if (nextTime) {
-      if (!time && header) {
-        time = createMetaLabel('ai-run-answer-time', nextTime);
-        header.appendChild(time);
-        changed = true;
-      } else if (time && time.textContent !== nextTime) {
-        time.textContent = nextTime;
-        changed = true;
-      }
-    } else if (time && time.parentNode) {
-      time.parentNode.removeChild(time);
-      changed = true;
-    }
-
-    var content = answer.content || (streaming ? 'Waiting for response…' : '');
-    var nextBodySignature = JSON.stringify([
-      threadState && threadState.showRawResponses ? 'raw' : 'rendered',
-      content,
-    ]);
-    if (section.__tribexAiAnswerBodySignature !== nextBodySignature) {
-      var body = section.querySelector('.ai-run-answer-body');
-      var nextBody = threadState && threadState.showRawResponses
-        ? createRawBody(content, 'ai-chat-body ai-run-answer-body')
-        : createMarkdownBody(content, 'ai-chat-body ai-run-answer-body');
-      if (body && body.parentNode) {
-        body.parentNode.replaceChild(nextBody, body);
-      } else {
-        section.appendChild(nextBody);
-      }
-      section.__tribexAiAnswerBodySignature = nextBodySignature;
-      changed = true;
-    }
-
-    return changed;
-  }
-
-  function patchRunGroupElement(node, group, threadState) {
-    var surface = getRunGroupSurface(node);
-    if (!surface) return false;
-    var changed = false;
-    var workSession = getRunGroupWorkSession(group);
-    var existingWorkSession = surface.querySelector('.ai-work-session');
-    if (workSession) {
-      var workSignature = getWorkSessionRenderSignature(workSession);
-      if (!existingWorkSession) {
-        var newWork = createWorkSessionElement(workSession, group.id, threadState);
-        var answerNode = surface.querySelector('.ai-run-answer');
-        surface.insertBefore(newWork, answerNode || surface.firstChild || null);
-        changed = true;
-      } else if (existingWorkSession.getAttribute('data-work-session-signature') !== workSignature) {
-        var replacementWork = createWorkSessionElement(workSession, group.id, threadState);
-        surface.replaceChild(replacementWork, existingWorkSession);
-        changed = true;
-      }
-    } else if (existingWorkSession && existingWorkSession.parentNode) {
-      existingWorkSession.parentNode.removeChild(existingWorkSession);
-      changed = true;
-    }
-
-    var wantsAnswer = !!(group.answer && (group.answer.content || group.answer.isStreaming));
-    var existingAnswer = surface.querySelector('.ai-run-answer');
-    if (wantsAnswer) {
-      if (existingAnswer) {
-        changed = updateRunAnswerElement(existingAnswer, group.answer, threadState) || changed;
-      } else {
-        insertBeforeFirstInline(surface, createRunAnswer(group.answer, threadState));
-        changed = true;
-      }
-    } else if (existingAnswer && existingAnswer.parentNode) {
-      existingAnswer.parentNode.removeChild(existingAnswer);
-      changed = true;
-    }
-
-    node.setAttribute('data-run-structure-signature', getRunGroupStructuralSignature(group, threadState));
-    node.setAttribute('data-run-signature', group.signature);
-    return changed;
-  }
-
-  function syncRunGroups(state, groups) {
-    var used = {};
-    var changed = false;
-
-    if (state.lastModeSignature && state.lastModeSignature.indexOf('legacy:') === 0) {
-      state.transcript.innerHTML = '';
-      changed = true;
-    }
-
-    if (!groups.length) {
-      if (!state.transcript.querySelector('.ai-thread-empty')) {
-        state.transcript.innerHTML = '';
-        var empty = document.createElement('div');
-        empty.className = 'ai-thread-empty';
-        empty.innerHTML = '<strong>No messages yet</strong><p>Start the conversation and the hosted thread will appear here.</p>';
-        state.transcript.appendChild(empty);
-        changed = true;
-      }
-      return changed;
-    }
-
-    var emptyState = state.transcript.querySelector('.ai-thread-empty');
-    if (emptyState) {
-      emptyState.parentNode.removeChild(emptyState);
-      changed = true;
-    }
-
-    groups.forEach(function (group, index) {
-      var selector = '.ai-run-group[data-run-id="' + group.id.replace(/"/g, '\\"') + '"]';
-      var existing = state.transcript.querySelector(selector);
-      var node = existing;
-
-      var structuralSignature = getRunGroupStructuralSignature(group, state);
-
-      if (!existing) {
-        node = createRunGroupElement(group, state);
-        changed = true;
-      } else if (existing.getAttribute('data-run-structure-signature') !== structuralSignature) {
-        node = createRunGroupElement(group, state);
-        state.transcript.replaceChild(node, existing);
-        changed = true;
-      } else if (existing.getAttribute('data-run-signature') !== group.signature) {
-        changed = patchRunGroupElement(existing, group, state) || changed;
-      }
-
-      used[group.id] = true;
-      if (state.transcript.children[index] !== node) {
-        state.transcript.insertBefore(node, state.transcript.children[index] || null);
-        changed = true;
-      }
-    });
-
-    Array.from(state.transcript.querySelectorAll('.ai-run-group')).forEach(function (node) {
-      var id = node.getAttribute('data-run-id');
-      if (!used[id]) {
-        node.parentNode.removeChild(node);
-        changed = true;
-      }
-    });
-
-    var modeSignature = 'groups:' + JSON.stringify(groups.map(function (group) {
-      return [group.id, group.signature];
-    }));
-    state.lastModeSignature = modeSignature;
-    return changed;
-  }
-
-  function updateLiveWorkSessionLabels(state, groups) {
-    (groups || []).forEach(function (group) {
-      var workSession = normalizeWorkSessionForDisplay(
-        group.workSession || deriveLegacyWorkSession(group),
-        (group.answer && group.answer.createdAt) || group.latestCreatedAt || null
-      );
-      if (!workSession || workSession.status !== 'running') return;
-      var selector = '.ai-run-group[data-run-id="' + group.id.replace(/"/g, '\\"') + '"]';
-      var node = state.transcript.querySelector(selector);
-      if (!node) return;
-      var label = node.querySelector('.ai-work-session-label');
-      if (label) {
-        label.textContent = 'Working for ' + formatElapsed(workSession.startedAt, workSession.endedAt, true);
-      }
-    });
-  }
-
-  function updateTranscript(state, threadContext) {
-    var runtimeRuns = threadContext.thread && Array.isArray(threadContext.thread.runs)
-      ? threadContext.thread.runs
-      : null;
-    var model = runtimeRuns
-      ? {
-        mode: 'groups',
-        groups: runtimeRuns.map(function (group, index) {
-          var structuralSignature = JSON.stringify({
-            displayMode: state.showRawResponses ? 'raw' : 'rendered',
-            id: group.id,
-            turnId: group.turnId,
-            prompt: group.user && group.user.content,
-            inlineResults: group.answer && Array.isArray(group.answer.inlineResults)
-              ? group.answer.inlineResults.map(function (item) {
-                return [
-                  item.id,
-                  item.contentType || item.resultContentType || item.toolName,
-                  item.resultData && item.resultData.title,
-                  item.resultData && item.resultData.body,
-                ];
-              })
-              : [],
-            workItems: group.workSession
-              ? (group.workSession.items || []).map(function (item) {
-                return [
-                  item.id,
-                  item.toolName,
-                  item.title,
-                  item.artifactKey,
-                ];
-              })
-              : [],
-            index: index,
-          });
-          return Object.assign({}, group, {
-            structuralSignature: structuralSignature,
-            signature: JSON.stringify({
-              displayMode: state.showRawResponses ? 'raw' : 'rendered',
-              id: group.id,
-              turnId: group.turnId,
-              prompt: group.user && group.user.content,
-              answer: group.answer ? [group.answer.content, group.answer.isStreaming] : null,
-              inlineResults: group.answer && Array.isArray(group.answer.inlineResults)
-                ? group.answer.inlineResults.map(function (item) {
-                  return [
-                    item.id,
-                    item.contentType || item.resultContentType || item.toolName,
-                    item.resultData && item.resultData.title,
-                    item.resultData && item.resultData.body,
-                    item.updatedAt || item.createdAt,
-                  ];
-                })
-                : [],
-              workSession: group.workSession
-                ? {
-                  status: group.workSession.status,
-                  startedAt: group.workSession.startedAt,
-                  endedAt: group.workSession.endedAt,
-                  items: (group.workSession.items || []).map(function (item) {
-                    return [
-                      item.id,
-                      item.title,
-                      item.status,
-                      item.detail,
-                      item.artifactKey,
-                      item.updatedAt,
-                    ];
-                  }),
-                }
-                : null,
-              index: index,
-            }),
-          });
-        }),
-      }
-      : buildRunGroups(
-        (threadContext.thread && (threadContext.thread.displayMessages || threadContext.thread.messages)) || [],
-        state.showRawResponses,
-      );
-    if (model.mode === 'legacy') {
-      return updateLegacyTranscript(state, model);
-    }
-    var changed = syncRunGroups(state, model.groups || []);
-    updateLiveWorkSessionLabels(state, model.groups || []);
-    return changed;
-  }
-
-  function updateComposer(state, threadContext, threadChanged) {
-    var nextThreadId = threadContext.thread && threadContext.thread.id ? threadContext.thread.id : null;
-    var busy = isThreadTurnBusy(threadContext);
-    state.threadId = nextThreadId;
-    state.textarea.value = threadContext.thread && threadContext.thread.ui
-      ? (threadContext.thread.ui.draftText || '')
-      : '';
-    state.view.classList.toggle('ai-thread-turn-busy', busy);
-    state.composer.classList.toggle('is-context-mode', busy);
-    state.composer.removeAttribute('aria-hidden');
-    if ('inert' in state.composer) state.composer.inert = false;
-    state.interruptDock.hidden = !busy;
-    state.interrupt.hidden = !busy;
-    state.interrupt.disabled = !busy;
-    state.textarea.disabled = false;
-    state.primary.disabled = false;
-    state.primary.textContent = busy ? 'Add context' : 'Send';
-    state.hint.textContent = busy
-      ? 'The AI is still working. Your prompt will be added to the chat context and it will take it into account as it continues.'
-      : 'Cmd/Ctrl+Enter to send';
-  }
-
-  function restoreThreadScroll(state, threadContext, threadChanged) {
-    var threadUi = threadContext.thread && threadContext.thread.ui ? threadContext.thread.ui : null;
-    if (!threadChanged) return;
-
-    if (threadUi && threadUi.wasNearBottom === false && typeof threadUi.scrollTop === 'number') {
-      state.scrollHost.scrollTop = threadUi.scrollTop;
-      updateJumpButton(state, true);
+  function subscribe(container, state) {
+    if (state.unsubscribe || !window.__tribexAiState || typeof window.__tribexAiState.subscribe !== 'function') {
       return;
     }
-
-    scrollToBottom(state.scrollHost);
-    updateJumpButton(state, false);
+    state.unsubscribe = window.__tribexAiState.subscribe(function () {
+      if (typeof state.render === 'function') state.render();
+    });
+    if (container.dataset) container.dataset.tribexAiSubscribed = 'true';
   }
 
-  function renderThread(state, threadContext) {
-    var nextThreadId = threadContext.thread && threadContext.thread.id ? threadContext.thread.id : null;
-    var threadChanged = state.threadId !== nextThreadId;
+  function getThreadContext(threadId) {
+    if (!threadId || !window.__tribexAiState || typeof window.__tribexAiState.getThreadContext !== 'function') {
+      return { thread: null, loading: false, pending: false, error: 'Thread state is unavailable.' };
+    }
+    return window.__tribexAiState.getThreadContext(threadId) || { thread: null };
+  }
+
+  function getViewModel(threadContext) {
+    if (!window.__tribexAiChatReducer || typeof window.__tribexAiChatReducer.deriveThreadViewModel !== 'function') {
+      throw new Error('tribex-ai-chat-reducer.js must load before tribex-ai-thread.js');
+    }
+    return window.__tribexAiChatReducer.deriveThreadViewModel(threadContext);
+  }
+
+  function stableStringify(value) {
+    return JSON.stringify(value, function (_key, nested) {
+      if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return nested;
+      return Object.keys(nested).sort().reduce(function (sorted, key) {
+        sorted[key] = nested[key];
+        return sorted;
+      }, {});
+    });
+  }
+
+  function messageSignature(message) {
+    if (!message) return null;
+    return {
+      id: message.id || null,
+      role: message.role || null,
+      content: message.content || '',
+      createdAt: message.createdAt || null,
+      isStreaming: !!message.isStreaming,
+      pending: !!message.pending,
+    };
+  }
+
+  function activityGroupSignature(group) {
+    return {
+      id: group.id || null,
+      kind: group.kind || null,
+      items: (group.items || []).map(function (item) {
+        return {
+          id: item.id || null,
+          kind: item.kind || null,
+          status: item.status || null,
+          title: item.title || null,
+          detail: item.detail || null,
+          artifactKey: item.artifactKey || null,
+          childThreadId: item.childThreadId || null,
+        };
+      }),
+    };
+  }
+
+  function reviewInputSignature(input) {
+    if (!input) return null;
+    return stableStringify({
+      id: input.id || null,
+      status: input.status || null,
+      renderer: input.renderer || null,
+      title: input.title || null,
+      detail: input.detail || input.description || null,
+      reviewSessionId: input.reviewSessionId || input.sessionId || null,
+      rendererPayload: input.rendererPayload || null,
+      data: input.data || null,
+    });
+  }
+
+  function viewSignature(threadContext, viewModel) {
+    var thread = threadContext.thread || {};
+    return stableStringify({
+      thread: {
+        id: thread.id || null,
+        title: thread.title || null,
+        lastActivityAt: viewModel.busy || viewModel.lifecycle === 'waiting_on_review' || viewModel.lifecycle === 'waiting_on_user'
+          ? null
+          : thread.lastActivityAt || null,
+      },
+      scope: {
+        organization: threadContext.organization && threadContext.organization.name || null,
+        workspace: threadContext.workspace && threadContext.workspace.name || null,
+        project: threadContext.project && threadContext.project.name || null,
+      },
+      error: threadContext.error || null,
+      lifecycle: viewModel.lifecycle,
+      statusLabel: viewModel.statusLabel,
+      statusDetail: viewModel.statusDetail,
+      activeOperationId: viewModel.activeOperationId,
+      sessions: (viewModel.sessions || []).map(function (session) {
+        return {
+          id: session.id || null,
+          lifecycle: session.lifecycle || null,
+          user: messageSignature(session.user),
+          answer: messageSignature(session.answer),
+          activityGroups: (session.activityGroups || []).map(activityGroupSignature),
+        };
+      }),
+      artifacts: (viewModel.artifacts || []).map(function (artifact) {
+        return {
+          artifactKey: artifact.artifactKey || null,
+          title: artifact.title || null,
+          detail: artifact.detail || null,
+          contentType: artifact.contentType || null,
+          reviewRequired: !!artifact.reviewRequired,
+        };
+      }),
+      pendingHumanInputs: (viewModel.pendingHumanInputs || []).map(reviewInputSignature),
+      activePause: viewModel.activePause ? {
+        id: viewModel.activePause.id || null,
+        status: viewModel.activePause.status || null,
+        title: viewModel.activePause.title || null,
+        detail: viewModel.activePause.detail || viewModel.activePause.progressSummary || null,
+        tasks: (viewModel.activePause.tasks || []).map(function (task) {
+          return {
+            id: task.id || null,
+            title: task.title || null,
+            detail: task.detail || null,
+            status: task.status || null,
+          };
+        }),
+      } : null,
+    });
+  }
+
+  function scheduleRender(container, state, options) {
+    options = options || {};
+    if (options.force) {
+      renderThread(container, state, options);
+      return;
+    }
+    if (state.renderScheduled) return;
+    state.renderScheduled = true;
+    var run = function () {
+      state.renderScheduled = false;
+      renderThread(container, state, options);
+    };
+    if (window.requestAnimationFrame) window.requestAnimationFrame(run);
+    else window.setTimeout(run, 0);
+  }
+
+  function getTimelineScrollSnapshot(timeline) {
+    if (!timeline) return { scrollTop: null, wasNearBottom: false };
+    var remaining = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    return {
+      scrollTop: timeline.scrollTop,
+      wasNearBottom: remaining <= 48,
+    };
+  }
+
+  function rememberTimelineScroll(state, timeline) {
+    var snapshot = getTimelineScrollSnapshot(timeline);
+    state.timelineScrollTop = snapshot.scrollTop;
+    state.timelineWasNearBottom = snapshot.wasNearBottom;
     if (
-      threadChanged &&
       state.threadId &&
       window.__tribexAiState &&
       typeof window.__tribexAiState.rememberThreadScroll === 'function'
     ) {
-      window.__tribexAiState.rememberThreadScroll(state.threadId, {
-        scrollTop: state.scrollHost.scrollTop || 0,
-        wasNearBottom: isNearBottom(state.scrollHost),
+      window.__tribexAiState.rememberThreadScroll(state.threadId, snapshot);
+    }
+  }
+
+  function attachTimelineBehavior(timeline, state) {
+    timeline.tabIndex = 0;
+    timeline.setAttribute('role', 'region');
+    timeline.setAttribute('aria-label', 'AI thread timeline');
+    timeline.addEventListener('scroll', function () {
+      rememberTimelineScroll(state, timeline);
+    });
+  }
+
+  function getBlockerSignature(viewModel) {
+    var inputs = (viewModel.pendingHumanInputs || []).map(function (input) {
+      return input && input.id ? input.id : reviewInputSignature(input);
+    });
+    var pause = viewModel.activePause ? [viewModel.activePause.id || '', viewModel.activePause.status || ''].join(':') : '';
+    return inputs.concat(pause ? ['pause:' + pause] : []).join('|');
+  }
+
+  function restoreTimelineScroll(timeline, state, viewModel, previousSnapshot) {
+    var blockerSignature = getBlockerSignature(viewModel);
+    var hasBlockers = !!blockerSignature;
+    var shouldRevealBlocker = hasBlockers && state.lastBlockerSignature !== blockerSignature;
+    state.lastBlockerSignature = blockerSignature || null;
+
+    var run = function () {
+      if (!timeline || !timeline.isConnected) return;
+      if (shouldRevealBlocker) {
+        var blockers = timeline.querySelector('.ai-codex-blockers');
+        if (blockers) {
+          timeline.scrollTop = Math.max(0, blockers.offsetTop - 12);
+          rememberTimelineScroll(state, timeline);
+          return;
+        }
+      }
+      if (previousSnapshot && typeof previousSnapshot.scrollTop === 'number') {
+        var maxScroll = Math.max(0, timeline.scrollHeight - timeline.clientHeight);
+        timeline.scrollTop = Math.min(previousSnapshot.scrollTop, maxScroll);
+        rememberTimelineScroll(state, timeline);
+        return;
+      }
+      if (previousSnapshot && previousSnapshot.wasNearBottom) {
+        timeline.scrollTop = timeline.scrollHeight;
+        rememberTimelineScroll(state, timeline);
+      }
+    };
+    if (window.requestAnimationFrame) window.requestAnimationFrame(run);
+    else window.setTimeout(run, 0);
+  }
+
+  function appendStatusPill(parent, lifecycle, label) {
+    var pill = createEl('span', cx('ai-codex-status', 'ai-codex-status-' + lifecycle));
+    pill.appendChild(createEl('span', 'ai-codex-status-dot'));
+    pill.appendChild(createEl('span', '', label || titleCase(lifecycle)));
+    parent.appendChild(pill);
+    return pill;
+  }
+
+  function shouldShowDiagnostics(viewModel) {
+    return !!(
+      window.__MCPVIEWS_DEV__ ||
+      viewModel.lifecycle === 'recovering' ||
+      viewModel.lifecycle === 'failed'
+    );
+  }
+
+  function renderHeader(root, state, threadContext, viewModel) {
+    var thread = threadContext.thread || {};
+    var header = createEl('header', 'ai-codex-header');
+    var titleBlock = createEl('div', 'ai-codex-title-block');
+    var eyebrow = [
+      threadContext.organization && threadContext.organization.name,
+      threadContext.workspace && threadContext.workspace.name,
+      threadContext.project && threadContext.project.name,
+    ].filter(Boolean).join(' / ');
+    titleBlock.appendChild(createEl('div', 'ai-codex-eyebrow', eyebrow || 'AI Workspace'));
+    titleBlock.appendChild(createEl('h1', 'ai-codex-title', displayThreadTitle(thread.title, 'New chat')));
+    var meta = createEl('div', 'ai-codex-meta');
+    appendStatusPill(meta, viewModel.lifecycle, viewModel.statusLabel);
+    if (thread.lastActivityAt) {
+      meta.appendChild(createEl('span', 'ai-codex-meta-chip', formatTime(thread.lastActivityAt)));
+    }
+    titleBlock.appendChild(meta);
+    header.appendChild(titleBlock);
+
+    var actions = createEl('div', 'ai-codex-header-actions');
+    actions.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', 'Refresh', function () {
+      if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
+        window.__tribexAiState.refreshActiveThread();
+      }
+    }));
+    if (shouldShowDiagnostics(viewModel)) {
+      actions.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', state.diagnosticsOpen ? 'Hide diagnostics' : 'Diagnostics', function () {
+        state.diagnosticsOpen = !state.diagnosticsOpen;
+        state.render({ force: true });
+      }));
+    }
+    header.appendChild(actions);
+    root.appendChild(header);
+  }
+
+  function renderRecovery(root, state, threadContext, viewModel) {
+    if (
+      viewModel.lifecycle !== 'recovering' &&
+      !(viewModel.heartbeat && viewModel.heartbeat.stale) &&
+      !threadContext.error
+    ) {
+      return;
+    }
+    var banner = createEl('section', 'ai-codex-recovery');
+    var copy = createEl('div', 'ai-codex-recovery-copy');
+    copy.appendChild(createEl('strong', '', threadContext.error ? 'This run needs attention' : viewModel.statusLabel));
+    copy.appendChild(createEl('p', '', threadContext.error || viewModel.statusDetail || 'The frontend is checking the runtime and control plane for the latest state.'));
+    banner.appendChild(copy);
+    var actions = createEl('div', 'ai-codex-recovery-actions');
+    actions.appendChild(createButton('ai-secondary-btn', 'Refresh thread', function () {
+      if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
+        window.__tribexAiState.refreshActiveThread();
+      }
+    }));
+    if (viewModel.activePause && viewModel.activePause.id) {
+      actions.appendChild(createButton('ai-secondary-btn', 'Check blocker', function () {
+        if (window.__tribexAiState && typeof window.__tribexAiState.checkThreadPause === 'function') {
+          window.__tribexAiState.checkThreadPause(state.threadId, viewModel.activePause.id);
+        }
+      }));
+    }
+    banner.appendChild(actions);
+    root.appendChild(banner);
+  }
+
+  function renderUserPrompt(session) {
+    var user = session.user;
+    var prompt = createEl('article', 'ai-codex-message ai-codex-message-user');
+    var header = createEl('div', 'ai-codex-message-header');
+    header.appendChild(createEl('span', 'ai-codex-role', 'You'));
+    if (user && user.createdAt) header.appendChild(createEl('span', 'ai-codex-time', formatTime(user.createdAt)));
+    prompt.appendChild(header);
+    prompt.appendChild(createEl('div', 'ai-codex-user-copy', displayText(user && user.content)));
+    return prompt;
+  }
+
+  function renderAnswer(session) {
+    if (!session.answer || !session.answer.content) return null;
+    var answer = createEl('article', 'ai-codex-message ai-codex-message-assistant');
+    var header = createEl('div', 'ai-codex-message-header');
+    header.appendChild(createEl('span', 'ai-codex-role', 'Assistant'));
+    if (session.answer.createdAt) header.appendChild(createEl('span', 'ai-codex-time', formatTime(session.answer.createdAt)));
+    if (session.answer.isStreaming) header.appendChild(createEl('span', 'ai-codex-live-chip', 'streaming'));
+    answer.appendChild(header);
+    answer.appendChild(renderMarkdown(displayText(session.answer.content), 'ai-codex-answer-copy'));
+    return answer;
+  }
+
+  function renderActivityItem(item, state) {
+    var row = createEl('div', cx('ai-codex-activity-item', 'ai-codex-activity-' + item.kind, 'ai-codex-activity-status-' + item.status));
+    var marker = createEl('span', 'ai-codex-activity-marker');
+    row.appendChild(marker);
+    var copy = createEl('div', 'ai-codex-activity-copy');
+    var title = createEl('div', 'ai-codex-activity-title');
+    title.appendChild(createEl('strong', '', displayActivityTitle(item)));
+    title.appendChild(createEl('span', 'ai-codex-activity-status', titleCase(item.status)));
+    copy.appendChild(title);
+    if (item.detail) copy.appendChild(createEl('p', 'ai-codex-activity-detail', displayText(item.detail)));
+    if (item.childThreadId) {
+      copy.appendChild(createEl('div', 'ai-codex-activity-detail', 'Delegated thread'));
+    }
+    row.appendChild(copy);
+    if (item.artifactKey) {
+      row.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', 'Open', function () {
+        state.drawerOpen = true;
+        state.selectedArtifactKey = item.artifactKey;
+        if (typeof state.render === 'function') state.render({ force: true });
+      }));
+    }
+    return row;
+  }
+
+  function renderActivityGroups(session, state) {
+    var groups = session.activityGroups || [];
+    if (!groups.length) return null;
+    var wrap = createEl('div', 'ai-codex-activity-groups');
+    groups.forEach(function (group) {
+      var key = session.id + ':' + group.id;
+      var details = createEl('details', cx('ai-codex-activity-group', 'ai-codex-activity-group-' + group.kind));
+      details.open = state.expandedGroups[key] !== false && (group.kind === 'review' || group.kind === 'subagent');
+      details.addEventListener('toggle', function () {
+        state.expandedGroups[key] = details.open;
+      });
+      var summary = createEl('summary', 'ai-codex-activity-summary');
+      summary.appendChild(createEl('span', '', group.title));
+      summary.appendChild(createEl('span', 'ai-codex-count', String(group.items.length)));
+      details.appendChild(summary);
+      var list = createEl('div', 'ai-codex-activity-list');
+      group.items.forEach(function (item) {
+        list.appendChild(renderActivityItem(item, state));
+      });
+      details.appendChild(list);
+      wrap.appendChild(details);
+    });
+    return wrap;
+  }
+
+  function renderSession(session, index, state, viewModel) {
+    var card = createEl('section', cx('ai-codex-session', 'ai-codex-session-' + session.lifecycle));
+    card.setAttribute('data-session-id', session.id || String(index));
+    var rail = createEl('div', 'ai-codex-session-rail');
+    rail.appendChild(createEl('span', 'ai-codex-session-dot'));
+    card.appendChild(rail);
+    var body = createEl('div', 'ai-codex-session-body');
+    var head = createEl('div', 'ai-codex-session-head');
+    head.appendChild(createEl('span', 'ai-codex-session-index', 'Session ' + (index + 1)));
+    appendStatusPill(head, session.lifecycle || viewModel.lifecycle, titleCase(session.lifecycle || viewModel.lifecycle));
+    body.appendChild(head);
+    if (session.user && session.user.content && !isSyntheticReviewResumeMessage(session.user)) {
+      body.appendChild(renderUserPrompt(session));
+    }
+    var activity = renderActivityGroups(session, state);
+    if (activity) body.appendChild(activity);
+    var answer = renderAnswer(session);
+    if (answer) body.appendChild(answer);
+    else if (session.lifecycle !== 'complete') {
+      var pending = createEl('div', 'ai-codex-pending-answer');
+      pending.appendChild(createEl('span', 'ai-codex-pulse'));
+      pending.appendChild(createEl('span', '', session.lifecycle === 'queued' ? 'Queued as context' : viewModel.statusLabel || 'Working'));
+      body.appendChild(pending);
+    }
+    card.appendChild(body);
+    return card;
+  }
+
+  function sanitizeReviewPayload(input) {
+    var payload = input && input.rendererPayload ? input.rendererPayload : {};
+    var data = payload.data || input.data || {};
+    var meta = Object.assign({}, payload.meta || {}, {
+      cloudManaged: true,
+      humanInputId: input.id,
+      reviewSessionId: input.reviewSessionId || input.sessionId || input.id,
+    });
+    var toolArgs = Object.assign({}, payload.toolArgs || payload.tool_args || {});
+    if (toolArgs.meta && toolArgs.meta.backendCallback) {
+      toolArgs.meta = Object.assign({}, toolArgs.meta, {
+        backendCallback: Object.assign({}, toolArgs.meta.backendCallback, { token: '[redacted]' }),
       });
     }
-    var wasNearBottom = threadChanged ? true : isNearBottom(state.scrollHost);
-    var beforeHeight = state.scrollHost.scrollHeight || 0;
+    return {
+      renderer: input.renderer || payload.tool_name || payload.toolName || payload.contentType || 'rich_content',
+      data: data,
+      meta: meta,
+      toolArgs: toolArgs,
+    };
+  }
 
-    state.threadId = nextThreadId;
-    updateHeader(state, threadContext);
-    updateAlerts(state, threadContext);
-    var hydrating = updateHydration(state, threadContext);
-    var changed = false;
-    if (!hydrating) {
-      updateResultsShelf(state, threadContext);
-      changed = updateTranscript(state, threadContext);
+  function submitReviewDecision(threadId, input, decision, card) {
+    if (!threadId || !input || !input.id || !window.__tribexAiClient || typeof window.__tribexAiClient.submitThreadHumanInputDecision !== 'function') {
+      return Promise.reject(new Error('Review submission is unavailable.'));
     }
-    updateThreadBlocker(state, threadContext);
-    updateComposer(state, threadContext, threadChanged);
+    card.classList.add('is-submitting');
+    var status = card.querySelector('.ai-codex-review-status');
+    if (status) status.textContent = 'Submitting review decision...';
+    var payload = Object.assign({}, decision || {}, {
+      sessionId: input.reviewSessionId || input.sessionId || input.id,
+      decision: (decision && decision.decision) || 'partial',
+    });
+    return window.__tribexAiClient.submitThreadHumanInputDecision(threadId, input.id, payload)
+      .then(function () {
+        card.classList.remove('is-submitting');
+        card.classList.add('is-submitted');
+        if (status) status.textContent = 'Review submitted. Refreshing thread...';
+        if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
+          return window.__tribexAiState.refreshActiveThread();
+        }
+        return null;
+      })
+      .catch(function (error) {
+        card.classList.remove('is-submitting');
+        card.classList.add('is-error');
+        if (status) status.textContent = error && error.message ? error.message : 'Review submission failed.';
+        throw error;
+      });
+  }
 
-    var afterHeight = state.scrollHost.scrollHeight || beforeHeight;
-    var contentGrew = afterHeight > beforeHeight || threadContext.pending || threadContext.loading;
+  function renderReviewCard(state, input) {
+    var reviewKey = input && input.id ? input.id : 'review';
+    var signature = reviewInputSignature(input);
+    var cached = state.reviewCards && state.reviewCards[reviewKey];
+    if (cached && cached.signature === signature && cached.card) {
+      return cached.card;
+    }
+    var card = createEl('section', 'ai-codex-blocker ai-codex-review-card');
+    card.setAttribute('data-review-id', reviewKey);
+    var header = createEl('div', 'ai-codex-blocker-header');
+    header.appendChild(createEl('strong', '', displayText(input.title, 'Review required')));
+    header.appendChild(createEl('span', 'ai-codex-blocker-badge', 'Waiting on review'));
+    card.appendChild(header);
+    if (input.detail || input.description) {
+      card.appendChild(createEl('p', 'ai-codex-blocker-detail', displayText(input.detail || input.description)));
+    }
+    var normalized = sanitizeReviewPayload(input);
+    var renderer = window.__renderers && window.__renderers[normalized.renderer];
+    var previewProvidesDecisionSubmit = false;
+    if (typeof renderer === 'function') {
+      var preview = createEl('div', 'ai-codex-review-preview');
+      preview.tabIndex = 0;
+      preview.setAttribute('role', 'region');
+      preview.setAttribute('aria-label', displayText(input.title, 'Review required') + ' preview');
+      try {
+        renderer(preview, normalized.data, normalized.meta, normalized.toolArgs, true, function (decision) {
+          return submitReviewDecision(state.threadId, input, decision, card);
+        });
+        previewProvidesDecisionSubmit = true;
+      } catch (error) {
+        preview.textContent = error && error.message ? error.message : 'Review preview failed.';
+      }
+      card.appendChild(preview);
+    }
+    card.appendChild(createEl('div', 'ai-codex-review-status', ''));
+    var actions = createEl('div', 'ai-codex-blocker-actions');
+    if (!previewProvidesDecisionSubmit) {
+      actions.appendChild(createButton('ai-primary-btn', 'Submit reviewed decision', function () {
+        submitReviewDecision(state.threadId, input, { decision: 'approved' }, card).catch(function () {});
+      }));
+    }
+    actions.appendChild(createButton('ai-secondary-btn', 'Refresh', function () {
+      if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
+        window.__tribexAiState.refreshActiveThread();
+      }
+    }));
+    card.appendChild(actions);
+    state.reviewCards[reviewKey] = {
+      signature: signature,
+      card: card,
+    };
+    return card;
+  }
 
-    if (threadChanged) {
-      restoreThreadScroll(state, threadContext, threadChanged);
-    } else if (wasNearBottom) {
-      scrollToBottom(state.scrollHost);
-      updateJumpButton(state, false);
-    } else if (changed && (contentGrew || !wasNearBottom)) {
-      updateJumpButton(state, true);
+  function renderPauseCard(state, activePause) {
+    if (!activePause) return null;
+    var status = String(activePause.status || '').toUpperCase();
+    var card = createEl('section', 'ai-codex-blocker ai-codex-pause-card');
+    var header = createEl('div', 'ai-codex-blocker-header');
+    header.appendChild(createEl('strong', '', displayText(activePause.title, status === 'READY' ? 'Ready to continue' : 'Action required')));
+    header.appendChild(createEl('span', 'ai-codex-blocker-badge', titleCase(status || 'waiting')));
+    card.appendChild(header);
+    if (activePause.detail || activePause.progressSummary) {
+      card.appendChild(createEl('p', 'ai-codex-blocker-detail', displayText(activePause.detail || activePause.progressSummary)));
+    }
+    var tasks = Array.isArray(activePause.tasks) ? activePause.tasks : [];
+    if (tasks.length) {
+      var list = createEl('div', 'ai-codex-pause-tasks');
+      tasks.forEach(function (task) {
+        var row = createEl('div', 'ai-codex-pause-task');
+        row.appendChild(createEl('strong', '', displayText(task.title, 'Required step')));
+        if (task.detail) row.appendChild(createEl('span', '', displayText(task.detail)));
+        row.appendChild(createEl('span', 'ai-codex-pause-task-status', titleCase(task.status || 'pending')));
+        list.appendChild(row);
+      });
+      card.appendChild(list);
+    }
+    var actions = createEl('div', 'ai-codex-blocker-actions');
+    actions.appendChild(createButton('ai-secondary-btn', 'Check status', function () {
+      if (window.__tribexAiState && typeof window.__tribexAiState.checkThreadPause === 'function') {
+        window.__tribexAiState.checkThreadPause(state.threadId, activePause.id);
+      }
+    }));
+    if (status === 'READY') {
+      actions.appendChild(createButton('ai-primary-btn', 'Continue', function () {
+        if (window.__tribexAiState && typeof window.__tribexAiState.continueThreadPause === 'function') {
+          window.__tribexAiState.continueThreadPause(state.threadId, activePause.id);
+        }
+      }));
+    }
+    card.appendChild(actions);
+    return card;
+  }
+
+  function renderBlockers(root, state, viewModel) {
+    var inputs = viewModel.pendingHumanInputs || [];
+    var pause = viewModel.activePause;
+    var activeReviewIds = {};
+    inputs.forEach(function (input) {
+      if (input && input.id) activeReviewIds[input.id] = true;
+    });
+    Object.keys(state.reviewCards || {}).forEach(function (reviewId) {
+      if (!activeReviewIds[reviewId]) delete state.reviewCards[reviewId];
+    });
+    if (!inputs.length && !pause) return;
+    var wrap = createEl('div', 'ai-codex-blockers');
+    inputs.forEach(function (input) {
+      wrap.appendChild(renderReviewCard(state, input));
+    });
+    if (pause && !inputs.length) {
+      var card = renderPauseCard(state, pause);
+      if (card) wrap.appendChild(card);
+    }
+    root.appendChild(wrap);
+  }
+
+  function renderArtifactCards(root, state, viewModel) {
+    if (!viewModel.artifacts.length) return;
+    var shelf = createEl('section', 'ai-codex-artifact-shelf');
+    var header = createEl('div', 'ai-codex-shelf-header');
+    header.appendChild(createEl('strong', '', 'Artifacts'));
+    header.appendChild(createEl('span', 'ai-codex-count', String(viewModel.artifacts.length)));
+    shelf.appendChild(header);
+    var list = createEl('div', 'ai-codex-artifact-list');
+    viewModel.artifacts.forEach(function (artifact) {
+      var chip = createButton('ai-codex-artifact-chip', displayText(artifact.title, 'Artifact'), function () {
+        state.drawerOpen = true;
+        state.selectedArtifactKey = artifact.artifactKey;
+        state.render({ force: true });
+      });
+      if (artifact.reviewRequired) chip.appendChild(createEl('span', 'ai-codex-artifact-flag', 'review'));
+      list.appendChild(chip);
+    });
+    shelf.appendChild(list);
+    root.appendChild(shelf);
+  }
+
+  function renderTimeline(root, state, threadContext, viewModel) {
+    var timeline = createEl('main', 'ai-codex-timeline');
+    attachTimelineBehavior(timeline, state);
+    renderRecovery(timeline, state, threadContext, viewModel);
+    var hasBlockers = (viewModel.pendingHumanInputs || []).length || viewModel.activePause;
+    var blockersRendered = false;
+    if (!viewModel.sessions.length) {
+      var empty = createEl('section', 'ai-codex-empty');
+      empty.appendChild(createEl('h2', '', 'Start a working session'));
+      empty.appendChild(createEl('p', '', 'Ask the agent to do work. Progress, reviews, artifacts, and recovery will appear here.'));
+      timeline.appendChild(empty);
+    } else {
+      viewModel.sessions.forEach(function (session, index) {
+        if (hasBlockers && !blockersRendered && session.lifecycle === 'queued') {
+          renderBlockers(timeline, state, viewModel);
+          blockersRendered = true;
+        }
+        timeline.appendChild(renderSession(session, index, state, viewModel));
+      });
+    }
+    if (hasBlockers && !blockersRendered) renderBlockers(timeline, state, viewModel);
+    renderArtifactCards(timeline, state, viewModel);
+    root.appendChild(timeline);
+  }
+
+  function renderArtifactDrawer(root, state, viewModel) {
+    if (!state.drawerOpen && !state.diagnosticsOpen) return;
+    var aside = createEl('aside', 'ai-codex-drawer');
+    var tabs = createEl('div', 'ai-codex-drawer-tabs');
+    if (viewModel.artifacts.length) {
+      tabs.appendChild(createButton(cx('ai-codex-drawer-tab', !state.diagnosticsOpen && 'is-active'), 'Artifact', function () {
+        state.diagnosticsOpen = false;
+        state.drawerOpen = true;
+        state.render({ force: true });
+      }));
+    }
+    if (shouldShowDiagnostics(viewModel)) {
+      tabs.appendChild(createButton(cx('ai-codex-drawer-tab', state.diagnosticsOpen && 'is-active'), 'Diagnostics', function () {
+        state.diagnosticsOpen = true;
+        state.drawerOpen = false;
+        state.render({ force: true });
+      }));
+    }
+    tabs.appendChild(createButton('ai-codex-drawer-close', 'Close', function () {
+      state.drawerOpen = false;
+      state.diagnosticsOpen = false;
+      state.render({ force: true });
+    }, { ariaLabel: 'Close drawer' }));
+    aside.appendChild(tabs);
+
+    if (state.diagnosticsOpen) {
+      aside.appendChild(createEl('h2', 'ai-codex-drawer-title', 'Runtime diagnostics'));
+      var pre = createEl('pre', 'ai-codex-diagnostics');
+      pre.textContent = JSON.stringify(viewModel.diagnostics, null, 2);
+      aside.appendChild(pre);
+      root.appendChild(aside);
+      return;
     }
 
-    state.lastRenderedThreadId = nextThreadId;
-    clearLiveTick(state);
-    if (hasLiveRunState(threadContext)) {
-      scheduleLiveTick(state);
+    var selected = viewModel.artifacts.find(function (artifact) {
+      return artifact.artifactKey === state.selectedArtifactKey;
+    }) || viewModel.artifacts[viewModel.artifacts.length - 1];
+    if (!selected) {
+      aside.appendChild(createEl('p', 'ai-codex-muted', 'No artifact selected.'));
+      root.appendChild(aside);
+      return;
     }
+    state.selectedArtifactKey = selected.artifactKey;
+    aside.appendChild(createEl('h2', 'ai-codex-drawer-title', displayText(selected.title, 'Artifact')));
+    if (selected.detail) aside.appendChild(createEl('p', 'ai-codex-muted', displayText(selected.detail)));
+    var preview = createEl('div', 'ai-codex-artifact-preview');
+    var renderer = selected.contentType && window.__renderers ? window.__renderers[selected.contentType] : null;
+    if (typeof renderer === 'function' && selected.resultData) {
+      try {
+        renderer(preview, selected.resultData, selected.resultMeta || {}, selected.toolArgs || {}, !!selected.reviewRequired);
+      } catch (error) {
+        preview.textContent = error && error.message ? error.message : 'Artifact preview failed.';
+      }
+    } else if (selected.resultData) {
+      var raw = createEl('pre', 'ai-codex-diagnostics');
+      raw.textContent = JSON.stringify(selected.resultData, null, 2);
+      preview.appendChild(raw);
+    } else {
+      preview.textContent = 'This artifact has no inline preview data.';
+    }
+    aside.appendChild(preview);
+    root.appendChild(aside);
+  }
+
+  function renderComposer(root, state, viewModel) {
+    var composer = createEl('section', cx('ai-codex-composer', viewModel.busy && 'is-context-mode'));
+    if (viewModel.busy) {
+      var interrupt = createButton('ai-secondary-btn ai-codex-interrupt', 'Stop after current step', function () {
+        if (window.__tribexAiState && typeof window.__tribexAiState.interruptThread === 'function') {
+          window.__tribexAiState.interruptThread(state.threadId);
+        }
+      });
+      composer.appendChild(interrupt);
+    }
+    var textarea = createEl('textarea', 'ai-codex-input');
+    textarea.placeholder = viewModel.busy
+      ? 'Add context to the active working session...'
+      : 'Ask the agent to do something...';
+    textarea.value = state.draftText || '';
+    textarea.addEventListener('input', function () {
+      state.draftText = textarea.value;
+    });
+    state.textarea = textarea;
+    composer.appendChild(textarea);
+    var footer = createEl('div', 'ai-codex-composer-footer');
+    footer.appendChild(createEl('span', 'ai-codex-composer-hint', viewModel.busy ? 'Queued as context for the current session' : 'Cmd/Ctrl+Enter to send'));
+    var send = createButton('ai-primary-btn', viewModel.busy ? 'Add context' : 'Send', function () {
+      var prompt = textarea.value;
+      if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.submitPrompt !== 'function') return;
+      if (!String(prompt || '').trim()) return;
+      state.draftText = '';
+      textarea.value = '';
+      Promise.resolve(window.__tribexAiState.submitPrompt(state.threadId, prompt))
+        .then(function (submitted) {
+          if (!submitted) {
+            state.draftText = prompt;
+            if (state.textarea) state.textarea.value = prompt;
+          }
+        })
+        .catch(function () {
+          state.draftText = prompt;
+          if (state.textarea) state.textarea.value = prompt;
+        });
+    }, { disabled: !viewModel.canSend });
+    textarea.addEventListener('keydown', function (event) {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !send.disabled) {
+        event.preventDefault();
+        send.click();
+      }
+    });
+    footer.appendChild(send);
+    composer.appendChild(footer);
+    root.appendChild(composer);
+  }
+
+  function renderThread(container, state, options) {
+    options = options || {};
+    var previousTimeline = container.querySelector('.ai-codex-timeline');
+    var previousSnapshot = getTimelineScrollSnapshot(previousTimeline);
+    var threadContext = getThreadContext(state.threadId);
+    var viewModel = getViewModel(threadContext);
+    var signature = viewSignature(threadContext, viewModel);
+    if (!options.force && state.lastRenderSignature === signature) {
+      return;
+    }
+    state.lastRenderSignature = signature;
+    container.innerHTML = '';
+    var root = createEl('div', cx('ai-codex-thread', 'ai-codex-thread-' + viewModel.lifecycle));
+    renderHeader(root, state, threadContext, viewModel);
+    var layout = createEl('div', 'ai-codex-layout');
+    renderTimeline(layout, state, threadContext, viewModel);
+    renderArtifactDrawer(layout, state, viewModel);
+    root.appendChild(layout);
+    renderComposer(root, state, viewModel);
+    container.appendChild(root);
+    restoreTimelineScroll(container.querySelector('.ai-codex-timeline'), state, viewModel, previousSnapshot);
   }
 
   window.__renderers = window.__renderers || {};
   window.__renderers.tribex_ai_thread = function renderTribexAiThread(container, data, meta, toolArgs) {
-    var aiState = window.__tribexAiState;
-    var threadId = toolArgs && toolArgs.threadId;
-    if (!aiState || !threadId) {
-      container.textContent = 'Thread context is unavailable.';
-      return;
-    }
-
-    var threadContext = aiState.getThreadContext(threadId);
-    if (!threadContext || !threadContext.thread) {
-      container.textContent = 'Unable to load the selected thread.';
-      return;
-    }
-
-    var state = ensureShell(container);
-    renderThread(state, threadContext);
+    var threadId = getActiveThreadId(data || {}, meta || {}, toolArgs || {});
+    var state = getState(container, threadId);
+    state.render = function (options) {
+      scheduleRender(container, state, options || {});
+    };
+    subscribe(container, state);
+    renderThread(container, state, { force: true });
   };
 })();

@@ -340,15 +340,16 @@
           return;
         }
       }
+      if (previousSnapshot && previousSnapshot.wasNearBottom) {
+        timeline.scrollTop = timeline.scrollHeight;
+        rememberTimelineScroll(state, timeline);
+        return;
+      }
       if (previousSnapshot && typeof previousSnapshot.scrollTop === 'number') {
         var maxScroll = Math.max(0, timeline.scrollHeight - timeline.clientHeight);
         timeline.scrollTop = Math.min(previousSnapshot.scrollTop, maxScroll);
         rememberTimelineScroll(state, timeline);
         return;
-      }
-      if (previousSnapshot && previousSnapshot.wasNearBottom) {
-        timeline.scrollTop = timeline.scrollHeight;
-        rememberTimelineScroll(state, timeline);
       }
     };
     if (window.requestAnimationFrame) window.requestAnimationFrame(run);
@@ -587,6 +588,25 @@
       });
   }
 
+  function rendererResultProvidesDecisionSubmit(result) {
+    return !!(
+      result &&
+      typeof result === 'object' &&
+      (
+        result.providesDecisionSubmit === true ||
+        result.providesReviewDecisionSubmit === true
+      )
+    );
+  }
+
+  function previewHasDecisionSubmit(preview, result) {
+    return rendererResultProvidesDecisionSubmit(result) || !!(
+      preview &&
+      preview.querySelector &&
+      preview.querySelector('[data-review-decision-submit="true"]')
+    );
+  }
+
   function renderReviewCard(state, input) {
     var reviewKey = input && input.id ? input.id : 'review';
     var signature = reviewInputSignature(input);
@@ -612,10 +632,10 @@
       preview.setAttribute('role', 'region');
       preview.setAttribute('aria-label', displayText(input.title, 'Review required') + ' preview');
       try {
-        renderer(preview, normalized.data, normalized.meta, normalized.toolArgs, true, function (decision) {
+        var renderResult = renderer(preview, normalized.data, normalized.meta, normalized.toolArgs, true, function (decision) {
           return submitReviewDecision(state.threadId, input, decision, card);
         });
-        previewProvidesDecisionSubmit = true;
+        previewProvidesDecisionSubmit = previewHasDecisionSubmit(preview, renderResult);
       } catch (error) {
         preview.textContent = error && error.message ? error.message : 'Review preview failed.';
       }

@@ -647,6 +647,7 @@
     submitBtn.textContent = 'Submit Decisions';
     submitBtn.title = 'Submit decisions for ' + getReviewScopeLabel(tables, reviewTitle);
     submitBtn.setAttribute('aria-label', 'Submit decisions for ' + getReviewScopeLabel(tables, reviewTitle));
+    submitBtn.setAttribute('data-review-decision-submit', 'true');
     submitBtn.style.cssText = 'padding: var(--space-2) var(--space-4); border-radius: var(--border-radius-sm); border: 1px solid var(--color-info); background: var(--color-info); color: white; cursor: pointer; font-size: var(--text-small); font-weight: var(--weight-semibold);';
     submitBtn.addEventListener('click', function () {
       if (submitState === 'submitting' || submitState === 'submitted') return;

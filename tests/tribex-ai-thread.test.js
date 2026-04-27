@@ -40,6 +40,7 @@ function installBaseRenderers() {
         var button = document.createElement('button');
         button.type = 'button';
         button.textContent = 'Approve table';
+        button.setAttribute('data-review-decision-submit', 'true');
         button.addEventListener('click', function () {
           onDecision({ decision: 'approved', type: 'structured_data_decisions' });
         });
@@ -436,6 +437,61 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-review-status').textContent).toContain('Review submitted');
   });
 
+  it('keeps fallback review submission available for passive rich content reviews', async function () {
+    var submitDecision = vi.fn(function () { return Promise.resolve({ ok: true }); });
+    var refreshActiveThread = vi.fn(function () { return Promise.resolve(true); });
+    window.__tribexAiClient = {
+      submitThreadHumanInputDecision: submitDecision,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: refreshActiveThread,
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            pendingHumanInputs: [
+              {
+                id: 'human-input-rich',
+                renderer: 'rich_content',
+                title: 'Review summary',
+                reviewSessionId: 'review-session-rich',
+                rendererPayload: {
+                  data: { title: 'Summary only', body: 'Please review this summary.' },
+                },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(window.__renderers.rich_content).toHaveBeenCalled();
+    expect(document.querySelector('.ai-codex-review-card').textContent).toContain('Submit reviewed decision');
+
+    var fallbackSubmit = Array.from(document.querySelectorAll('.ai-codex-review-card .ai-codex-blocker-actions button')).find(function (button) {
+      return button.textContent === 'Submit reviewed decision';
+    });
+    fallbackSubmit.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(submitDecision).toHaveBeenCalledWith(
+      'thread-1',
+      'human-input-rich',
+      expect.objectContaining({
+        sessionId: 'review-session-rich',
+        decision: 'approved',
+      }),
+    );
+    expect(refreshActiveThread).toHaveBeenCalled();
+  });
+
   it('keeps submitted review cards stable while backend reconciliation is still pending', async function () {
     var notify = null;
     var refreshActiveThread = vi.fn(function () { return Promise.resolve(true); });
@@ -707,6 +763,60 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.review-editor').value).toBe('user-edited value');
     expect(window.__renderers.structured_data).toHaveBeenCalledTimes(1);
     expect(document.querySelector('.ai-codex-activity-group-review').textContent).toContain('Prepare review payload');
+  });
+
+  it('keeps following the bottom when timeline content grows', function () {
+    var subscription = null;
+    var rafCallbacks = [];
+    window.requestAnimationFrame = function (callback) {
+      rafCallbacks.push(callback);
+      return rafCallbacks.length;
+    };
+    function flushNextFrame() {
+      var callback = rafCallbacks.shift();
+      if (callback) callback();
+    }
+    var threadContext = {
+      thread: baseThread({
+        messages: [
+          { id: 'u1', role: 'user', content: 'Start work.', createdAt: '2026-04-24T18:00:00.000Z' },
+          { id: 'a1', role: 'assistant', content: 'Working on it.', createdAt: '2026-04-24T18:01:00.000Z' },
+        ],
+      }),
+      loading: false,
+      pending: false,
+      error: null,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function (listener) {
+        subscription = listener;
+        return vi.fn();
+      }),
+      getThreadContext: vi.fn(function () { return threadContext; }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+    var initialTimeline = document.querySelector('.ai-codex-timeline');
+    Object.defineProperty(initialTimeline, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(initialTimeline, 'clientHeight', { configurable: true, value: 400 });
+    initialTimeline.scrollTop = 600;
+    flushNextFrame();
+
+    threadContext.thread.lastActivityAt = '2026-04-24T18:02:00.000Z';
+    threadContext.thread.messages = threadContext.thread.messages.concat([
+      { id: 'a2', role: 'assistant', content: 'More progress has arrived.', createdAt: '2026-04-24T18:02:00.000Z' },
+    ]);
+    subscription();
+
+    flushNextFrame();
+    var nextTimeline = document.querySelector('.ai-codex-timeline');
+    Object.defineProperty(nextTimeline, 'scrollHeight', { configurable: true, value: 1400 });
+    Object.defineProperty(nextTimeline, 'clientHeight', { configurable: true, value: 400 });
+    flushNextFrame();
+
+    expect(nextTimeline.scrollTop).toBe(1400);
   });
 
   it('keeps waiting review cards still during backend status polling', function () {

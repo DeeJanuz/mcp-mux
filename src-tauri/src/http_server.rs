@@ -61,6 +61,17 @@ pub struct PushResult {
     pub meta: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FirstPartyAiDebugRequest {
+    method: String,
+    path: String,
+    #[serde(default)]
+    body: Option<serde_json::Value>,
+    #[serde(default)]
+    query: Option<HashMap<String, String>>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushResponse {
@@ -647,6 +658,46 @@ async fn health_handler() -> impl IntoResponse {
     })
 }
 
+fn first_party_ai_debug_enabled_value(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|raw| raw.trim().to_ascii_lowercase()),
+        Some(value) if value == "1" || value == "true" || value == "yes" || value == "on"
+    )
+}
+
+fn first_party_ai_debug_enabled() -> bool {
+    first_party_ai_debug_enabled_value(std::env::var("MCPVIEWS_ENABLE_LOCAL_AI_DEBUG").ok().as_deref())
+}
+
+async fn first_party_ai_debug_handler(
+    Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
+    Json(req): Json<FirstPartyAiDebugRequest>,
+) -> impl IntoResponse {
+    if !first_party_ai_debug_enabled() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Local first-party AI debug proxy is disabled."
+            })),
+        );
+    }
+
+    let app_state = {
+        let state_guard = state.lock().await;
+        Arc::clone(&state_guard.inner)
+    };
+
+    match crate::first_party_ai::proxy_request(&app_state, &req.method, &req.path, req.body, req.query).await {
+        Ok(value) => (StatusCode::OK, Json(value)),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": error
+            })),
+        ),
+    }
+}
+
 async fn push_handler(
     Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
     Json(push_req): Json<serde_json::Value>,
@@ -1040,6 +1091,7 @@ pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle, 
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/api/push", post(push_handler))
+        .route("/api/debug/first-party-ai", post(first_party_ai_debug_handler))
         .route("/api/desktop-relay/tool-request", post(desktop_relay_tool_request_handler))
         .route("/api/heartbeat", post(heartbeat_handler))
         .route("/api/reload-plugins", post(reload_plugins_handler))
@@ -1252,6 +1304,17 @@ mod tests {
         assert_eq!(v["token_type"], "bearer");
         assert_eq!(v["expires_in"], 86400);
         assert_eq!(v["scope"], "mcp");
+    }
+
+    #[test]
+    fn test_first_party_ai_debug_enabled_value() {
+        assert!(first_party_ai_debug_enabled_value(Some("1")));
+        assert!(first_party_ai_debug_enabled_value(Some("true")));
+        assert!(first_party_ai_debug_enabled_value(Some("YES")));
+        assert!(first_party_ai_debug_enabled_value(Some(" on ")));
+        assert!(!first_party_ai_debug_enabled_value(Some("0")));
+        assert!(!first_party_ai_debug_enabled_value(Some("false")));
+        assert!(!first_party_ai_debug_enabled_value(None));
     }
 
     #[test]

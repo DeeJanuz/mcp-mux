@@ -1135,6 +1135,113 @@ describe('tribex-ai-state', function () {
     expect(client.sendMessage).toHaveBeenCalledTimes(1);
   });
 
+  it('clears a timed-out pending operation after stop so the same prompt can retry cleanly', async function () {
+    var attempts = 0;
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'New chat',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'New chat',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [],
+        });
+      }),
+      registerDesktopRelay: vi.fn(function () {
+        return Promise.resolve({
+          relaySession: { id: 'relay-session-1' },
+          relayDeviceId: 'device-1',
+        });
+      }),
+      startDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      disconnectRuntime: vi.fn(),
+      sendMessage: vi.fn(function (_threadId, _prompt, options) {
+        attempts += 1;
+        if (attempts === 1) {
+          return Promise.reject(new Error('Runtime connection timed out.'));
+        }
+        return Promise.resolve({
+          turnId: options && options.turnId ? options.turnId : 'turn-retry',
+          done: new Promise(function () {}),
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value.thread || value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1', { connectStream: false });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    var firstSubmitted = await window.__tribexAiState.submitPrompt('thread-1', 'This will time out');
+    expect(firstSubmitted).toBe(false);
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.activeTurn.status).toBe('reconnecting');
+
+    await window.__tribexAiState.interruptThread('thread-1');
+    var retrySubmitted = await window.__tribexAiState.submitPrompt('thread-1', 'This will time out');
+    var threadContext = window.__tribexAiState.getThreadContext('thread-1');
+
+    expect(retrySubmitted).toBe(true);
+    expect(client.sendMessage).toHaveBeenCalledTimes(2);
+    expect(threadContext.pending).toBe(true);
+    expect(threadContext.thread.activeTurn).toMatchObject({
+      status: 'sending',
+      userMessage: expect.objectContaining({
+        content: 'This will time out',
+      }),
+    });
+    expect(threadContext.thread.messages.filter(function (message) {
+      return message.content === 'This will time out' && message.queued;
+    })).toHaveLength(0);
+  });
+
   it('interrupts an active prompt and unlocks the thread without leaving the pulse running', async function () {
     var client = {
       getConfig: vi.fn(function () {

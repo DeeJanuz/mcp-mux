@@ -141,6 +141,237 @@
       return JSON.parse(JSON.stringify(value));
     }
 
+    function nowIso() {
+      return typeof api.nowIso === 'function' ? api.nowIso() : new Date().toISOString();
+    }
+
+    function normalizeWorkflowStatus(status) {
+      var value = String(status || 'pending').toLowerCase();
+      if (value === 'success' || value === 'done') return 'completed';
+      if (value === 'needs_approval' || value === 'needs-approval' || value === 'approval_required') return 'review_needed';
+      if (value === 'error') return 'failed';
+      return value || 'pending';
+    }
+
+    function normalizeWorkflowStepKind(kind) {
+      var value = String(kind || '').toLowerCase();
+      var known = {
+        plan: true,
+        tool: true,
+        delegate: true,
+        synthesis: true,
+        draft: true,
+        review: true,
+        mutation: true,
+        final: true,
+        repair: true,
+      };
+      return known[value] ? value : 'unknown';
+    }
+
+    function arrayCopy(value) {
+      return Array.isArray(value) ? value.filter(Boolean).map(function (item) { return String(item); }) : [];
+    }
+
+    function mapById(items) {
+      return (Array.isArray(items) ? items : []).reduce(function (byId, item) {
+        if (item && item.id) byId[item.id] = item;
+        return byId;
+      }, {});
+    }
+
+    function normalizeWorkflowArtifact(raw) {
+      if (!raw || !raw.id) return null;
+      return {
+        id: String(raw.id),
+        kind: String(raw.kind || 'artifact'),
+        title: raw.title || raw.id,
+        status: normalizeWorkflowStatus(raw.status || 'created'),
+        rendererArtifactKey: raw.rendererArtifactKey || raw.renderer_artifact_key || null,
+        externalRef: raw.externalRef || raw.external_ref || null,
+      };
+    }
+
+    function normalizeWorkflowApproval(raw) {
+      if (!raw || !raw.id) return null;
+      return {
+        id: String(raw.id),
+        title: raw.title || raw.id,
+        status: normalizeWorkflowStatus(raw.status || 'pending'),
+        reviewSessionId: raw.reviewSessionId || raw.review_session_id || null,
+        artifactRef: raw.artifactRef || raw.artifact_ref || null,
+      };
+    }
+
+    function normalizeWorkflowStep(raw, index, artifactsById, approvalsById) {
+      if (!raw || !raw.id) return null;
+      var rawKind = String(raw.kind || '');
+      var kind = normalizeWorkflowStepKind(rawKind);
+      var artifactRefs = arrayCopy(raw.artifactRefs || raw.artifact_refs);
+      var approvalRefs = arrayCopy(raw.approvalRefs || raw.approval_refs);
+      return {
+        id: String(raw.id),
+        order: typeof raw.order === 'number' ? raw.order : null,
+        title: raw.title || raw.id,
+        kind: kind,
+        rawKind: kind === 'unknown' ? rawKind || null : null,
+        status: normalizeWorkflowStatus(raw.status),
+        dependsOn: arrayCopy(raw.dependsOn || raw.depends_on),
+        startedAt: raw.startedAt || raw.started_at || null,
+        completedAt: raw.completedAt || raw.completed_at || null,
+        updatedAt: raw.updatedAt || raw.updated_at || null,
+        detail: raw.detail || null,
+        evidenceRefs: arrayCopy(raw.evidenceRefs || raw.evidence_refs),
+        artifactRefs: artifactRefs,
+        approvalRefs: approvalRefs,
+        artifacts: artifactRefs.map(function (ref) { return artifactsById[ref] || null; }).filter(Boolean),
+        approvals: approvalRefs.map(function (ref) { return approvalsById[ref] || null; }).filter(Boolean),
+        repairOfStepId: raw.repairOfStepId || raw.repair_of_step_id || null,
+        repairOfTitle: null,
+        repairs: [],
+        childRunRefs: arrayCopy(raw.childRunRefs || raw.child_run_refs),
+        mutationRisk: raw.mutationRisk || raw.mutation_risk || null,
+        arrayIndex: index,
+      };
+    }
+
+    function compareWorkflowSteps(left, right) {
+      if (left.order !== null && right.order !== null && left.order !== right.order) {
+        return left.order - right.order;
+      }
+      if (left.order !== null && right.order === null) return -1;
+      if (left.order === null && right.order !== null) return 1;
+      var leftTime = api.parseActivityTimestamp(left.startedAt || left.updatedAt || left.completedAt);
+      var rightTime = api.parseActivityTimestamp(right.startedAt || right.updatedAt || right.completedAt);
+      if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
+      if (leftTime !== null && rightTime === null) return -1;
+      if (leftTime === null && rightTime !== null) return 1;
+      return left.arrayIndex - right.arrayIndex;
+    }
+
+    function heartbeatView(raw, status) {
+      var heartbeatAt = raw && (raw.heartbeatAt || raw.heartbeat_at || raw.updatedAt || raw.updated_at || raw.generatedAt || raw.generated_at) || null;
+      var heartbeatTime = heartbeatAt ? api.parseActivityTimestamp(heartbeatAt) : null;
+      var currentTime = api.parseActivityTimestamp(nowIso());
+      var ageMs = heartbeatTime !== null && currentTime !== null ? Math.max(0, currentTime - heartbeatTime) : null;
+      var staleAfterMs = 10000;
+      var live = status === 'running' || status === 'review_needed' || status === 'pending';
+      return {
+        at: heartbeatAt,
+        ageMs: ageMs,
+        staleAfterMs: staleAfterMs,
+        stale: !!(live && ageMs !== null && ageMs > staleAfterMs),
+      };
+    }
+
+    function normalizeWorkflowProjection(raw) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+      if (!raw.operationId && !raw.operation_id) return null;
+      if (!Array.isArray(raw.steps)) return null;
+
+      var artifacts = (raw.artifacts || []).map(normalizeWorkflowArtifact).filter(Boolean);
+      var approvals = (raw.approvals || []).map(normalizeWorkflowApproval).filter(Boolean);
+      var artifactsById = mapById(artifacts);
+      var approvalsById = mapById(approvals);
+      var stepsById = {};
+      var steps = raw.steps.map(function (step, index) {
+        return normalizeWorkflowStep(step, index, artifactsById, approvalsById);
+      }).filter(Boolean).sort(compareWorkflowSteps);
+      steps.forEach(function (step) {
+        stepsById[step.id] = step;
+      });
+      var repairs = [];
+      steps.forEach(function (step) {
+        if (step.kind !== 'repair' && !step.repairOfStepId) return;
+        var parent = step.repairOfStepId ? stepsById[step.repairOfStepId] : null;
+        if (parent) {
+          step.repairOfTitle = parent.title;
+          parent.repairs.push({
+            id: step.id,
+            title: step.title,
+            status: step.status,
+          });
+        }
+        repairs.push(step);
+      });
+
+      var status = normalizeWorkflowStatus(raw.status);
+      var heartbeat = heartbeatView(raw, status);
+      var normalized = {
+        schemaVersion: raw.schemaVersion || raw.schema_version || 1,
+        contractName: raw.contractName || raw.contract_name || 'workflow_projection',
+        id: raw.id || null,
+        operationId: raw.operationId || raw.operation_id,
+        threadId: raw.threadId || raw.thread_id || null,
+        personaKey: raw.personaKey || raw.persona_key || null,
+        workflowRef: raw.workflowRef || raw.workflow_ref || null,
+        title: raw.title || 'Workflow',
+        status: status,
+        displayStatus: heartbeat.stale ? 'degraded' : status,
+        generatedAt: raw.generatedAt || raw.generated_at || null,
+        startedAt: raw.startedAt || raw.started_at || null,
+        updatedAt: raw.updatedAt || raw.updated_at || null,
+        heartbeatAt: heartbeat.at,
+        heartbeat: heartbeat,
+        artifacts: artifacts,
+        approvals: approvals,
+        summary: raw.summary || '',
+        timeline: {
+          title: raw.title || 'Workflow',
+          status: heartbeat.stale ? 'degraded' : status,
+          steps: steps,
+          repairs: repairs,
+          artifacts: artifacts,
+          approvals: approvals,
+          delegatedGroups: steps.filter(function (step) {
+            return step.childRunRefs && step.childRunRefs.length;
+          }).map(function (step) {
+            return {
+              stepId: step.id,
+              title: step.title,
+              childRunRefs: step.childRunRefs.slice(),
+              status: step.status,
+            };
+          }),
+        },
+      };
+      return normalized;
+    }
+
+    function workflowProjectionTimestamp(projection) {
+      return api.parseActivityTimestamp(projection && projection.generatedAt);
+    }
+
+    function applyWorkflowProjection(record, rawProjection) {
+      if (!record) return null;
+      var normalized = normalizeWorkflowProjection(rawProjection);
+      if (!normalized) return null;
+      record.workflowProjectionsByOperationId = record.workflowProjectionsByOperationId || {};
+      var existing = record.workflowProjectionsByOperationId[normalized.operationId] || null;
+      var existingTime = workflowProjectionTimestamp(existing);
+      var nextTime = workflowProjectionTimestamp(normalized);
+      if (existing && existingTime !== null && nextTime !== null && existingTime > nextTime) {
+        return existing;
+      }
+      record.workflowProjectionsByOperationId[normalized.operationId] = normalized;
+
+      var latest = null;
+      Object.keys(record.workflowProjectionsByOperationId).forEach(function (operationId) {
+        var candidate = record.workflowProjectionsByOperationId[operationId];
+        if (!latest) {
+          latest = candidate;
+          return;
+        }
+        var latestTime = workflowProjectionTimestamp(latest);
+        var candidateTime = workflowProjectionTimestamp(candidate);
+        if (candidateTime !== null && (latestTime === null || candidateTime >= latestTime)) {
+          latest = candidate;
+        }
+      });
+      record.workflowProjection = latest;
+      return normalized;
+    }
+
     function createThreadDetailRecord(threadId) {
       var summary = api.getThread(threadId) || {};
       return {
@@ -174,6 +405,8 @@
         turnCompletedAtById: {},
         turnHistoryById: {},
         turnOrder: [],
+        workflowProjection: null,
+        workflowProjectionsByOperationId: {},
         activity: {
           itemsById: {},
           order: [],
@@ -261,6 +494,45 @@
       return (messages || []).some(function (message) {
         return messageMatchesCandidate(message, candidate);
       });
+    }
+
+    function findUserIndexForActiveTurn(messages, activeTurn) {
+      if (!Array.isArray(messages) || !activeTurn) return -1;
+      if (activeTurn.turnId) {
+        for (var i = 0; i < messages.length; i += 1) {
+          if (messages[i] && messages[i].role === 'user' && messages[i].turnId === activeTurn.turnId) {
+            return i;
+          }
+        }
+      }
+      if (activeTurn.turnOrdinal) {
+        for (var ordinal = 0, j = 0; j < messages.length; j += 1) {
+          if (!messages[j] || messages[j].role !== 'user') continue;
+          ordinal += 1;
+          if (messages[j].turnOrdinal === activeTurn.turnOrdinal || ordinal === activeTurn.turnOrdinal) {
+            return j;
+          }
+        }
+      }
+      for (var index = 0; index < messages.length; index += 1) {
+        if (messageMatchesCandidate(messages[index], activeTurn.userMessage)) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    function findSettledAssistantForActiveTurn(messages, activeTurn) {
+      if (!Array.isArray(messages) || !activeTurn) return null;
+      var userIndex = findUserIndexForActiveTurn(messages, activeTurn);
+      if (userIndex < 0) return null;
+      for (var i = userIndex + 1; i < messages.length; i += 1) {
+        var message = messages[i];
+        if (!message) continue;
+        if (message.role === 'user') break;
+        if (message.role === 'assistant') return message;
+      }
+      return null;
     }
 
     function extractSnapshotMessages(record) {
@@ -1522,7 +1794,7 @@
                 isStreaming: false,
                 inlineResults: inlineResults,
               },
-              workSession: workItems.length ? {
+              workSession: (workItems.length || hasRunning) ? {
                 id: turn.turnId || ('work-session-' + index),
                 turnId: turn.turnId || null,
                 turnOrdinal: turn.turnOrdinal || null,
@@ -1578,6 +1850,25 @@
         }
 
         var current = runs[runs.length - 1];
+        var target = current;
+        var currentUserStatus = String((current.userMessage && (current.userMessage.status || current.userMessage.lifecycle || current.userMessage.state)) || '').toLowerCase();
+        var currentUserQueued = !!(current.userMessage && (current.userMessage.queued || currentUserStatus === 'queued'));
+        if (currentUserQueued) {
+          target = null;
+          for (var runIndex = runs.length - 2; runIndex >= 0; runIndex -= 1) {
+            var candidate = runs[runIndex];
+            var candidateStatus = String((candidate.userMessage && (candidate.userMessage.status || candidate.userMessage.lifecycle || candidate.userMessage.state)) || '').toLowerCase();
+            if (candidate.userMessage && !candidate.userMessage.queued && candidateStatus !== 'queued' && !candidate.assistantMessage) {
+              target = candidate;
+              break;
+            }
+          }
+          if (!target) {
+            fallbackToLegacy = true;
+            return;
+          }
+        }
+        current = target;
         if (!current.assistantMessage) {
           current.assistantMessage = Object.assign({}, message);
         } else {
@@ -1667,7 +1958,7 @@
           turnOrdinal: run.turnOrdinal || (history && history.turnOrdinal) || null,
         });
         var hasRunning = isWorkSessionLive(record, turnReference, assistantMessage, workItems);
-        var workSession = workItems.length
+        var workSession = (workItems.length || hasRunning)
           ? {
             id: run.turnId || ('work-session-' + index),
             turnId: run.turnId || null,
@@ -1709,6 +2000,9 @@
       var activityItems = buildActivityItems(record);
       var runs = buildRunGroups(record, displayMessages, activityItems);
       var artifacts = normalizeArtifactItems(record);
+      var workflowProjection = record && record.workflowProjection
+        ? cloneValue(record.workflowProjection)
+        : null;
       var latestConversationMessage = null;
       for (var messageIndex = displayMessages.length - 1; messageIndex >= 0; messageIndex -= 1) {
         var candidateMessage = displayMessages[messageIndex];
@@ -1785,6 +2079,8 @@
         activityItems: activityItems,
         runs: runs,
         artifacts: artifacts,
+        workflowProjection: workflowProjection,
+        workflowTimeline: workflowProjection ? workflowProjection.timeline : null,
         artifactDrawer: record && record.artifactDrawer
           ? {
             drawerId: record.artifactDrawer.drawerId || null,
@@ -1843,7 +2139,8 @@
         record.activeTurn.status === 'accepted' ||
         record.activeTurn.status === 'sending' ||
         record.activeTurn.status === 'reconnecting' ||
-        record.activeTurn.status === 'unknown_delivery'
+        record.activeTurn.status === 'unknown_delivery' ||
+        record.activeTurn.status === 'checking_result'
       ) {
         turn.assistantMessage = null;
       }
@@ -1853,15 +2150,31 @@
       if (!record) return;
       reconcileRuntimeSnapshotTurnReferences(record);
       var baseTurnOrdinal = 0;
+      var lastBaseTurn = null;
+      var lastBaseNonQueuedTurn = null;
       (record.base && Array.isArray(record.base.messages) ? record.base.messages : []).forEach(function (message, index) {
         if (!message) return;
         if (message.role === 'user') {
           baseTurnOrdinal += 1;
         }
         var fallbackOrdinal = baseTurnOrdinal || null;
-        var turn = ensureTurnEntry(record, message.turnId || null, message.turnOrdinal || fallbackOrdinal);
+        var hasExplicitTurnReference = !!(message.turnId || message.turnOrdinal);
+        var lastBaseStatus = String((lastBaseTurn && lastBaseTurn.userMessage && (lastBaseTurn.userMessage.status || lastBaseTurn.userMessage.lifecycle || lastBaseTurn.userMessage.state)) || '').toLowerCase();
+        var lastBaseWasQueued = !!(lastBaseTurn && lastBaseTurn.userMessage && (lastBaseTurn.userMessage.queued || lastBaseStatus === 'queued'));
+        var turn = null;
+        if (message.role === 'assistant' && !hasExplicitTurnReference && lastBaseWasQueued && lastBaseNonQueuedTurn && !lastBaseNonQueuedTurn.assistantMessage) {
+          turn = lastBaseNonQueuedTurn;
+        } else {
+          turn = ensureTurnEntry(record, message.turnId || null, message.turnOrdinal || fallbackOrdinal);
+        }
         if (!turn) return;
         mergeTurnMessage(turn, message);
+        if (message.role === 'user') {
+          lastBaseTurn = turn;
+          if (!(message.queued || String(message.status || message.lifecycle || message.state || '').toLowerCase() === 'queued')) {
+            lastBaseNonQueuedTurn = turn;
+          }
+        }
         if (message.role === 'tool') {
           syncActivityItemToTurn(record, Object.assign({
             id: message.id || ('legacy-tool-' + index),
@@ -1891,15 +2204,31 @@
       });
 
       var snapshotTurnOrdinal = 0;
+      var lastSnapshotTurn = null;
+      var lastSnapshotNonQueuedTurn = null;
       extractSnapshotMessages(record).forEach(function (message) {
         if (!message || (message.role !== 'user' && message.role !== 'assistant')) return;
         if (message.role === 'user') {
           snapshotTurnOrdinal += 1;
         }
         var fallbackOrdinal = snapshotTurnOrdinal || null;
-        var turn = ensureTurnEntry(record, message.turnId || null, message.turnOrdinal || fallbackOrdinal);
+        var hasExplicitTurnReference = !!(message.turnId || message.turnOrdinal);
+        var lastSnapshotStatus = String((lastSnapshotTurn && lastSnapshotTurn.userMessage && (lastSnapshotTurn.userMessage.status || lastSnapshotTurn.userMessage.lifecycle || lastSnapshotTurn.userMessage.state)) || '').toLowerCase();
+        var lastSnapshotWasQueued = !!(lastSnapshotTurn && lastSnapshotTurn.userMessage && (lastSnapshotTurn.userMessage.queued || lastSnapshotStatus === 'queued'));
+        var turn = null;
+        if (message.role === 'assistant' && !hasExplicitTurnReference && lastSnapshotWasQueued && lastSnapshotNonQueuedTurn && !lastSnapshotNonQueuedTurn.assistantMessage) {
+          turn = lastSnapshotNonQueuedTurn;
+        } else {
+          turn = ensureTurnEntry(record, message.turnId || null, message.turnOrdinal || fallbackOrdinal);
+        }
         if (!turn) return;
         mergeTurnMessage(turn, message);
+        if (message.role === 'user') {
+          lastSnapshotTurn = turn;
+          if (!(message.queued || String(message.status || message.lifecycle || message.state || '').toLowerCase() === 'queued')) {
+            lastSnapshotNonQueuedTurn = turn;
+          }
+        }
       });
 
       record.turnOrder = (record.turnOrder || []).filter(function (key) {
@@ -1923,6 +2252,29 @@
     function reconcileActiveTurn(record) {
       if (!record || !record.activeTurn || !record.runtimeSnapshot) return;
       var snapshotMessages = extractSnapshotMessages(record);
+      var settledAssistant = findSettledAssistantForActiveTurn(snapshotMessages, record.activeTurn);
+      if (settledAssistant && settledAssistant.content && !settledAssistant.isStreaming) {
+        record.activeTurn.assistantMessage = Object.assign({}, settledAssistant, {
+          turnId: record.activeTurn.turnId || settledAssistant.turnId || null,
+          turnOrdinal: record.activeTurn.turnOrdinal || settledAssistant.turnOrdinal || null,
+          isStreaming: false,
+        });
+        record.activeTurn.status = 'finalized';
+        record.activeTurn.presenceLabel = 'Completed';
+        if (record.activeTurn.turnId) {
+          record.turnCompletedAtById = record.turnCompletedAtById || {};
+          record.turnCompletedAtById[record.activeTurn.turnId] = settledAssistant.createdAt || api.nowIso();
+        }
+        delete state.pendingThreadIds[record.id];
+        if (state.pendingThreadOperations) {
+          delete state.pendingThreadOperations[record.id];
+        }
+        if (state.threadErrors) {
+          state.threadErrors[record.id] = null;
+        }
+        record.rowState = null;
+        rememberTurnHistory(record);
+      }
       var hasUser = record.activeTurn.userMessage ? containsMessage(snapshotMessages, record.activeTurn.userMessage) : true;
       var hasAssistant = record.activeTurn.assistantMessage && record.activeTurn.assistantMessage.content
         ? containsMessage(snapshotMessages, record.activeTurn.assistantMessage)
@@ -1932,6 +2284,14 @@
         record.lastTurnId = record.activeTurn.turnId || record.lastTurnId || null;
         record.lastTurnOrdinal = record.activeTurn.turnOrdinal || record.lastTurnOrdinal || 0;
         record.activeTurn = null;
+        delete state.pendingThreadIds[record.id];
+        if (state.pendingThreadOperations) {
+          delete state.pendingThreadOperations[record.id];
+        }
+        if (state.threadErrors) {
+          state.threadErrors[record.id] = null;
+        }
+        record.rowState = null;
       }
     }
 
@@ -1952,6 +2312,8 @@
           activityItems: projection.activityItems,
           runs: projection.runs,
           artifacts: projection.artifacts,
+          workflowProjection: projection.workflowProjection,
+          workflowTimeline: projection.workflowTimeline,
           artifactDrawer: projection.artifactDrawer,
           preview: projection.preview,
           messageActivityAt: projection.messageActivityAt,
@@ -2006,6 +2368,8 @@
     api.buildActivityItems = buildActivityItems;
     api.buildDisplayMessages = buildDisplayMessages;
     api.buildRunGroups = buildRunGroups;
+    api.normalizeWorkflowProjection = normalizeWorkflowProjection;
+    api.applyWorkflowProjection = applyWorkflowProjection;
     api.buildThreadProjection = buildThreadProjection;
     api.syncThreadSummaryFromRecord = syncThreadSummaryFromRecord;
     api.rememberTurnHistory = rememberTurnHistory;

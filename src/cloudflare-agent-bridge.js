@@ -3,7 +3,7 @@ import { CHAT_MESSAGE_TYPES, StreamAccumulator } from 'agents/chat';
 
 var CHAT_REQUEST_TYPE = CHAT_MESSAGE_TYPES.USE_CHAT_REQUEST;
 var CHAT_RESPONSE_TYPE = CHAT_MESSAGE_TYPES.USE_CHAT_RESPONSE;
-var RUNTIME_CONNECT_TIMEOUT_MS = 10000;
+var RUNTIME_CONNECT_TIMEOUT_MS = 30000;
 var LOCAL_RUNTIME_PROBE_TIMEOUT_MS = 4000;
 var LOCAL_RUNTIME_PROBE_INTERVAL_MS = 250;
 var LOCAL_RUNTIME_PROBE_REQUEST_TIMEOUT_MS = 1000;
@@ -207,6 +207,43 @@ function randomRequestId() {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function summarizeConnection(connection) {
+  var query = connection && connection.query && typeof connection.query === 'object'
+    ? connection.query
+    : {};
+  return {
+    host: normalizeHost(connection && connection.host),
+    agent: connection && connection.agent ? String(connection.agent) : null,
+    name: connection && connection.name ? String(connection.name) : null,
+    path: normalizePath(connection && connection.path) || null,
+    queryKeys: Object.keys(query).sort(),
+    loopback: isLoopbackRuntimeHost(connection && connection.host),
+  };
+}
+
+function emitRuntimeDiagnostic(threadId, input, stage, extra) {
+  bus.emit(threadId, Object.assign({
+    type: 'runtime_diagnostic',
+    stage: stage,
+    createdAt: nowIso(),
+    connection: summarizeConnection(input && input.connection),
+    turnId: input && input.turnId ? input.turnId : null,
+    operationId: input && input.operationId ? input.operationId : null,
+  }, extra || {}));
+}
+
+function emitRuntimePresence(threadId, input, label, detail) {
+  bus.emit(threadId, {
+    type: 'runtime_presence',
+    phase: 'connecting',
+    label: label,
+    detail: detail || null,
+    createdAt: nowIso(),
+    turnId: input && input.turnId ? input.turnId : null,
+    operationId: input && input.operationId ? input.operationId : null,
+  });
 }
 
 function toError(error, fallback) {
@@ -698,9 +735,14 @@ function buildRendererCompletionSummary(turn) {
   return 'I opened the result in a background tab for you.';
 }
 
-function shouldGracefullyRecoverTurn(turn) {
+function isLateTransportClose(error) {
+  var message = error instanceof Error ? error.message : String(error || '');
+  return /connection closed|runtime stream failed|thread session closed|stream closed|socket closed/i.test(message);
+}
+
+function shouldGracefullyRecoverTurn(turn, error) {
   if (!turn) return false;
-  if (turn.finalText) return false;
+  if (turn.finalText) return isLateTransportClose(error);
   if (Object.keys(turn.pendingToolCalls || {}).length > 0) return false;
   if (turnHasFailedToolItems(turn)) return false;
   return !!latestSuccessfulRendererItem(turn);
@@ -757,7 +799,7 @@ function updateToolLifecycle(turn, chunk) {
 function failActiveTurn(threadId, record, error) {
   if (!record || !record.activeTurn) return;
   var turn = record.activeTurn;
-  if (shouldGracefullyRecoverTurn(turn)) {
+  if (shouldGracefullyRecoverTurn(turn, error)) {
     turn.finalText = buildRendererCompletionSummary(turn) || turn.finalText;
     turn.finalStartedAt = turn.finalStartedAt || nowIso();
     turn.assistantStarted = !!turn.finalText;
@@ -822,6 +864,21 @@ function parseChunkBody(body) {
   }
 }
 
+function normalizeRuntimePresenceChunk(chunk) {
+  if (!chunk || typeof chunk !== 'object') return null;
+  var data = chunk.data && typeof chunk.data === 'object' ? chunk.data : chunk;
+  var phase = data.phase || data.status || data.type || null;
+  if (!phase) return null;
+  return {
+    phase: String(phase),
+    label: data.label || null,
+    detail: data.detail || null,
+    operationId: data.operationId || null,
+    createdAt: data.createdAt || nowIso(),
+    payload: data.payload && typeof data.payload === 'object' ? data.payload : null,
+  };
+}
+
 function processTurnChunk(threadId, record, payload, chunk) {
   var turn = record && record.activeTurn;
   if (!turn) return;
@@ -833,6 +890,20 @@ function processTurnChunk(threadId, record, payload, chunk) {
   }
 
   var chunkResult = turn.accumulator.applyChunk(chunk);
+
+  if (chunk.type === 'data-runtime_presence' || chunk.type === 'runtime_presence') {
+    var presence = normalizeRuntimePresenceChunk(chunk);
+    if (presence) {
+      bus.emit(threadId, Object.assign({
+        type: 'runtime_presence',
+        turnId: turn.turnId,
+      }, presence));
+    }
+    if (payload.done) {
+      finalizeActiveTurn(threadId, record);
+    }
+    return;
+  }
 
   if (
     chunk.type === 'tool-input-start' ||
@@ -971,6 +1042,7 @@ async function connect(input) {
   }
 
   var threadId = input.threadId;
+  var connectStartedAt = Date.now();
   var nextKey = connectionKey(input.connection);
   var existing = getRecord(threadId);
 
@@ -981,6 +1053,7 @@ async function connect(input) {
     existing.client.readyState !== 3 &&
     existing.connectionStatus === 'connected'
   ) {
+    emitRuntimeDiagnostic(threadId, input, 'reuse_connected_client');
     return existing.client;
   }
 
@@ -988,7 +1061,20 @@ async function connect(input) {
     closeClientQuietly(existing.client, 1000, 'Reconnecting with updated runtime session.');
   }
 
+  emitRuntimeDiagnostic(threadId, input, 'connect_start', {
+    timeoutMs: RUNTIME_CONNECT_TIMEOUT_MS,
+  });
+  emitRuntimePresence(
+    threadId,
+    input,
+    isLoopbackRuntimeHost(input.connection.host) ? 'Checking local runtime' : 'Opening runtime connection',
+    summarizeConnection(input.connection).host
+  );
+
   await waitForLocalRuntimeHost(input.connection);
+  emitRuntimeDiagnostic(threadId, input, 'host_probe_ok', {
+    elapsedMs: Date.now() - connectStartedAt,
+  });
 
   var ClientCtor = resolveAgentClientCtor();
   var record = null;
@@ -1023,6 +1109,9 @@ async function connect(input) {
         record.connectionStatus = 'connected';
         record.lastError = null;
       }
+      emitRuntimeDiagnostic(threadId, input, 'websocket_open', {
+        elapsedMs: Date.now() - connectStartedAt,
+      });
       settleReadyResolve();
       bus.emit(threadId, { type: 'status', status: 'connected' });
     },
@@ -1067,10 +1156,23 @@ async function connect(input) {
   connections.set(threadId, record);
   attachClientListeners(threadId, record);
   bus.emit(threadId, { type: 'status', status: 'connecting' });
+  emitRuntimePresence(
+    threadId,
+    input,
+    'Waiting for runtime handshake',
+    summarizeConnection(input.connection).host
+  );
 
   Promise.resolve(client.ready).then(function () {
+    emitRuntimeDiagnostic(threadId, input, 'identity_ready', {
+      elapsedMs: Date.now() - connectStartedAt,
+    });
     settleReadyResolve();
   }, function (error) {
+    emitRuntimeDiagnostic(threadId, input, 'identity_ready_error', {
+      elapsedMs: Date.now() - connectStartedAt,
+      error: error && error.message ? error.message : String(error),
+    });
     settleReadyReject(error);
   });
 
@@ -1083,6 +1185,10 @@ async function connect(input) {
       bus.emit(threadId, {
         type: 'error',
         error: 'Runtime connection timed out.',
+      });
+      emitRuntimeDiagnostic(threadId, input, 'connect_timeout', {
+        elapsedMs: Date.now() - connectStartedAt,
+        timeoutMs: RUNTIME_CONNECT_TIMEOUT_MS,
       });
       closeClientQuietly(client, 1000, 'Runtime connection timed out.');
     });

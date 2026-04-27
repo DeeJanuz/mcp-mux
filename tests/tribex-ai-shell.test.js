@@ -340,6 +340,83 @@ describe('tribex-ai-shell', function () {
     expect(state.openThread).toHaveBeenCalledWith('thread-child');
   });
 
+  it('shows public thread titles in the navigator without runtime parameters', function () {
+    var internalTitle = 'Email Inbox Summarizer: Analyze accountId=cmobypfhy0000l904abcd1234, provider=GMAIL, emailAddress=user@example.com';
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      searchTerm: '',
+      organizations: [{ id: 'org-1', name: 'Org 1' }],
+      selectedOrganization: { id: 'org-1', name: 'Org 1' },
+      selectedWorkspace: { id: 'workspace-1', name: 'Workspace', packageKey: 'generic' },
+      selectedProject: { id: 'project-1', name: 'Project', workspaceId: 'workspace-1' },
+      projectGroups: [{
+        project: {
+          id: 'project-1',
+          name: 'Project',
+          workspaceName: 'Workspace',
+        },
+        threads: [
+          { id: 'thread-1', projectId: 'project-1', title: internalTitle, lastActivityAt: '2026-04-14T20:11:00.000Z' },
+        ],
+        threadTree: [{
+          id: 'thread-1',
+          projectId: 'project-1',
+          title: internalTitle,
+          lastActivityAt: '2026-04-14T20:11:00.000Z',
+          childThreads: [],
+        }],
+      }],
+      hasProjects: true,
+      canRunSmokeTest: false,
+      activeProjectId: 'project-1',
+      activeThreadId: 'thread-1',
+      projectExpansion: {
+        'project-1': true,
+      },
+      threadExpansion: {},
+      packages: [],
+      composer: {
+        creatingWorkspace: false,
+        projectName: '',
+        creatingProject: false,
+        threadProjectId: null,
+        threadTitle: '',
+        threadPersonasByProjectId: {},
+        loadingThreadPersonas: false,
+        threadPersonaError: null,
+        selectedPersonaKey: '',
+        creatingThread: false,
+      },
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    var row = document.querySelector('.ai-nav-thread-tree-row');
+    expect(row.textContent).toContain('Email Inbox Summarizer');
+    expect(row.textContent).not.toContain('accountId');
+    expect(row.textContent).not.toContain('cmobypfhy0000l904abcd1234');
+    expect(row.title).toBe('Email Inbox Summarizer');
+    expect(document.querySelector('.ai-nav-thread-action').getAttribute('aria-label')).toBe('Rename Email Inbox Summarizer');
+  });
+
   it('keeps child threads collapsed until their parent is expanded', function () {
     var snapshot = {
       navigatorVisible: true,

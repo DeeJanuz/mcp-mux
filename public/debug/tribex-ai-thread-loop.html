@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TribeX AI Thread Visual Debug Loop</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    html,
+    body,
+    #target {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    body {
+      background: var(--bg-app);
+    }
+
+    #debug-overlay {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 99999;
+      width: min(420px, calc(100vw - 36px));
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+      color: var(--text-primary);
+      box-shadow: var(--glass-shadow-elevated);
+      padding: 12px 14px;
+      font: 12px/1.45 var(--font-sans);
+      backdrop-filter: blur(10px);
+    }
+
+    #debug-overlay strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+
+    #debug-overlay code {
+      color: var(--code-inline-text);
+    }
+
+    .debug-review-panel {
+      display: grid;
+      gap: 10px;
+    }
+
+    .debug-review-panel label {
+      display: grid;
+      gap: 5px;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+
+    .debug-review-panel input {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--border-default);
+      border-radius: 6px;
+      background: var(--bg-surface-inset);
+      color: var(--text-primary);
+      padding: 8px 10px;
+      font: inherit;
+    }
+
+    .debug-review-panel button {
+      justify-self: start;
+    }
+  </style>
+</head>
+<body class="ai-mode-active ai-mode-session-active">
+  <div id="bg-pattern" aria-hidden="true"></div>
+  <div id="target"></div>
+  <div id="debug-overlay"></div>
+
+  <script src="/renderers/tribex-ai-utils.js"></script>
+  <script src="/renderers/tribex-ai-chat-reducer.js"></script>
+  <script src="/renderers/tribex-ai-thread.js"></script>
+  <script>
+    (function () {
+      'use strict';
+
+      var params = new URLSearchParams(window.location.search);
+      var stage = params.get('stage') || 'running';
+      var rootReplacements = 0;
+      var reviewRenderCount = 0;
+      var lastRoot = null;
+      var subscription = null;
+
+      function nowIso(offsetMs) {
+        return new Date(Date.parse('2026-04-26T21:00:00.000Z') + (offsetMs || 0)).toISOString();
+      }
+
+      function baseThread() {
+        return {
+          id: 'visual-debug-thread',
+          title: 'Visual Debug Thread',
+          lastActivityAt: nowIso(0),
+          messages: [],
+          runs: [],
+          activeTurn: {
+            turnId: 'turn-visual-debug',
+            operationId: 'operation-visual-debug',
+            status: 'running',
+            presenceLabel: 'Accepted by runtime',
+            lastPresenceAt: nowIso(0),
+            userMessage: {
+              id: 'user-visual-debug',
+              role: 'user',
+              content: 'Summarize inboxes from the past 24 hours and propose archive candidates.',
+              createdAt: nowIso(0),
+            },
+          },
+        };
+      }
+
+      var threadContext = {
+        organization: { name: 'Local Persona Lab' },
+        workspace: { name: 'Persona Lab Workspace' },
+        project: { name: 'Persona Lab Project' },
+        thread: baseThread(),
+        loading: false,
+        pending: false,
+        error: null,
+        streamStatus: 'connected',
+        relayStatus: 'online',
+      };
+
+      window.__companionUtils = {
+        renderMarkdown: function (content) {
+          var el = document.createElement('div');
+          el.className = 'md-render';
+          el.textContent = content || '';
+          return el;
+        },
+        renderMermaidBlocks: function () {},
+        getActiveSession: function () {
+          return { session: { meta: { threadId: threadContext.thread.id } } };
+        },
+      };
+
+      window.__renderers.structured_data = function (container, data, _meta, _toolArgs, _reviewRequired, onDecision) {
+        reviewRenderCount += 1;
+        var panel = document.createElement('div');
+        panel.className = 'debug-review-panel';
+        var label = document.createElement('label');
+        label.textContent = 'Archive rationale';
+        var input = document.createElement('input');
+        input.className = 'debug-review-editor';
+        input.value = data && data.value ? data.value : 'Original review value';
+        label.appendChild(input);
+        panel.appendChild(label);
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'ai-primary-btn debug-review-submit';
+        button.textContent = 'Submit review';
+        button.addEventListener('click', function () {
+          if (typeof onDecision === 'function') {
+            onDecision({ decision: 'approved', modifications: { value: input.value } });
+          }
+        });
+        panel.appendChild(button);
+        container.appendChild(panel);
+      };
+
+      window.__tribexAiClient = {
+        submitThreadHumanInputDecision: function () {
+          return Promise.resolve({ ok: true });
+        },
+      };
+
+      window.__tribexAiState = {
+        subscribe: function (listener) {
+          subscription = listener;
+          return function () {};
+        },
+        getThreadContext: function () {
+          return threadContext;
+        },
+        refreshActiveThread: function () {
+          return Promise.resolve(true);
+        },
+        submitPrompt: function () {
+          return Promise.resolve(true);
+        },
+        interruptThread: function () {},
+        checkThreadPause: function () {
+          return Promise.resolve(null);
+        },
+        continueThreadPause: function () {
+          return Promise.resolve(true);
+        },
+      };
+
+      function render() {
+        window.__renderers.tribex_ai_thread(
+          document.getElementById('target'),
+          {},
+          {},
+          { threadId: threadContext.thread.id }
+        );
+        var nextRoot = document.querySelector('.ai-codex-thread');
+        if (nextRoot && nextRoot !== lastRoot) {
+          rootReplacements += 1;
+          lastRoot = nextRoot;
+        }
+      }
+
+      function notify() {
+        if (typeof subscription === 'function') subscription();
+        var nextRoot = document.querySelector('.ai-codex-thread');
+        if (nextRoot && nextRoot !== lastRoot) {
+          rootReplacements += 1;
+          lastRoot = nextRoot;
+        }
+      }
+
+      function applyWorkflowProjection() {
+        threadContext.thread.workflowProjection = {
+          operationId: 'operation-visual-debug',
+          status: 'running',
+          updatedAt: nowIso(4000),
+          timeline: {
+            steps: [
+              {
+                id: 'delegate-step',
+                title: 'Run delegated inbox scanners',
+                status: 'running',
+                childRunRefs: ['child-run-a', 'child-run-b'],
+              },
+              {
+                id: 'review-step',
+                title: 'Prepare archive review payload',
+                status: 'running',
+                kind: 'review',
+              },
+            ],
+          },
+        };
+      }
+
+      function applyReviewPayload() {
+        threadContext.thread.pendingHumanInputs = [
+          {
+            id: 'human-input-visual-debug',
+            renderer: 'structured_data',
+            title: 'Review archive candidates',
+            detail: 'Approve, edit, or reject proposed archive actions.',
+            reviewSessionId: 'review-session-visual-debug',
+            rendererPayload: {
+              data: {
+                title: 'Archive candidates',
+                value: 'Original review value',
+              },
+              meta: {},
+              toolArgs: {},
+            },
+          },
+        ];
+      }
+
+      function applyPostReviewChurn() {
+        var editor = document.querySelector('.debug-review-editor');
+        if (editor) editor.value = 'User edited review value';
+        for (var index = 0; index < 6; index += 1) {
+          threadContext.thread.activeTurn.presenceLabel = index % 2 === 0 ? 'Preparing review' : 'Checking status';
+          threadContext.thread.activeTurn.lastPresenceAt = nowIso(5000 + index);
+          threadContext.thread.lastHydratedAt = nowIso(8000 + index);
+          notify();
+        }
+      }
+
+      render();
+      if (stage === 'workflow' || stage === 'review' || stage === 'churn') {
+        applyWorkflowProjection();
+        notify();
+      }
+      if (stage === 'review' || stage === 'churn') {
+        applyReviewPayload();
+        notify();
+      }
+      if (stage === 'churn') {
+        applyPostReviewChurn();
+      }
+
+      var overlay = document.getElementById('debug-overlay');
+      var editor = document.querySelector('.debug-review-editor');
+      overlay.innerHTML = [
+        '<strong>AI Thread Visual Debug</strong>',
+        '<div>Stage: <code>' + stage + '</code></div>',
+        '<div>Lifecycle: <code>' + (document.querySelector('.ai-codex-thread') || {}).className + '</code></div>',
+        '<div>Root replacements: <code>' + rootReplacements + '</code></div>',
+        '<div>Review renderer calls: <code>' + reviewRenderCount + '</code></div>',
+        '<div>Review value: <code>' + (editor ? editor.value : 'none') + '</code></div>',
+      ].join('');
+
+      window.__TRIBEX_VISUAL_DEBUG__ = {
+        stage: stage,
+        rootReplacements: rootReplacements,
+        reviewRenderCount: reviewRenderCount,
+        reviewValue: editor ? editor.value : null,
+      };
+    })();
+  </script>
+</body>
+</html>

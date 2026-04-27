@@ -642,6 +642,32 @@
     };
   }
 
+  function normalizePendingHumanInput(raw, index) {
+    raw = raw || {};
+    var id = pickFirst([raw.id, raw.inputId, raw.input_id, raw.sessionId, raw.session_id], null);
+    if (!id) return null;
+    return {
+      id: id,
+      kind: pickFirst([raw.kind, raw.type], 'review'),
+      status: pickFirst([raw.status], 'PENDING'),
+      title: pickFirst([raw.title], 'Review Required'),
+      threadId: pickFirst([raw.threadId, raw.thread_id], null),
+      threadPauseId: pickFirst([raw.threadPauseId, raw.thread_pause_id], null),
+      reviewSessionId: pickFirst([
+        raw.reviewSessionId,
+        raw.review_session_id,
+        raw.sessionId,
+        raw.session_id,
+      ], id),
+      renderer: pickFirst([raw.renderer, raw.toolName, raw.tool_name], null),
+      rendererPayload: raw.rendererPayload || raw.renderer_payload || raw.safePayload || raw.safe_payload || raw.payload || {},
+      artifactId: pickFirst([raw.artifactId, raw.artifact_id], null),
+      createdAt: normalizeTimestamp(pickFirst([raw.createdAt, raw.created_at], null)),
+      updatedAt: normalizeTimestamp(pickFirst([raw.updatedAt, raw.updated_at], null)),
+      index: index,
+    };
+  }
+
   function normalizeThreadSummary(raw, project, index) {
     raw = raw || {};
     var id = pickFirst([raw.id, raw.threadId], 'thread-' + index);
@@ -847,6 +873,10 @@
       messages = [raw.message];
     }
 
+    var pendingHumanInputs = extractArray(raw, ['pendingHumanInputs', 'pending_human_inputs']).length
+      ? extractArray(raw, ['pendingHumanInputs', 'pending_human_inputs'])
+      : extractArray(thread, ['pendingHumanInputs', 'pending_human_inputs']);
+
     return {
       id: pickFirst([thread.id, thread.threadId], null),
       projectId: pickFirst([thread.projectId, raw.projectId, project.id], null),
@@ -863,6 +893,7 @@
       personaRelease: raw.personaRelease || thread.personaRelease || null,
       personaTestRun: raw.personaTestRun || thread.personaTestRun || null,
       activePause: normalizeThreadPause(raw.activePause || raw.active_pause || thread.activePause || thread.active_pause || null),
+      pendingHumanInputs: pendingHumanInputs.map(normalizePendingHumanInput).filter(Boolean),
       parentThreadId: pickFirst([
         thread.parentThreadId,
         thread.parent_thread_id,
@@ -1218,8 +1249,31 @@
     return text.trim();
   }
 
+  function isHiddenRuntimeMessage(raw) {
+    if (!raw || typeof raw !== 'object') return false;
+    var metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {};
+    return (
+      metadata.hiddenFromTranscript === true ||
+      metadata.hidden_from_transcript === true ||
+      metadata.hidden === true ||
+      metadata.visibility === 'internal'
+    );
+  }
+
+  function isInternalRuntimeContinuationText(role, text) {
+    if (role !== 'user') return false;
+    var content = String(text || '').trim();
+    if (!content) return false;
+    return (
+      content.indexOf('Delegated work listener resolved.') === 0 &&
+      content.indexOf('Continue the coordinator workflow using the delegated results below.') >= 0 &&
+      content.indexOf('Delegated listener payload:') >= 0
+    );
+  }
+
   function normalizeRuntimeUiMessage(raw, index) {
     if (!raw || typeof raw !== 'object') return null;
+    if (isHiddenRuntimeMessage(raw)) return null;
     var role = pickFirst([raw.role], null);
     var text = role === 'assistant'
       ? compactRuntimeAssistantText(raw.parts)
@@ -1227,6 +1281,7 @@
     if ((role !== 'user' && role !== 'assistant') || !text) {
       return null;
     }
+    if (isInternalRuntimeContinuationText(role, text)) return null;
     var createdAt = normalizeTimestamp(pickFirst([
       raw.createdAt,
       raw.timestamp,
@@ -1695,6 +1750,15 @@
     });
   }
 
+  function submitThreadHumanInputDecision(threadId, inputId, decision) {
+    return requestVariants('POST', [
+      {
+        path: '/threads/' + encodeURIComponent(threadId) + '/human-inputs/' + encodeURIComponent(inputId) + '/decision',
+        body: decision || {},
+      },
+    ]);
+  }
+
   function createThread(projectId, title, personaKey) {
     var threadTitle = String(title || 'New chat').trim() || 'New chat';
     return requestVariants('POST', [
@@ -2116,6 +2180,7 @@
     runSmokeTest: runSmokeTest,
     continueThreadPause: continueThreadPause,
     checkThreadPause: checkThreadPause,
+    submitThreadHumanInputDecision: submitThreadHumanInputDecision,
     sendMessage: sendMessage,
     sendMagicLink: sendMagicLink,
     shouldPreviewCompanionPayload: shouldPreviewCompanionPayload,

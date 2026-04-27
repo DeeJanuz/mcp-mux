@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { workflowProjectionFixtures } from './fixtures/workflow-projection-fixtures.js';
 import { loadTribexAiState, loadTribexAiUtils } from './helpers/tribex-ai-state-loader.js';
 
 describe('tribex-ai-state projection helpers', function () {
@@ -88,6 +89,478 @@ describe('tribex-ai-state projection helpers', function () {
     expect(runs[0].workSession.items).toHaveLength(1);
     expect(runs[0].workSession.items[0].id).toBe('activity-1');
     expect(runs[0].workSession.endedAt).toBe('2026-04-16T10:01:30.000Z');
+  });
+
+  it('routes assistant answers around queued context run groups', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var runs = api.buildRunGroups(
+      { turnHistoryById: {} },
+      [
+        {
+          id: 'u1',
+          role: 'user',
+          content: 'Start work.',
+          createdAt: '2026-04-16T10:00:00.000Z',
+        },
+        {
+          id: 'u2',
+          role: 'user',
+          content: 'Queued context.',
+          queued: true,
+          status: 'queued',
+          createdAt: '2026-04-16T10:00:01.000Z',
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: 'Finished with queued context included.',
+          createdAt: '2026-04-16T10:00:03.000Z',
+        },
+      ],
+      []
+    );
+
+    expect(runs).toHaveLength(2);
+    expect(runs[0].answer.content).toBe('Finished with queued context included.');
+    expect(runs[1].user.queued).toBe(true);
+    expect(runs[1].answer.content).toBe('');
+  });
+
+  it('rebuilds turn history without assigning assistant answers to queued context', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-16T10:00:04.000Z'; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var projection = api.buildThreadProjection({
+      id: 'thread-1',
+      base: {
+        messages: [
+          {
+            id: 'u1',
+            role: 'user',
+            content: 'Start work.',
+            createdAt: '2026-04-16T10:00:00.000Z',
+          },
+          {
+            id: 'u2',
+            role: 'user',
+            content: 'Queued context.',
+            queued: true,
+            status: 'queued',
+            createdAt: '2026-04-16T10:00:01.000Z',
+          },
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'Finished with queued context included.',
+            createdAt: '2026-04-16T10:00:03.000Z',
+          },
+        ],
+      },
+      turnHistoryById: {},
+      turnCompletedAtById: {},
+    });
+
+    expect(projection.runs).toHaveLength(2);
+    expect(projection.runs[0].answer.content).toBe('Finished with queued context included.');
+    expect(projection.runs[1].user.queued).toBe(true);
+    expect(projection.runs[1].answer.content).toBe('');
+  });
+
+  it('normalizes WorkflowProjection v1 into a timeline-ready view model', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        threadEntitiesById: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-24T18:04:02.000Z'; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var raw = workflowProjectionFixtures.email_ops_happy_path;
+    var normalized = api.normalizeWorkflowProjection(Object.assign({}, raw, {
+      steps: [raw.steps[2], raw.steps[0], raw.steps[1]].map(function (step) {
+        return Object.assign({}, step);
+      }),
+    }));
+
+    expect(normalized).toMatchObject({
+      schemaVersion: 1,
+      operationId: 'op-email-happy',
+      workflowRef: 'email_ops_v1',
+      status: 'completed',
+      displayStatus: 'completed',
+      heartbeat: {
+        ageMs: 2000,
+        stale: false,
+      },
+    });
+    expect(normalized.timeline.steps.map(function (step) { return step.id; })).toEqual([
+      'op-email-happy:email_ops_v1:accept',
+      'op-email-happy:email_ops_v1:accounts',
+      'op-email-happy:email_ops_v1:delegate',
+    ]);
+    expect(normalized.timeline.steps[2]).toMatchObject({
+      kind: 'delegate',
+      childRunRefs: ['subagent:gmail-primary', 'subagent:gmail-support'],
+    });
+  });
+
+  it('normalizes pending approvals and review artifact links for timeline rendering', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        threadEntitiesById: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-24T18:03:05.000Z'; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var normalized = api.normalizeWorkflowProjection(workflowProjectionFixtures.email_ops_pending_approval);
+    var reviewStep = normalized.timeline.steps.find(function (step) {
+      return step.id === 'op-email-pending:email_ops_v1:archive-review';
+    });
+
+    expect(normalized.status).toBe('review_needed');
+    expect(reviewStep.status).toBe('review_needed');
+    expect(reviewStep.approvals).toEqual([
+      expect.objectContaining({
+        id: 'approval:archive-review',
+        status: 'pending',
+        reviewSessionId: 'review-archive-pending',
+      }),
+    ]);
+    expect(reviewStep.artifacts).toEqual([
+      expect.objectContaining({
+        id: 'artifact:archive-review',
+        rendererArtifactKey: 'tribex-ai-result:thread-email-ops:op-email-pending:archive-review',
+      }),
+    ]);
+  });
+
+  it('stores the latest valid WorkflowProjection by operationId and generatedAt', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        threadEntitiesById: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-24T18:04:02.000Z'; },
+    };
+    var record = {};
+
+    window.__createTribexAiStateProjection(context, api);
+
+    api.applyWorkflowProjection(record, Object.assign(
+      {},
+      workflowProjectionFixtures.email_ops_happy_path,
+      { generatedAt: '2026-04-24T18:04:00.000Z' }
+    ));
+    api.applyWorkflowProjection(record, Object.assign(
+      {},
+      workflowProjectionFixtures.email_ops_happy_path,
+      { generatedAt: '2026-04-24T18:03:00.000Z', summary: 'Older stale copy' }
+    ));
+    api.applyWorkflowProjection(record, Object.assign(
+      {},
+      workflowProjectionFixtures.email_ops_pending_approval,
+      { generatedAt: '2026-04-24T18:05:00.000Z' }
+    ));
+
+    expect(record.workflowProjectionsByOperationId['op-email-happy'].summary).toBe(
+      'Reviewed two inboxes, staged one draft, and archived approved messages.'
+    );
+    expect(record.workflowProjection).toMatchObject({
+      operationId: 'op-email-pending',
+      generatedAt: '2026-04-24T18:05:00.000Z',
+    });
+  });
+
+  it('links repair steps to their failed parent step', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        threadEntitiesById: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-24T18:06:02.000Z'; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var normalized = api.normalizeWorkflowProjection(workflowProjectionFixtures.email_ops_repaired_draft_validation);
+    var draftStep = normalized.timeline.steps.find(function (step) {
+      return step.id === 'op-email-repaired:email_ops_v1:drafts';
+    });
+    var repairStep = normalized.timeline.repairs[0];
+
+    expect(repairStep).toMatchObject({
+      kind: 'repair',
+      repairOfStepId: 'op-email-repaired:email_ops_v1:drafts',
+      repairOfTitle: 'Create user-mailbox drafts',
+    });
+    expect(draftStep.repairs).toEqual([
+      expect.objectContaining({
+        id: 'op-email-repaired:email_ops_v1:repair-drafts',
+        status: 'completed',
+      }),
+    ]);
+  });
+
+  it('marks stale live heartbeats as degraded without discarding the projection', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        threadEntitiesById: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-24T18:04:30.000Z'; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var normalized = api.normalizeWorkflowProjection(Object.assign(
+      {},
+      workflowProjectionFixtures.email_ops_pending_approval,
+      { status: 'running' }
+    ));
+
+    expect(normalized.status).toBe('running');
+    expect(normalized.displayStatus).toBe('degraded');
+    expect(normalized.heartbeat).toMatchObject({
+      ageMs: 90000,
+      stale: true,
+      staleAfterMs: 10000,
+    });
+  });
+
+  it('keeps unknown step kinds renderable with an unknown fallback', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        threadEntitiesById: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-24T18:04:02.000Z'; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var raw = JSON.parse(JSON.stringify(workflowProjectionFixtures.email_ops_happy_path));
+    raw.steps[1].kind = 'bespoke_unmapped_kind';
+    var normalized = api.normalizeWorkflowProjection(raw);
+
+    expect(normalized.timeline.steps[1]).toMatchObject({
+      kind: 'unknown',
+      rawKind: 'bespoke_unmapped_kind',
+    });
+  });
+
+  it('preserves runtime fallback projection when no WorkflowProjection is present', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        threadEntitiesById: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+      nowIso: function () { return '2026-04-24T18:04:02.000Z'; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var projection = api.buildThreadProjection({
+      id: 'thread-1',
+      activity: {
+        itemsById: {
+          activity1: {
+            id: 'activity1',
+            toolName: 'search',
+            status: 'running',
+            title: 'Search',
+            createdAt: '2026-04-24T18:04:00.000Z',
+            updatedAt: '2026-04-24T18:04:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+        },
+        order: ['activity1'],
+      },
+      activeTurn: {
+        turnId: 'turn-1',
+        turnOrdinal: 1,
+        status: 'running',
+        userMessage: {
+          id: 'user-1',
+          role: 'user',
+          content: 'Do work',
+          createdAt: '2026-04-24T18:03:59.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+      },
+      turnHistoryById: {},
+      turnCompletedAtById: {},
+    });
+
+    expect(projection.workflowProjection).toBeNull();
+    expect(projection.workflowTimeline).toBeNull();
+    expect(projection.runs[0].workSession).toMatchObject({
+      status: 'running',
+      items: [expect.objectContaining({ id: 'activity1' })],
+    });
   });
 
   it('builds concrete artifact records with stable session keys and preserves the current default artifact selection', function () {

@@ -186,6 +186,14 @@
     return searchVisible || !!String(snapshot && snapshot.searchTerm || '').trim();
   }
 
+  function displayThreadTitle(thread, fallback) {
+    var title = thread && thread.title;
+    if (window.__tribexAiUtils && typeof window.__tribexAiUtils.formatThreadTitleForDisplay === 'function') {
+      return window.__tribexAiUtils.formatThreadTitleForDisplay(title, fallback || 'Thread');
+    }
+    return String(title || fallback || 'Thread');
+  }
+
   function threadTreeContainsThread(thread, threadId) {
     if (!thread || !threadId) return false;
     if (thread.id === threadId) return true;
@@ -620,6 +628,7 @@
         var searching = !!String(snapshot.searchTerm || '').trim();
 
         function renderThreadRow(thread, depth) {
+          var publicTitle = displayThreadTitle(thread, 'Thread');
           var hasChildren = !!(thread.childThreads && thread.childThreads.length);
           var childPathActive = hasChildren && threadTreeContainsThread(thread, snapshot.activeThreadId);
           var hasExpansionOverride = !!(
@@ -641,10 +650,10 @@
           if (hasChildren) {
             var expandButton = createIconButton(
               'ai-nav-thread-expander' + (threadExpanded ? ' expanded' : ''),
-              (threadExpanded ? 'Collapse ' : 'Expand ') + thread.title,
+              (threadExpanded ? 'Collapse ' : 'Expand ') + publicTitle,
               ICONS.chevron,
               {
-                title: (threadExpanded ? 'Collapse ' : 'Expand ') + thread.title,
+                title: (threadExpanded ? 'Collapse ' : 'Expand ') + publicTitle,
                 pressed: threadExpanded,
                 onClick: function (event) {
                   if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
@@ -667,7 +676,7 @@
           var button = document.createElement('button');
           button.className = 'ai-nav-thread-row ai-nav-thread-tree-row' + (snapshot.activeThreadId === thread.id ? ' active' : '');
           button.type = 'button';
-          button.title = thread.title;
+          button.title = publicTitle;
           button.addEventListener('click', function () {
             aiState.openThread(thread.id);
           });
@@ -680,7 +689,7 @@
 
           var threadTitle = document.createElement('span');
           threadTitle.className = 'ai-nav-thread-row-title';
-          threadTitle.textContent = thread.title;
+          threadTitle.textContent = publicTitle;
           titleWrap.appendChild(threadTitle);
           button.appendChild(titleWrap);
 
@@ -694,8 +703,8 @@
           button.appendChild(time);
           row.appendChild(button);
 
-          var renameThreadButton = createIconButton('ai-nav-thread-action', 'Rename ' + thread.title, ICONS.edit, {
-            title: 'Rename ' + thread.title,
+          var renameThreadButton = createIconButton('ai-nav-thread-action', 'Rename ' + publicTitle, ICONS.edit, {
+            title: 'Rename ' + publicTitle,
             disabled: snapshot.integration.status !== 'authenticated' || snapshot.loadingNavigator,
             onClick: function (event) {
               if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
@@ -1054,7 +1063,7 @@
     if (targetThread) {
       var current = document.createElement('p');
       current.className = 'ai-nav-helper';
-      current.textContent = 'Current title: ' + targetThread.title;
+      current.textContent = 'Current title: ' + displayThreadTitle(targetThread, 'Thread');
       form.appendChild(current);
     }
 

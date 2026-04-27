@@ -190,11 +190,11 @@ describe('setAllRowDecisions', function () {
     expect(state.decisions['r1']).toBe('reject');
     expect(state.decisions['r1a']).toBe('reject');
   });
-  it('skips rows without changes', function () {
+  it('sets decision on review rows without cell changes', function () {
     var state = { decisions: {} };
     var row = { id: 'r1', cells: { c1: { value: 'v', change: null } } };
     sdu.setAllRowDecisions(row, state, 'accept');
-    expect(state.decisions['r1']).toBeUndefined();
+    expect(state.decisions['r1']).toBe('accept');
   });
 });
 

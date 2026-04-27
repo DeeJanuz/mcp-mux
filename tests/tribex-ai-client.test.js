@@ -521,7 +521,7 @@ describe('tribex-ai-client', function () {
     var sendPromise = window.__tribexAiClient.sendMessage('thread-123', 'hello').catch(function (error) {
       return error;
     });
-    await vi.advanceTimersByTimeAsync(10001);
+    await vi.advanceTimersByTimeAsync(30001);
 
     await expect(sendPromise).resolves.toBeInstanceOf(Error);
     await expect(sendPromise).resolves.toMatchObject({
@@ -808,6 +808,81 @@ describe('tribex-ai-client', function () {
     });
   });
 
+  it('normalizes durable pending human inputs on thread hydration', function () {
+    expect(window.__tribexAiClient.normalizeThreadDetail({
+      thread: {
+        id: 'thread-review',
+        title: 'Review thread',
+      },
+      pendingHumanInputs: [
+        {
+          id: 'input-review-1',
+          kind: 'review',
+          status: 'PENDING',
+          title: 'Archive candidates',
+          threadPauseId: 'pause-review-1',
+          reviewSessionId: 'review-session-1',
+          renderer: 'structured_data',
+          rendererPayload: {
+            tool_name: 'structured_data',
+            data: { tables: [] },
+          },
+        },
+      ],
+      messages: [],
+    })).toMatchObject({
+      id: 'thread-review',
+      pendingHumanInputs: [
+        {
+          id: 'input-review-1',
+          kind: 'review',
+          status: 'PENDING',
+          threadPauseId: 'pause-review-1',
+          reviewSessionId: 'review-session-1',
+          renderer: 'structured_data',
+          rendererPayload: {
+            tool_name: 'structured_data',
+            data: { tables: [] },
+          },
+        },
+      ],
+    });
+  });
+
+  it('submits durable human input decisions through the control-plane thread endpoint', async function () {
+    var calls = [];
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: vi.fn(function (command, args) {
+          calls.push({ command: command, args: args });
+          return Promise.resolve({ ok: true });
+        }),
+      },
+    };
+
+    await expect(window.__tribexAiClient.submitThreadHumanInputDecision(
+      'thread-review',
+      'input-review-1',
+      { sessionId: 'review-session-1', decision: 'partial', operationDecisions: { row_1: 'reject' } }
+    )).resolves.toEqual({ ok: true });
+    expect(calls).toEqual([
+      {
+        command: 'first_party_ai_request',
+        args: {
+          method: 'POST',
+          path: '/threads/thread-review/human-inputs/input-review-1/decision',
+          body: {
+            sessionId: 'review-session-1',
+            decision: 'partial',
+            operationDecisions: { row_1: 'reject' },
+          },
+          query: null,
+        },
+      },
+    ]);
+  });
+
   it('preserves review session identity for sequenced push_review companion events', function () {
     expect(window.__tribexAiClient.normalizeMessage({
       toolName: 'push_review',
@@ -958,6 +1033,73 @@ describe('tribex-ai-client', function () {
 
     expect(transcript.messageActivityAt).toBeNull();
     expect(transcript.lastActivityAt).toBeNull();
+  });
+
+  it('filters hidden runtime continuation prompts from the visible transcript', function () {
+    var transcript = window.__tribexAiClient.normalizeRuntimeTranscript('thread-1', {
+      messages: [
+        {
+          id: 'original-user',
+          role: 'user',
+          createdAt: '2026-04-26T18:54:12.000Z',
+          parts: [{ type: 'text', text: 'Summarize my inboxes.' }],
+        },
+        {
+          id: 'resume-user',
+          role: 'user',
+          createdAt: '2026-04-26T18:55:00.000Z',
+          metadata: {
+            visibility: 'internal',
+            hiddenFromTranscript: true,
+          },
+          parts: [{ type: 'text', text: 'Delegated work listener resolved.\n\nContinue with internal results.' }],
+        },
+        {
+          id: 'assistant-final',
+          role: 'assistant',
+          createdAt: '2026-04-26T18:55:13.000Z',
+          parts: [{ type: 'text', text: 'Archive candidates are ready.' }],
+        },
+      ],
+    });
+
+    expect(transcript.messages.map(function (message) { return message.id; })).toEqual([
+      'original-user',
+      'assistant-final',
+    ]);
+    expect(transcript.preview).toBe('Archive candidates are ready.');
+  });
+
+  it('filters legacy delegated listener resume payloads from runtime transcripts', function () {
+    var transcript = window.__tribexAiClient.normalizeRuntimeTranscript('thread-1', {
+      messages: [
+        {
+          id: 'original-user',
+          role: 'user',
+          parts: [{ type: 'text', text: 'Summarize my inboxes.' }],
+        },
+        {
+          id: 'legacy-resume-user',
+          role: 'user',
+          parts: [{
+            type: 'text',
+            text: [
+              'Delegated work listener resolved.',
+              '',
+              'Continue the coordinator workflow using the delegated results below.',
+              '',
+              'Delegated listener payload:',
+              '{ "status": "completed", "results": [] }',
+            ].join('\n'),
+          }],
+        },
+      ],
+    });
+
+    expect(transcript.messages.map(function (message) { return message.id; })).toEqual([
+      'original-user',
+    ]);
+    expect(transcript.preview).toBe('Summarize my inboxes.');
   });
 
   it('treats assistant_delta companion events as streaming assistant messages and not previews', function () {

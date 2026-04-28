@@ -287,20 +287,28 @@ function closeClientQuietly(client, code, reason) {
 function buildChatRequestPayload(input) {
   var existingMessages = Array.isArray(input.messages) ? input.messages : [];
   var userMessageId = input.userMessageId || input.messageId || randomRequestId();
+  var runtimePrompt = String(input.runtimePrompt || input.prompt || '');
+  var displayPrompt = String(input.displayPrompt || input.prompt || runtimePrompt);
+  var metadata = {
+    displayPrompt: displayPrompt,
+  };
+  if (input.skillInvocation) metadata.skillInvocation = input.skillInvocation;
   return {
     messages: existingMessages.concat([
       {
         id: userMessageId,
         role: 'user',
+        metadata: metadata,
         parts: [
           {
             type: 'text',
-            text: String(input.prompt || ''),
+            text: runtimePrompt,
           },
         ],
       },
     ]),
-    text: String(input.prompt || ''),
+    text: runtimePrompt,
+    displayText: displayPrompt,
     messageId: userMessageId,
     waitForStable: input.waitForStable === false ? false : true,
     trigger: 'submit-message',
@@ -314,6 +322,7 @@ function buildChatRequestPayload(input) {
     clientMessageId: input.clientMessageId || input.messageId || userMessageId,
     contentFingerprint: input.contentFingerprint || null,
     lastKnownEventSequence: input.lastKnownEventSequence || null,
+    skillInvocation: input.skillInvocation || null,
   };
 }
 
@@ -1248,6 +1257,9 @@ async function startTurn(input) {
     operationId: input.operationId || null,
     contentFingerprint: input.contentFingerprint || null,
     prompt: String(input.prompt || ''),
+    runtimePrompt: String(input.runtimePrompt || input.prompt || ''),
+    displayPrompt: String(input.displayPrompt || input.prompt || ''),
+    skillInvocation: input.skillInvocation || null,
     startedAt: createdAt,
     messageId: 'assistant-' + requestId,
     userMessageId: userMessageId,
@@ -1271,7 +1283,9 @@ async function startTurn(input) {
     operationId: input.operationId || null,
     clientMessageId: input.clientMessageId || input.messageId || userMessageId,
     contentFingerprint: input.contentFingerprint || null,
-    prompt: String(input.prompt || ''),
+    prompt: String(input.displayPrompt || input.prompt || ''),
+    runtimePrompt: String(input.runtimePrompt || input.prompt || ''),
+    skillInvocation: input.skillInvocation || null,
     createdAt: createdAt,
   });
   bus.emit(input.threadId, {
@@ -1283,8 +1297,12 @@ async function startTurn(input) {
     message: {
       id: userMessageId,
       role: 'user',
-      content: String(input.prompt || ''),
+      content: String(input.displayPrompt || input.prompt || ''),
       createdAt: createdAt,
+      metadata: {
+        displayPrompt: String(input.displayPrompt || input.prompt || ''),
+        skillInvocation: input.skillInvocation || null,
+      },
     },
   });
 
@@ -1319,10 +1337,14 @@ function buildQueuedContextMessages(record) {
     messages.push({
       id: turn.userMessageId,
       role: 'user',
+      metadata: {
+        displayPrompt: turn.displayPrompt || turn.prompt || '',
+        skillInvocation: turn.skillInvocation || null,
+      },
       parts: [
         {
           type: 'text',
-          text: String(turn.prompt || ''),
+          text: String(turn.runtimePrompt || turn.prompt || ''),
         },
       ],
     });

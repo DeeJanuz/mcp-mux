@@ -91,6 +91,85 @@ describe('tribex-ai-state projection helpers', function () {
     expect(runs[0].workSession.endedAt).toBe('2026-04-16T10:01:30.000Z');
   });
 
+  it('preserves tool part order for same-timestamp review workflow activity', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var runs = api.buildRunGroups(
+      {
+        turnHistoryById: {},
+        turnCompletedAtById: {},
+      },
+      [
+        {
+          id: 'u1',
+          role: 'user',
+          content: 'Analyze email.',
+          createdAt: '2026-04-27T18:00:00.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: '',
+          createdAt: '2026-04-27T18:01:00.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+          isStreaming: false,
+        },
+      ],
+      [
+        {
+          id: 'await-review',
+          toolName: 'await_review',
+          status: 'completed',
+          createdAt: '2026-04-27T18:00:30.000Z',
+          updatedAt: '2026-04-27T18:00:30.000Z',
+          sortIndex: 4,
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+        {
+          id: 'prepare-archive',
+          toolName: 'user_email_archive_review_propose',
+          status: 'completed',
+          createdAt: '2026-04-27T18:00:30.000Z',
+          updatedAt: '2026-04-27T18:00:30.000Z',
+          sortIndex: 3,
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+      ]
+    );
+
+    expect(runs[0].workSession.items.map(function (item) { return item.id; })).toEqual([
+      'prepare-archive',
+      'await-review',
+    ]);
+  });
+
   it('routes assistant answers around queued context run groups', function () {
     var context = {
       state: {

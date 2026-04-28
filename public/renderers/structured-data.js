@@ -43,6 +43,11 @@
   var applyBulkDecision = sdu.applyBulkDecision;
   var buildCsvString = sdu.buildCsvString;
   var normalizeStructuredData = sdu.normalizeStructuredData || function (value) { return value; };
+  var summarizeDecisionState = sdu.summarizeDecisionState || function () {
+    return { totalRows: 0, decidedRows: 0, pendingRows: 0, complete: false };
+  };
+  var reviewDrafts = window.__structuredDataReviewDrafts || {};
+  window.__structuredDataReviewDrafts = reviewDrafts;
 
   // ── 1. CSS Injection ──
 
@@ -55,10 +60,20 @@
       '.sd-title { font-family: var(--font-sans); font-size: 18px; font-weight: var(--weight-semibold); color: var(--text-primary); margin: 0 0 var(--space-3) 0; }',
       '.sd-filter { font-family: var(--font-sans); font-size: var(--text-body); color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--border-radius-sm); padding: var(--space-1) var(--space-2); margin-bottom: var(--space-3); width: 100%; box-sizing: border-box; }',
       '.sd-filter:focus { outline: none; border-color: var(--color-info); }',
-      '.sd-table { width: 100%; border-collapse: collapse; font-family: var(--font-sans); font-size: var(--text-body); }',
-      '.sd-th { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 2px solid var(--border-default); color: var(--text-secondary); font-weight: var(--weight-semibold); font-size: var(--text-small); cursor: pointer; user-select: none; white-space: nowrap; }',
+      '.sd-table { width: max-content; table-layout: fixed; border-collapse: collapse; font-family: var(--font-sans); font-size: var(--text-body); }',
+      '.sd-th { text-align: left; padding: var(--space-2) var(--space-3); border-bottom: 2px solid var(--border-default); color: var(--text-secondary); font-weight: var(--weight-semibold); font-size: var(--text-small); cursor: pointer; user-select: none; white-space: nowrap; min-width: 180px; max-width: 440px; }',
       '.sd-th:hover { color: var(--text-primary); }',
-      '.sd-td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); vertical-align: top; }',
+      '.sd-td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); vertical-align: top; min-width: 180px; max-width: 440px; overflow-wrap: anywhere; }',
+      '.sd-th[data-column-id="subject"], .sd-td[data-column-id="subject"], .sd-th[data-column-id="title"], .sd-td[data-column-id="title"], .sd-th[data-column-id="name"], .sd-td[data-column-id="name"], .sd-th[data-column-id="target"], .sd-td[data-column-id="target"] { min-width: 260px; max-width: 520px; }',
+      '.sd-th[data-column-id="summary"], .sd-td[data-column-id="summary"], .sd-th[data-column-id="description"], .sd-td[data-column-id="description"], .sd-th[data-column-id="details"], .sd-td[data-column-id="details"], .sd-th[data-column-id="reason"], .sd-td[data-column-id="reason"], .sd-th[data-column-id="rationale"], .sd-td[data-column-id="rationale"], .sd-th[data-column-id="snippet"], .sd-td[data-column-id="snippet"] { min-width: 340px; max-width: 620px; }',
+      '.sd-th[data-column-id="from"], .sd-td[data-column-id="from"], .sd-th[data-column-id="sender"], .sd-td[data-column-id="sender"], .sd-th[data-column-id="account"], .sd-td[data-column-id="account"], .sd-th[data-column-id="email"], .sd-td[data-column-id="email"] { min-width: 220px; max-width: 420px; }',
+      '.sd-th[data-column-id="date"], .sd-td[data-column-id="date"], .sd-th[data-column-id="received"], .sd-td[data-column-id="received"], .sd-th[data-column-id="timestamp"], .sd-td[data-column-id="timestamp"] { min-width: 190px; max-width: 280px; }',
+      '.sd-th[data-column-id="decision"], .sd-td[data-column-id="decision"] { width: 82px; min-width: 82px; max-width: 82px; box-sizing: border-box; text-align: center; position: sticky; left: 24px; z-index: 2; background: var(--glass-bg-heavy); box-shadow: 1px 0 0 var(--border-subtle); }',
+      '.sd-table:not([data-has-toggle-spacer="true"]) .sd-th[data-column-id="decision"], .sd-table:not([data-has-toggle-spacer="true"]) .sd-td[data-column-id="decision"] { left: 0; }',
+      '.sd-th[data-column-id="decision"] { z-index: 4; }',
+      '.sd-th[data-column-id="decision"], .sd-td[data-column-id="decision"] { padding-left: 10px; padding-right: 10px; }',
+      '.sd-td[data-column-id="decision"] .sd-decision-toggle { gap: 4px; margin-left: 0; }',
+      '.sd-td[data-column-id="decision"] .sd-decision-toggle button { width: 24px; min-width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }',
       '.sd-cell-add { background: var(--color-success-bg); color: var(--color-success-text); }',
       '.sd-cell-delete { background: var(--color-error-bg); color: var(--color-error-text); text-decoration: line-through; }',
       '.sd-cell-update { background: var(--color-warning-bg); color: var(--color-warning-text); }',
@@ -96,7 +111,9 @@
       '.sd-csv-btn { flex-shrink: 0; padding: var(--space-1) var(--space-2); font-size: var(--text-xs); font-family: var(--font-sans); color: var(--text-secondary); background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: var(--border-radius-sm); cursor: pointer; transition: background 0.15s, color 0.15s; }',
       '.sd-csv-btn:hover { color: var(--text-primary); background: var(--bg-surface-inset); }',
       '.sd-csv-btn-copied { background: var(--color-success-bg) !important; color: var(--color-success-text) !important; border-color: var(--color-success) !important; }',
-      '.sd-toggle-spacer { width: 24px; min-width: 24px; }',
+      '.sd-toggle-spacer { width: 24px; min-width: 24px; max-width: 24px; }',
+      '.sd-th.sd-toggle-spacer, .sd-td.sd-toggle-spacer { position: sticky; left: 0; z-index: 3; background: var(--glass-bg-heavy); }',
+      '.sd-th.sd-toggle-spacer { z-index: 5; }',
       '.sd-legend { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-3); font-family: var(--font-sans); font-size: var(--text-xs); color: var(--text-secondary); }',
       '.sd-legend-item { display: inline-flex; align-items: center; gap: var(--space-1); }',
       '.sd-legend-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }',
@@ -230,18 +247,143 @@
     return wrapper;
   }
 
-  function buildTableHeader(columns, state, reviewRequired, rerenderFn) {
+  function clonePlainObject(value) {
+    var source = value && typeof value === 'object' ? value : {};
+    return Object.keys(source).reduce(function (next, key) {
+      next[key] = source[key];
+      return next;
+    }, {});
+  }
+
+  function getReviewDraftKey(data, meta, toolArgs) {
+    meta = meta && typeof meta === 'object' ? meta : {};
+    toolArgs = toolArgs && typeof toolArgs === 'object' ? toolArgs : {};
+    var key = meta.humanInputId ||
+      meta.reviewSessionId ||
+      meta.sessionId ||
+      toolArgs.humanInputId ||
+      toolArgs.reviewSessionId ||
+      toolArgs.session_id ||
+      data && (data.reviewSessionId || data.sessionId || data.session_id);
+    return key ? String(key) : '';
+  }
+
+  function hydrateReviewDraft(states, draft) {
+    if (!draft || !draft.tables) return;
+    Object.keys(states).forEach(function (tableId) {
+      var tableDraft = draft.tables[tableId];
+      if (!tableDraft) return;
+      states[tableId].decisions = clonePlainObject(tableDraft.decisions);
+      states[tableId].modifications = clonePlainObject(tableDraft.modifications);
+    });
+  }
+
+  function persistReviewDraft(key, states) {
+    if (!key) return;
+    var tables = {};
+    Object.keys(states || {}).forEach(function (tableId) {
+      tables[tableId] = {
+        decisions: clonePlainObject(states[tableId].decisions),
+        modifications: clonePlainObject(states[tableId].modifications),
+      };
+    });
+    reviewDrafts[key] = {
+      updatedAt: new Date().toISOString(),
+      tables: tables,
+    };
+  }
+
+  function clearReviewDraft(key) {
+    if (key && reviewDrafts[key]) delete reviewDrafts[key];
+  }
+
+  function getColumnWidth(col) {
+    var id = String((col && (col.id || col.name)) || 'column').toLowerCase();
+    if (id === 'subject' || id === 'title' || id === 'name' || id === 'target') return 260;
+    if (id === 'summary' || id === 'description' || id === 'details' || id === 'reason' || id === 'rationale' || id === 'snippet') return 340;
+    if (id === 'from' || id === 'sender' || id === 'account' || id === 'email') return 220;
+    if (id === 'date' || id === 'received' || id === 'timestamp') return 190;
+    return 180;
+  }
+
+  function appendColumn(colgroup, id, width) {
+    var col = document.createElement('col');
+    col.setAttribute('data-column-id', id);
+    col.style.width = width + 'px';
+    colgroup.appendChild(col);
+  }
+
+  function hasExpandableRows(rows) {
+    return (rows || []).some(function (row) {
+      if (!row || !row.children || row.children.length === 0) return false;
+      return true;
+    });
+  }
+
+  function buildTableColGroup(columns, reviewRequired, includeToggleSpacer) {
+    var colgroup = document.createElement('colgroup');
+    var totalWidth = 0;
+    if (includeToggleSpacer) {
+      totalWidth += 24;
+      appendColumn(colgroup, 'spacer', 24);
+    }
+    if (reviewRequired) {
+      totalWidth += 82;
+      appendColumn(colgroup, 'decision', 82);
+    }
+    columns.forEach(function (col) {
+      var id = String(col.id || col.name || 'column');
+      var width = getColumnWidth(col);
+      totalWidth += width;
+      appendColumn(colgroup, id, width);
+    });
+    return {
+      element: colgroup,
+      width: totalWidth,
+    };
+  }
+
+  function buildDecisionHeader() {
+    var decTh = document.createElement('th');
+    decTh.className = 'sd-th';
+    decTh.setAttribute('data-column-id', 'decision');
+    decTh.textContent = 'Decision';
+    return decTh;
+  }
+
+  function buildRowDecisionCell(row, columns, state, rerenderFn) {
+    var decTd = document.createElement('td');
+    decTd.className = 'sd-td';
+    decTd.setAttribute('data-column-id', 'decision');
+    var rowLabel = getRowReviewLabel(row, columns);
+    decTd.appendChild(buildDecisionToggle(row.id, state, rerenderFn, {
+      acceptTitle: 'Accept row',
+      rejectTitle: 'Reject row',
+      acceptAriaLabel: 'Accept row: ' + rowLabel,
+      rejectAriaLabel: 'Reject row: ' + rowLabel,
+    }));
+    return decTd;
+  }
+
+  function buildTableHeader(columns, state, reviewRequired, includeToggleSpacer, rerenderFn) {
     var thead = document.createElement('thead');
     var tr = document.createElement('tr');
 
-    // Expand toggle spacer column
-    var spacerTh = document.createElement('th');
-    spacerTh.className = 'sd-th sd-toggle-spacer';
-    tr.appendChild(spacerTh);
+    if (includeToggleSpacer) {
+      var spacerTh = document.createElement('th');
+      spacerTh.className = 'sd-th sd-toggle-spacer';
+      tr.appendChild(spacerTh);
+    }
+
+    // Decision column stays on the left so row actions remain reachable in wide CSV reviews.
+    if (reviewRequired) {
+      tr.appendChild(buildDecisionHeader());
+    }
 
     columns.forEach(function (col) {
       var th = document.createElement('th');
       th.className = 'sd-th';
+      th.setAttribute('data-column-id', String(col.id || col.name || 'column'));
 
       if (reviewRequired) {
         if (col.change === 'add') th.classList.add('sd-col-add');
@@ -289,19 +431,11 @@
       tr.appendChild(th);
     });
 
-    // Decision column header if review mode
-    if (reviewRequired) {
-      var decTh = document.createElement('th');
-      decTh.className = 'sd-th';
-      decTh.textContent = 'Decision';
-      tr.appendChild(decTh);
-    }
-
     thead.appendChild(tr);
     return thead;
   }
 
-  function buildTableBody(flatRows, columns, state, reviewRequired, rerenderFn) {
+  function buildTableBody(flatRows, columns, state, reviewRequired, includeToggleSpacer, rerenderFn) {
     var tbody = document.createElement('tbody');
 
     flatRows.forEach(function (entry) {
@@ -314,17 +448,23 @@
         tr.classList.add('sd-row-rejected');
       }
 
-      // Expand toggle cell
-      var toggleTd = document.createElement('td');
-      toggleTd.className = 'sd-td sd-toggle-spacer';
       var hasChildren = row.children && row.children.length > 0;
       var isExpanded = state.expandedRows.has(row.id);
-      toggleTd.appendChild(buildExpandToggle(row.id, hasChildren, isExpanded, rerenderFn));
-      tr.appendChild(toggleTd);
+      if (includeToggleSpacer) {
+        var toggleTd = document.createElement('td');
+        toggleTd.className = 'sd-td sd-toggle-spacer';
+        toggleTd.appendChild(buildExpandToggle(row.id, hasChildren, isExpanded, rerenderFn));
+        tr.appendChild(toggleTd);
+      }
+
+      if (reviewRequired) {
+        tr.appendChild(buildRowDecisionCell(row, columns, state, rerenderFn));
+      }
 
       columns.forEach(function (col, colIndex) {
         var td = document.createElement('td');
         td.className = 'sd-td';
+        td.setAttribute('data-column-id', String(col.id || col.name || 'column'));
 
         // Depth indentation on first cell
         if (colIndex === 0) {
@@ -368,20 +508,6 @@
         tr.appendChild(td);
       });
 
-      // Row decision toggle in review mode
-      if (reviewRequired) {
-        var decTd = document.createElement('td');
-        decTd.className = 'sd-td';
-        var rowLabel = getRowReviewLabel(row, columns);
-        decTd.appendChild(buildDecisionToggle(row.id, state, rerenderFn, {
-          acceptTitle: 'Accept row',
-          rejectTitle: 'Reject row',
-          acceptAriaLabel: 'Accept row: ' + rowLabel,
-          rejectAriaLabel: 'Reject row: ' + rowLabel,
-        }));
-        tr.appendChild(decTd);
-      }
-
       tbody.appendChild(tr);
     });
 
@@ -413,7 +539,7 @@
     URL.revokeObjectURL(url);
   }
 
-  function buildTableContainer(tableData, state, reviewRequired, onDecision) {
+  function buildTableContainer(tableData, state, reviewRequired, onDecision, onStateChange) {
     var container = document.createElement('div');
     container.className = 'sd-container';
 
@@ -466,6 +592,7 @@
         var tempStates = {};
         tempStates[tableData.id] = state;
         applyBulkDecision([tableData], tempStates, 'accept');
+        if (onStateChange) onStateChange();
         renderTableContent();
       });
 
@@ -478,6 +605,7 @@
         var tempStates = {};
         tempStates[tableData.id] = state;
         applyBulkDecision([tableData], tempStates, 'reject');
+        if (onStateChange) onStateChange();
         renderTableContent();
       });
 
@@ -500,6 +628,10 @@
 
     var table = document.createElement('table');
     table.className = 'sd-table';
+    var includeToggleSpacer = hasExpandableRows(tableData.rows);
+    if (includeToggleSpacer) {
+      table.setAttribute('data-has-toggle-spacer', 'true');
+    }
     container.appendChild(table);
 
     function renderTableContent() {
@@ -507,6 +639,7 @@
 
       var rerenderFn = function (mutator) {
         if (mutator) mutator(state);
+        if (onStateChange) onStateChange();
         renderTableContent();
       };
 
@@ -521,8 +654,11 @@
 
       var flatRows = flattenRows(rows, 0, state.expandedRows);
 
-      table.appendChild(buildTableHeader(tableData.columns, state, reviewRequired, rerenderFn));
-      table.appendChild(buildTableBody(flatRows, tableData.columns, state, reviewRequired, rerenderFn));
+      var colGroup = buildTableColGroup(tableData.columns, reviewRequired, includeToggleSpacer);
+      table.style.width = colGroup.width + 'px';
+      table.appendChild(colGroup.element);
+      table.appendChild(buildTableHeader(tableData.columns, state, reviewRequired, includeToggleSpacer, rerenderFn));
+      table.appendChild(buildTableBody(flatRows, tableData.columns, state, reviewRequired, includeToggleSpacer, rerenderFn));
     }
 
     renderTableContent();
@@ -567,7 +703,7 @@
     });
   }
 
-  function buildSubmitBar(tables, states, tableContainers, onDecision, reviewTitle) {
+  function buildSubmitBar(tables, states, tableContainers, onDecision, reviewTitle, onStateChange, reviewDraftKey) {
     var bar = document.createElement('div');
     bar.className = 'sd-submit-bar';
     bar.setAttribute('data-submit-state', 'idle');
@@ -621,15 +757,20 @@
       setTableSubmittedState(nextState === 'submitting' || nextState === 'submitted');
     }
 
+    function applyDecision(decision) {
+      if (submitState === 'submitting' || submitState === 'submitted') return;
+      applyBulkDecision(tables, states, decision);
+      if (onStateChange) onStateChange();
+      scheduleRerenderAllTables();
+    }
+
     var acceptAllBtn = document.createElement('button');
     acceptAllBtn.textContent = 'Accept All';
     acceptAllBtn.title = 'Accept all decisions in ' + getReviewScopeLabel(tables, reviewTitle);
     acceptAllBtn.setAttribute('aria-label', 'Accept all decisions in ' + getReviewScopeLabel(tables, reviewTitle));
     acceptAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-small);';
     acceptAllBtn.addEventListener('click', function () {
-      if (submitState === 'submitting' || submitState === 'submitted') return;
-      applyBulkDecision(tables, states, 'accept');
-      scheduleRerenderAllTables();
+      applyDecision('accept');
     });
 
     var rejectAllBtn = document.createElement('button');
@@ -638,10 +779,29 @@
     rejectAllBtn.setAttribute('aria-label', 'Reject all decisions in ' + getReviewScopeLabel(tables, reviewTitle));
     rejectAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-small);';
     rejectAllBtn.addEventListener('click', function () {
-      if (submitState === 'submitting' || submitState === 'submitted') return;
-      applyBulkDecision(tables, states, 'reject');
-      scheduleRerenderAllTables();
+      applyDecision('reject');
     });
+
+    function submitDecision() {
+      if (submitState === 'submitting' || submitState === 'submitted') return Promise.resolve(null);
+      var payload = buildDecisionPayload(tables, states);
+      setSubmitState('submitting', 'Decision submitted. Resuming agent...');
+      var result = null;
+      try {
+        result = onDecision ? onDecision(payload) : null;
+      } catch (error) {
+        setSubmitState('error', error && error.message ? error.message : 'Review submission failed.');
+        return Promise.reject(error);
+      }
+      return Promise.resolve(result).then(function () {
+        setSubmitState('submitted', 'Decision confirmed. Agent is applying changes.');
+        clearReviewDraft(reviewDraftKey);
+        return result;
+      }).catch(function (error) {
+        setSubmitState('error', error && error.message ? error.message : 'Review submission failed.');
+        throw error;
+      });
+    }
 
     var submitBtn = document.createElement('button');
     submitBtn.textContent = 'Submit Decisions';
@@ -650,28 +810,36 @@
     submitBtn.setAttribute('data-review-decision-submit', 'true');
     submitBtn.style.cssText = 'padding: var(--space-2) var(--space-4); border-radius: var(--border-radius-sm); border: 1px solid var(--color-info); background: var(--color-info); color: white; cursor: pointer; font-size: var(--text-small); font-weight: var(--weight-semibold);';
     submitBtn.addEventListener('click', function () {
-      if (submitState === 'submitting' || submitState === 'submitted') return;
-      var payload = buildDecisionPayload(tables, states);
-      setSubmitState('submitting', 'Decision submitted. Resuming agent...');
-      var result = null;
-      try {
-        result = onDecision ? onDecision(payload) : null;
-      } catch (error) {
-        setSubmitState('error', error && error.message ? error.message : 'Review submission failed.');
-        return;
-      }
-      Promise.resolve(result).then(function () {
-        setSubmitState('submitted', 'Decision confirmed. Agent is applying changes.');
-      }).catch(function (error) {
-        setSubmitState('error', error && error.message ? error.message : 'Review submission failed.');
-      });
+      submitDecision().catch(function () {});
     });
 
     controls.push(acceptAllBtn, rejectAllBtn, submitBtn);
     bar.appendChild(acceptAllBtn);
     bar.appendChild(rejectAllBtn);
     bar.appendChild(submitBtn);
-    return bar;
+    return {
+      element: bar,
+      applyDecision: applyDecision,
+      submitDecision: submitDecision,
+    };
+  }
+
+  function shouldUseExternalDecisionSubmit(meta, toolArgs) {
+    var candidates = [meta, toolArgs];
+    if (toolArgs && toolArgs.meta) candidates.push(toolArgs.meta);
+    return candidates.some(function (candidate) {
+      return !!(
+        candidate &&
+        typeof candidate === 'object' &&
+        !Array.isArray(candidate) &&
+        (
+          candidate.externalDecisionSubmit === true ||
+          candidate.suppressDecisionSubmit === true ||
+          candidate.hideDecisionSubmit === true ||
+          candidate.bundleDecisionSubmit === true
+        )
+      );
+    });
   }
 
   // ── 4. Legend ──
@@ -761,17 +929,65 @@
     var states = {};
     var tableContainers = [];
     var submitBar = null;
+    var submitController = null;
+    var reviewDraftKey = reviewRequired ? getReviewDraftKey(data, meta, toolArgs) : '';
+    var decisionStateCallback = meta && typeof meta.onDecisionStateChange === 'function'
+      ? meta.onDecisionStateChange
+      : null;
+    data.tables.forEach(function (tableData) {
+      states[tableData.id] = createTableState(tableData);
+    });
+    hydrateReviewDraft(states, reviewDraftKey ? reviewDrafts[reviewDraftKey] : null);
+
+    function getDecisionSummary() {
+      return summarizeDecisionState(data.tables, states);
+    }
+
+    function notifyDecisionStateChange() {
+      if (decisionStateCallback) decisionStateCallback(getDecisionSummary());
+    }
+
+    function persistCurrentReviewDraft() {
+      persistReviewDraft(reviewDraftKey, states);
+      notifyDecisionStateChange();
+    }
+
+    function rerenderReviewSurfaces() {
+      persistCurrentReviewDraft();
+      tableContainers.forEach(function (tc) {
+        if (tc.__rerender) tc.__rerender();
+      });
+    }
+
+    var externalDecisionSubmit = reviewRequired && onDecision
+      ? shouldUseExternalDecisionSubmit(meta, toolArgs)
+      : false;
+
     if (reviewRequired && onDecision) {
-      submitBar = buildSubmitBar(data.tables, states, tableContainers, onDecision, data.title);
-      container.appendChild(submitBar);
+      submitController = buildSubmitBar(data.tables, states, tableContainers, onDecision, data.title, persistCurrentReviewDraft, reviewDraftKey);
+      submitBar = submitController && submitController.element ? submitController.element : submitController;
+      if (!externalDecisionSubmit) {
+        container.appendChild(submitBar);
+      }
     }
 
     data.tables.forEach(function (tableData) {
-      states[tableData.id] = createTableState(tableData);
-      var tableContainer = buildTableContainer(tableData, states[tableData.id], reviewRequired, onDecision);
+      var tableContainer = buildTableContainer(tableData, states[tableData.id], reviewRequired, onDecision, persistCurrentReviewDraft);
       tableContainers.push(tableContainer);
       container.appendChild(tableContainer);
     });
+
+    notifyDecisionStateChange();
+
+    if (submitController && submitController.submitDecision) {
+      return {
+        providesDecisionSubmit: true,
+        applyDecision: submitController.applyDecision,
+        getDecisionSummary: getDecisionSummary,
+        submitDecision: submitController.submitDecision,
+      };
+    }
+    return undefined;
   }
 
   window.__renderers.structured_data = renderStructuredData;

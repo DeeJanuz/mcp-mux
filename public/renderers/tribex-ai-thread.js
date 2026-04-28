@@ -27,7 +27,7 @@
     return button;
   }
 
-  function renderMarkdown(content, className) {
+  function renderMarkdown(content, className, options) {
     var body = createEl('div', className);
     if (
       window.__companionUtils &&
@@ -35,6 +35,9 @@
     ) {
       var rendered = window.__companionUtils.renderMarkdown(content || '');
       if (rendered) {
+        if (options && options.suppressEntryAnimation && rendered.classList) {
+          rendered.classList.add('md-content-no-entry-animation');
+        }
         body.appendChild(rendered);
         if (typeof window.__companionUtils.renderMermaidBlocks === 'function') {
           window.__companionUtils.renderMermaidBlocks(rendered);
@@ -111,6 +114,15 @@
   function getState(container, threadId) {
     var existing = containerState.get(container);
     if (existing) {
+      if (threadId && threadId !== existing.threadId) {
+        existing.expandedGroups = {};
+        existing.reviewCards = {};
+        existing.reviewCardCollapsed = {};
+        existing.timelineScrollTop = null;
+        existing.timelineWasNearBottom = false;
+        existing.lastBlockerSignature = null;
+        existing.lastRenderSignature = null;
+      }
       existing.threadId = threadId || existing.threadId;
       return existing;
     }
@@ -121,7 +133,21 @@
       selectedArtifactKey: null,
       diagnosticsOpen: false,
       draftText: '',
+      selectedSkill: null,
+      skillValues: {},
+      skillInsertIndex: 0,
+      skillPickerOpen: false,
+      slashQuery: null,
+      variablePopover: null,
+      focusEditorAfterRender: null,
+      skills: [],
+      skillsLoading: false,
+      skillsLoadedForThreadId: null,
+      emailAccounts: [],
+      emailAccountsLoading: false,
+      emailAccountsLoadedForThreadId: null,
       reviewCards: {},
+      reviewCardCollapsed: {},
       timelineScrollTop: null,
       timelineWasNearBottom: false,
       lastBlockerSignature: null,
@@ -178,6 +204,7 @@
       createdAt: message.createdAt || null,
       isStreaming: !!message.isStreaming,
       pending: !!message.pending,
+      skillInvocation: message.raw && message.raw.metadata ? message.raw.metadata.skillInvocation || null : null,
     };
   }
 
@@ -393,9 +420,7 @@
 
     var actions = createEl('div', 'ai-codex-header-actions');
     actions.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', 'Refresh', function () {
-      if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
-        window.__tribexAiState.refreshActiveThread();
-      }
+      refreshThreadFromViewState(state);
     }));
     if (shouldShowDiagnostics(viewModel)) {
       actions.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', state.diagnosticsOpen ? 'Hide diagnostics' : 'Diagnostics', function () {
@@ -405,6 +430,17 @@
     }
     header.appendChild(actions);
     root.appendChild(header);
+  }
+
+  function refreshThreadFromViewState(state) {
+    if (!window.__tribexAiState) return null;
+    if (state && state.threadId && typeof window.__tribexAiState.refreshThread === 'function') {
+      return window.__tribexAiState.refreshThread(state.threadId, true);
+    }
+    if (typeof window.__tribexAiState.refreshActiveThread === 'function') {
+      return window.__tribexAiState.refreshActiveThread();
+    }
+    return null;
   }
 
   function renderRecovery(root, state, threadContext, viewModel) {
@@ -422,9 +458,7 @@
     banner.appendChild(copy);
     var actions = createEl('div', 'ai-codex-recovery-actions');
     actions.appendChild(createButton('ai-secondary-btn', 'Refresh thread', function () {
-      if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
-        window.__tribexAiState.refreshActiveThread();
-      }
+      refreshThreadFromViewState(state);
     }));
     if (viewModel.activePause && viewModel.activePause.id) {
       actions.appendChild(createButton('ai-secondary-btn', 'Check blocker', function () {
@@ -444,11 +478,63 @@
     header.appendChild(createEl('span', 'ai-codex-role', 'You'));
     if (user && user.createdAt) header.appendChild(createEl('span', 'ai-codex-time', formatTime(user.createdAt)));
     prompt.appendChild(header);
-    prompt.appendChild(createEl('div', 'ai-codex-user-copy', displayText(user && user.content)));
+    prompt.appendChild(renderUserPromptCopy(user));
     return prompt;
   }
 
-  function renderAnswer(session) {
+  function getMessageSkillInvocation(message) {
+    var raw = message && message.raw ? message.raw : {};
+    var metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {};
+    return metadata.skillInvocation && metadata.skillInvocation.key ? metadata.skillInvocation : null;
+  }
+
+  function appendText(parent, text) {
+    if (text) parent.appendChild(document.createTextNode(text));
+  }
+
+  function displayPromptFromSkillInvocation(content, invocation) {
+    if (!invocation || !invocation.key || !invocation.display || typeof invocation.display !== 'object') return content;
+    return joinPromptParts(
+      invocation.display.textBefore || '',
+      '/' + invocation.key,
+      invocation.display.textAfter || ''
+    ) || content;
+  }
+
+  function findSkillToken(content, invocation) {
+    if (invocation && invocation.key) {
+      var token = '/' + invocation.key;
+      var index = content.indexOf(token);
+      if (index >= 0) return { token: token, index: index, name: invocation.name || token };
+    }
+    var match = String(content || '').match(/(^|\s)(\/[A-Za-z0-9][A-Za-z0-9_-]{1,80})(?=$|\s|[.,!?;:])/);
+    if (!match) return null;
+    return {
+      token: match[2],
+      index: match.index + match[1].length,
+      name: match[2],
+    };
+  }
+
+  function renderUserPromptCopy(user) {
+    var invocation = getMessageSkillInvocation(user);
+    var content = displayPromptFromSkillInvocation(displayText(user && user.content), invocation);
+    var skillToken = findSkillToken(content, invocation);
+    if (!skillToken) return createEl('div', 'ai-codex-user-copy', content);
+    var body = createEl('div', 'ai-codex-user-copy ai-codex-user-copy-skill');
+    var token = skillToken.token;
+    var index = skillToken.index;
+    var before = content.slice(0, index);
+    var after = content.slice(index + token.length);
+    appendText(body, before);
+    var chip = createEl('span', 'ai-codex-message-skill-chip', token);
+    chip.title = skillToken.name || token;
+    body.appendChild(chip);
+    appendText(body, after);
+    return body;
+  }
+
+  function renderAnswer(session, state) {
     if (!session.answer || !session.answer.content) return null;
     var answer = createEl('article', 'ai-codex-message ai-codex-message-assistant');
     var header = createEl('div', 'ai-codex-message-header');
@@ -456,7 +542,9 @@
     if (session.answer.createdAt) header.appendChild(createEl('span', 'ai-codex-time', formatTime(session.answer.createdAt)));
     if (session.answer.isStreaming) header.appendChild(createEl('span', 'ai-codex-live-chip', 'streaming'));
     answer.appendChild(header);
-    answer.appendChild(renderMarkdown(displayText(session.answer.content), 'ai-codex-answer-copy'));
+    answer.appendChild(renderMarkdown(displayText(session.answer.content), 'ai-codex-answer-copy', {
+      suppressEntryAnimation: !!session.answer.isStreaming || !!(state && state.hasRenderedThreadContent),
+    }));
     return answer;
   }
 
@@ -525,7 +613,7 @@
     }
     var activity = renderActivityGroups(session, state);
     if (activity) body.appendChild(activity);
-    var answer = renderAnswer(session);
+    var answer = renderAnswer(session, state);
     if (answer) body.appendChild(answer);
     else if (session.lifecycle !== 'complete') {
       var pending = createEl('div', 'ai-codex-pending-answer');
@@ -559,26 +647,36 @@
     };
   }
 
-  function submitReviewDecision(threadId, input, decision, card) {
+  function submitReviewDecision(threadId, input, decision, card, options) {
     if (!threadId || !input || !input.id || !window.__tribexAiClient || typeof window.__tribexAiClient.submitThreadHumanInputDecision !== 'function') {
       return Promise.reject(new Error('Review submission is unavailable.'));
     }
+    options = options || {};
     card.classList.add('is-submitting');
     var status = card.querySelector('.ai-codex-review-status');
     if (status) status.textContent = 'Submitting review decision...';
-    var payload = Object.assign({}, decision || {}, {
+    var decisionPayload = decision && typeof decision === 'object' ? Object.assign({}, decision) : {};
+    if (typeof decision === 'string') decisionPayload.decision = decision;
+    if (!decisionPayload.operationDecisions && decisionPayload.decisions) {
+      decisionPayload.operationDecisions = decisionPayload.decisions;
+    }
+    if (!decisionPayload.suggestionDecisions && decisionPayload.suggestion_decisions) {
+      decisionPayload.suggestionDecisions = decisionPayload.suggestion_decisions;
+    }
+    if (!decisionPayload.tableDecisions && decisionPayload.table_decisions) {
+      decisionPayload.tableDecisions = decisionPayload.table_decisions;
+    }
+    var payload = Object.assign({}, decisionPayload, {
       sessionId: input.reviewSessionId || input.sessionId || input.id,
-      decision: (decision && decision.decision) || 'partial',
+      decision: decisionPayload.decision || 'partial',
     });
     return window.__tribexAiClient.submitThreadHumanInputDecision(threadId, input.id, payload)
       .then(function () {
         card.classList.remove('is-submitting');
         card.classList.add('is-submitted');
-        if (status) status.textContent = 'Review submitted. Refreshing thread...';
-        if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
-          return window.__tribexAiState.refreshActiveThread();
-        }
-        return null;
+        if (status) status.textContent = options.skipRefresh ? 'Review submitted.' : 'Review submitted. Refreshing thread...';
+        if (options.skipRefresh) return true;
+        return refreshThreadFromViewState({ threadId: threadId });
       })
       .catch(function (error) {
         card.classList.remove('is-submitting');
@@ -599,6 +697,24 @@
     );
   }
 
+  function rendererResultSubmitDecision(result) {
+    return result && typeof result.submitDecision === 'function'
+      ? result.submitDecision
+      : null;
+  }
+
+  function rendererResultApplyDecision(result) {
+    return result && typeof result.applyDecision === 'function'
+      ? result.applyDecision
+      : null;
+  }
+
+  function rendererResultGetDecisionSummary(result) {
+    return result && typeof result.getDecisionSummary === 'function'
+      ? result.getDecisionSummary
+      : null;
+  }
+
   function previewHasDecisionSubmit(preview, result) {
     return rendererResultProvidesDecisionSubmit(result) || !!(
       preview &&
@@ -607,43 +723,123 @@
     );
   }
 
-  function renderReviewCard(state, input) {
+  function renderReviewCard(state, input, options) {
+    options = options || {};
+    var bundled = !!options.bundled;
     var reviewKey = input && input.id ? input.id : 'review';
-    var signature = reviewInputSignature(input);
+    var signature = reviewInputSignature(input) + (bundled ? ':bundled' : ':single');
     var cached = state.reviewCards && state.reviewCards[reviewKey];
-    if (cached && cached.signature === signature && cached.card) {
+    var inputStatus = String(input && input.status || 'PENDING').toUpperCase();
+    if (cached && cached.card && cached.bundled === bundled && (cached.signature === signature || inputStatus === 'PENDING')) {
+      cached.signature = signature;
       return cached.card;
     }
     var card = createEl('section', 'ai-codex-blocker ai-codex-review-card');
     card.setAttribute('data-review-id', reviewKey);
+    card.setAttribute('data-review-collapsed', state.reviewCardCollapsed && state.reviewCardCollapsed[reviewKey] ? 'true' : 'false');
     var header = createEl('div', 'ai-codex-blocker-header');
     header.appendChild(createEl('strong', '', displayText(input.title, 'Review required')));
-    header.appendChild(createEl('span', 'ai-codex-blocker-badge', 'Waiting on review'));
+    var headerMeta = createEl('div', 'ai-codex-review-header-meta');
+    var decisionBadge = createEl('span', 'ai-codex-blocker-badge ai-codex-review-decision-badge', 'Review pending');
+    decisionBadge.setAttribute('data-decision-complete', 'false');
+    headerMeta.appendChild(decisionBadge);
+    headerMeta.appendChild(createEl('span', 'ai-codex-blocker-badge', 'Waiting on review'));
+    var body = createEl('div', 'ai-codex-review-card-body');
+    var toggleButton = createButton('ai-secondary-btn ai-codex-review-toggle', 'Hide', function () {
+      setCardCollapsed(card.getAttribute('data-review-collapsed') !== 'true');
+    }, { ariaLabel: 'Collapse review' });
+    toggleButton.setAttribute('aria-expanded', 'true');
+    headerMeta.appendChild(toggleButton);
+    header.appendChild(headerMeta);
     card.appendChild(header);
+
+    function setCardCollapsed(collapsed) {
+      if (!state.reviewCardCollapsed) state.reviewCardCollapsed = {};
+      state.reviewCardCollapsed[reviewKey] = !!collapsed;
+      card.classList.toggle('is-collapsed', !!collapsed);
+      card.setAttribute('data-review-collapsed', collapsed ? 'true' : 'false');
+      body.hidden = !!collapsed;
+      toggleButton.textContent = collapsed ? 'Show' : 'Hide';
+      toggleButton.title = collapsed ? 'Show review' : 'Hide review';
+      toggleButton.setAttribute('aria-label', collapsed ? 'Expand review' : 'Collapse review');
+      toggleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    }
+
+    function updateDecisionBadge(summary) {
+      summary = summary && typeof summary === 'object' ? summary : {};
+      var totalRows = Number(summary.totalRows || 0);
+      var decidedRows = Number(summary.decidedRows || 0);
+      var complete = totalRows > 0 && summary.complete === true;
+      decisionBadge.classList.toggle('is-complete', complete);
+      decisionBadge.setAttribute('data-decision-complete', complete ? 'true' : 'false');
+      decisionBadge.setAttribute('data-decided-rows', String(decidedRows));
+      decisionBadge.setAttribute('data-total-rows', String(totalRows));
+      decisionBadge.textContent = totalRows > 0
+        ? complete
+          ? 'All rows decided'
+          : String(decidedRows) + '/' + String(totalRows) + ' decided'
+        : 'Review pending';
+    }
+
     if (input.detail || input.description) {
-      card.appendChild(createEl('p', 'ai-codex-blocker-detail', displayText(input.detail || input.description)));
+      body.appendChild(createEl('p', 'ai-codex-blocker-detail', displayText(input.detail || input.description)));
     }
     var normalized = sanitizeReviewPayload(input);
+    if (bundled) {
+      normalized.meta = Object.assign({}, normalized.meta || {}, {
+        bundleDecisionSubmit: true,
+        externalDecisionSubmit: true,
+      });
+      normalized.toolArgs = Object.assign({}, normalized.toolArgs || {}, {
+        bundleDecisionSubmit: true,
+        externalDecisionSubmit: true,
+      });
+    }
+    normalized.meta = Object.assign({}, normalized.meta || {}, {
+      onDecisionStateChange: updateDecisionBadge,
+    });
     var renderer = window.__renderers && window.__renderers[normalized.renderer];
     var previewProvidesDecisionSubmit = false;
+    var previewSubmitDecision = null;
+    var previewApplyDecision = null;
+    var previewGetDecisionSummary = null;
+    var submissionOptions = null;
+    function submitDecisionFromRenderer(decision) {
+      return submitReviewDecision(state.threadId, input, decision, card, submissionOptions || {});
+    }
+    function refreshDecisionSummary() {
+      if (typeof previewGetDecisionSummary === 'function') {
+        updateDecisionBadge(previewGetDecisionSummary());
+      }
+    }
     if (typeof renderer === 'function') {
-      var preview = createEl('div', 'ai-codex-review-preview');
+      var preview = createEl('div', 'ai-codex-review-preview ai-codex-review-preview-full');
       preview.tabIndex = 0;
       preview.setAttribute('role', 'region');
       preview.setAttribute('aria-label', displayText(input.title, 'Review required') + ' preview');
       try {
         var renderResult = renderer(preview, normalized.data, normalized.meta, normalized.toolArgs, true, function (decision) {
-          return submitReviewDecision(state.threadId, input, decision, card);
+          return submitDecisionFromRenderer(decision);
         });
         previewProvidesDecisionSubmit = previewHasDecisionSubmit(preview, renderResult);
+        previewSubmitDecision = rendererResultSubmitDecision(renderResult);
+        previewApplyDecision = rendererResultApplyDecision(renderResult);
+        previewGetDecisionSummary = rendererResultGetDecisionSummary(renderResult);
+        refreshDecisionSummary();
+        if (previewSubmitDecision && !bundled) {
+          headerMeta.appendChild(createButton('ai-primary-btn ai-codex-small-btn', 'Submit decisions', function () {
+            previewSubmitDecision().catch(function () {});
+          }));
+        }
       } catch (error) {
-        preview.textContent = error && error.message ? error.message : 'Review preview failed.';
+          preview.textContent = error && error.message ? error.message : 'Review preview failed.';
       }
-      card.appendChild(preview);
+      body.appendChild(preview);
     }
-    card.appendChild(createEl('div', 'ai-codex-review-status', ''));
+    var statusEl = createEl('div', 'ai-codex-review-status', '');
+    body.appendChild(statusEl);
     var actions = createEl('div', 'ai-codex-blocker-actions');
-    if (!previewProvidesDecisionSubmit) {
+    if (!bundled && !previewSubmitDecision && !previewProvidesDecisionSubmit) {
       actions.appendChild(createButton('ai-primary-btn', 'Submit reviewed decision', function () {
         submitReviewDecision(state.threadId, input, { decision: 'approved' }, card).catch(function () {});
       }));
@@ -653,21 +849,166 @@
         window.__tribexAiState.refreshActiveThread();
       }
     }));
-    card.appendChild(actions);
+    body.appendChild(actions);
+    card.appendChild(body);
+    setCardCollapsed(state.reviewCardCollapsed && state.reviewCardCollapsed[reviewKey] === true);
+    function submitDecision(options) {
+      submissionOptions = options || null;
+      var result = null;
+      try {
+        result = previewSubmitDecision
+          ? previewSubmitDecision()
+          : submitReviewDecision(state.threadId, input, { decision: 'partial' }, card, submissionOptions || {});
+      } catch (error) {
+        submissionOptions = null;
+        return Promise.reject(error);
+      }
+      return Promise.resolve(result).finally(function () {
+        submissionOptions = null;
+      });
+    }
     state.reviewCards[reviewKey] = {
       signature: signature,
+      bundled: bundled,
       card: card,
+      applyDecision: previewApplyDecision,
+      getDecisionSummary: previewGetDecisionSummary,
+      refreshDecisionSummary: refreshDecisionSummary,
+      submitDecision: submitDecision,
     };
     return card;
+  }
+
+  function getReviewCardEntry(state, input) {
+    var reviewKey = input && input.id ? input.id : 'review';
+    return state.reviewCards && state.reviewCards[reviewKey] ? state.reviewCards[reviewKey] : null;
+  }
+
+  function applyBundleDecision(state, inputs, decision, statusEl) {
+    inputs.forEach(function (input) {
+      var entry = getReviewCardEntry(state, input);
+      if (entry && typeof entry.applyDecision === 'function') {
+        entry.applyDecision(decision);
+        if (typeof entry.refreshDecisionSummary === 'function') {
+          entry.refreshDecisionSummary();
+        }
+      }
+    });
+    if (statusEl) {
+      statusEl.textContent = decision === 'reject'
+        ? 'All pending rows marked rejected.'
+        : 'All pending rows marked approved.';
+    }
+  }
+
+  function submitBundleReviewDecisions(state, inputs, card, statusEl) {
+    if (!inputs.length) return Promise.resolve(null);
+    card.classList.add('is-submitting');
+    if (statusEl) statusEl.textContent = 'Submitting bundled review decisions...';
+    var submissions = inputs.map(function (input) {
+      var entry = getReviewCardEntry(state, input);
+      if (entry && typeof entry.submitDecision === 'function') {
+        return entry.submitDecision({ skipRefresh: true });
+      }
+      var placeholder = createEl('div', 'ai-codex-review-status', '');
+      return submitReviewDecision(state.threadId, input, { decision: 'partial' }, placeholder, { skipRefresh: true });
+    });
+    return Promise.all(submissions)
+      .then(function () {
+        card.classList.remove('is-submitting');
+        card.classList.add('is-submitted');
+        if (statusEl) statusEl.textContent = 'Bundled decisions submitted. Refreshing thread...';
+        return refreshThreadFromViewState({ threadId: state.threadId });
+      })
+      .catch(function (error) {
+        card.classList.remove('is-submitting');
+        card.classList.add('is-error');
+        if (statusEl) statusEl.textContent = error && error.message ? error.message : 'Bundled review submission failed.';
+        throw error;
+      });
+  }
+
+  function renderReviewBundleControls(state, inputs) {
+    var card = createEl('section', 'ai-codex-blocker ai-codex-review-bundle ai-codex-review-bundle-sticky');
+    var header = createEl('div', 'ai-codex-blocker-header');
+    header.appendChild(createEl('strong', '', 'Bundled decision review'));
+    header.appendChild(createEl('span', 'ai-codex-blocker-badge', String(inputs.length) + ' reviews'));
+    card.appendChild(header);
+
+    var status = createEl('div', 'ai-codex-review-status', '');
+    var actions = createEl('div', 'ai-codex-blocker-actions');
+    actions.appendChild(createButton('ai-secondary-btn ai-codex-approve-all', 'Approve All', function () {
+      applyBundleDecision(state, inputs, 'accept', status);
+    }));
+    actions.appendChild(createButton('ai-secondary-btn ai-codex-reject-all', 'Reject All', function () {
+      applyBundleDecision(state, inputs, 'reject', status);
+    }));
+    var submit = createButton('ai-primary-btn', 'Submit Decisions', function () {
+      submitBundleReviewDecisions(state, inputs, card, status).catch(function () {});
+    });
+    submit.setAttribute('data-review-bundle-submit', 'true');
+    actions.appendChild(submit);
+    actions.appendChild(createButton('ai-secondary-btn', 'Refresh', function () {
+      if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
+        window.__tribexAiState.refreshActiveThread();
+      }
+    }));
+    card.appendChild(actions);
+    card.appendChild(status);
+    return card;
+  }
+
+  function isDelegatedPause(activePause) {
+    if (!activePause) return false;
+    var values = [
+      activePause.reasonKind,
+      activePause.reason_kind,
+      activePause.kind,
+      activePause.type,
+      activePause.category,
+    ];
+    var metadata = activePause.metadata && typeof activePause.metadata === 'object'
+      ? activePause.metadata
+      : {};
+    values.push(
+      metadata.reasonKind,
+      metadata.reason_kind,
+      metadata.pauseKind,
+      metadata.pause_kind,
+      metadata.pauseType,
+      metadata.pause_type,
+      metadata.mode,
+      metadata.waitingOn,
+      metadata.waiting_on,
+      metadata.source
+    );
+    return values.some(function (value) {
+      var normalized = String(value || '').toLowerCase().replace(/[\s_]+/g, '-');
+      return (
+        normalized === 'delegated-work' ||
+        normalized === 'delegated' ||
+        normalized === 'sub-agent' ||
+        normalized === 'subagent' ||
+        normalized === 'listen' ||
+        normalized === 'agent-listen' ||
+        normalized === 'sub-agent-listen' ||
+        normalized.indexOf('sub-agent') >= 0 ||
+        normalized.indexOf('subagent') >= 0
+      );
+    });
   }
 
   function renderPauseCard(state, activePause) {
     if (!activePause) return null;
     var status = String(activePause.status || '').toUpperCase();
+    if (isDelegatedPause(activePause) && status === 'RESUMING') return null;
+    var badgeLabel = isDelegatedPause(activePause) && status === 'BLOCKED'
+      ? 'Waiting'
+      : titleCase(status || 'waiting');
     var card = createEl('section', 'ai-codex-blocker ai-codex-pause-card');
     var header = createEl('div', 'ai-codex-blocker-header');
     header.appendChild(createEl('strong', '', displayText(activePause.title, status === 'READY' ? 'Ready to continue' : 'Action required')));
-    header.appendChild(createEl('span', 'ai-codex-blocker-badge', titleCase(status || 'waiting')));
+    header.appendChild(createEl('span', 'ai-codex-blocker-badge', badgeLabel));
     card.appendChild(header);
     if (activePause.detail || activePause.progressSummary) {
       card.appendChild(createEl('p', 'ai-codex-blocker-detail', displayText(activePause.detail || activePause.progressSummary)));
@@ -709,13 +1050,20 @@
       if (input && input.id) activeReviewIds[input.id] = true;
     });
     Object.keys(state.reviewCards || {}).forEach(function (reviewId) {
-      if (!activeReviewIds[reviewId]) delete state.reviewCards[reviewId];
+      if (!activeReviewIds[reviewId]) {
+        delete state.reviewCards[reviewId];
+        if (state.reviewCardCollapsed) delete state.reviewCardCollapsed[reviewId];
+      }
     });
     if (!inputs.length && !pause) return;
     var wrap = createEl('div', 'ai-codex-blockers');
+    var bundled = inputs.length > 1;
     inputs.forEach(function (input) {
-      wrap.appendChild(renderReviewCard(state, input));
+      wrap.appendChild(renderReviewCard(state, input, { bundled: bundled }));
     });
+    if (bundled) {
+      wrap.insertBefore(renderReviewBundleControls(state, inputs), wrap.firstChild);
+    }
     if (pause && !inputs.length) {
       var card = renderPauseCard(state, pause);
       if (card) wrap.appendChild(card);
@@ -750,6 +1098,10 @@
     renderRecovery(timeline, state, threadContext, viewModel);
     var hasBlockers = (viewModel.pendingHumanInputs || []).length || viewModel.activePause;
     var blockersRendered = false;
+    if (hasBlockers) {
+      renderBlockers(timeline, state, viewModel);
+      blockersRendered = true;
+    }
     if (!viewModel.sessions.length) {
       var empty = createEl('section', 'ai-codex-empty');
       empty.appendChild(createEl('h2', '', 'Start a working session'));
@@ -833,7 +1185,390 @@
     root.appendChild(aside);
   }
 
+  function getSkillsApi() {
+    return window.__tribexAiSkills || {};
+  }
+
+  function ensureComposerResources(state) {
+    var api = getSkillsApi();
+    if (state.skillsLoadedForThreadId !== state.threadId && !state.skillsLoading) {
+      state.skillsLoading = true;
+      state.skillsLoadedForThreadId = state.threadId;
+      var skillsPromise = window.__tribexAiClient && typeof window.__tribexAiClient.fetchThreadSkills === 'function'
+        ? window.__tribexAiClient.fetchThreadSkills(state.threadId)
+        : Promise.resolve(api.builtinSkills ? api.builtinSkills() : []);
+      Promise.resolve(skillsPromise).then(function (skills) {
+        state.skills = api.mergeSkillLists
+          ? api.mergeSkillLists(skills || [], [])
+          : (skills || []);
+      }).catch(function () {
+        state.skills = api.builtinSkills ? api.builtinSkills() : [];
+      }).finally(function () {
+        state.skillsLoading = false;
+        if (typeof state.render === 'function') state.render({ force: true });
+      });
+    }
+
+    if (state.emailAccountsLoadedForThreadId !== state.threadId && !state.emailAccountsLoading) {
+      state.emailAccountsLoading = true;
+      state.emailAccountsLoadedForThreadId = state.threadId;
+      var accountsPromise = window.__tribexAiClient && typeof window.__tribexAiClient.fetchConnectedEmailAccounts === 'function'
+        ? window.__tribexAiClient.fetchConnectedEmailAccounts(state.threadId)
+        : Promise.resolve([]);
+      Promise.resolve(accountsPromise).then(function (accounts) {
+        state.emailAccounts = api.normalizeEmailAccounts ? api.normalizeEmailAccounts(accounts || []) : (accounts || []);
+        if (state.selectedSkill && api.buildDefaultValues) {
+          var existing = state.skillValues || {};
+          var nextDefaults = api.buildDefaultValues(state.selectedSkill, state.emailAccounts, new Date());
+          if (!existing.inboxes || !existing.inboxes.length) {
+            state.skillValues = Object.assign({}, existing, { inboxes: nextDefaults.inboxes || [] });
+          }
+        }
+      }).catch(function () {
+        state.emailAccounts = [];
+      }).finally(function () {
+        state.emailAccountsLoading = false;
+        if (typeof state.render === 'function') state.render({ force: true });
+      });
+    }
+  }
+
+  function readEditorDraft(editor) {
+    if (!editor) return '';
+    var text = '';
+    var skillInsertIndex = null;
+    var stripEditorSentinels = function (value) {
+      return String(value || '').replace(/\u00a0/g, ' ').replace(/\u200b/g, '');
+    };
+    function walk(node) {
+      if (!node) return;
+      if (node.nodeType === Node.TEXT_NODE) {
+        text += stripEditorSentinels(node.nodeValue);
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.classList && node.classList.contains('ai-codex-skill-chip')) {
+        if (skillInsertIndex === null) skillInsertIndex = text.length;
+        return;
+      }
+      if (node.tagName === 'BR') {
+        text += '\n';
+        return;
+      }
+      Array.prototype.slice.call(node.childNodes || []).forEach(walk);
+      if (node !== editor && /^(DIV|P)$/.test(node.tagName)) text += '\n';
+    }
+    walk(editor);
+    return {
+      text: text,
+      skillInsertIndex: skillInsertIndex === null ? text.length : skillInsertIndex,
+    };
+  }
+
+  function readEditorText(editor) {
+    return readEditorDraft(editor).text;
+  }
+
+  function splitDraftAroundSkill(state) {
+    var draft = String(state.draftText || '');
+    var index = Math.min(Math.max(state.skillInsertIndex || 0, 0), draft.length);
+    return {
+      before: draft.slice(0, index),
+      after: draft.slice(index),
+    };
+  }
+
+  function joinPromptParts(before, token, after) {
+    return [before, token, after].filter(function (part) {
+      return String(part || '').trim();
+    }).join(' ').replace(/[ \t]{2,}/g, ' ').trim();
+  }
+
+  function detectSlashQuery(value) {
+    var api = getSkillsApi();
+    return api.detectSlashSkillQuery ? api.detectSlashSkillQuery(value) : null;
+  }
+
+  function filteredSkills(state) {
+    var api = getSkillsApi();
+    return api.filterSkills ? api.filterSkills(state.skills || [], state.slashQuery && state.slashQuery.query) : (state.skills || []);
+  }
+
+  function selectSkill(state, skill, slashQuery) {
+    var api = getSkillsApi();
+    if (!skill) return;
+    var draft = String(state.draftText || '');
+    var insertIndex = slashQuery ? slashQuery.start : draft.length;
+    if (slashQuery) {
+      draft = draft.slice(0, slashQuery.start) + draft.slice(slashQuery.end);
+    }
+    state.draftText = draft.replace(/\s{2,}/g, ' ');
+    state.selectedSkill = skill;
+    state.skillInsertIndex = Math.min(insertIndex, state.draftText.length);
+    state.skillValues = api.buildDefaultValues ? api.buildDefaultValues(skill, state.emailAccounts || [], new Date()) : {};
+    state.skillPickerOpen = false;
+    state.slashQuery = null;
+    state.variablePopover = null;
+    state.focusEditorAfterRender = 'after-skill';
+    if (typeof state.render === 'function') state.render({ force: true });
+  }
+
+  function clearSelectedSkill(state) {
+    state.selectedSkill = null;
+    state.skillValues = {};
+    state.variablePopover = null;
+    state.slashQuery = null;
+    state.focusEditorAfterRender = null;
+    if (typeof state.render === 'function') state.render({ force: true });
+  }
+
+  function appendEditorText(editor, text) {
+    if (!text) return;
+    editor.appendChild(document.createTextNode(text));
+  }
+
+  function renderEditorValue(editor, state, placeholder) {
+    editor.innerHTML = '';
+    editor.setAttribute('data-placeholder', placeholder);
+    if (!state.selectedSkill) {
+      editor.textContent = state.draftText || '';
+      return;
+    }
+    var draft = String(state.draftText || '');
+    var insertIndex = Math.min(Math.max(state.skillInsertIndex || 0, 0), draft.length);
+    appendEditorText(editor, draft.slice(0, insertIndex));
+    var chip = createEl('span', 'ai-codex-skill-chip', '/' + state.selectedSkill.key);
+    chip.contentEditable = 'false';
+    chip.setAttribute('role', 'button');
+    chip.setAttribute('aria-label', 'Selected skill ' + state.selectedSkill.name);
+    chip.title = state.selectedSkill.description || state.selectedSkill.name;
+    chip.addEventListener('click', function () {
+      state.skillPickerOpen = true;
+      state.variablePopover = null;
+      if (typeof state.render === 'function') state.render({ force: true });
+    });
+    editor.appendChild(chip);
+    editor.appendChild(document.createTextNode('\u200b'));
+    appendEditorText(editor, draft.slice(insertIndex));
+  }
+
+  function focusEditorAfterSkill(editor, state) {
+    if (!editor || state.focusEditorAfterRender !== 'after-skill') return;
+    state.focusEditorAfterRender = null;
+    window.setTimeout(function () {
+      var chip = editor.querySelector('.ai-codex-skill-chip');
+      if (!chip) return;
+      editor.focus();
+      var selection = window.getSelection && window.getSelection();
+      if (!selection) return;
+      var range = document.createRange();
+      var anchor = chip.nextSibling;
+      if (anchor && anchor.nodeType === Node.TEXT_NODE) {
+        range.setStart(anchor, Math.min(1, anchor.nodeValue.length));
+      } else {
+        range.setStartAfter(chip);
+      }
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }, 0);
+  }
+
+  function defineEditorValue(editor, state) {
+    try {
+      Object.defineProperty(editor, 'value', {
+        configurable: true,
+        get: function () {
+          return state.draftText || '';
+        },
+        set: function (value) {
+          state.draftText = String(value || '');
+          renderEditorValue(editor, state, editor.getAttribute('data-placeholder') || '');
+        },
+      });
+    } catch (_error) {
+      editor.value = state.draftText || '';
+    }
+  }
+
+  function localDateTimeValue(value) {
+    var parsed = Date.parse(value);
+    if (Number.isNaN(parsed)) return '';
+    var date = new Date(parsed);
+    var offsetMs = date.getTimezoneOffset() * 60 * 1000;
+    return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+  }
+
+  function isoFromLocalDateTime(value) {
+    if (!value) return '';
+    var parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? '' : new Date(parsed).toISOString();
+  }
+
+  function createSkillPickerMenu(state) {
+    var shouldShow = state.skillPickerOpen || !!state.slashQuery;
+    if (!shouldShow) return null;
+    var menu = createEl('div', 'ai-codex-skill-menu');
+    if (state.skillsLoading) {
+      menu.appendChild(createEl('div', 'ai-codex-skill-empty', 'Loading skills...'));
+      return menu;
+    }
+    var skills = filteredSkills(state);
+    if (!skills.length) {
+      menu.appendChild(createEl('div', 'ai-codex-skill-empty', 'No matching skills'));
+      return menu;
+    }
+    skills.forEach(function (skill) {
+      var option = createButton('ai-codex-skill-option', '', function () {
+        selectSkill(state, skill, state.slashQuery);
+      });
+      option.appendChild(createEl('span', 'ai-codex-skill-option-key', '/' + skill.key));
+      option.appendChild(createEl('span', 'ai-codex-skill-option-name', skill.name));
+      if (skill.description) option.appendChild(createEl('span', 'ai-codex-skill-option-description', skill.description));
+      menu.appendChild(option);
+    });
+    return menu;
+  }
+
+  function renderSkillPicker(composer, state, beforeNode) {
+    var menu = createSkillPickerMenu(state);
+    if (!menu) return;
+    if (beforeNode && beforeNode.parentNode === composer) {
+      composer.insertBefore(menu, beforeNode);
+    } else {
+      composer.appendChild(menu);
+    }
+  }
+
+  function refreshSkillPickerInComposer(composer, state) {
+    var existing = composer.querySelector('.ai-codex-skill-menu');
+    if (existing) existing.remove();
+    var footer = composer.querySelector('.ai-codex-composer-footer');
+    renderSkillPicker(composer, state, footer);
+  }
+
+  function renderVariablePopover(parent, state, variable) {
+    if (!variable || state.variablePopover !== variable.name) return;
+    var popover = createEl('div', 'ai-codex-variable-popover');
+    popover.appendChild(createEl('strong', '', variable.label));
+    if (variable.type === 'email_account_multi_select') {
+      var actions = createEl('div', 'ai-codex-variable-actions');
+      actions.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', 'Select all', function () {
+        state.skillValues[variable.name] = (state.emailAccounts || []).map(function (account) { return account.id; });
+        if (typeof state.render === 'function') state.render({ force: true });
+      }));
+      actions.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', 'Clear', function () {
+        state.skillValues[variable.name] = [];
+        if (typeof state.render === 'function') state.render({ force: true });
+      }));
+      popover.appendChild(actions);
+      var list = createEl('div', 'ai-codex-email-option-list');
+      var selected = state.skillValues[variable.name] || [];
+      (state.emailAccounts || []).forEach(function (account) {
+        var label = createEl('label', 'ai-codex-email-option');
+        var checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selected.indexOf(account.id) >= 0;
+        checkbox.addEventListener('change', function () {
+          var next = (state.skillValues[variable.name] || []).slice();
+          if (checkbox.checked && next.indexOf(account.id) < 0) next.push(account.id);
+          if (!checkbox.checked) next = next.filter(function (id) { return id !== account.id; });
+          state.skillValues[variable.name] = next;
+          if (typeof state.render === 'function') state.render({ force: true });
+        });
+        label.appendChild(checkbox);
+        label.appendChild(createEl('span', '', account.emailAddress || account.label || account.id));
+        list.appendChild(label);
+      });
+      if (!state.emailAccounts.length) {
+        list.appendChild(createEl('div', 'ai-codex-skill-empty', state.emailAccountsLoading ? 'Loading inboxes...' : 'No connected inboxes found'));
+      }
+      popover.appendChild(list);
+    } else if (variable.type === 'datetime') {
+      var input = document.createElement('input');
+      input.type = 'datetime-local';
+      input.className = 'ai-codex-variable-input';
+      input.value = localDateTimeValue(state.skillValues[variable.name]);
+      input.addEventListener('change', function () {
+        state.skillValues[variable.name] = isoFromLocalDateTime(input.value);
+        if (typeof state.render === 'function') state.render({ force: true });
+      });
+      popover.appendChild(input);
+    }
+    parent.appendChild(popover);
+  }
+
+  function renderSkillControls(composer, state) {
+    var api = getSkillsApi();
+    var wrap = createEl('div', 'ai-codex-skill-controls');
+    var row = createEl('div', 'ai-codex-skill-row');
+    row.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', 'Skills', function () {
+      state.skillPickerOpen = !state.skillPickerOpen;
+      state.slashQuery = null;
+      state.variablePopover = null;
+      if (typeof state.render === 'function') state.render({ force: true });
+    }, { title: 'Select a persona skill' }));
+    if (state.selectedSkill) {
+      row.appendChild(createButton('ai-codex-selected-skill', '/' + state.selectedSkill.key, function () {
+        state.skillPickerOpen = !state.skillPickerOpen;
+        if (typeof state.render === 'function') state.render({ force: true });
+      }));
+      row.appendChild(createButton('ai-codex-skill-remove', 'x', function () {
+        clearSelectedSkill(state);
+      }, { ariaLabel: 'Remove selected skill' }));
+    } else {
+      row.appendChild(createEl('span', 'ai-codex-composer-hint', 'Type / to search persona skills'));
+    }
+    wrap.appendChild(row);
+
+    if (state.selectedSkill) {
+      var variables = createEl('div', 'ai-codex-variable-row');
+      (state.selectedSkill.variables || []).forEach(function (variable) {
+        var label = variable.label + ': ' + (api.formatVariableChip ? api.formatVariableChip(variable, state.skillValues[variable.name], state.emailAccounts || []) : String(state.skillValues[variable.name] || ''));
+        var chip = createButton('ai-codex-variable-chip', label, function () {
+          state.variablePopover = state.variablePopover === variable.name ? null : variable.name;
+          state.skillPickerOpen = false;
+          if (typeof state.render === 'function') state.render({ force: true });
+        });
+        variables.appendChild(chip);
+      });
+      wrap.appendChild(variables);
+      (state.selectedSkill.variables || []).forEach(function (variable) {
+        renderVariablePopover(wrap, state, variable);
+      });
+    }
+    composer.appendChild(wrap);
+  }
+
+  function buildComposerPayload(state) {
+    var api = getSkillsApi();
+    var userText = String(state.draftText || '').trim();
+    if (!state.selectedSkill) {
+      return userText ? { displayPrompt: userText, runtimePrompt: userText, skillInvocation: null } : null;
+    }
+    var split = splitDraftAroundSkill(state);
+    var displayPrompt = joinPromptParts(split.before, '/' + state.selectedSkill.key, split.after);
+    var runtimePrompt = api.buildRuntimePrompt
+      ? api.buildRuntimePrompt(userText, state.selectedSkill, state.skillValues, state.emailAccounts || [])
+      : displayPrompt;
+    var skillInvocation = api.buildSkillInvocation
+      ? api.buildSkillInvocation(state.selectedSkill, state.skillValues, state.emailAccounts || [])
+      : null;
+    if (skillInvocation) {
+      skillInvocation.display = {
+        textBefore: split.before,
+        textAfter: split.after,
+      };
+    }
+    return {
+      displayPrompt: displayPrompt,
+      runtimePrompt: runtimePrompt,
+      skillInvocation: skillInvocation,
+    };
+  }
+
   function renderComposer(root, state, viewModel) {
+    ensureComposerResources(state);
     var composer = createEl('section', cx('ai-codex-composer', viewModel.busy && 'is-context-mode'));
     if (viewModel.busy) {
       var interrupt = createButton('ai-secondary-btn ai-codex-interrupt', 'Stop after current step', function () {
@@ -843,37 +1578,87 @@
       });
       composer.appendChild(interrupt);
     }
-    var textarea = createEl('textarea', 'ai-codex-input');
-    textarea.placeholder = viewModel.busy
+    var textarea = createEl('div', 'ai-codex-input ai-codex-token-editor');
+    textarea.contentEditable = 'true';
+    textarea.setAttribute('role', 'textbox');
+    textarea.setAttribute('aria-multiline', 'true');
+    var placeholder = viewModel.busy
       ? 'Add context to the active working session...'
       : 'Ask the agent to do something...';
-    textarea.value = state.draftText || '';
+    defineEditorValue(textarea, state);
+    renderEditorValue(textarea, state, placeholder);
     textarea.addEventListener('input', function () {
-      state.draftText = textarea.value;
+      var nextDraft = readEditorDraft(textarea);
+      state.draftText = nextDraft.text || '';
+      if (state.selectedSkill) state.skillInsertIndex = nextDraft.skillInsertIndex;
+      var nextSlash = state.selectedSkill ? null : detectSlashQuery(state.draftText);
+      var changed = JSON.stringify(nextSlash || null) !== JSON.stringify(state.slashQuery || null);
+      state.slashQuery = nextSlash;
+      if (changed) refreshSkillPickerInComposer(composer, state);
     });
     state.textarea = textarea;
     composer.appendChild(textarea);
+    renderSkillControls(composer, state);
+    renderSkillPicker(composer, state);
     var footer = createEl('div', 'ai-codex-composer-footer');
     footer.appendChild(createEl('span', 'ai-codex-composer-hint', viewModel.busy ? 'Queued as context for the current session' : 'Cmd/Ctrl+Enter to send'));
     var send = createButton('ai-primary-btn', viewModel.busy ? 'Add context' : 'Send', function () {
-      var prompt = textarea.value;
+      var currentDraft = readEditorDraft(textarea);
+      state.draftText = currentDraft.text || '';
+      if (state.selectedSkill) state.skillInsertIndex = currentDraft.skillInsertIndex;
+      var payload = buildComposerPayload(state);
       if (!state.threadId || !window.__tribexAiState || typeof window.__tribexAiState.submitPrompt !== 'function') return;
-      if (!String(prompt || '').trim()) return;
+      if (!payload || !String(payload.displayPrompt || '').trim()) return;
+      var prompt = payload.displayPrompt;
+      var originalDraftText = state.draftText;
+      var originalSkillInsertIndex = state.skillInsertIndex || 0;
+      var selectedSkill = state.selectedSkill;
+      var skillValues = Object.assign({}, state.skillValues || {});
       state.draftText = '';
+      state.selectedSkill = null;
+      state.skillValues = {};
+      state.skillInsertIndex = 0;
+      state.variablePopover = null;
+      state.slashQuery = null;
       textarea.value = '';
-      Promise.resolve(window.__tribexAiState.submitPrompt(state.threadId, prompt))
+      var submitResult = selectedSkill
+        ? window.__tribexAiState.submitPrompt(state.threadId, prompt, payload)
+        : window.__tribexAiState.submitPrompt(state.threadId, prompt);
+      Promise.resolve(submitResult)
         .then(function (submitted) {
           if (!submitted) {
-            state.draftText = prompt;
-            if (state.textarea) state.textarea.value = prompt;
+            state.draftText = originalDraftText;
+            state.selectedSkill = selectedSkill;
+            state.skillValues = skillValues;
+            state.skillInsertIndex = originalSkillInsertIndex;
+            if (state.textarea) state.textarea.value = originalDraftText;
           }
         })
         .catch(function () {
-          state.draftText = prompt;
-          if (state.textarea) state.textarea.value = prompt;
+          state.draftText = originalDraftText;
+          state.selectedSkill = selectedSkill;
+          state.skillValues = skillValues;
+          state.skillInsertIndex = originalSkillInsertIndex;
+          if (state.textarea) state.textarea.value = originalDraftText;
         });
-    }, { disabled: !viewModel.canSend });
+    }, { disabled: !(viewModel.canSend || state.threadId) });
     textarea.addEventListener('keydown', function (event) {
+      if (state.slashQuery && event.key === 'Enter' && !event.metaKey && !event.ctrlKey) {
+        var matches = filteredSkills(state);
+        if (matches.length) {
+          event.preventDefault();
+          selectSkill(state, matches[0], state.slashQuery);
+          return;
+        }
+      }
+      if (event.key === 'Escape' && (state.slashQuery || state.skillPickerOpen || state.variablePopover)) {
+        event.preventDefault();
+        state.slashQuery = null;
+        state.skillPickerOpen = false;
+        state.variablePopover = null;
+        if (typeof state.render === 'function') state.render({ force: true });
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !send.disabled) {
         event.preventDefault();
         send.click();
@@ -882,6 +1667,7 @@
     footer.appendChild(send);
     composer.appendChild(footer);
     root.appendChild(composer);
+    focusEditorAfterSkill(textarea, state);
   }
 
   function renderThread(container, state, options) {
@@ -904,6 +1690,7 @@
     root.appendChild(layout);
     renderComposer(root, state, viewModel);
     container.appendChild(root);
+    state.hasRenderedThreadContent = true;
     restoreTimelineScroll(container.querySelector('.ai-codex-timeline'), state, viewModel, previousSnapshot);
   }
 
@@ -915,6 +1702,6 @@
       scheduleRender(container, state, options || {});
     };
     subscribe(container, state);
-    renderThread(container, state, { force: true });
+    renderThread(container, state, {});
   };
 })();

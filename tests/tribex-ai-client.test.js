@@ -44,6 +44,7 @@ function createRuntimeSessionEnvelope(threadId) {
         timeoutMs: 120000,
       },
       catalog: null,
+      relayToken: 'legacy-relay-token',
     },
   };
 }
@@ -449,6 +450,22 @@ describe('tribex-ai-client', function () {
     })).toBe(true);
   });
 
+  it('does not open preview panes for non-renderer subagent events', function () {
+    expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
+      toolName: 'subagent_dispatch',
+      result: {
+        data: { childThreadId: 'thread-child', status: 'started' },
+      },
+    })).toBe(false);
+
+    expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
+      toolName: 'subagent_listen',
+      result: {
+        data: { childThreadId: 'thread-child', status: 'completed' },
+      },
+    })).toBe(false);
+  });
+
   it('treats thread-scoped rich content as a previewable artifact session', function () {
     expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
       toolName: 'rich_content',
@@ -545,6 +562,73 @@ describe('tribex-ai-client', function () {
       summary: 'Hosted execution completed',
       detail: 'Drafted the finance summary.',
     });
+  });
+
+  it('fetches persona skills for a thread and falls back to the built-in email-analysis skill', async function () {
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/skills') {
+        return Promise.resolve({
+          skills: [{
+            name: 'Email Analysis',
+            prompt_template: 'Analyze {{inboxes}}',
+            variables: [{ name: 'inboxes', type: 'email_account_multi_select' }],
+          }],
+        });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(window.__tribexAiClient.fetchThreadSkills('thread-123')).resolves.toEqual([
+      expect.objectContaining({
+        key: 'email-analysis',
+        promptTemplate: 'Analyze {{inboxes}}',
+      }),
+    ]);
+
+    invoke.mockRejectedValue(new Error('not found'));
+    await expect(window.__tribexAiClient.fetchThreadSkills('thread-missing')).resolves.toEqual([
+      expect.objectContaining({ key: 'email-analysis' }),
+    ]);
+  });
+
+  it('fetches connected email account options without exposing backend-only token fields', async function () {
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/connected-email-accounts') {
+        return Promise.resolve({
+          accounts: [{
+            accountId: 'acct-primary',
+            provider: 'GMAIL',
+            emailAddress: 'primary@example.com',
+            displayName: 'Primary inbox',
+            status: 'connected',
+            accessToken: 'secret-token',
+          }],
+        });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(window.__tribexAiClient.fetchConnectedEmailAccounts('thread-123')).resolves.toEqual([
+      {
+        id: 'acct-primary',
+        provider: 'GMAIL',
+        emailAddress: 'primary@example.com',
+        label: 'Primary inbox',
+        status: 'connected',
+      },
+    ]);
   });
 
   it('allows queue-only sends while a runtime turn is active', async function () {
@@ -679,6 +763,28 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       summary: 'Starting hosted execution',
       detail: 'Submitting 42 characters to the hosted runtime.',
+    });
+  });
+
+  it('keeps non-renderer subagent tool results out of artifact slots', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      toolName: 'subagent_dispatch',
+      result: {
+        data: {
+          childThreadId: 'thread-child',
+          title: 'Search mailbox',
+        },
+      },
+      createdAt: '2026-04-27T18:00:00.000Z',
+    }, 0)).toMatchObject({
+      role: 'tool',
+      toolName: 'subagent_dispatch',
+      artifactKey: null,
+      inlineDisplay: false,
+      resultContentType: 'subagent_dispatch',
+      resultData: {
+        childThreadId: 'thread-child',
+      },
     });
   });
 
@@ -1070,6 +1176,38 @@ describe('tribex-ai-client', function () {
     expect(transcript.preview).toBe('Archive candidates are ready.');
   });
 
+  it('uses runtime metadata displayPrompt when hydrating user messages', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      id: 'control-plane-user-1',
+      role: 'user',
+      content: 'Use the Email Coordinator persona to inspect account id: acct-primary.',
+      metadata: {
+        displayPrompt: 'Find archive candidates /email-analysis',
+      },
+    }, 0)).toMatchObject({
+      id: 'control-plane-user-1',
+      role: 'user',
+      content: 'Find archive candidates /email-analysis',
+    });
+
+    expect(window.__tribexAiClient.normalizeRuntimeUiMessage({
+      id: 'runtime-user-1',
+      role: 'user',
+      metadata: {
+        displayPrompt: 'Find archive candidates /email-analysis',
+        skillInvocation: { key: 'email-analysis' },
+      },
+      parts: [{
+        type: 'text',
+        text: 'Use the Email Coordinator persona to inspect email for account id: acct-primary.',
+      }],
+    }, 0)).toMatchObject({
+      id: 'runtime-user-1',
+      role: 'user',
+      content: 'Find archive candidates /email-analysis',
+    });
+  });
+
   it('filters legacy delegated listener resume payloads from runtime transcripts', function () {
     var transcript = window.__tribexAiClient.normalizeRuntimeTranscript('thread-1', {
       messages: [
@@ -1417,6 +1555,84 @@ describe('tribex-ai-client', function () {
       expect.objectContaining({ type: 'status', status: 'connecting' }),
       expect.objectContaining({ type: 'user_accepted' }),
       expect.objectContaining({ type: 'turn_finish' }),
+    ]));
+  });
+
+  it('sends expanded runtime prompts while preserving clean display prompts in metadata', async function () {
+    var requests = [];
+    var FakeAgentClient = createAgentClientCtor({
+      onChatRequest: function (payload) {
+        requests.push(payload);
+        return false;
+      },
+    });
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(createRuntimeSessionEnvelope('thread-123'));
+      }
+      if (command === 'get_local_mcp_catalog') {
+        return Promise.resolve(createLocalCatalogResponse());
+      }
+      if (command === 'first_party_ai_relay_request' && args.path === '/api/desktop-relay/catalog') {
+        return Promise.resolve({ ok: true });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    var runtimeEvents = [];
+    var unsubscribe = window.__tribexAiClient.listenToRuntimeEvents('thread-123', function (event) {
+      runtimeEvents.push(event);
+    });
+    var turn = await window.__tribexAiClient.sendMessage('thread-123', 'Expanded runtime prompt with account id: acct-primary.', {
+      displayPrompt: 'Find archive candidates /email-analysis',
+      runtimePrompt: 'Expanded runtime prompt with account id: acct-primary.',
+      skillInvocation: {
+        key: 'email-analysis',
+        variables: [{ name: 'inboxes', value: ['acct-primary'] }],
+      },
+    });
+    turn.done.catch(function () {});
+    unsubscribe();
+
+    expect(requests).toHaveLength(1);
+    var body = JSON.parse(requests[0].init.body);
+    expect(body).toMatchObject({
+      text: 'Expanded runtime prompt with account id: acct-primary.',
+      displayText: 'Find archive candidates /email-analysis',
+      skillInvocation: {
+        key: 'email-analysis',
+      },
+      messages: [
+        expect.objectContaining({
+          role: 'user',
+          metadata: expect.objectContaining({
+            displayPrompt: 'Find archive candidates /email-analysis',
+            skillInvocation: expect.objectContaining({ key: 'email-analysis' }),
+          }),
+          parts: [
+            expect.objectContaining({
+              type: 'text',
+              text: 'Expanded runtime prompt with account id: acct-primary.',
+            }),
+          ],
+        }),
+      ],
+    });
+    expect(runtimeEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'user_accepted',
+        message: expect.objectContaining({
+          content: 'Find archive candidates /email-analysis',
+        }),
+      }),
     ]));
   });
 

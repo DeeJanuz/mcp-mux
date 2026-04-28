@@ -1,5 +1,5 @@
 import './structured-data-renderer-setup.js';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 var renderer = window.__renderers.structured_data;
 
@@ -64,11 +64,52 @@ function buildNeutralReviewData() {
   };
 }
 
-function renderReview(onDecision) {
-  var container = document.createElement('div');
-  renderer(container, buildReviewData(), null, null, true, onDecision || function () {});
-  return container;
+function buildMultiTableReviewData() {
+  return {
+    title: 'Multi Table Review',
+    tables: [
+      {
+        id: 'archive',
+        name: 'Archive Candidates',
+        columns: [
+          { id: 'subject', name: 'Subject', change: null },
+          { id: 'account', name: 'Account', change: null }
+        ],
+        rows: [{
+          id: 'archive-r1',
+          cells: {
+            subject: { value: 'Promotion', change: null },
+            account: { value: 'inbox@example.com', change: null }
+          },
+          children: []
+        }]
+      },
+      {
+        id: 'move',
+        name: 'Document Moves',
+        columns: [
+          { id: 'action', name: 'Action', change: null },
+          { id: 'target', name: 'Target', change: null }
+        ],
+        rows: [{
+          id: 'move-r1',
+          cells: {
+            action: { value: 'update', change: null },
+            target: { value: 'MCPViews AI Streaming Scroll/Fade Test Infrastructure', change: null }
+          },
+          children: []
+        }]
+      }
+    ]
+  };
 }
+
+  function renderReview(onDecision) {
+    var container = document.createElement('div');
+    var result = renderer(container, buildReviewData(), null, null, true, onDecision || function () {});
+    container.__renderResult = result;
+    return container;
+  }
 
 function getToggleButtons(toggle) {
   return toggle.querySelectorAll('button');
@@ -77,6 +118,9 @@ function getToggleButtons(toggle) {
 describe('structured_data review decisions', function () {
   beforeEach(function () {
     document.body.innerHTML = '';
+    Object.keys(window.__structuredDataReviewDrafts || {}).forEach(function (key) {
+      delete window.__structuredDataReviewDrafts[key];
+    });
   });
 
   it('renders changed rows and columns as undecided until selected', function () {
@@ -84,6 +128,7 @@ describe('structured_data review decisions', function () {
     var toggles = container.querySelectorAll('.sd-decision-toggle');
 
     expect(toggles).toHaveLength(2);
+    expect(container.querySelector('.sd-review-list')).toBeNull();
 
     toggles.forEach(function (toggle) {
       var buttons = getToggleButtons(toggle);
@@ -101,12 +146,136 @@ describe('structured_data review decisions', function () {
     expect(container.querySelector('button[aria-label="Reject all decisions in Review Changes"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Submit decisions for Review Changes"]')).not.toBeNull();
     expect(container.querySelector('button[aria-label="Reject all rows in Accounts"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Accept row: New account"]')).not.toBeNull();
 
     var rowAccept = container.querySelector('tbody button[data-decision-action="accept"]');
     var rowReject = container.querySelector('tbody button[data-decision-action="reject"]');
     expect(rowAccept.getAttribute('data-decision-key')).toBe('r1');
     expect(rowAccept.getAttribute('aria-label')).toBe('Accept row: New account');
     expect(rowReject.getAttribute('aria-label')).toBe('Reject row: New account');
+  });
+
+  it('can hide review-level submit controls while keeping per-table bulk controls', function () {
+    var container = document.createElement('div');
+    var submitted = null;
+    var result = renderer(container, buildReviewData(), {
+      externalDecisionSubmit: true,
+    }, null, true, function (payload) {
+      submitted = payload;
+    });
+
+    expect(container.querySelector('button[aria-label="Submit decisions for Review Changes"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Accept all decisions in Review Changes"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Reject all rows in Accounts"]')).not.toBeNull();
+    expect(typeof result.submitDecision).toBe('function');
+    expect(typeof result.applyDecision).toBe('function');
+
+    result.applyDecision('reject');
+    result.submitDecision();
+
+    expect(submitted.operationDecisions).toMatchObject({
+      r1: 'reject',
+      'col:name': 'reject',
+    });
+  });
+
+  it('reports row decision completeness for external bundled submit controls', function () {
+    var container = document.createElement('div');
+    var onDecisionStateChange = vi.fn();
+    var result = renderer(container, buildNeutralReviewData(), {
+      externalDecisionSubmit: true,
+      onDecisionStateChange: onDecisionStateChange,
+    }, null, true, function () {});
+
+    expect(typeof result.getDecisionSummary).toBe('function');
+    expect(result.getDecisionSummary()).toMatchObject({
+      totalRows: 2,
+      decidedRows: 0,
+      pendingRows: 2,
+      complete: false,
+    });
+
+    result.applyDecision('accept');
+
+    expect(result.getDecisionSummary()).toMatchObject({
+      totalRows: 2,
+      decidedRows: 2,
+      pendingRows: 0,
+      complete: true,
+    });
+    expect(onDecisionStateChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      totalRows: 2,
+      decidedRows: 2,
+      complete: true,
+    }));
+  });
+
+  it('adds column width hooks and wider CSV review defaults', function () {
+    var container = document.createElement('div');
+    renderer(container, buildNeutralReviewData(), null, null, true, function () {});
+
+    expect(container.querySelector('th[data-column-id="subject"]')).not.toBeNull();
+    expect(container.querySelector('td[data-column-id="subject"]')).not.toBeNull();
+    expect(container.querySelector('th[data-column-id="account"]')).not.toBeNull();
+    expect(container.querySelector('td[data-column-id="decision"]')).not.toBeNull();
+    expect(Array.from(container.querySelectorAll('thead th')).map(function (th) {
+      return th.getAttribute('data-column-id') || 'spacer';
+    })).toEqual(['decision', 'subject', 'account']);
+    expect(Array.from(container.querySelectorAll('tbody tr:first-child td')).map(function (td) {
+      return td.getAttribute('data-column-id') || 'spacer';
+    })).toEqual(['decision', 'subject', 'account']);
+    expect(Array.from(container.querySelectorAll('colgroup col')).map(function (col) {
+      return [col.getAttribute('data-column-id'), col.style.width];
+    })).toEqual([
+      ['decision', '82px'],
+      ['subject', '260px'],
+      ['account', '220px'],
+    ]);
+    expect(container.querySelector('.sd-table').style.width).toBe('562px');
+    expect(container.querySelector('.sd-table').hasAttribute('data-has-toggle-spacer')).toBe(false);
+
+    var styles = document.getElementById('structured-data-styles').textContent;
+    expect(styles).toContain('.sd-table { width: max-content; table-layout: fixed;');
+    expect(styles).toContain('.sd-th {');
+    expect(styles).toContain('min-width: 180px');
+    expect(styles).toContain('.sd-th[data-column-id="subject"]');
+    expect(styles).toContain('.sd-th[data-column-id="summary"]');
+    expect(styles).toContain('.sd-th[data-column-id="decision"]');
+    expect(styles).toContain('width: 82px');
+    expect(styles).toContain('padding-left: 10px; padding-right: 10px');
+    expect(styles).toContain('width: 24px; min-width: 24px; height: 24px');
+    expect(styles).toContain('left: 24px');
+    expect(styles).toContain('.sd-table:not([data-has-toggle-spacer="true"])');
+    expect(styles).toContain('.sd-th.sd-toggle-spacer, .sd-td.sd-toggle-spacer');
+  });
+
+  it('keeps the expand spacer only for hierarchical rows', function () {
+    var container = document.createElement('div');
+    var data = buildNeutralReviewData();
+    data.tables[0].rows[0].children = [{
+      id: 'r1-child',
+      cells: {
+        subject: { value: 'Nested child', change: null },
+        account: { value: 'inbox@example.com', change: null }
+      },
+      children: []
+    }];
+
+    renderer(container, data, null, null, true, function () {});
+
+    expect(container.querySelector('.sd-table').getAttribute('data-has-toggle-spacer')).toBe('true');
+    expect(Array.from(container.querySelectorAll('thead th')).map(function (th) {
+      return th.getAttribute('data-column-id') || 'spacer';
+    })).toEqual(['spacer', 'decision', 'subject', 'account']);
+    expect(Array.from(container.querySelectorAll('colgroup col')).map(function (col) {
+      return [col.getAttribute('data-column-id'), col.style.width];
+    })).toEqual([
+      ['spacer', '24px'],
+      ['decision', '82px'],
+      ['subject', '260px'],
+      ['account', '220px'],
+    ]);
+    expect(container.querySelector('.sd-table').style.width).toBe('586px');
   });
 
   it('can return a selected decision back to undecided', function () {
@@ -145,6 +314,29 @@ describe('structured_data review decisions', function () {
     expect(submitted.decisions).toEqual({});
   });
 
+  it('returns an imperative review submit hook for host-level buttons', async function () {
+    var submitted = null;
+    var container = renderReview(function (payload) {
+      submitted = payload;
+      return Promise.resolve({ ok: true });
+    });
+
+    expect(container.__renderResult).toMatchObject({
+      providesDecisionSubmit: true,
+    });
+    expect(typeof container.__renderResult.submitDecision).toBe('function');
+
+    var rowAccept = container.querySelector('tbody button[data-decision-action="accept"]');
+    rowAccept.click();
+    await flushFrame();
+    await container.__renderResult.submitDecision();
+
+    expect(submitted.decisions).toMatchObject({
+      r1: 'accept',
+    });
+    expect(container.querySelector('.sd-submit-bar').getAttribute('data-submit-state')).toBe('submitted');
+  });
+
   it('shows decision controls for review rows even when cells have no change markers', async function () {
     var submitted = null;
     var container = document.createElement('div');
@@ -173,6 +365,20 @@ describe('structured_data review decisions', function () {
     });
   });
 
+  it('renders multiple review tables as separate sections without an aggregated review list', function () {
+    var container = document.createElement('div');
+    renderer(container, buildMultiTableReviewData(), null, null, true, function () {});
+
+    expect(container.querySelector('.sd-submit-bar')).not.toBeNull();
+    expect(container.querySelector('.sd-review-list')).toBeNull();
+    expect(container.querySelectorAll('.sd-container')).toHaveLength(2);
+    expect(Array.from(container.querySelectorAll('.sd-table-name')).map(function (heading) {
+      return heading.textContent;
+    })).toEqual(['Archive Candidates', 'Document Moves']);
+    expect(container.textContent).not.toContain('Review items');
+    expect(container.textContent).not.toContain('2 items');
+  });
+
   it('keeps rapid bulk accept plus submit on the operation spine', function () {
     var submitted = null;
     var container = document.createElement('div');
@@ -187,6 +393,65 @@ describe('structured_data review decisions', function () {
     expect(submitted).not.toBeNull();
     expect(submitted.decisions).toMatchObject({
       r1: 'accept',
+      r2: 'accept',
+    });
+  });
+
+  it('supports partial approvals from table row controls', async function () {
+    var submitted = null;
+    var container = document.createElement('div');
+    renderer(container, buildNeutralReviewData(), null, null, true, function (payload) {
+      submitted = payload;
+    });
+
+    var rejectAllBtn = container.querySelector('button[aria-label="Reject all decisions in Archive Review"]');
+    rejectAllBtn.click();
+    await flushFrame();
+
+    var rowAcceptButtons = container.querySelectorAll('tbody button[data-decision-action="accept"]');
+    rowAcceptButtons[0].click();
+    await flushFrame();
+
+    var submitBarButtons = container.querySelectorAll('.sd-submit-bar button');
+    submitBarButtons[submitBarButtons.length - 1].click();
+
+    expect(submitted).not.toBeNull();
+    expect(submitted.decisions).toMatchObject({
+      r1: 'accept',
+      r2: 'reject',
+    });
+    expect(Array.from(container.querySelectorAll('tbody .sd-decision-toggle')).map(function (toggle) {
+      return toggle.getAttribute('data-decision-state');
+    })).toEqual(['accept', 'reject']);
+  });
+
+  it('restores in-progress review decisions after the host rerenders the renderer container', async function () {
+    var submitted = null;
+    var container = document.createElement('div');
+    var meta = { humanInputId: 'human-input-archive-draft', reviewSessionId: 'review-archive-draft' };
+    renderer(container, buildNeutralReviewData(), meta, null, true, function (payload) {
+      submitted = payload;
+    });
+
+    container.querySelector('button[aria-label="Reject all decisions in Archive Review"]').click();
+    await flushFrame();
+    var secondAccept = container.querySelectorAll('tbody button[data-decision-action="accept"]')[1];
+    secondAccept.click();
+    await flushFrame();
+
+    renderer(container, buildNeutralReviewData(), Object.assign({}, meta, { pollVersion: 2 }), null, true, function (payload) {
+      submitted = payload;
+    });
+
+    expect(Array.from(container.querySelectorAll('tbody .sd-decision-toggle')).map(function (toggle) {
+      return toggle.getAttribute('data-decision-state');
+    })).toEqual(['reject', 'accept']);
+
+    container.querySelector('button[data-review-decision-submit]').click();
+
+    expect(submitted).not.toBeNull();
+    expect(submitted.decisions).toMatchObject({
+      r1: 'reject',
       r2: 'accept',
     });
   });

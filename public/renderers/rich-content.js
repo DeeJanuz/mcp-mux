@@ -94,56 +94,26 @@
     var submitBar = document.createElement('div');
     submitBar.className = 'sd-submit-bar';
 
-    var acceptAllBtn = document.createElement('button');
-    acceptAllBtn.textContent = 'Accept All';
-    acceptAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-small);';
-    acceptAllBtn.addEventListener('click', function () {
-      // Accept all suggestions
+    function applyDecision(decision) {
+      var status = decision === 'reject' ? 'reject' : 'accept';
+      var accepted = status === 'accept';
       var widgets = container.querySelectorAll('.suggest-widget');
       widgets.forEach(function (w) {
-        w.classList.remove('suggest-rejected');
-        w.classList.add('suggest-accepted');
-        w.setAttribute('data-suggest-status', 'accept');
+        w.classList.remove(accepted ? 'suggest-rejected' : 'suggest-accepted');
+        w.classList.add(accepted ? 'suggest-accepted' : 'suggest-rejected');
+        w.setAttribute('data-suggest-status', status);
       });
-      // Accept all table rows
       if (hasTables && window.__structuredDataUtils) {
         var sdu = window.__structuredDataUtils;
         data.tables.forEach(function (t) {
           if (tableStates[t.id]) {
-            sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, 'accept');
+            sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, status);
           }
         });
       }
-    });
+    }
 
-    var rejectAllBtn = document.createElement('button');
-    rejectAllBtn.textContent = 'Reject All';
-    rejectAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-small);';
-    rejectAllBtn.addEventListener('click', function () {
-      // Reject all suggestions
-      var widgets = container.querySelectorAll('.suggest-widget');
-      widgets.forEach(function (w) {
-        w.classList.remove('suggest-accepted');
-        w.classList.add('suggest-rejected');
-        w.setAttribute('data-suggest-status', 'reject');
-      });
-      // Reject all table rows
-      if (hasTables && window.__structuredDataUtils) {
-        var sdu = window.__structuredDataUtils;
-        data.tables.forEach(function (t) {
-          if (tableStates[t.id]) {
-            sdu.applyBulkDecision([t], { [t.id]: tableStates[t.id] }, 'reject');
-          }
-        });
-      }
-    });
-
-    var submitBtn = document.createElement('button');
-    submitBtn.textContent = 'Submit Decisions';
-    submitBtn.setAttribute('data-review-decision-submit', 'true');
-    submitBtn.style.cssText = 'padding: var(--space-2) var(--space-4); border-radius: var(--border-radius-sm); border: 1px solid var(--color-info); background: var(--color-info); color: white; cursor: pointer; font-size: var(--text-small); font-weight: var(--weight-semibold);';
-    submitBtn.addEventListener('click', function () {
-      // Build combined payload
+    function buildPayload() {
       var suggestionDecisions = null;
       if (hasSuggestions) {
         suggestionDecisions = {};
@@ -172,18 +142,73 @@
         });
       }
 
-      var payload = {
+      return {
         type: 'rich_content_decisions',
         suggestion_decisions: suggestionDecisions,
         table_decisions: tableDecisions,
       };
-      onDecision(payload);
+    }
+
+    function submitDecision() {
+      return onDecision(buildPayload());
+    }
+
+    function getDecisionSummary() {
+      if (!hasTables || !window.__structuredDataUtils || typeof window.__structuredDataUtils.summarizeDecisionState !== 'function') {
+        return { totalRows: 0, decidedRows: 0, pendingRows: 0, complete: false };
+      }
+      return window.__structuredDataUtils.summarizeDecisionState(data.tables, tableStates);
+    }
+
+    var acceptAllBtn = document.createElement('button');
+    acceptAllBtn.textContent = 'Accept All';
+    acceptAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--color-success-text); cursor: pointer; font-size: var(--text-small);';
+    acceptAllBtn.addEventListener('click', function () {
+      applyDecision('accept');
+    });
+
+    var rejectAllBtn = document.createElement('button');
+    rejectAllBtn.textContent = 'Reject All';
+    rejectAllBtn.style.cssText = 'padding: var(--space-2) var(--space-3); border-radius: var(--border-radius-sm); border: 1px solid var(--color-error); background: var(--color-error-bg); color: var(--color-error-text); cursor: pointer; font-size: var(--text-small);';
+    rejectAllBtn.addEventListener('click', function () {
+      applyDecision('reject');
+    });
+
+    var submitBtn = document.createElement('button');
+    submitBtn.textContent = 'Submit Decisions';
+    submitBtn.setAttribute('data-review-decision-submit', 'true');
+    submitBtn.style.cssText = 'padding: var(--space-2) var(--space-4); border-radius: var(--border-radius-sm); border: 1px solid var(--color-info); background: var(--color-info); color: white; cursor: pointer; font-size: var(--text-small); font-weight: var(--weight-semibold);';
+    submitBtn.addEventListener('click', function () {
+      submitDecision();
     });
 
     submitBar.appendChild(acceptAllBtn);
     submitBar.appendChild(rejectAllBtn);
     submitBar.appendChild(submitBtn);
-    return submitBar;
+    return {
+      element: submitBar,
+      applyDecision: applyDecision,
+      getDecisionSummary: getDecisionSummary,
+      submitDecision: submitDecision,
+    };
+  }
+
+  function shouldUseExternalDecisionSubmit(meta, toolArgs) {
+    var candidates = [meta, toolArgs];
+    if (toolArgs && toolArgs.meta) candidates.push(toolArgs.meta);
+    return candidates.some(function (candidate) {
+      return !!(
+        candidate &&
+        typeof candidate === 'object' &&
+        !Array.isArray(candidate) &&
+        (
+          candidate.externalDecisionSubmit === true ||
+          candidate.suppressDecisionSubmit === true ||
+          candidate.hideDecisionSubmit === true ||
+          candidate.bundleDecisionSubmit === true
+        )
+      );
+    });
   }
 
   // ── Main renderer ──
@@ -317,8 +342,16 @@
 
       // Step 6: Combined submit bar (review mode with suggestions OR tables)
       if (reviewRequired && onDecision && (hasSuggestions || hasTables)) {
-        var submitBar = buildCombinedSubmitBar(container, hasSuggestions, hasTables, data, tableStates, onDecision);
-        container.appendChild(submitBar);
+        var submitController = buildCombinedSubmitBar(container, hasSuggestions, hasTables, data, tableStates, onDecision);
+        if (!shouldUseExternalDecisionSubmit(meta, toolArgs)) {
+          container.appendChild(submitController.element);
+        }
+        return {
+          providesDecisionSubmit: true,
+          applyDecision: submitController.applyDecision,
+          getDecisionSummary: submitController.getDecisionSummary,
+          submitDecision: submitController.submitDecision,
+        };
       }
     }
   };

@@ -207,6 +207,7 @@ describe('buildDecisionPayload', function () {
     };
     var payload = sdu.buildDecisionPayload(tables, states);
     expect(payload.decisions).toEqual({ r1: 'accept', r2: 'reject' });
+    expect(payload.operationDecisions).toEqual({ r1: 'accept', r2: 'reject' });
     expect(payload.type).toBe('operation_decisions');
   });
   it('handles modifications and user_edits', function () {

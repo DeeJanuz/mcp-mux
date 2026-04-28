@@ -253,6 +253,7 @@
     return {
       type: 'operation_decisions',
       decisions: decisions,
+      operationDecisions: decisions,
       modifications: modifications,
       additions: {
         user_edits: userEdits
@@ -268,6 +269,36 @@
         if (col.change === 'add' || col.change === 'delete') st.decisions['col:' + col.id] = decision;
       });
     });
+  }
+
+  function collectRowIds(rows, ids) {
+    ids = ids || [];
+    if (!rows) return ids;
+    rows.forEach(function (row) {
+      if (row && row.id) ids.push(row.id);
+      if (row && row.children) collectRowIds(row.children, ids);
+    });
+    return ids;
+  }
+
+  function summarizeDecisionState(tables, states) {
+    var totalRows = 0;
+    var decidedRows = 0;
+    (tables || []).forEach(function (tableData) {
+      var st = states && states[tableData.id] ? states[tableData.id] : null;
+      var rowIds = collectRowIds(tableData.rows, []);
+      totalRows += rowIds.length;
+      rowIds.forEach(function (rowId) {
+        var decision = st && st.decisions ? st.decisions[rowId] : null;
+        if (decision === 'accept' || decision === 'reject') decidedRows += 1;
+      });
+    });
+    return {
+      totalRows: totalRows,
+      decidedRows: decidedRows,
+      pendingRows: Math.max(0, totalRows - decidedRows),
+      complete: totalRows > 0 && decidedRows === totalRows,
+    };
   }
 
   function buildCsvString(tableData, modifications) {
@@ -322,6 +353,7 @@
     setAllRowDecisions: setAllRowDecisions,
     buildDecisionPayload: buildDecisionPayload,
     applyBulkDecision: applyBulkDecision,
+    summarizeDecisionState: summarizeDecisionState,
     buildCsvString: buildCsvString
   };
 })();

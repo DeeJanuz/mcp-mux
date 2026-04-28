@@ -4491,6 +4491,84 @@ describe('tribex-ai-state', function () {
     expect(window.__tribexAiState.getThreadContext('thread-1').thread.activePause).toMatchObject({ id: 'pause-2' });
   });
 
+  it('filters delegated RESUMING pauses from hydrated thread detail', async function () {
+    var staleDelegatedPause = {
+      id: 'pause-delegated',
+      status: 'RESUMING',
+      reasonKind: 'DELEGATED_WORK',
+      title: 'Waiting for 3 delegated tasks',
+      detail: 'Delegated work is ready for the coordinator to continue.',
+      tasks: [
+        { id: 'task-1', status: 'COMPLETED', title: 'Sub-agent item' },
+      ],
+    };
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([
+          { id: 'thread-1', projectId: 'project-1', workspaceId: 'workspace-1', organizationId: 'org-1', title: 'Existing chat', activePause: staleDelegatedPause },
+        ]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          organizationId: 'org-1',
+          title: 'Existing chat',
+          messages: [],
+          activePause: staleDelegatedPause,
+          rowState: 'pending',
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value.thread || value; },
+      normalizeThreadPause: function (value) { return value; },
+      normalizeMessage: function () { return null; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
+    expect(thread.activePause).toBeNull();
+    expect(thread.rowState).not.toBe('waiting-on-user');
+    expect(thread.rowState).not.toBe('ready-to-continue');
+  });
+
   it('keeps the thread busy after continue while only the resume handoff has arrived', async function () {
     var streamHandler = null;
     var runtimeSyncCount = 0;

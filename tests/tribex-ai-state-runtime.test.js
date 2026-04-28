@@ -657,7 +657,7 @@ describe('tribex-ai-state runtime helpers', function () {
     });
 
     expect(detail.activePause.id).toBe('pause-1');
-    expect(detail.rowState).toBe('waiting-on-user');
+    expect(detail.rowState).toBe('pending');
     expect(detail.activeTurn.userMessage.pending).toBe(false);
     expect(context.state.pendingThreadIds['thread-1']).toBeUndefined();
     expect(context.state.pendingThreadOperations['thread-1']).toBeUndefined();
@@ -722,7 +722,7 @@ describe('tribex-ai-state runtime helpers', function () {
     });
 
     expect(detail.activePause.id).toBe('pause-1');
-    expect(detail.rowState).toBe('waiting-on-user');
+    expect(detail.rowState).toBe('pending');
     expect(detail.activeTurn.userMessage.pending).toBe(false);
     expect(context.state.pendingThreadIds['thread-1']).toBeUndefined();
     expect(context.state.pendingThreadOperations['thread-1']).toBeUndefined();

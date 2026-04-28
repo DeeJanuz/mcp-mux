@@ -468,16 +468,7 @@
       getNestedValue(raw, ['result', 'meta', 'previewPane']) === true ||
       getNestedValue(raw, ['result', 'meta', 'standalonePreview']) === true
     );
-    var threadScoped = !!(
-      getNestedValue(raw, ['toolArgs', 'threadId']) ||
-      getNestedValue(raw, ['toolArgs', 'thread_id']) ||
-      getNestedValue(raw, ['threadId']) ||
-      getNestedValue(raw, ['thread_id']) ||
-      getNestedValue(raw, ['meta', 'threadId']) ||
-      getNestedValue(raw, ['result', 'meta', 'threadId'])
-    );
-
-    return explicitStandalonePreview || /^[a-z0-9_]+$/i.test(toolName);
+    return explicitStandalonePreview || !!extractRendererToolPayload(raw, toolName);
   }
 
   function normalizeOrganization(raw, index) {
@@ -592,6 +583,8 @@
     raw = raw || {};
     var key = pickFirst([raw.key, raw.personaKey], null);
     if (!key) return null;
+    var skillsApi = window.__tribexAiSkills || {};
+    var rawSkills = extractArray(raw.skills || raw.personaSkills || raw.persona_skills, ['skills', 'items', 'results']);
     return {
       id: pickFirst([raw.id, raw.personaReleaseId, raw.releaseId], key),
       key: key,
@@ -599,6 +592,9 @@
       releaseVersion: pickFirst([raw.releaseVersion, raw.version], null),
       agentClass: pickFirst([raw.agentClass], null),
       toolPolicySummary: raw.toolPolicySummary || null,
+      skills: skillsApi.normalizeSkill
+        ? rawSkills.map(function (skill, index) { return skillsApi.normalizeSkill(skill, index); }).filter(Boolean)
+        : rawSkills,
     };
   }
 
@@ -723,8 +719,12 @@
     }
 
     var isStreamingAssistant = role === 'assistant' && isAssistantDeltaPayload(raw);
+    var metadata = source.metadata && typeof source.metadata === 'object'
+      ? source.metadata
+      : (raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {});
     var content = stringifyContent(pickFirst([
       isStreamingAssistant ? extractStreamingContent(raw) : null,
+      role === 'user' ? pickFirst([metadata.displayPrompt, metadata.display_prompt], null) : null,
       source.content,
       raw.content,
       source.text,
@@ -794,6 +794,9 @@
         resultMeta,
         sessionId
       );
+      var artifactKey = rendererPayload && resultData && !inlineDisplay
+        ? (raw.artifactKey || raw.artifact_key || buildLegacyArtifactKey(raw, index, resultContentType))
+        : null;
       return {
         id: buildCompanionToolMessageId(raw, index),
         role: 'tool',
@@ -807,9 +810,7 @@
         modelName: pickFirst([raw.modelName, raw.model_name, raw.modelId, raw.model_id, raw.model], null),
         modelProvider: pickFirst([raw.modelProvider, raw.model_provider, raw.providerName, raw.provider_name, raw.provider], null),
         resultContentType: resultContentType,
-        artifactKey: resultData && !inlineDisplay
-          ? buildLegacyArtifactKey(raw, index, resultContentType)
-          : null,
+        artifactKey: artifactKey,
         sessionId: sessionId,
         inlineDisplay: inlineDisplay,
         sequence: typeof raw.sequence === 'number' ? raw.sequence : null,
@@ -821,6 +822,7 @@
       id: pickFirst([source.id, raw.id, raw.eventId], 'message-' + index),
       role: role,
       content: content,
+      metadata: metadata,
       messageId: pickFirst([
         source.messageId,
         source.messageID,
@@ -1275,9 +1277,10 @@
     if (!raw || typeof raw !== 'object') return null;
     if (isHiddenRuntimeMessage(raw)) return null;
     var role = pickFirst([raw.role], null);
+    var metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {};
     var text = role === 'assistant'
       ? compactRuntimeAssistantText(raw.parts)
-      : extractRuntimeText(raw.parts);
+      : pickFirst([metadata.displayPrompt, metadata.display_prompt], extractRuntimeText(raw.parts));
     if ((role !== 'user' && role !== 'assistant') || !text) {
       return null;
     }
@@ -1292,6 +1295,7 @@
       id: pickFirst([raw.id], 'runtime-message-' + index),
       role: role,
       content: text,
+      metadata: metadata,
       turnId: pickFirst([
         raw.turnId,
         raw.turn_id,
@@ -1457,7 +1461,10 @@
       var relaySessionId = envelope.relay && envelope.relay.bridge
         ? envelope.relay.bridge.relaySessionId
         : null;
-      return publishDesktopRelayCatalog(relaySessionId, catalog).then(function (publishResult) {
+      var relayToken = envelope.relay && envelope.relay.relayToken
+        ? envelope.relay.relayToken
+        : null;
+      return publishDesktopRelayCatalog(relaySessionId, catalog, relayToken).then(function (publishResult) {
         envelope.relay = envelope.relay || {};
         envelope.relay.catalog = publishResult.catalog || catalog;
         return connectAgentRuntime(threadId, envelope).then(function () {
@@ -1516,12 +1523,13 @@
     });
   }
 
-  function relayRequest(method, path, body, query) {
+  function relayRequest(method, path, body, query, relayToken) {
     return invoke('first_party_ai_relay_request', {
       method: method,
       path: path,
       body: body || null,
       query: query || null,
+      relayToken: relayToken || null,
     });
   }
 
@@ -1717,6 +1725,58 @@
     });
   }
 
+  function normalizeSkillPayload(raw) {
+    var api = window.__tribexAiSkills || {};
+    var rawSkills = extractArray(raw, ['skills', 'personaSkills', 'persona_skills', 'items', 'results', 'data']);
+    var skills = api.normalizeSkill
+      ? rawSkills.map(function (skill, index) { return api.normalizeSkill(skill, index); }).filter(Boolean)
+      : rawSkills;
+    return api.mergeSkillLists ? api.mergeSkillLists(skills, []) : skills;
+  }
+
+  function fallbackSkills() {
+    var api = window.__tribexAiSkills || {};
+    return api.builtinSkills ? api.builtinSkills() : [];
+  }
+
+  function fetchThreadSkills(threadId) {
+    if (!threadId) return Promise.resolve(fallbackSkills());
+    return requestVariants('GET', [
+      { path: '/threads/' + encodeURIComponent(threadId) + '/skills' },
+      { path: '/threads/' + encodeURIComponent(threadId) + '/persona-skills' },
+      { path: '/thread-skills', query: { threadId: threadId } },
+    ]).then(function (raw) {
+      return normalizeSkillPayload(raw);
+    }).catch(function () {
+      return fallbackSkills();
+    });
+  }
+
+  function normalizeEmailAccountPayload(raw) {
+    var api = window.__tribexAiSkills || {};
+    return api.normalizeEmailAccounts
+      ? api.normalizeEmailAccounts(raw)
+      : extractArray(raw, ['accounts', 'emailAccounts', 'email_accounts', 'items', 'results', 'data']);
+  }
+
+  function fetchConnectedEmailAccounts(threadId) {
+    if (!threadId) return Promise.resolve([]);
+    return requestVariants('GET', [
+      { path: '/threads/' + encodeURIComponent(threadId) + '/connected-email-accounts' },
+      { path: '/threads/' + encodeURIComponent(threadId) + '/email-accounts' },
+      { path: '/email/accounts', query: { threadId: threadId } },
+    ]).catch(function () {
+      if (typeof callLocalMcpTool !== 'function') return [];
+      return callLocalMcpTool('user_email_accounts_list', {}).catch(function () {
+        return [];
+      });
+    }).then(function (raw) {
+      return normalizeEmailAccountPayload(raw);
+    }).catch(function () {
+      return [];
+    });
+  }
+
   function fetchThread(threadId) {
     return requestCandidates('GET', [
       '/threads/' + encodeURIComponent(threadId),
@@ -1810,6 +1870,9 @@
         relayBridge: envelope.relay && envelope.relay.bridge ? envelope.relay.bridge : null,
         relayCatalog: envelope.relay && envelope.relay.catalog ? envelope.relay.catalog : null,
         prompt: prompt,
+        runtimePrompt: options && options.runtimePrompt ? options.runtimePrompt : prompt,
+        displayPrompt: options && options.displayPrompt ? options.displayPrompt : prompt,
+        skillInvocation: options && options.skillInvocation ? options.skillInvocation : null,
         validationProfile: options && options.validationProfile ? options.validationProfile : null,
         personaOverride: override.personaOverride || null,
         personaTestRunId: override.personaTestRunId || null,
@@ -2035,7 +2098,7 @@
     });
   }
 
-  function publishDesktopRelayCatalog(relaySessionId, catalog) {
+  function publishDesktopRelayCatalog(relaySessionId, catalog, relayToken) {
     return Promise.resolve(catalog || null)
       .then(function (existingCatalog) {
         return existingCatalog || buildLocalRelayCatalog();
@@ -2045,7 +2108,7 @@
           relaySessionId: relaySessionId || undefined,
           connectors: resolvedCatalog.connectors || [],
           tools: resolvedCatalog.tools || [],
-        }).then(function (response) {
+        }, null, relayToken || null).then(function (response) {
           return Object.assign({}, response || {}, {
             catalog: resolvedCatalog,
           });
@@ -2144,6 +2207,8 @@
     fetchOrganizations: fetchOrganizations,
     fetchProjects: fetchProjects,
     fetchProjectThreadPersonas: fetchProjectThreadPersonas,
+    fetchThreadSkills: fetchThreadSkills,
+    fetchConnectedEmailAccounts: fetchConnectedEmailAccounts,
     fetchRuntimeSession: fetchRuntimeSession,
     fetchThread: fetchThread,
     fetchThreads: fetchThreads,

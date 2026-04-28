@@ -1734,6 +1734,33 @@
         });
     }
 
+    function getActivitySortIndex(item, fallback) {
+      if (item && typeof item.sortIndex === 'number' && Number.isFinite(item.sortIndex)) {
+        return item.sortIndex;
+      }
+      if (item && typeof item.order === 'number' && Number.isFinite(item.order)) {
+        return item.order;
+      }
+      if (item && typeof item.sequence === 'number' && Number.isFinite(item.sequence)) {
+        return item.sequence;
+      }
+      return typeof fallback === 'number' ? fallback : Number.MAX_SAFE_INTEGER;
+    }
+
+    function compareWorkItemsChronologically(left, right, leftFallback, rightFallback) {
+      var leftTime = api.parseActivityTimestamp(left && (left.createdAt || left.updatedAt));
+      var rightTime = api.parseActivityTimestamp(right && (right.createdAt || right.updatedAt));
+      if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
+        return leftTime - rightTime;
+      }
+      if (leftTime === null && rightTime !== null) return 1;
+      if (leftTime !== null && rightTime === null) return -1;
+      var leftOrder = getActivitySortIndex(left, leftFallback);
+      var rightOrder = getActivitySortIndex(right, rightFallback);
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      return String((left && left.id) || '').localeCompare(String((right && right.id) || ''));
+    }
+
     function buildRunGroups(record, displayMessages, activityItems) {
       var keys = Array.isArray(record && record.turnOrder) ? record.turnOrder : [];
       if (keys.length) {
@@ -1757,16 +1784,7 @@
               return !(item && getCanonicalActivityDisplayMode(item) === 'inline' && isRendererResultItem(item));
             });
 
-            workItems.sort(function (left, right) {
-              var leftTime = api.parseActivityTimestamp(left.createdAt || left.updatedAt);
-              var rightTime = api.parseActivityTimestamp(right.createdAt || right.updatedAt);
-              if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
-                return leftTime - rightTime;
-              }
-              if (leftTime === null && rightTime !== null) return 1;
-              if (leftTime !== null && rightTime === null) return -1;
-              return String(left.id || '').localeCompare(String(right.id || ''));
-            });
+            workItems.sort(compareWorkItemsChronologically);
 
             var assistantMessage = turn.assistantMessage ? Object.assign({}, turn.assistantMessage) : null;
             var hasRunning = isWorkSessionLive(record, turn, assistantMessage, workItems);
@@ -1915,16 +1933,7 @@
           workItems = activityByTurnOrdinal[run.turnOrdinal].slice();
         }
 
-        workItems.sort(function (left, right) {
-          var leftTime = api.parseActivityTimestamp(left.createdAt || left.updatedAt);
-          var rightTime = api.parseActivityTimestamp(right.createdAt || right.updatedAt);
-          if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
-            return leftTime - rightTime;
-          }
-          if (leftTime === null && rightTime !== null) return 1;
-          if (leftTime !== null && rightTime === null) return -1;
-          return String(left.id || '').localeCompare(String(right.id || ''));
-        });
+        workItems.sort(compareWorkItemsChronologically);
 
         var inlineResults = workItems
           .filter(function (item) {

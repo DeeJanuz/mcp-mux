@@ -539,9 +539,10 @@ pub async fn first_party_ai_relay_request(
     path: String,
     body: Option<serde_json::Value>,
     query: Option<HashMap<String, String>>,
+    relay_token: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<serde_json::Value, String> {
-    crate::desktop_relay::relay_request(state.inner(), &method, &path, body, query).await
+    crate::desktop_relay::relay_request(state.inner(), &method, &path, body, query, relay_token).await
 }
 
 #[tauri::command]

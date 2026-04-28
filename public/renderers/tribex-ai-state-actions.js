@@ -500,6 +500,29 @@
         });
     }
 
+    function hasThreadBusySignal(threadId, thread) {
+      var activeTurn = thread && thread.activeTurn;
+      var meaningfulActiveTurn = !!(
+        activeTurn &&
+        (
+          activeTurn.userMessage ||
+          activeTurn.assistantMessage ||
+          activeTurn.operationId ||
+          activeTurn.clientMessageId ||
+          activeTurn.contentFingerprint
+        )
+      );
+      return !!(
+        thread &&
+        (
+          meaningfulActiveTurn ||
+          thread.activePause ||
+          (Array.isArray(thread.pendingHumanInputs) && thread.pendingHumanInputs.length) ||
+          (state.pendingThreadOperations && state.pendingThreadOperations[threadId])
+        )
+      );
+    }
+
     function refreshThread(threadId, connectStream) {
       if (!threadId) return Promise.resolve(null);
       var epoch = nextThreadEpoch(threadId);
@@ -529,17 +552,16 @@
                 merged.activePause = api.filterContinuedPause(threadId, merged.activePause, merged);
               }
               merged.optimistic = false;
-              if (Object.keys(state.pendingThreadIds).indexOf(threadId) >= 0) {
+              if (Object.keys(state.pendingThreadIds).indexOf(threadId) >= 0 && hasThreadBusySignal(threadId, merged)) {
                 merged.rowState = 'pending';
               } else if (merged.activePause) {
+                delete state.pendingThreadIds[threadId];
                 if (!merged.activePause.resumeMode) {
                   merged.activePause.resumeMode = 'MANUAL';
                 }
-                var pauseStatus = String(merged.activePause.status || '').toUpperCase();
-                merged.rowState = pauseStatus === 'READY'
-                  ? 'ready-to-continue'
-                  : 'waiting-on-user';
+                merged.rowState = rowStateForPause(merged.activePause);
               } else {
+                delete state.pendingThreadIds[threadId];
                 merged.rowState = null;
                 merged.pauseCheckState = null;
               }
@@ -571,6 +593,10 @@
                         hydrated.rowState === 'ready-to-continue'
                       )) {
                         hydrated.rowState = null;
+                      }
+                      if (!hasThreadBusySignal(threadId, hydrated)) {
+                        delete state.pendingThreadIds[threadId];
+                        if (hydrated.rowState === 'pending') hydrated.rowState = null;
                       }
                       hydrated.lastHydratedAt = api.nowIso();
                     }
@@ -1060,10 +1086,14 @@
       return /runtime connection timed out/i.test(String(message || ''));
     }
 
-    function submitPrompt(threadId, prompt) {
+    function submitPrompt(threadId, prompt, options) {
+      options = options || {};
       var trimmed = String(prompt || '').trim();
       if (!trimmed) return Promise.resolve(false);
-      var duplicateOperation = findDuplicatePendingOperation(threadId, trimmed);
+      var runtimePrompt = String(options.runtimePrompt || trimmed).trim();
+      var displayPrompt = String(options.displayPrompt || trimmed).trim();
+      var contentForFingerprint = runtimePrompt || displayPrompt || trimmed;
+      var duplicateOperation = findDuplicatePendingOperation(threadId, contentForFingerprint);
       if (duplicateOperation) {
         markDuplicateSubmit(threadId, duplicateOperation);
         return Promise.resolve(false);
@@ -1072,7 +1102,7 @@
       var busy = isThreadBusy(threadId);
       var messageId = api.randomId('user');
       var operationId = api.randomId('operation');
-      var contentFingerprint = buildContentFingerprint(threadId, trimmed);
+      var contentFingerprint = buildContentFingerprint(threadId, contentForFingerprint);
       var operation = {
         operationId: operationId,
         clientMessageId: messageId,
@@ -1090,9 +1120,13 @@
       state.threadErrors[threadId] = null;
       api.bindRuntimeBridge(threadId);
       if (busy && typeof api.queueContextMessage === 'function') {
-        api.queueContextMessage(threadId, trimmed, messageId, operation);
+        api.queueContextMessage(threadId, displayPrompt, messageId, operation, {
+          skillInvocation: options.skillInvocation || null,
+        });
       } else {
-        api.queueLocalTurn(threadId, trimmed, turnId, operation);
+        api.queueLocalTurn(threadId, displayPrompt, turnId, operation, {
+          skillInvocation: options.skillInvocation || null,
+        });
       }
       rememberPendingOperation(threadId, operation);
       api.setThreadDraft(threadId, '');
@@ -1100,12 +1134,15 @@
 
       return ensureDesktopRelay(threadId)
         .then(function () {
-          return window.__tribexAiClient.sendMessage(threadId, trimmed, {
+          return window.__tribexAiClient.sendMessage(threadId, runtimePrompt || trimmed, {
             turnId: turnId,
             messageId: messageId || undefined,
             operationId: operationId,
             clientMessageId: messageId,
             contentFingerprint: contentFingerprint,
+            displayPrompt: displayPrompt || trimmed,
+            runtimePrompt: runtimePrompt || trimmed,
+            skillInvocation: options.skillInvocation || null,
             waitForStable: busy ? false : undefined,
             forceRuntimeRefresh: false,
           });
@@ -2102,6 +2139,72 @@
       schedulePausePolling(threadId, resolvePausePollDelay(context.pausePolling ? context.pausePolling.attempt : 0));
     }
 
+    function isHumanDecisionPause(activePause) {
+      if (!activePause) return false;
+      var values = [
+        activePause.reasonKind,
+        activePause.reason_kind,
+        activePause.kind,
+        activePause.type,
+      ];
+      var metadata = activePause.metadata && typeof activePause.metadata === 'object'
+        ? activePause.metadata
+        : {};
+      values.push(metadata.reasonKind, metadata.reason_kind, metadata.pauseKind, metadata.pause_kind);
+      return values.some(function (value) {
+        return String(value || '').toLowerCase().indexOf('human') >= 0;
+      });
+    }
+
+    function isDelegatedPause(activePause) {
+      if (!activePause) return false;
+      var values = [
+        activePause.reasonKind,
+        activePause.reason_kind,
+        activePause.kind,
+        activePause.type,
+        activePause.category,
+      ];
+      var metadata = activePause.metadata && typeof activePause.metadata === 'object'
+        ? activePause.metadata
+        : {};
+      values.push(
+        metadata.reasonKind,
+        metadata.reason_kind,
+        metadata.pauseKind,
+        metadata.pause_kind,
+        metadata.pauseType,
+        metadata.pause_type,
+        metadata.mode,
+        metadata.waitingOn,
+        metadata.waiting_on,
+        metadata.source
+      );
+      return values.some(function (value) {
+        var normalized = String(value || '').toLowerCase().replace(/[\s_]+/g, '-');
+        return (
+          normalized === 'delegated-work' ||
+          normalized === 'delegated' ||
+          normalized === 'sub-agent' ||
+          normalized === 'subagent' ||
+          normalized === 'listen' ||
+          normalized === 'agent-listen' ||
+          normalized === 'sub-agent-listen' ||
+          normalized.indexOf('sub-agent') >= 0 ||
+          normalized.indexOf('subagent') >= 0
+        );
+      });
+    }
+
+    function rowStateForPause(activePause) {
+      if (!activePause) return null;
+      var status = String(activePause.status || '').toUpperCase();
+      if (status === 'READY') return 'ready-to-continue';
+      if (isDelegatedPause(activePause)) return 'pending';
+      if (status === 'BLOCKED' || status === 'RESUMING') return 'waiting-on-user';
+      return null;
+    }
+
     function checkThreadPause(threadId, threadPauseId, options) {
       options = options || {};
       if (!threadId || !threadPauseId || !window.__tribexAiClient || typeof window.__tribexAiClient.checkThreadPause !== 'function') {
@@ -2133,9 +2236,7 @@
             currentThread.activePause = activePause;
             currentThread.lastHydratedAt = api.nowIso();
             if (activePause) {
-              currentThread.rowState = String(activePause.status || '').toUpperCase() === 'READY'
-                ? 'ready-to-continue'
-                : 'waiting-on-user';
+              currentThread.rowState = rowStateForPause(activePause);
             } else if (result && result.didResume) {
               currentThread.rowState = 'pending';
             } else if (
@@ -2144,6 +2245,18 @@
             ) {
               currentThread.rowState = null;
             }
+          }
+          var shouldHydrateHumanReview = !!(
+            activePause &&
+            String(activePause.status || '').toUpperCase() === 'BLOCKED' &&
+            isHumanDecisionPause(activePause) &&
+            currentThread &&
+            (!Array.isArray(currentThread.pendingHumanInputs) || !currentThread.pendingHumanInputs.length)
+          );
+          if (shouldHydrateHumanReview) {
+            refreshThread(threadId, true).catch(function () {
+              return null;
+            });
           }
           if (result && result.didResume) {
             stopPausePolling();

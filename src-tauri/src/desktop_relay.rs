@@ -450,6 +450,7 @@ async fn publish_tools_snapshot(
         RELAY_TOOL_SNAPSHOT_PATH,
         Some(payload),
         None,
+        None,
     )
     .await
     .map(|_| ())
@@ -662,6 +663,7 @@ async fn respond_to_hosted_tool_request(
         RELAY_TOOL_RESPONSE_PATH,
         Some(response_payload.clone()),
         None,
+        None,
     )
     .await;
 
@@ -719,6 +721,7 @@ async fn scoped_request(
     path: &str,
     body: Option<Value>,
     query: Option<HashMap<String, String>>,
+    relay_token: Option<&str>,
 ) -> Result<Value, String> {
     let url = endpoint_url(scope, path)?;
     let method = method
@@ -730,7 +733,9 @@ async fn scoped_request(
         .request(method, &url)
         .header("Accept", "application/json");
 
-    if let Ok(header) = auth_header(state).await {
+    if let Some(token) = relay_token.filter(|token| !token.trim().is_empty()) {
+        request = request.header("Authorization", format!("Bearer {}", token.trim()));
+    } else if let Ok(header) = auth_header(state).await {
         request = request.header("Authorization", header);
     }
 
@@ -781,8 +786,18 @@ pub async fn relay_request(
     path: &str,
     body: Option<Value>,
     query: Option<HashMap<String, String>>,
+    relay_token: Option<String>,
 ) -> Result<Value, String> {
-    scoped_request(state, EndpointScope::Relay, method, path, body, query).await
+    scoped_request(
+        state,
+        EndpointScope::Relay,
+        method,
+        path,
+        body,
+        query,
+        relay_token.as_deref(),
+    )
+    .await
 }
 
 fn realtime_request_key(relay_session_id: &str, request_id: &str) -> String {
@@ -919,6 +934,7 @@ pub async fn register_desktop_relay(
         "/api/desktop-relay/register",
         body,
         None,
+        None,
     )
     .await?;
 
@@ -952,6 +968,7 @@ pub async fn refresh_desktop_relay(
         "POST",
         "/api/desktop-relay/refresh",
         body,
+        None,
         None,
     )
     .await?;

@@ -89,6 +89,32 @@ describe('tribex-ai-chat-reducer', function () {
     expect(viewModel.pendingHumanInputs).toHaveLength(1);
   });
 
+  it('ignores connection-only runtime presence without creating a busy session', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        activeTurn: {
+          status: 'running',
+          userMessage: null,
+          assistantMessage: null,
+          presencePhase: 'connecting',
+          presenceLabel: 'Waiting for runtime handshake',
+          lastPresenceAt: '2026-04-27T16:51:11.824Z',
+        },
+        messages: [],
+        runs: [],
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('idle');
+    expect(viewModel.busy).toBe(false);
+    expect(viewModel.composerMode).toBe('prompt');
+    expect(viewModel.sessions).toHaveLength(0);
+  });
+
   it('models pause continuation as waiting on the user', function () {
     var viewModel = derive({
       thread: {
@@ -107,6 +133,28 @@ describe('tribex-ai-chat-reducer', function () {
     expect(viewModel.lifecycle).toBe('waiting_on_user');
     expect(viewModel.activePause.id).toBe('pause-1');
     expect(viewModel.busy).toBe(false);
+  });
+
+  it('models delegated work pauses as active agent waits, not user waits', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        activePause: {
+          id: 'pause-delegated',
+          status: 'BLOCKED',
+          reasonKind: 'DELEGATED_WORK',
+          title: 'Waiting for 3 delegated tasks',
+          detail: 'The coordinator is waiting for delegated sub-agent work to finish before continuing.',
+        },
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('running');
+    expect(viewModel.statusLabel).toBe('Waiting on delegated work');
+    expect(viewModel.busy).toBe(true);
   });
 
   it('progressively recovers stale running sessions from heartbeat age', function () {
@@ -150,6 +198,27 @@ describe('tribex-ai-chat-reducer', function () {
 
     expect(groups.map(function (group) { return group.kind; })).toEqual(['tool', 'artifact', 'review', 'subagent']);
     expect(groups.find(function (group) { return group.kind === 'artifact'; }).items[0].artifactKey).toBe('artifact-1');
+  });
+
+  it('keeps ordinary non-renderer tool results out of the artifact shelf', function () {
+    var emailSearch = {
+      id: 'tool-email-search-1',
+      toolName: 'user_email_search',
+      status: 'completed',
+      resultContentType: 'user_email_search',
+      resultData: {
+        messages: [
+          { id: 'msg-1', subject: 'Receipt', from: 'store@example.com' },
+        ],
+      },
+    };
+
+    var groups = window.__tribexAiChatReducer.groupActivity([emailSearch]);
+
+    expect(groups.map(function (group) { return group.kind; })).toEqual(['tool']);
+    expect(window.__tribexAiChatReducer.collectArtifacts({
+      activityItems: [emailSearch],
+    })).toEqual([]);
   });
 
   it('uses activity timestamps to order groups and items from first to last action', function () {
@@ -214,6 +283,53 @@ describe('tribex-ai-chat-reducer', function () {
     expect(session.activityGroups.map(function (group) { return group.kind; })).toEqual(['subagent', 'review']);
     expect(session.activityGroups[0].items[0].detail).toBe('Waiting on 2 delegated runs.');
     expect(session.activityGroups[1].items[0].title).toBe('Prepare archive review');
+  });
+
+  it('keeps subagent dispatch and listen events out of the artifact group', function () {
+    var groups = window.__tribexAiChatReducer.groupActivity([
+      {
+        id: 'dispatch-1',
+        toolName: 'subagent_dispatch',
+        status: 'completed',
+        resultData: { childThreadId: 'thread-child' },
+        artifactKey: 'legacy-dispatch-artifact',
+      },
+      {
+        id: 'listen-1',
+        toolName: 'subagent_listen',
+        status: 'completed',
+        resultData: { childThreadId: 'thread-child', status: 'completed' },
+        artifactKey: 'legacy-listen-artifact',
+      },
+    ]);
+
+    expect(groups.map(function (group) { return group.kind; })).toEqual(['subagent']);
+    expect(groups[0].items.map(function (item) { return item.id; })).toEqual(['dispatch-1', 'listen-1']);
+  });
+
+  it('uses tool part order when review activities share a timestamp', function () {
+    var groups = window.__tribexAiChatReducer.groupActivity([
+      {
+        id: 'await-review',
+        toolName: 'await_review',
+        status: 'completed',
+        createdAt: '2026-04-27T18:00:00.000Z',
+        sortIndex: 4,
+      },
+      {
+        id: 'prepare-archive',
+        toolName: 'user_email_archive_review_propose',
+        status: 'completed',
+        createdAt: '2026-04-27T18:00:00.000Z',
+        sortIndex: 3,
+      },
+    ]);
+
+    var reviewGroup = groups.find(function (group) { return group.kind === 'review'; });
+    expect(reviewGroup.items.map(function (item) { return item.toolName; })).toEqual([
+      'user_email_archive_review_propose',
+      'await_review',
+    ]);
   });
 
   it('lets completed active turns override stale running workflow projections', function () {

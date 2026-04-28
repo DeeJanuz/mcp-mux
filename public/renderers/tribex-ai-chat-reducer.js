@@ -100,20 +100,97 @@
     );
   }
 
-  function isArtifactLike(item) {
+  function isSubagentToolEvent(item) {
+    if (!item) return false;
+    var key = normalizeStatus(item.toolName || item.tool_name || item.kind || item.type || item.title || '');
+    return (
+      key === 'subagent_dispatch' ||
+      key === 'subagent_listen' ||
+      key === 'sub_agent_dispatch' ||
+      key === 'sub_agent_listen' ||
+      key === 'agent_listen' ||
+      key === 'delegated_work_dispatch' ||
+      key === 'delegated_work_listen'
+    );
+  }
+
+  function isDelegatedPause(activePause) {
+    if (!activePause) return false;
+    var values = [
+      activePause.reasonKind,
+      activePause.reason_kind,
+      activePause.kind,
+      activePause.type,
+      activePause.category,
+    ];
+    var metadata = activePause.metadata && typeof activePause.metadata === 'object'
+      ? activePause.metadata
+      : {};
+    values.push(
+      metadata.reasonKind,
+      metadata.reason_kind,
+      metadata.pauseKind,
+      metadata.pause_kind,
+      metadata.pauseType,
+      metadata.pause_type,
+      metadata.mode,
+      metadata.waitingOn,
+      metadata.waiting_on,
+      metadata.source
+    );
+    return values.some(function (value) {
+      var normalized = String(value || '').toLowerCase().replace(/[\s_]+/g, '-');
+      return (
+        normalized === 'delegated-work' ||
+        normalized === 'delegated' ||
+        normalized === 'sub-agent' ||
+        normalized === 'subagent' ||
+        normalized === 'listen' ||
+        normalized === 'agent-listen' ||
+        normalized === 'sub-agent-listen' ||
+        normalized.indexOf('sub-agent') >= 0 ||
+        normalized.indexOf('subagent') >= 0
+      );
+    });
+  }
+
+  function isRendererContentType(value) {
+    var normalized = String(value || '').trim();
+    return normalized === 'rich_content' || normalized === 'structured_data';
+  }
+
+  function hasArtifactMetadata(item) {
+    if (!item || typeof item !== 'object') return false;
+    var meta = item.resultMeta || item.meta || {};
     return !!(
-      item &&
+      meta &&
+      typeof meta === 'object' &&
+      !Array.isArray(meta) &&
       (
-        item.artifactKey ||
-        item.resultData ||
-        item.resultContentType ||
-        item.contentType
+        meta.artifactSource ||
+        meta.artifactId ||
+        meta.artifactKey ||
+        meta.reviewSessionId
       )
+    );
+  }
+
+  function isArtifactLike(item) {
+    if (isSubagentToolEvent(item)) return false;
+    if (!item) return false;
+    if (isRendererContentType(item.resultContentType || item.contentType || item.toolName)) return true;
+    if (item.artifactKey && hasArtifactMetadata(item)) return true;
+    return !!(
+      item.artifact &&
+      typeof item.artifact === 'object' &&
+      !Array.isArray(item.artifact) &&
+      isRendererContentType(item.artifact.contentType || item.artifact.content_type)
     );
   }
 
   function isSubagentLike(item) {
     if (!item) return false;
+    if (isSubagentToolEvent(item)) return true;
     var values = [
       item.toolName,
       item.title,
@@ -135,7 +212,9 @@
       ? item.order
       : typeof item.sequence === 'number' && Number.isFinite(item.sequence)
         ? item.sequence
-        : index;
+        : typeof item.sortIndex === 'number' && Number.isFinite(item.sortIndex)
+          ? item.sortIndex
+          : index;
     var status = normalizeStatus(item.status || 'completed');
     var kind = isReviewLike(item)
       ? 'review'
@@ -153,6 +232,7 @@
       detail: item.detail || item.summary || '',
       toolName: item.toolName || null,
       order: explicitOrder,
+      sortIndex: typeof item.sortIndex === 'number' && Number.isFinite(item.sortIndex) ? item.sortIndex : explicitOrder,
       createdAt: item.createdAt || item.startedAt || null,
       updatedAt: item.updatedAt || item.completedAt || item.createdAt || null,
       completedAt: item.completedAt || null,
@@ -491,7 +571,7 @@
   }
 
   function statusFromActiveTurn(activeTurn) {
-    if (!activeTurn) return null;
+    if (!isRenderableActiveTurn(activeTurn)) return null;
     var status = normalizeStatus(activeTurn.status);
     if (status === 'sending') return LIFECYCLE.SENDING;
     if (status === 'queued' || status === 'accepted') return LIFECYCLE.QUEUED;
@@ -499,6 +579,19 @@
     if (status === 'failed') return LIFECYCLE.FAILED;
     if (status === 'finalized' || status === 'completed' || status === 'complete') return LIFECYCLE.COMPLETE;
     return LIFECYCLE.RUNNING;
+  }
+
+  function isRenderableActiveTurn(activeTurn) {
+    return !!(
+      activeTurn &&
+      (
+        activeTurn.userMessage ||
+        activeTurn.assistantMessage ||
+        activeTurn.operationId ||
+        activeTurn.clientMessageId ||
+        activeTurn.contentFingerprint
+      )
+    );
   }
 
   function statusFromPause(activePause, pendingHumanInputs) {
@@ -511,6 +604,7 @@
     var status = normalizeStatus(activePause.status);
     if (status === 'resuming') return LIFECYCLE.RESUMING;
     if (status === 'ready') return LIFECYCLE.WAITING_ON_USER;
+    if (isDelegatedPause(activePause)) return LIFECYCLE.RUNNING;
     if (status === 'blocked') {
       var kind = normalizeStatus(activePause.reasonKind || activePause.reason_kind || activePause.kind || '');
       return kind.indexOf('human') >= 0 ? LIFECYCLE.WAITING_ON_REVIEW : LIFECYCLE.WAITING_ON_USER;
@@ -559,6 +653,9 @@
   }
 
   function labelForLifecycle(lifecycle, thread, heartbeat) {
+    if (lifecycle === LIFECYCLE.RUNNING && isDelegatedPause(thread && thread.activePause)) {
+      return 'Waiting on delegated work';
+    }
     if (heartbeat && heartbeat.recovering) return 'Checking status';
     if (heartbeat && heartbeat.stale) return 'Still working';
     var activeTurn = thread && thread.activeTurn;
@@ -591,7 +688,7 @@
 
   function appendActiveTurnSession(sessions, thread, lifecycle) {
     var activeTurn = thread && thread.activeTurn;
-    if (!activeTurn || lifecycle === LIFECYCLE.COMPLETE) return sessions;
+    if (!isRenderableActiveTurn(activeTurn) || lifecycle === LIFECYCLE.COMPLETE) return sessions;
     var user = activeTurn.userMessage ? normalizeMessage(activeTurn.userMessage, sessions.length) : null;
     var answer = activeTurn.assistantMessage ? normalizeMessage(activeTurn.assistantMessage, sessions.length) : null;
     var id = activeTurn.turnId || (user && user.id) || 'active-session';
@@ -649,7 +746,7 @@
     var thread = threadContext && threadContext.thread ? threadContext.thread : {};
     var lifecycle = deriveLifecycle(threadContext || {});
     var heartbeat = latestHeartbeat(thread, lifecycle);
-    if (heartbeat.recovering && lifecycle === LIFECYCLE.RUNNING) {
+    if (heartbeat.recovering && lifecycle === LIFECYCLE.RUNNING && !isDelegatedPause(thread && thread.activePause)) {
       lifecycle = LIFECYCLE.RECOVERING;
     }
     var runs = asArray(thread.runs);

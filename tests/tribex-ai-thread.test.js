@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 var __dirnameResolved = dirname(fileURLToPath(import.meta.url));
 var utilsCode = readFileSync(join(__dirnameResolved, '../public/renderers/tribex-ai-utils.js'), 'utf8');
 var reducerCode = readFileSync(join(__dirnameResolved, '../public/renderers/tribex-ai-chat-reducer.js'), 'utf8');
+var skillsCode = readFileSync(join(__dirnameResolved, '../public/renderers/tribex-ai-skills.js'), 'utf8');
 var threadCode = readFileSync(join(__dirnameResolved, '../public/renderers/tribex-ai-thread.js'), 'utf8');
+var stylesCode = readFileSync(join(__dirnameResolved, '../src/styles.css'), 'utf8');
 
 function loadUtils() {
   new Function(utilsCode).call(globalThis);
@@ -16,8 +18,18 @@ function loadReducer() {
   new Function(reducerCode).call(globalThis);
 }
 
+function loadSkills() {
+  new Function(skillsCode).call(globalThis);
+}
+
 function loadThread() {
   new Function(threadCode).call(globalThis);
+}
+
+function flushPromises() {
+  return Promise.resolve().then(function () {
+    return Promise.resolve();
+  });
 }
 
 function renderThread(threadId) {
@@ -36,16 +48,25 @@ function installBaseRenderers() {
     }),
     structured_data: vi.fn(function (container, data, _meta, _toolArgs, _reviewRequired, onDecision) {
       container.textContent = data && data.title ? data.title : 'Structured data preview';
+      var submitDecision = function () {
+        return typeof onDecision === 'function'
+          ? onDecision({ decision: 'approved', type: 'structured_data_decisions' })
+          : null;
+      };
       if (typeof onDecision === 'function') {
         var button = document.createElement('button');
         button.type = 'button';
         button.textContent = 'Approve table';
         button.setAttribute('data-review-decision-submit', 'true');
         button.addEventListener('click', function () {
-          onDecision({ decision: 'approved', type: 'structured_data_decisions' });
+          submitDecision();
         });
         container.appendChild(button);
       }
+      return {
+        providesDecisionSubmit: true,
+        submitDecision: submitDecision,
+      };
     }),
   };
 }
@@ -65,7 +86,9 @@ beforeEach(function () {
   delete window.__MCPVIEWS_DEV__;
   delete window.__tribexAiUtils;
   delete window.__tribexAiChatReducer;
+  delete window.__tribexAiSkills;
   delete window.__tribexAiState;
+  delete window.__tribexAiClient;
   window.__companionUtils = {
     renderMarkdown: vi.fn(function (content) {
       var el = document.createElement('div');
@@ -85,6 +108,7 @@ beforeEach(function () {
   };
   loadUtils();
   loadReducer();
+  loadSkills();
   loadThread();
 });
 
@@ -218,6 +242,120 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-thread').textContent).not.toContain('session_id');
     expect(document.querySelector('.ai-codex-thread').textContent).not.toContain('archive_review_');
     expect(document.querySelector('.ai-codex-thread').textContent).not.toContain('cmobypfhy0000l904abcd1234');
+  });
+
+  it('renders skill user messages as handwritten text plus the skill chip', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            title: 'Email Analysis',
+            messages: [
+              {
+                id: 'user-skill-1',
+                role: 'user',
+                content: 'Before /email-analysis after',
+                metadata: {
+                  skillInvocation: {
+                    key: 'email-analysis',
+                    name: 'Email Analysis',
+                  },
+                },
+                createdAt: '2026-04-24T18:04:12.000Z',
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var userCopy = document.querySelector('.ai-codex-user-copy');
+    expect(userCopy.textContent).toBe('Before /email-analysis after');
+    expect(userCopy.querySelector('.ai-codex-message-skill-chip').textContent).toBe('/email-analysis');
+    expect(userCopy.textContent).not.toContain('Inboxes:');
+  });
+
+  it('chips persisted skill display prompts even when transcript metadata is unavailable', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            title: 'Email Analysis',
+            messages: [
+              {
+                id: 'user-skill-persisted',
+                role: 'user',
+                content: 'Summarize my inbox /email-analysis',
+                createdAt: '2026-04-24T18:04:12.000Z',
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var userCopy = document.querySelector('.ai-codex-user-copy');
+    expect(userCopy.textContent).toBe('Summarize my inbox /email-analysis');
+    expect(userCopy.querySelector('.ai-codex-message-skill-chip').textContent).toBe('/email-analysis');
+  });
+
+  it('uses skill display metadata when runtime hydration includes the expanded prompt text', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            title: 'Email Analysis',
+            messages: [
+              {
+                id: 'user-skill-runtime',
+                role: 'user',
+                content: 'Summarize my inbox\n\nUse the Email Coordinator persona.\n- personal@example.com (provider: GMAIL, account id: acct-primary)',
+                metadata: {
+                  skillInvocation: {
+                    key: 'email-analysis',
+                    name: 'Email Analysis',
+                    display: {
+                      textBefore: 'Summarize my inbox',
+                      textAfter: '',
+                    },
+                  },
+                },
+                createdAt: '2026-04-24T18:04:12.000Z',
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var userCopy = document.querySelector('.ai-codex-user-copy');
+    expect(userCopy.textContent).toBe('Summarize my inbox /email-analysis');
+    expect(userCopy.textContent).not.toContain('account id');
+    expect(userCopy.querySelector('.ai-codex-message-skill-chip').textContent).toBe('/email-analysis');
   });
 
   it('replaces delegated mailbox tool prompts with user-facing copy', function () {
@@ -359,6 +497,285 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-input').value).toBe('');
   });
 
+  it('lets the composer select email-analysis with defaults from connected inboxes', async function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-27T12:00:00.000Z'));
+    var submitPrompt = vi.fn(function () { return Promise.resolve(true); });
+    window.__tribexAiClient = {
+      fetchThreadSkills: vi.fn(function () {
+        return Promise.resolve(window.__tribexAiSkills.builtinSkills());
+      }),
+      fetchConnectedEmailAccounts: vi.fn(function () {
+        return Promise.resolve([
+          { id: 'acct-primary', provider: 'GMAIL', emailAddress: 'primary@example.com', displayName: 'Primary' },
+          { id: 'acct-work', provider: 'GMAIL', emailAddress: 'work@example.com', displayName: 'Work' },
+        ]);
+      }),
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: submitPrompt,
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread(),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+    await flushPromises();
+
+    var editor = document.querySelector('.ai-codex-input');
+    editor.value = 'List archive candidates.';
+    editor.dispatchEvent(new Event('input'));
+    var skillsButton = Array.from(document.querySelectorAll('.ai-codex-skill-row button')).find(function (button) {
+      return button.textContent === 'Skills';
+    });
+    skillsButton.click();
+    document.querySelector('.ai-codex-skill-option').click();
+
+    expect(document.querySelector('.ai-codex-skill-chip').textContent).toBe('/email-analysis');
+    expect(document.querySelector('.ai-codex-variable-row').textContent).toContain('Inboxes: All inboxes');
+    expect(document.querySelector('.ai-codex-variable-row').textContent).toContain('Start: 2026-04-26T12:00:00Z');
+    expect(document.querySelector('.ai-codex-variable-row').textContent).toContain('End: 2026-04-27T12:00:00Z');
+
+    editor = document.querySelector('.ai-codex-input');
+    editor.value = 'List archive candidates. /another';
+    editor.dispatchEvent(new Event('input'));
+    expect(document.querySelector('.ai-codex-skill-menu')).toBeNull();
+
+    document.querySelector('.ai-codex-composer-footer button').click();
+    await flushPromises();
+
+    expect(submitPrompt).toHaveBeenCalledTimes(1);
+    var displayPrompt = submitPrompt.mock.calls[0][1];
+    var payload = submitPrompt.mock.calls[0][2];
+    expect(displayPrompt).toContain('/email-analysis');
+    expect(displayPrompt).not.toContain('Inboxes: All inboxes');
+    expect(displayPrompt).not.toContain('Use the Email Coordinator persona');
+    expect(displayPrompt).not.toContain('acct-primary');
+    expect(payload.runtimePrompt).toContain('Use the Email Coordinator persona');
+    expect(payload.runtimePrompt).toContain('primary@example.com (provider: GMAIL, account id: acct-primary)');
+    expect(payload.runtimePrompt).toContain('work@example.com (provider: GMAIL, account id: acct-work)');
+    expect(payload.runtimePrompt).toContain('Start: 2026-04-26T12:00:00Z');
+    expect(payload.skillInvocation).toMatchObject({
+      key: 'email-analysis',
+      selectedAccounts: [
+        { id: 'acct-primary', emailAddress: 'primary@example.com' },
+        { id: 'acct-work', emailAddress: 'work@example.com' },
+      ],
+    });
+  });
+
+  it('allows a pushed thread renderer with a known id to send before thread cache hydration', async function () {
+    var submitPrompt = vi.fn(function () { return Promise.resolve(true); });
+    window.__tribexAiClient = {
+      fetchThreadSkills: vi.fn(function () {
+        return Promise.resolve(window.__tribexAiSkills.builtinSkills());
+      }),
+      fetchConnectedEmailAccounts: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: submitPrompt,
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: null,
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-pushed');
+    await flushPromises();
+
+    var editor = document.querySelector('.ai-codex-input');
+    editor.value = 'Summarize inboxes.';
+    editor.dispatchEvent(new Event('input'));
+    document.querySelector('.ai-codex-skill-row button').click();
+    document.querySelector('.ai-codex-skill-option').click();
+
+    var send = document.querySelector('.ai-codex-composer-footer button');
+    expect(send.disabled).toBe(false);
+    send.click();
+    await flushPromises();
+
+    expect(submitPrompt).toHaveBeenCalledWith(
+      'thread-pushed',
+      expect.stringContaining('/email-analysis'),
+      expect.objectContaining({
+        skillInvocation: expect.objectContaining({ key: 'email-analysis' }),
+      }),
+    );
+  });
+
+  it('keeps editable text before and after the selected skill chip', async function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-27T12:00:00.000Z'));
+    var submitPrompt = vi.fn(function () { return Promise.resolve(true); });
+    window.__tribexAiClient = {
+      fetchThreadSkills: vi.fn(function () {
+        return Promise.resolve(window.__tribexAiSkills.builtinSkills());
+      }),
+      fetchConnectedEmailAccounts: vi.fn(function () {
+        return Promise.resolve([
+          { id: 'acct-primary', provider: 'GMAIL', emailAddress: 'primary@example.com' },
+        ]);
+      }),
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: submitPrompt,
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread(),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+    await flushPromises();
+
+    var editor = document.querySelector('.ai-codex-input');
+    editor.value = 'Before ';
+    editor.dispatchEvent(new Event('input'));
+    document.querySelector('.ai-codex-skill-row button').click();
+    document.querySelector('.ai-codex-skill-option').click();
+
+    editor = document.querySelector('.ai-codex-input');
+    var chip = editor.querySelector('.ai-codex-skill-chip');
+    expect(chip.nextSibling.nodeValue).toBe('\u200b');
+    chip.nextSibling.nodeValue += ' after';
+    editor.dispatchEvent(new Event('input'));
+
+    document.querySelector('.ai-codex-composer-footer button').click();
+    await flushPromises();
+
+    var displayPrompt = submitPrompt.mock.calls[0][1];
+    var payload = submitPrompt.mock.calls[0][2];
+    expect(displayPrompt).toBe('Before /email-analysis after');
+    expect(payload.displayPrompt).toBe('Before /email-analysis after');
+    expect(payload.runtimePrompt).toContain('Before  after');
+    expect(payload.runtimePrompt).toContain('Use the Email Coordinator persona');
+    expect(payload.skillInvocation.display).toMatchObject({
+      textBefore: 'Before ',
+      textAfter: ' after',
+    });
+  });
+
+  it('keeps composer focus while slash filtering skills', async function () {
+    window.__tribexAiClient = {
+      fetchThreadSkills: vi.fn(function () {
+        return Promise.resolve(window.__tribexAiSkills.builtinSkills());
+      }),
+      fetchConnectedEmailAccounts: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread(),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+    await flushPromises();
+
+    var editor = document.querySelector('.ai-codex-input');
+    editor.focus();
+    editor.textContent = '/e';
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(document.activeElement).toBe(editor);
+    expect(document.querySelector('.ai-codex-input')).toBe(editor);
+    expect(document.querySelector('.ai-codex-skill-option').textContent).toContain('/email-analysis');
+
+    editor.textContent = '/ema';
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(document.activeElement).toBe(editor);
+    expect(document.querySelector('.ai-codex-input')).toBe(editor);
+    expect(document.querySelector('.ai-codex-skill-option').textContent).toContain('/email-analysis');
+  });
+
+  it('edits email-analysis inbox variables from the compact popover', async function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-27T12:00:00.000Z'));
+    var submitPrompt = vi.fn(function () { return Promise.resolve(true); });
+    window.__tribexAiClient = {
+      fetchThreadSkills: vi.fn(function () {
+        return Promise.resolve(window.__tribexAiSkills.builtinSkills());
+      }),
+      fetchConnectedEmailAccounts: vi.fn(function () {
+        return Promise.resolve([
+          { id: 'acct-personal', provider: 'GMAIL', emailAddress: 'personal@example.com' },
+          { id: 'acct-work', provider: 'GMAIL', emailAddress: 'work@example.com' },
+        ]);
+      }),
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: submitPrompt,
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread(),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+    await flushPromises();
+    document.querySelector('.ai-codex-skill-row button').click();
+    document.querySelector('.ai-codex-skill-option').click();
+
+    var inboxChip = Array.from(document.querySelectorAll('.ai-codex-variable-chip')).find(function (button) {
+      return button.textContent.indexOf('Inboxes:') === 0;
+    });
+    inboxChip.click();
+    var secondCheckbox = document.querySelectorAll('.ai-codex-email-option input')[1];
+    secondCheckbox.checked = false;
+    secondCheckbox.dispatchEvent(new Event('change'));
+
+    expect(document.querySelector('.ai-codex-variable-row').textContent).toContain('Inboxes: personal@example.com');
+    document.querySelector('.ai-codex-composer-footer button').click();
+    await flushPromises();
+
+    var payload = submitPrompt.mock.calls[0][2];
+    expect(payload.displayPrompt).toContain('/email-analysis');
+    expect(payload.displayPrompt).not.toContain('Inboxes: personal@example.com');
+    expect(payload.displayPrompt).not.toContain('acct-personal');
+    expect(payload.runtimePrompt).toContain('personal@example.com (provider: GMAIL, account id: acct-personal)');
+    expect(payload.runtimePrompt).not.toContain('acct-work');
+    expect(payload.skillInvocation.selectedAccounts).toEqual([
+      expect.objectContaining({ id: 'acct-personal', emailAddress: 'personal@example.com' }),
+    ]);
+  });
+
   it('renders inline review blockers and submits renderer decisions through the backend operation spine', async function () {
     var refreshActiveThread = vi.fn(function () { return Promise.resolve(true); });
     var submitDecision = vi.fn(function () { return Promise.resolve({ ok: true }); });
@@ -406,6 +823,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-review-card').textContent).toContain('Approve revised table');
     expect(document.querySelector('.ai-codex-review-preview').getAttribute('role')).toBe('region');
     expect(document.querySelector('.ai-codex-review-preview').getAttribute('aria-label')).toBe('Approve revised table preview');
+    expect(document.querySelector('.ai-codex-blocker-header .ai-primary-btn').textContent).toBe('Submit decisions');
     expect(document.querySelector('.ai-codex-review-card').textContent).not.toContain('Submit reviewed decision');
     expect(window.__renderers.structured_data).toHaveBeenCalledWith(
       expect.any(HTMLElement),
@@ -420,7 +838,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
       expect.any(Function),
     );
 
-    document.querySelector('.ai-codex-review-preview button').click();
+    document.querySelector('.ai-codex-blocker-header .ai-primary-btn').click();
     await Promise.resolve();
     await Promise.resolve();
 
@@ -435,6 +853,300 @@ describe('tribex-ai-thread Codex-like surface', function () {
     );
     expect(refreshActiveThread).toHaveBeenCalled();
     expect(document.querySelector('.ai-codex-review-status').textContent).toContain('Review submitted');
+  });
+
+  it('batches multiple pending review cards behind one submit control', async function () {
+    var refreshActiveThread = vi.fn(function () { return Promise.resolve(true); });
+    var submitDecision = vi.fn(function () { return Promise.resolve({ ok: true }); });
+    var rendererStates = {};
+    window.__tribexAiClient = {
+      submitThreadHumanInputDecision: submitDecision,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: refreshActiveThread,
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            pendingHumanInputs: [
+              {
+                id: 'human-input-a',
+                renderer: 'structured_data',
+                title: 'Archive account A',
+                reviewSessionId: 'review-session-a',
+                rendererPayload: { data: { title: 'Account A' } },
+              },
+              {
+                id: 'human-input-b',
+                renderer: 'structured_data',
+                title: 'Archive account B',
+                reviewSessionId: 'review-session-b',
+                rendererPayload: { data: { title: 'Account B' } },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+    window.__renderers.structured_data = vi.fn(function (container, data, meta, _toolArgs, _reviewRequired, onDecision) {
+      rendererStates[data.title] = { decision: null, meta: meta };
+      container.appendChild(document.createTextNode(data.title));
+      var tableAccept = document.createElement('button');
+      tableAccept.type = 'button';
+      tableAccept.textContent = 'Accept All';
+      container.appendChild(tableAccept);
+      if (!meta.externalDecisionSubmit) {
+        var localSubmit = document.createElement('button');
+        localSubmit.type = 'button';
+        localSubmit.textContent = 'Submit Decisions';
+        localSubmit.setAttribute('data-review-decision-submit', 'true');
+        container.appendChild(localSubmit);
+      }
+      return {
+        providesDecisionSubmit: true,
+        applyDecision: function (decision) {
+          rendererStates[data.title].decision = decision;
+          if (typeof meta.onDecisionStateChange === 'function') {
+            meta.onDecisionStateChange({
+              totalRows: 1,
+              decidedRows: decision === 'accept' || decision === 'reject' ? 1 : 0,
+              pendingRows: decision === 'accept' || decision === 'reject' ? 0 : 1,
+              complete: decision === 'accept' || decision === 'reject',
+            });
+          }
+        },
+        getDecisionSummary: function () {
+          var decided = rendererStates[data.title].decision === 'accept' || rendererStates[data.title].decision === 'reject';
+          return {
+            totalRows: 1,
+            decidedRows: decided ? 1 : 0,
+            pendingRows: decided ? 0 : 1,
+            complete: decided,
+          };
+        },
+        submitDecision: function () {
+          return onDecision({
+            type: 'operation_decisions',
+            decisions: {
+              [data.title + ':row-1']: rendererStates[data.title].decision,
+            },
+          });
+        },
+      };
+    });
+
+    renderThread('thread-1');
+
+    var submitButtons = Array.from(document.querySelectorAll('button')).filter(function (button) {
+      return /submit decisions/i.test(button.textContent || '');
+    });
+    expect(submitButtons).toHaveLength(1);
+    expect(document.querySelector('[data-review-bundle-submit="true"]')).not.toBeNull();
+    expect(document.querySelector('.ai-codex-review-bundle-sticky')).not.toBeNull();
+    expect(Array.from(document.querySelectorAll('.ai-codex-review-decision-badge')).map(function (badge) {
+      return badge.textContent;
+    })).toEqual(['0/1 decided', '0/1 decided']);
+    expect(Array.from(document.querySelectorAll('.ai-codex-review-preview button')).map(function (button) {
+      return button.textContent;
+    })).toEqual(['Accept All', 'Accept All']);
+    expect(window.__renderers.structured_data).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      { title: 'Account A' },
+      expect.objectContaining({ externalDecisionSubmit: true, bundleDecisionSubmit: true }),
+      expect.any(Object),
+      true,
+      expect.any(Function),
+    );
+
+    var firstCard = document.querySelector('.ai-codex-review-card');
+    var firstBody = firstCard.querySelector('.ai-codex-review-card-body');
+    var firstToggle = firstCard.querySelector('.ai-codex-review-toggle');
+    expect(firstCard.getAttribute('data-review-collapsed')).toBe('false');
+    expect(firstBody.hidden).toBe(false);
+    expect(firstCard.querySelector('.ai-codex-review-preview').classList.contains('ai-codex-review-preview-full')).toBe(true);
+    firstToggle.click();
+    expect(firstCard.getAttribute('data-review-collapsed')).toBe('true');
+    expect(firstBody.hidden).toBe(true);
+    expect(firstToggle.getAttribute('aria-expanded')).toBe('false');
+    firstToggle.click();
+    expect(firstCard.getAttribute('data-review-collapsed')).toBe('false');
+    expect(firstBody.hidden).toBe(false);
+
+    Array.from(document.querySelectorAll('button')).find(function (button) {
+      return button.textContent === 'Approve All';
+    }).click();
+    expect(Array.from(document.querySelectorAll('.ai-codex-review-decision-badge')).map(function (badge) {
+      return [badge.textContent, badge.getAttribute('data-decision-complete')];
+    })).toEqual([['All rows decided', 'true'], ['All rows decided', 'true']]);
+
+    document.querySelector('[data-review-bundle-submit="true"]').click();
+    await flushPromises();
+    await flushPromises();
+
+    expect(submitDecision).toHaveBeenCalledTimes(2);
+    expect(submitDecision).toHaveBeenNthCalledWith(
+      1,
+      'thread-1',
+      'human-input-a',
+      expect.objectContaining({
+        sessionId: 'review-session-a',
+        decision: 'partial',
+        operationDecisions: { 'Account A:row-1': 'accept' },
+      }),
+    );
+    expect(submitDecision).toHaveBeenNthCalledWith(
+      2,
+      'thread-1',
+      'human-input-b',
+      expect.objectContaining({
+        sessionId: 'review-session-b',
+        decision: 'partial',
+        operationDecisions: { 'Account B:row-1': 'accept' },
+      }),
+    );
+    expect(refreshActiveThread).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps bundled review controls sticky, lean, and removes nested review preview scrolling', function () {
+    expect(stylesCode).toContain('.ai-codex-review-bundle-sticky');
+    expect(stylesCode).toContain('position: sticky');
+    expect(stylesCode).toContain('.ai-codex-session {');
+    expect(stylesCode).toContain('max-width: none');
+    expect(stylesCode).toContain('.ai-codex-review-bundle {');
+    expect(stylesCode).toContain('padding: 8px 10px');
+    expect(stylesCode).toContain('min-height: 28px');
+    expect(stylesCode).toContain('border-radius: 6px');
+    expect(stylesCode).toContain('.ai-codex-review-bundle .ai-codex-approve-all');
+    expect(stylesCode).toContain('background: var(--color-success-bg)');
+    expect(stylesCode).toContain('.ai-codex-review-bundle .ai-codex-reject-all');
+    expect(stylesCode).toContain('background: var(--color-error-bg)');
+    expect(stylesCode).toContain('.ai-codex-review-bundle .ai-codex-review-status:empty');
+    expect(stylesCode).toContain('max-height: none');
+    expect(stylesCode).toContain('overflow: visible');
+  });
+
+  it('maps structured-data row decisions to the control-plane review payload shape', async function () {
+    var submitDecision = vi.fn(function () { return Promise.resolve({ ok: true }); });
+    window.__tribexAiClient = {
+      submitThreadHumanInputDecision: submitDecision,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(function () { return Promise.resolve(true); }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            pendingHumanInputs: [
+              {
+                id: 'human-input-archive',
+                renderer: 'structured_data',
+                title: 'Archive review',
+                reviewSessionId: 'archive-review-1',
+                rendererPayload: {
+                  data: { title: 'Archive candidates' },
+                },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+    window.__renderers.structured_data = vi.fn(function (container, _data, _meta, _toolArgs, _reviewRequired, onDecision) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Submit partial';
+      button.setAttribute('data-review-decision-submit', 'true');
+      button.addEventListener('click', function () {
+        onDecision({
+          type: 'operation_decisions',
+          decisions: {
+            'archive:acct-1:ray-ban': 'accept',
+            'archive:acct-1:gucci': 'reject',
+          },
+          modifications: {},
+          additions: { user_edits: {} },
+        });
+      });
+      container.appendChild(button);
+      return {
+        providesDecisionSubmit: true,
+      };
+    });
+
+    renderThread('thread-1');
+    document.querySelector('.ai-codex-review-preview button').click();
+    await flushPromises();
+
+    expect(submitDecision).toHaveBeenCalledWith(
+      'thread-1',
+      'human-input-archive',
+      expect.objectContaining({
+        sessionId: 'archive-review-1',
+        decision: 'partial',
+        operationDecisions: {
+          'archive:acct-1:ray-ban': 'accept',
+          'archive:acct-1:gucci': 'reject',
+        },
+        decisions: {
+          'archive:acct-1:ray-ban': 'accept',
+          'archive:acct-1:gucci': 'reject',
+        },
+      }),
+    );
+  });
+
+  it('keeps an in-progress review card stable across pending metadata refreshes', function () {
+    var version = 1;
+    var submitDecision = vi.fn(function () { return Promise.resolve({ ok: true }); });
+    window.__tribexAiClient = {
+      submitThreadHumanInputDecision: submitDecision,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(function () { return Promise.resolve(true); }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            pendingHumanInputs: [
+              {
+                id: 'human-input-stable',
+                status: 'PENDING',
+                renderer: 'structured_data',
+                title: 'Inbox archive review',
+                reviewSessionId: 'review-session-stable',
+                rendererPayload: {
+                  data: { title: 'Archive candidates' },
+                  meta: { pollVersion: version },
+                },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+    var firstCard = document.querySelector('.ai-codex-review-card');
+    firstCard.dataset.localDecisionState = 'ray-ban-accepted';
+
+    version = 2;
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-review-card')).toBe(firstCard);
+    expect(document.querySelector('.ai-codex-review-card').dataset.localDecisionState).toBe('ray-ban-accepted');
+    expect(window.__renderers.structured_data).toHaveBeenCalledTimes(1);
   });
 
   it('keeps fallback review submission available for passive rich content reviews', async function () {
@@ -694,6 +1406,101 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(window.__companionUtils.renderMarkdown.mock.calls.length).toBe(markdownCalls);
   });
 
+  it('skips unchanged host renderer calls so old threads do not remount while scrolling', function () {
+    var threadContext = {
+      thread: baseThread({
+        runs: [
+          {
+            id: 'run-1',
+            user: { id: 'u1', role: 'user', content: 'Review the old context.' },
+            answer: { id: 'a1', role: 'assistant', content: 'Historical answer.' },
+          },
+        ],
+      }),
+      loading: false,
+      pending: false,
+      error: null,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () { return threadContext; }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+    var root = document.querySelector('.ai-codex-thread');
+    var timeline = document.querySelector('.ai-codex-timeline');
+    Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 1600 });
+    Object.defineProperty(timeline, 'clientHeight', { configurable: true, value: 500 });
+    timeline.scrollTop = 420;
+    timeline.dispatchEvent(new Event('scroll'));
+    var markdownCalls = window.__companionUtils.renderMarkdown.mock.calls.length;
+
+    renderThread('thread-1');
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-thread')).toBe(root);
+    expect(document.querySelector('.ai-codex-timeline')).toBe(timeline);
+    expect(document.querySelector('.ai-codex-timeline').scrollTop).toBe(420);
+    expect(window.__companionUtils.renderMarkdown.mock.calls.length).toBe(markdownCalls);
+  });
+
+  it('resets render memoization when the host switches to another thread id', function () {
+    var activeThreadId = 'thread-1';
+    var contexts = {
+      'thread-1': {
+        thread: baseThread({
+          id: 'thread-1',
+          title: 'First thread',
+          runs: [
+            {
+              id: 'run-1',
+              user: { id: 'u1', role: 'user', content: 'First question.' },
+              answer: { id: 'a1', role: 'assistant', content: 'First answer.' },
+            },
+          ],
+        }),
+        loading: false,
+        pending: false,
+        error: null,
+      },
+      'thread-2': {
+        thread: baseThread({
+          id: 'thread-2',
+          title: 'Second thread',
+          runs: [
+            {
+              id: 'run-2',
+              user: { id: 'u2', role: 'user', content: 'Second question.' },
+              answer: { id: 'a2', role: 'assistant', content: 'Second answer.' },
+            },
+          ],
+        }),
+        loading: false,
+        pending: false,
+        error: null,
+      },
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function (threadId) {
+        return contexts[threadId || activeThreadId];
+      }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+    var firstRoot = document.querySelector('.ai-codex-thread');
+    activeThreadId = 'thread-2';
+    renderThread('thread-2');
+
+    expect(document.querySelector('.ai-codex-thread')).not.toBe(firstRoot);
+    expect(document.querySelector('.ai-codex-thread').textContent).toContain('Second question.');
+    expect(document.querySelector('.ai-codex-thread').textContent).toContain('Second answer.');
+  });
+
   it('preserves user edits inside a review card when background activity changes the timeline', function () {
     var subscription = null;
     var threadContext = {
@@ -819,6 +1626,142 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(nextTimeline.scrollTop).toBe(1400);
   });
 
+  it('keeps following the bottom across streamed assistant token updates', function () {
+    var subscription = null;
+    var rafCallbacks = [];
+    window.requestAnimationFrame = function (callback) {
+      rafCallbacks.push(callback);
+      return rafCallbacks.length;
+    };
+    function flushNextFrame() {
+      var callback = rafCallbacks.shift();
+      if (callback) callback();
+    }
+    var threadContext = {
+      thread: baseThread({
+        messages: [
+          { id: 'u1', role: 'user', content: 'Stream the answer.', createdAt: '2026-04-24T18:00:00.000Z' },
+          { id: 'a1', role: 'assistant', content: 'Token 1', isStreaming: true, createdAt: '2026-04-24T18:01:00.000Z' },
+        ],
+      }),
+      loading: false,
+      pending: false,
+      error: null,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function (listener) {
+        subscription = listener;
+        return vi.fn();
+      }),
+      getThreadContext: vi.fn(function () { return threadContext; }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+    var initialTimeline = document.querySelector('.ai-codex-timeline');
+    Object.defineProperty(initialTimeline, 'scrollHeight', { configurable: true, value: 1800 });
+    Object.defineProperty(initialTimeline, 'clientHeight', { configurable: true, value: 500 });
+    initialTimeline.scrollTop = 1300;
+    flushNextFrame();
+
+    for (var index = 2; index <= 4; index += 1) {
+      threadContext.thread.lastActivityAt = '2026-04-24T18:0' + index + ':00.000Z';
+      threadContext.thread.messages = [
+        threadContext.thread.messages[0],
+        Object.assign({}, threadContext.thread.messages[1], {
+          content: 'Token '.repeat(index * 4).trim(),
+          isStreaming: true,
+          updatedAt: '2026-04-24T18:0' + index + ':00.000Z',
+        }),
+      ];
+      subscription();
+      flushNextFrame();
+
+      var nextTimeline = document.querySelector('.ai-codex-timeline');
+      Object.defineProperty(nextTimeline, 'scrollHeight', { configurable: true, value: 1800 + index * 200 });
+      Object.defineProperty(nextTimeline, 'clientHeight', { configurable: true, value: 500 });
+      flushNextFrame();
+
+      expect(nextTimeline.scrollTop).toBe(nextTimeline.scrollHeight);
+    }
+  });
+
+  it('suppresses markdown entry animation while assistant text is streaming', function () {
+    window.__companionUtils.renderMarkdown = vi.fn(function (content) {
+      var el = document.createElement('div');
+      el.className = 'md-content';
+      el.textContent = content || '';
+      return el;
+    });
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            messages: [
+              { id: 'u1', role: 'user', content: 'Start streaming.', createdAt: '2026-04-24T18:00:00.000Z' },
+              { id: 'a1', role: 'assistant', content: 'Streaming answer', isStreaming: true, createdAt: '2026-04-24T18:01:00.000Z' },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-answer-copy .md-content').classList.contains('md-content-no-entry-animation')).toBe(true);
+  });
+
+  it('suppresses markdown entry animation for old answers after the first thread paint', function () {
+    window.__companionUtils.renderMarkdown = vi.fn(function (content) {
+      var el = document.createElement('div');
+      el.className = 'md-content';
+      el.textContent = content || '';
+      return el;
+    });
+    var threadContext = {
+      thread: baseThread({
+        runs: [
+          {
+            id: 'run-1',
+            user: { id: 'u1', role: 'user', content: 'Review historical context.' },
+            answer: { id: 'a1', role: 'assistant', content: 'Historical answer.' },
+          },
+        ],
+      }),
+      loading: false,
+      pending: false,
+      error: null,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () { return threadContext; }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+    expect(document.querySelector('.ai-codex-answer-copy .md-content').classList.contains('md-content-no-entry-animation')).toBe(false);
+
+    threadContext.thread.lastActivityAt = '2026-04-24T18:05:00.000Z';
+    threadContext.thread.runs = [
+      {
+        id: 'run-1',
+        user: { id: 'u1', role: 'user', content: 'Review historical context.' },
+        answer: { id: 'a1', role: 'assistant', content: 'Historical answer with metadata refresh.' },
+      },
+    ];
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-answer-copy .md-content').classList.contains('md-content-no-entry-animation')).toBe(true);
+  });
+
   it('keeps waiting review cards still during backend status polling', function () {
     var subscription = null;
     var pollIndex = 0;
@@ -928,6 +1871,73 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(continueThreadPause).toHaveBeenCalledWith('thread-1', 'pause-1');
   });
 
+  it('shows delegated work pauses as agent waits instead of user waits', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            activePause: {
+              id: 'pause-delegated',
+              status: 'BLOCKED',
+              reasonKind: 'DELEGATED_WORK',
+              title: 'Waiting for 3 delegated tasks',
+              detail: 'The coordinator is waiting for delegated sub-agent work to finish before continuing.',
+              tasks: [
+                { title: 'Sub-agent item', detail: 'Finished first inbox.', status: 'COMPLETED' },
+                { title: 'Sub-agent item', detail: 'Checking the connected mailbox.', status: 'PENDING' },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+      checkThreadPause: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-status').textContent).toContain('Waiting on delegated work');
+    expect(document.querySelector('.ai-codex-status').textContent).not.toContain('Waiting on you');
+    expect(document.querySelector('.ai-codex-pause-card').textContent).toContain('Waiting for 3 delegated tasks');
+    expect(document.querySelector('.ai-codex-blocker-badge').textContent).toBe('Waiting');
+  });
+
+  it('does not render stale delegated work cards while the coordinator is resuming', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            activePause: {
+              id: 'pause-delegated',
+              status: 'RESUMING',
+              reasonKind: 'DELEGATED_WORK',
+              title: 'Waiting for 3 delegated tasks',
+              detail: 'Delegated sub-agent work is ready for the coordinator to continue.',
+              tasks: [
+                { title: 'Sub-agent item', detail: 'Finished first inbox.', status: 'COMPLETED' },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+      checkThreadPause: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-pause-card')).toBeNull();
+    expect(document.body.textContent).not.toContain('Waiting for 3 delegated tasks');
+  });
+
   it('surfaces stale runtime recovery and dev diagnostics without hiding the composer', function () {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-24T18:05:30.000Z'));
@@ -980,5 +1990,49 @@ describe('tribex-ai-thread Codex-like surface', function () {
 
     document.querySelector('.ai-codex-recovery-actions button').click();
     expect(refreshActiveThread).toHaveBeenCalled();
+  });
+
+  it('refreshes standalone pushed threads by explicit thread id', function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-24T18:05:30.000Z'));
+    var refreshThread = vi.fn(function () { return Promise.resolve(true); });
+    var refreshActiveThread = vi.fn(function () { return Promise.resolve(true); });
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshThread: refreshThread,
+      refreshActiveThread: refreshActiveThread,
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            id: 'thread-standalone',
+            activeTurn: {
+              turnId: 'turn-stale',
+              status: 'running',
+              lastPresenceAt: '2026-04-24T18:04:00.000Z',
+              userMessage: {
+                id: 'u-stale',
+                role: 'user',
+                content: 'Run the inbox review.',
+                createdAt: '2026-04-24T18:04:00.000Z',
+              },
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'stale',
+        };
+      }),
+    };
+
+    renderThread('thread-standalone');
+
+    document.querySelector('.ai-codex-recovery-actions button').click();
+    document.querySelector('.ai-codex-header-actions button').click();
+
+    expect(refreshThread).toHaveBeenCalledWith('thread-standalone', true);
+    expect(refreshThread).toHaveBeenCalledTimes(2);
+    expect(refreshActiveThread).not.toHaveBeenCalled();
   });
 });

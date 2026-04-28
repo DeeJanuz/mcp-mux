@@ -230,6 +230,50 @@
       });
     }
 
+    function isDelegatedPause(pause) {
+      if (!pause) return false;
+      var metadata = pause.metadata && typeof pause.metadata === 'object' ? pause.metadata : {};
+      var values = [
+        pause.reasonKind,
+        pause.reason_kind,
+        pause.kind,
+        pause.type,
+        pause.category,
+        metadata.reasonKind,
+        metadata.reason_kind,
+        metadata.pauseKind,
+        metadata.pause_kind,
+        metadata.pauseType,
+        metadata.pause_type,
+        metadata.mode,
+        metadata.waitingOn,
+        metadata.waiting_on,
+        metadata.source,
+      ];
+      return values.some(function (value) {
+        var normalized = String(value || '').toLowerCase().replace(/[\s_]+/g, '-');
+        return (
+          normalized === 'delegated-work' ||
+          normalized === 'delegated' ||
+          normalized === 'sub-agent' ||
+          normalized === 'subagent' ||
+          normalized === 'listen' ||
+          normalized === 'agent-listen' ||
+          normalized === 'sub-agent-listen' ||
+          normalized.indexOf('sub-agent') >= 0 ||
+          normalized.indexOf('subagent') >= 0
+        );
+      });
+    }
+
+    function isDelegatedResumingPause(pause) {
+      return !!(
+        pause &&
+        normalizePauseStatus(pause.status) === 'RESUMING' &&
+        isDelegatedPause(pause)
+      );
+    }
+
     function getPauseActivityTimestamp(pause) {
       if (!pause) return null;
       var latest = maxActivityTimestamp(
@@ -281,6 +325,7 @@
     function filterContinuedPause(threadId, pause, source) {
       if (!pause) return null;
       if (isContinuedPause(threadId, pause)) return null;
+      if (isDelegatedResumingPause(pause)) return null;
       return isResolvedHydratedAuthPause(threadId, pause, source) ? null : pause;
     }
 

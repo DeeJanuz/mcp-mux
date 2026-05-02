@@ -1,6 +1,6 @@
 [package]
 name = "mcpviews-shared"
-version = "0.2.5-rc.2"
+version = "0.2.5-rc.3"
 edition = "2021"
 
 [dependencies]

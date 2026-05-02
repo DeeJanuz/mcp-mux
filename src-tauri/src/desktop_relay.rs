@@ -364,19 +364,12 @@ fn mark_legacy_request_responded(
     state: &Arc<AppState>,
     relay_id: &str,
     request: &HostedToolRequest,
-    response_payload: Value,
 ) {
     let Some(key) = legacy_request_key(relay_id, request) else {
         return;
     };
     let mut requests = state.first_party_ai_legacy_relay_requests.lock().unwrap();
-    requests.insert(
-        key,
-        json!({
-            "status": RELAY_REQUEST_RESPONDED,
-            "response": response_payload,
-        }),
-    );
+    requests.insert(key, json!({ "status": RELAY_REQUEST_RESPONDED }));
 }
 
 fn mark_legacy_request_response_pending(
@@ -796,7 +789,7 @@ async fn respond_to_hosted_tool_request(
 
     match response_result {
         Ok(_) => {
-            mark_legacy_request_responded(&state, &relay_id, &request, response_payload);
+            mark_legacy_request_responded(&state, &relay_id, &request);
             emit_event(
                 &app_handle,
                 event_name,
@@ -946,7 +939,7 @@ async fn retry_legacy_pending_response(
 
     match response_result {
         Ok(_) => {
-            mark_legacy_request_responded(&state, &relay_id, &request, response_payload);
+            mark_legacy_request_responded(&state, &relay_id, &request);
             emit_event(
                 &app_handle,
                 event_name,
@@ -2442,7 +2435,7 @@ mod tests {
     }
 
     #[test]
-    fn deduplicates_legacy_relay_request_ids_and_replays_cached_response() {
+    fn deduplicates_legacy_relay_request_ids_without_retain_completed_response() {
         let (state, _dir) = test_app_state();
         let request = HostedToolRequest {
             method: HostedToolMethod::Call,
@@ -2468,12 +2461,17 @@ mod tests {
             RelayRequestClaim::Duplicate,
         );
 
-        let response = build_tool_response_payload(&request, json!({ "ok": true }));
-        mark_legacy_request_responded(&state, "thread-legacy", &request, response.clone());
+        mark_legacy_request_responded(&state, "thread-legacy", &request);
         assert_eq!(
             claim_legacy_request(&state, "thread-legacy", &request),
-            RelayRequestClaim::PendingResponse(response),
+            RelayRequestClaim::Duplicate,
         );
+
+        let key = legacy_request_key("thread-legacy", &request).unwrap();
+        let requests = state.first_party_ai_legacy_relay_requests.lock().unwrap();
+        assert_eq!(requests.get(&key).unwrap()["status"], RELAY_REQUEST_RESPONDED);
+        assert!(requests.get(&key).unwrap().get("response").is_none());
+        drop(requests);
 
         let mut next_session_request = request.clone();
         next_session_request.relay_session_id = Some("relay-session-next".to_string());

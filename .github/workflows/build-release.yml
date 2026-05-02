@@ -302,8 +302,44 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-targets
 
+      - name: Prepare Windows bundle config
+        shell: bash
+        run: |
+          VERSION="${{ needs.prepare-release.outputs.version }}"
+          if [ -z "$VERSION" ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          export RELEASE_VERSION="$VERSION"
+          node <<'NODE'
+          const fs = require('fs');
+
+          const packageVersion = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+          const version = process.env.RELEASE_VERSION || packageVersion;
+          const match = version.match(/^(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.]+))?$/);
+          if (!match) {
+            throw new Error(`Invalid release version for Windows bundling: ${version}`);
+          }
+
+          let bundleVersion = version;
+          const prerelease = match[2];
+          if (prerelease) {
+            const numeric = prerelease.match(/(?:^|\.)(\d+)$/)?.[1];
+            if (!numeric) {
+              throw new Error(`Windows MSI prerelease version must end with a numeric identifier: ${version}`);
+            }
+            const prereleaseNumber = Number(numeric);
+            if (!Number.isInteger(prereleaseNumber) || prereleaseNumber > 65535) {
+              throw new Error(`Windows MSI prerelease number must be 0-65535: ${version}`);
+            }
+            bundleVersion = `${match[1]}-${prereleaseNumber}`;
+          }
+
+          fs.writeFileSync('tauri.windows.release.conf.json', JSON.stringify({ version: bundleVersion }, null, 2));
+          console.log(`Windows bundle version: ${bundleVersion}`);
+          NODE
+
       - name: Build Tauri app
-        run: npm run build
+        run: npm run build -- --config tauri.windows.release.conf.json
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

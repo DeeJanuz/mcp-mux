@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.2] - 2026-05-02
+
 ### Changed
 - Release builds now install Node.js 24 on GitHub Actions to match current package engine requirements.
 

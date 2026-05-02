@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,9 +12,20 @@ use crate::state::AppState;
 
 const AUTH_NAMESPACE: &str = "first_party_ai";
 const RELAY_AUTH_NAMESPACE: &str = "first_party_ai_relay";
+const SHARED_FIRST_PARTY_AUTH_NAMESPACES: &[&str] = &[
+    AUTH_NAMESPACE,
+    RELAY_AUTH_NAMESPACE,
+    "tribex_ai",
+    "tribe-x-ai-plugin",
+];
 
 fn has_persisted_session(auth_dir: &std::path::Path) -> bool {
-    auth_dir.join("first_party_ai.cookies.json").exists()
+    File::open(auth_dir.join("first_party_ai.cookies.json"))
+        .map(BufReader::new)
+        .ok()
+        .and_then(|reader| cookie_store::serde::json::load(reader).ok())
+        .map(|store| store.iter_any().next().is_some())
+        .unwrap_or(false)
 }
 
 fn env_override(keys: &[&str]) -> Option<String> {
@@ -376,6 +389,12 @@ pub(crate) fn clear_relay_auth() -> Result<(), String> {
         settings.save()
     } else {
         Ok(())
+    }
+}
+
+fn clear_shared_first_party_auth_tokens(auth_dir: &std::path::Path) {
+    for namespace in SHARED_FIRST_PARTY_AUTH_NAMESPACES {
+        let _ = mcpviews_shared::token_store::remove_token(auth_dir, namespace);
     }
 }
 
@@ -755,16 +774,17 @@ pub async fn verify_magic_link(
 }
 
 pub async fn clear_auth(state: &Arc<AppState>) -> Result<(), String> {
-    let sign_out_url = build_request_url("/api/auth/sign-out")?;
-    let _ = state
-        .http_client
-        .post(&sign_out_url)
-        .header("Accept", "application/json")
-        .send()
-        .await;
+    if let Ok(sign_out_url) = build_request_url("/api/auth/sign-out") {
+        let _ = state
+            .http_client
+            .post(&sign_out_url)
+            .header("Accept", "application/json")
+            .send()
+            .await;
+    }
 
     let _ = state.clear_first_party_ai_cookies();
-    let _ = mcpviews_shared::token_store::remove_token(&state.auth_dir, AUTH_NAMESPACE);
+    clear_shared_first_party_auth_tokens(&state.auth_dir);
     let _ = clear_relay_auth();
     Ok(())
 }
@@ -1022,6 +1042,18 @@ mod tests {
     }
 
     #[test]
+    fn has_persisted_session_ignores_empty_cookie_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("first_party_ai.cookies.json");
+        let store = cookie_store::CookieStore::new();
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = std::io::BufWriter::new(file);
+        cookie_store::serde::json::save(&store, &mut writer).unwrap();
+
+        assert!(!has_persisted_session(dir.path()));
+    }
+
+    #[test]
     fn align_first_party_base_url_updates_matching_loopback_endpoints() {
         let dir = tempfile::tempdir().unwrap();
         let settings_path = dir.path().join("config.json");
@@ -1081,5 +1113,33 @@ mod tests {
         assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:3000"));
         assert_eq!(cfg.relay_base_url.as_deref(), Some("https://relay.example.com"));
         assert_eq!(cfg.device_base_url.as_deref(), Some("https://device.example.com"));
+    }
+
+    #[test]
+    fn clear_shared_first_party_auth_tokens_clears_ai_and_plugin_namespaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let auth_dir = dir.path();
+        let token = mcpviews_shared::token_store::StoredToken {
+            access_token: "secret-token".to_string(),
+            refresh_token: None,
+            expires_at: None,
+        };
+
+        for namespace in SHARED_FIRST_PARTY_AUTH_NAMESPACES {
+            mcpviews_shared::token_store::store_token(auth_dir, namespace, &token).unwrap();
+            assert!(mcpviews_shared::token_store::has_stored_token(
+                auth_dir, namespace
+            ));
+        }
+        mcpviews_shared::token_store::store_token(auth_dir, "other-plugin", &token).unwrap();
+
+        clear_shared_first_party_auth_tokens(auth_dir);
+
+        for namespace in SHARED_FIRST_PARTY_AUTH_NAMESPACES {
+            assert!(!mcpviews_shared::token_store::has_stored_token(
+                auth_dir, namespace
+            ));
+        }
+        assert!(mcpviews_shared::token_store::has_stored_token(auth_dir, "other-plugin"));
     }
 }

@@ -5696,6 +5696,21 @@ body.ai-mode-active .ai-nav-settings-button:hover {
   background: var(--ai-rail-hover);
 }
 
+body.ai-mode-active .ai-nav-signout-button {
+  background: var(--ai-rail-panel);
+  color: var(--ai-rail-muted);
+}
+
+body.ai-mode-active .ai-nav-signout-button:hover:not(:disabled) {
+  background: var(--ai-rail-hover);
+  color: var(--ai-rail-text);
+}
+
+body.ai-mode-active .ai-nav-signout-button:disabled {
+  opacity: 0.56;
+  cursor: default;
+}
+
 body.ai-mode-active .ai-nav-collapsed-stack {
   gap: 8px;
   padding-top: 4px;

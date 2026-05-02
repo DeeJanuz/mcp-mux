@@ -28,6 +28,7 @@
         magicLinkSentTo: null,
         sendingMagicLink: false,
         verifyingMagicLink: false,
+        clearingAuth: false,
       },
       packages: [],
       organizations: [],

@@ -18,9 +18,9 @@ enum EndpointScope {
 
 const RELAY_TOOL_SNAPSHOT_PATH: &str = "/api/desktop-relay/tools/list";
 const RELAY_TOOL_RESPONSE_PATH: &str = "/api/desktop-relay/tools/response";
-const REALTIME_REQUEST_RUNNING: &str = "running";
-const REALTIME_REQUEST_RESPONSE_PENDING: &str = "response_pending";
-const REALTIME_REQUEST_RESPONDED: &str = "responded";
+const RELAY_REQUEST_RUNNING: &str = "running";
+const RELAY_REQUEST_RESPONSE_PENDING: &str = "response_pending";
+const RELAY_REQUEST_RESPONDED: &str = "responded";
 const REALTIME_RECONNECT_BASE_MS: u64 = 500;
 const REALTIME_RECONNECT_MAX_MS: u64 = 30_000;
 
@@ -39,7 +39,7 @@ struct RealtimeToolRequest {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum RealtimeRequestClaim {
+enum RelayRequestClaim {
     Started,
     Duplicate,
     PendingResponse(Value),
@@ -295,6 +295,107 @@ fn request_id_to_string(value: Option<&Value>) -> Option<String> {
         }
         _ => None,
     })
+}
+
+fn request_id_to_stable_key(value: Option<&Value>) -> Option<String> {
+    value.and_then(|entry| match entry {
+        Value::String(inner) => {
+            let trimmed = inner.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        Value::Number(_) | Value::Bool(_) => Some(entry.to_string()),
+        _ => None,
+    })
+}
+
+fn legacy_request_key(relay_id: &str, request: &HostedToolRequest) -> Option<String> {
+    let request_id = request_id_to_stable_key(request.request_id.as_ref())?;
+    let scope = request
+        .relay_session_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            request
+                .thread_id
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or(relay_id)
+        .trim();
+    let scope = if scope.is_empty() {
+        "desktop-relay"
+    } else {
+        scope
+    };
+    let tool_name = request.tool_name.as_deref().unwrap_or("-");
+    Some(format!(
+        "{}::{}::{}::{}",
+        scope,
+        request.method.as_str(),
+        tool_name,
+        request_id
+    ))
+}
+
+fn claim_legacy_request(
+    state: &Arc<AppState>,
+    relay_id: &str,
+    request: &HostedToolRequest,
+) -> RelayRequestClaim {
+    let Some(key) = legacy_request_key(relay_id, request) else {
+        return RelayRequestClaim::Started;
+    };
+    let mut requests = state.first_party_ai_legacy_relay_requests.lock().unwrap();
+    if let Some(existing) = requests.get(&key) {
+        if let Some(response) = existing.get("response") {
+            return RelayRequestClaim::PendingResponse(response.clone());
+        }
+        return RelayRequestClaim::Duplicate;
+    }
+    requests.insert(key, json!({ "status": RELAY_REQUEST_RUNNING }));
+    RelayRequestClaim::Started
+}
+
+fn mark_legacy_request_responded(
+    state: &Arc<AppState>,
+    relay_id: &str,
+    request: &HostedToolRequest,
+    response_payload: Value,
+) {
+    let Some(key) = legacy_request_key(relay_id, request) else {
+        return;
+    };
+    let mut requests = state.first_party_ai_legacy_relay_requests.lock().unwrap();
+    requests.insert(
+        key,
+        json!({
+            "status": RELAY_REQUEST_RESPONDED,
+            "response": response_payload,
+        }),
+    );
+}
+
+fn mark_legacy_request_response_pending(
+    state: &Arc<AppState>,
+    relay_id: &str,
+    request: &HostedToolRequest,
+    response_payload: Value,
+) {
+    let Some(key) = legacy_request_key(relay_id, request) else {
+        return;
+    };
+    let mut requests = state.first_party_ai_legacy_relay_requests.lock().unwrap();
+    requests.insert(
+        key,
+        json!({
+            "status": RELAY_REQUEST_RESPONSE_PENDING,
+            "response": response_payload,
+        }),
+    );
 }
 
 fn result_is_error(result: &Value) -> bool {
@@ -654,52 +755,89 @@ async fn respond_to_hosted_tool_request(
     relay_id: String,
     request: HostedToolRequest,
 ) {
-    let result = execute_hosted_tool_request(Arc::clone(&state), app_handle.clone(), request.clone()).await;
+    match claim_legacy_request(&state, &relay_id, &request) {
+        RelayRequestClaim::Started => {}
+        RelayRequestClaim::PendingResponse(response_payload) => {
+            retry_legacy_pending_response(
+                state,
+                app_handle,
+                event_name,
+                relay_id,
+                request,
+                response_payload,
+            )
+            .await;
+            return;
+        }
+        RelayRequestClaim::Duplicate => {
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool.request.duplicate",
+                        "method": request.method.as_str(),
+                        "requestId": request.request_id,
+                        "toolName": request.tool_name,
+                        "relaySessionId": request.relay_session_id,
+                    },
+                }),
+            );
+            return;
+        }
+    }
+
+    let result =
+        execute_hosted_tool_request(Arc::clone(&state), app_handle.clone(), request.clone()).await;
     let response_payload = build_tool_response_payload(&request, result);
-    let response_result = scoped_request(
-        &state,
-        EndpointScope::Relay,
-        "POST",
-        RELAY_TOOL_RESPONSE_PATH,
-        Some(response_payload.clone()),
-        None,
-        None,
-    )
-    .await;
+    let response_result = send_legacy_tool_response(&state, response_payload.clone()).await;
 
     match response_result {
-        Ok(_) => emit_event(
-            &app_handle,
-            event_name,
-            json!({
-                "relayId": relay_id,
-                "type": "data",
-                "payload": {
-                    "type": "relay.tool_response.sent",
-                    "method": request.method.as_str(),
-                    "requestId": request.request_id,
-                    "toolName": request.tool_name,
-                    "relaySessionId": request.relay_session_id,
-                },
-            }),
-        ),
-        Err(err) => emit_event(
-            &app_handle,
-            event_name,
-            json!({
-                "relayId": relay_id,
-                "type": "data",
-                "payload": {
-                    "type": "relay.tool_response.error",
-                    "method": request.method.as_str(),
-                    "requestId": request.request_id,
-                    "toolName": request.tool_name,
-                    "message": err,
-                    "relaySessionId": request.relay_session_id,
-                    "response": response_payload,
-                },
-            }),
-        ),
+        Ok(_) => {
+            mark_legacy_request_responded(&state, &relay_id, &request, response_payload);
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool_response.sent",
+                        "method": request.method.as_str(),
+                        "requestId": request.request_id,
+                        "toolName": request.tool_name,
+                        "relaySessionId": request.relay_session_id,
+                    },
+                }),
+            );
+        }
+        Err(err) => {
+            mark_legacy_request_response_pending(
+                &state,
+                &relay_id,
+                &request,
+                response_payload.clone(),
+            );
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool_response.error",
+                        "method": request.method.as_str(),
+                        "requestId": request.request_id,
+                        "toolName": request.tool_name,
+                        "message": err,
+                        "relaySessionId": request.relay_session_id,
+                        "response": response_payload,
+                    },
+                }),
+            );
+        }
     }
 }
 
@@ -780,6 +918,79 @@ async fn scoped_request(
     })
 }
 
+async fn send_legacy_tool_response(
+    state: &Arc<AppState>,
+    response_payload: Value,
+) -> Result<Value, String> {
+    scoped_request(
+        state,
+        EndpointScope::Relay,
+        "POST",
+        RELAY_TOOL_RESPONSE_PATH,
+        Some(response_payload),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn retry_legacy_pending_response(
+    state: Arc<AppState>,
+    app_handle: AppHandle,
+    event_name: &'static str,
+    relay_id: String,
+    request: HostedToolRequest,
+    response_payload: Value,
+) {
+    let response_result = send_legacy_tool_response(&state, response_payload.clone()).await;
+
+    match response_result {
+        Ok(_) => {
+            mark_legacy_request_responded(&state, &relay_id, &request, response_payload);
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool_response.sent",
+                        "method": request.method.as_str(),
+                        "requestId": request.request_id,
+                        "toolName": request.tool_name,
+                        "relaySessionId": request.relay_session_id,
+                    },
+                }),
+            );
+        }
+        Err(err) => {
+            mark_legacy_request_response_pending(
+                &state,
+                &relay_id,
+                &request,
+                response_payload.clone(),
+            );
+            emit_event(
+                &app_handle,
+                event_name,
+                json!({
+                    "relayId": relay_id,
+                    "type": "data",
+                    "payload": {
+                        "type": "relay.tool_response.error",
+                        "method": request.method.as_str(),
+                        "requestId": request.request_id,
+                        "toolName": request.tool_name,
+                        "message": err,
+                        "relaySessionId": request.relay_session_id,
+                        "response": response_payload,
+                    },
+                }),
+            );
+        }
+    }
+}
+
 pub async fn relay_request(
     state: &Arc<AppState>,
     method: &str,
@@ -812,19 +1023,19 @@ fn claim_realtime_request(
     state: &Arc<AppState>,
     relay_session_id: &str,
     request_id: &str,
-) -> RealtimeRequestClaim {
+) -> RelayRequestClaim {
     let key = realtime_request_key(relay_session_id, request_id);
     let mut requests = state.first_party_ai_realtime_relay_requests.lock().unwrap();
     if let Some(existing) = requests.get(&key) {
-        if realtime_request_status(existing) == Some(REALTIME_REQUEST_RESPONSE_PENDING) {
+        if realtime_request_status(existing) == Some(RELAY_REQUEST_RESPONSE_PENDING) {
             if let Some(response) = existing.get("response") {
-                return RealtimeRequestClaim::PendingResponse(response.clone());
+                return RelayRequestClaim::PendingResponse(response.clone());
             }
         }
-        return RealtimeRequestClaim::Duplicate;
+        return RelayRequestClaim::Duplicate;
     }
-    requests.insert(key, json!({ "status": REALTIME_REQUEST_RUNNING }));
-    RealtimeRequestClaim::Started
+    requests.insert(key, json!({ "status": RELAY_REQUEST_RUNNING }));
+    RelayRequestClaim::Started
 }
 
 fn mark_realtime_request_responded(
@@ -834,7 +1045,7 @@ fn mark_realtime_request_responded(
 ) {
     let key = realtime_request_key(relay_session_id, request_id);
     let mut requests = state.first_party_ai_realtime_relay_requests.lock().unwrap();
-    requests.insert(key, json!({ "status": REALTIME_REQUEST_RESPONDED }));
+    requests.insert(key, json!({ "status": RELAY_REQUEST_RESPONDED }));
 }
 
 fn mark_realtime_request_response_pending(
@@ -848,7 +1059,7 @@ fn mark_realtime_request_response_pending(
     requests.insert(
         key,
         json!({
-            "status": REALTIME_REQUEST_RESPONSE_PENDING,
+            "status": RELAY_REQUEST_RESPONSE_PENDING,
             "response": response_payload,
         }),
     );
@@ -1018,8 +1229,8 @@ async fn respond_to_realtime_tool_request(
         &realtime_request.relay_session_id,
         &realtime_request.request_id,
     ) {
-        RealtimeRequestClaim::Started => {}
-        RealtimeRequestClaim::PendingResponse(response_payload) => {
+        RelayRequestClaim::Started => {}
+        RelayRequestClaim::PendingResponse(response_payload) => {
             retry_realtime_pending_response(
                 state,
                 app_handle,
@@ -1035,7 +1246,7 @@ async fn respond_to_realtime_tool_request(
             .await;
             return;
         }
-        RealtimeRequestClaim::Duplicate => {
+        RelayRequestClaim::Duplicate => {
             emit_event(
                 &app_handle,
                 event_name,
@@ -2231,6 +2442,104 @@ mod tests {
     }
 
     #[test]
+    fn deduplicates_legacy_relay_request_ids_and_replays_cached_response() {
+        let (state, _dir) = test_app_state();
+        let request = HostedToolRequest {
+            method: HostedToolMethod::Call,
+            request_id: Some(json!(9)),
+            tool_name: Some("push_review".to_string()),
+            arguments: json!({}),
+            relay_session_id: Some("relay-session-legacy".to_string()),
+            device_id: None,
+            workspace_id: None,
+            thread_id: Some("thread-legacy".to_string()),
+        };
+
+        assert_eq!(
+            legacy_request_key("thread-legacy", &request).as_deref(),
+            Some("relay-session-legacy::tools/call::push_review::9"),
+        );
+        assert_eq!(
+            claim_legacy_request(&state, "thread-legacy", &request),
+            RelayRequestClaim::Started,
+        );
+        assert_eq!(
+            claim_legacy_request(&state, "thread-legacy", &request),
+            RelayRequestClaim::Duplicate,
+        );
+
+        let response = build_tool_response_payload(&request, json!({ "ok": true }));
+        mark_legacy_request_responded(&state, "thread-legacy", &request, response.clone());
+        assert_eq!(
+            claim_legacy_request(&state, "thread-legacy", &request),
+            RelayRequestClaim::PendingResponse(response),
+        );
+
+        let mut next_session_request = request.clone();
+        next_session_request.relay_session_id = Some("relay-session-next".to_string());
+        assert_eq!(
+            claim_legacy_request(&state, "thread-legacy", &next_session_request),
+            RelayRequestClaim::Started,
+        );
+    }
+
+    #[test]
+    fn replays_pending_legacy_response_without_reclaiming_execution() {
+        let (state, _dir) = test_app_state();
+        let request = HostedToolRequest {
+            method: HostedToolMethod::Call,
+            request_id: Some(json!("req-legacy-2")),
+            tool_name: Some("push_review".to_string()),
+            arguments: json!({}),
+            relay_session_id: Some("relay-session-legacy".to_string()),
+            device_id: None,
+            workspace_id: None,
+            thread_id: Some("thread-legacy".to_string()),
+        };
+        let response = build_tool_response_payload(&request, json!({ "ok": true }));
+
+        assert_eq!(
+            claim_legacy_request(&state, "thread-legacy", &request),
+            RelayRequestClaim::Started,
+        );
+        mark_legacy_request_response_pending(
+            &state,
+            "thread-legacy",
+            &request,
+            response.clone(),
+        );
+
+        assert_eq!(
+            claim_legacy_request(&state, "thread-legacy", &request),
+            RelayRequestClaim::PendingResponse(response),
+        );
+    }
+
+    #[test]
+    fn allows_unidentified_legacy_relay_requests_to_run_each_time() {
+        let (state, _dir) = test_app_state();
+        let request = HostedToolRequest {
+            method: HostedToolMethod::Call,
+            request_id: None,
+            tool_name: Some("push_review".to_string()),
+            arguments: json!({}),
+            relay_session_id: Some("relay-session-legacy".to_string()),
+            device_id: None,
+            workspace_id: None,
+            thread_id: Some("thread-legacy".to_string()),
+        };
+
+        assert_eq!(
+            claim_legacy_request(&state, "thread-legacy", &request),
+            RelayRequestClaim::Started,
+        );
+        assert_eq!(
+            claim_legacy_request(&state, "thread-legacy", &request),
+            RelayRequestClaim::Started,
+        );
+    }
+
+    #[test]
     fn builds_realtime_success_and_failure_response_shapes() {
         let success = build_realtime_tool_response_payload(
             "req-rt-3",
@@ -2260,26 +2569,26 @@ mod tests {
         clear_realtime_requests_for_stream_session(&state, "thread-1", "relay-session-1");
         assert_eq!(
             claim_realtime_request(&state, "relay-session-1", "req-1"),
-            RealtimeRequestClaim::Started,
+            RelayRequestClaim::Started,
         );
         assert_eq!(
             claim_realtime_request(&state, "relay-session-1", "req-1"),
-            RealtimeRequestClaim::Duplicate,
+            RelayRequestClaim::Duplicate,
         );
         mark_realtime_request_responded(&state, "relay-session-1", "req-1");
         assert_eq!(
             claim_realtime_request(&state, "relay-session-1", "req-1"),
-            RealtimeRequestClaim::Duplicate,
+            RelayRequestClaim::Duplicate,
         );
 
         clear_realtime_requests_for_stream_session(&state, "thread-1", "relay-session-2");
         assert_eq!(
             claim_realtime_request(&state, "relay-session-1", "req-1"),
-            RealtimeRequestClaim::Started,
+            RelayRequestClaim::Started,
         );
         assert_eq!(
             claim_realtime_request(&state, "relay-session-2", "req-1"),
-            RealtimeRequestClaim::Started,
+            RelayRequestClaim::Started,
         );
     }
 
@@ -2295,7 +2604,7 @@ mod tests {
         clear_realtime_requests_for_stream_session(&state, "thread-1", "relay-session-1");
         assert_eq!(
             claim_realtime_request(&state, "relay-session-1", "req-2"),
-            RealtimeRequestClaim::Started,
+            RelayRequestClaim::Started,
         );
         mark_realtime_request_response_pending(
             &state,
@@ -2306,7 +2615,7 @@ mod tests {
 
         assert_eq!(
             claim_realtime_request(&state, "relay-session-1", "req-2"),
-            RealtimeRequestClaim::PendingResponse(response),
+            RelayRequestClaim::PendingResponse(response),
         );
     }
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.5] - 2026-05-02
+
 ### Fixed
 - Windows release-candidate MSI packaging now uses a numeric-only Tauri bundle prerelease version while preserving the SemVer release tag.
 

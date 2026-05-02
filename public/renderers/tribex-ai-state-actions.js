@@ -1567,6 +1567,10 @@
     }
 
     function clearConnection() {
+      state.integration.error = null;
+      state.integration.clearingAuth = true;
+      api.notify();
+
       return window.__tribexAiClient.clearAuth().then(function () {
         Object.keys(context.runtimeEventUnsubscribers).forEach(function (threadId) {
           api.unbindRuntimeBridge(threadId);
@@ -1574,6 +1578,7 @@
         state.integration.session = null;
         state.integration.status = 'unauthenticated';
         state.integration.error = null;
+        state.integration.clearingAuth = false;
         state.integration.authEmail = '';
         state.integration.verificationInput = '';
         state.integration.magicLinkSentTo = null;
@@ -1628,6 +1633,11 @@
         state.composer.creatingThread = false;
         state.composer.lastPersonaByProjectId = {};
         api.notify();
+      }).catch(function (error) {
+        state.integration.error = error && error.message ? error.message : String(error);
+        state.integration.clearingAuth = false;
+        api.notify();
+        throw error;
       });
     }
 

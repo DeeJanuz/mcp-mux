@@ -56,6 +56,10 @@
       '<path d="M6.8 1.85h2.4l.35 1.4c.29.1.57.21.83.35l1.28-.7 1.7 1.7-.7 1.28c.14.27.25.55.35.83l1.4.35v2.4l-1.4.35c-.1.29-.21.57-.35.83l.7 1.28-1.7 1.7-1.28-.7c-.26.14-.54.25-.83.35l-.35 1.4H6.8l-.35-1.4a5.2 5.2 0 0 1-.83-.35l-1.28.7-1.7-1.7.7-1.28a5.2 5.2 0 0 1-.35-.83l-1.4-.35v-2.4l1.4-.35c.1-.28.21-.56.35-.83l-.7-1.28 1.7-1.7 1.28.7c.26-.14.54-.25.83-.35l.35-1.4Z" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round"/>' +
       '<circle cx="8" cy="8" r="2.15" fill="none" stroke="currentColor" stroke-width="1.15"/>' +
       '</svg>',
+    signOut:
+      '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
+      '<path d="M6.25 2.75h-2.5a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1h2.5M9 4.65 12.35 8 9 11.35M5.85 8h6.25" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>',
     chevron:
       '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">' +
       '<path d="M6.25 3.75 10.25 8l-4 4.25" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
@@ -754,6 +758,26 @@
           aiState.runSmokeTest();
         },
       }));
+    }
+
+    if (
+      snapshot.integration.config &&
+      snapshot.integration.config.configured &&
+      (snapshot.integration.status === 'authenticated' || snapshot.integration.status === 'error')
+    ) {
+      var signOut = createButton(
+        'ai-nav-settings-button ai-nav-signout-button',
+        snapshot.integration.clearingAuth ? 'Signing out...' : 'Sign out',
+        {
+          title: 'Sign out of AI workspace',
+          disabled: !!snapshot.integration.clearingAuth || snapshot.loadingNavigator,
+          onClick: function () {
+            aiState.clearConnection().catch(function () {});
+          },
+        }
+      );
+      signOut.insertAdjacentHTML('afterbegin', ICONS.signOut);
+      footer.appendChild(signOut);
     }
 
     var settings = createButton('ai-nav-settings-button', 'Settings', {

@@ -30,6 +30,7 @@ pub struct AppState {
     pub first_party_ai_streams: Mutex<HashMap<String, JoinHandle<()>>>,
     pub first_party_ai_desktop_relay_streams: Mutex<HashMap<String, JoinHandle<()>>>,
     pub first_party_ai_desktop_presence_heartbeats: Mutex<HashMap<String, JoinHandle<()>>>,
+    pub first_party_ai_legacy_relay_requests: Mutex<HashMap<String, serde_json::Value>>,
     pub first_party_ai_realtime_relay_requests: Mutex<HashMap<String, serde_json::Value>>,
     pub first_party_ai_realtime_relay_stream_sessions: Mutex<HashMap<String, String>>,
     pub auth_dir: PathBuf,
@@ -64,6 +65,7 @@ impl AppState {
             first_party_ai_streams: Mutex::new(HashMap::new()),
             first_party_ai_desktop_relay_streams: Mutex::new(HashMap::new()),
             first_party_ai_desktop_presence_heartbeats: Mutex::new(HashMap::new()),
+            first_party_ai_legacy_relay_requests: Mutex::new(HashMap::new()),
             first_party_ai_realtime_relay_requests: Mutex::new(HashMap::new()),
             first_party_ai_realtime_relay_stream_sessions: Mutex::new(HashMap::new()),
             auth_dir,
@@ -91,7 +93,13 @@ impl AppState {
                 .map_err(|err| format!("Failed to lock first-party AI cookie store: {}", err))?;
             store.clear();
         }
-        self.persist_first_party_ai_cookies()
+
+        let path = self.first_party_ai_cookie_path();
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|err| format!("Failed to remove first-party AI cookie file: {}", err))?;
+        }
+        Ok(())
     }
 
     /// Broadcast a tools/list_changed notification to all connected MCP SSE sessions.
@@ -407,6 +415,39 @@ mod tests {
             .map(|(name, value)| format!("{}={}", name, value))
             .collect::<Vec<_>>();
         assert!(cookies.iter().any(|cookie| cookie == "tribex.session_token=test-session"));
+    }
+
+    #[test]
+    fn test_first_party_ai_cookie_store_clear_removes_persisted_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().join("plugins"));
+        let auth_dir = dir.path().join("auth");
+        let state = AppState::new_with_store_and_auth_dir(store.clone(), auth_dir.clone());
+        let request_url = url::Url::parse("https://ai.daenonjanis.com").unwrap();
+        let cookie = cookie_store::RawCookie::parse(
+            "tribex.session_token=test-session; Domain=ai.daenonjanis.com; Path=/; HttpOnly",
+        )
+        .unwrap()
+        .into_owned();
+
+        {
+            let mut jar = state.first_party_ai_cookie_store.lock().unwrap();
+            jar.insert_raw(&cookie, &request_url).unwrap();
+        }
+
+        state.persist_first_party_ai_cookies().unwrap();
+        assert!(state.first_party_ai_cookie_path().exists());
+
+        state.clear_first_party_ai_cookies().unwrap();
+        assert!(!state.first_party_ai_cookie_path().exists());
+
+        let reloaded = AppState::new_with_store_and_auth_dir(store, auth_dir);
+        let jar = reloaded.first_party_ai_cookie_store.lock().unwrap();
+        let cookies = jar
+            .get_request_values(&request_url)
+            .map(|(name, value)| format!("{}={}", name, value))
+            .collect::<Vec<_>>();
+        assert!(cookies.is_empty());
     }
 
     #[test]

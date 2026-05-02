@@ -88,6 +88,7 @@ function createState(snapshot) {
     toggleThreadExpanded: vi.fn(),
     verifyMagicLink: vi.fn(function () { return Promise.resolve(); }),
     sendMagicLink: vi.fn(function () { return Promise.resolve(); }),
+    clearConnection: vi.fn(function () { return Promise.resolve(); }),
     setActiveSession: vi.fn(),
   };
 }
@@ -169,6 +170,81 @@ describe('tribex-ai-shell', function () {
     expect(document.activeElement).toBe(rerendered);
     expect(rerendered.value).toBe('da');
     expect(document.body.classList.contains('ai-mode-active')).toBe(true);
+  });
+
+  it('renders a sign-out action for authenticated AI workspaces', async function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      searchTerm: '',
+      selectedWorkspace: { id: 'workspace-1', packageKey: 'general' },
+      selectedProject: null,
+      organizations: [{ id: 'org-1', name: 'TribeX' }],
+      selectedOrganization: { id: 'org-1', name: 'TribeX' },
+      projectGroups: [],
+      projectExpansion: {},
+      packages: [],
+      composer: {
+        creatingWorkspace: false,
+        projectName: '',
+        creatingProject: false,
+        threadProjectId: null,
+        threadTitle: '',
+        threadPersonasByProjectId: {},
+        loadingThreadPersonas: false,
+        threadPersonaError: null,
+        selectedPersonaKey: '',
+        creatingThread: false,
+      },
+      hasProjects: false,
+      activeProjectId: null,
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        session: { user: { email: 'user@example.com' } },
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        clearingAuth: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    var button = Array.from(document.querySelectorAll('button')).find(function (candidate) {
+      return candidate.textContent.trim() === 'Sign out';
+    });
+    expect(button).toBeTruthy();
+
+    button.click();
+    await Promise.resolve();
+
+    expect(state.clearConnection).toHaveBeenCalledTimes(1);
+
+    state.clearConnection.mockClear();
+    snapshot.integration.status = 'error';
+    snapshot.integration.error = 'Workspace load failed.';
+    state.updateSnapshot(snapshot);
+
+    button = Array.from(document.querySelectorAll('button')).find(function (candidate) {
+      return candidate.textContent.trim() === 'Sign out';
+    });
+    expect(button).toBeTruthy();
+
+    button.click();
+    await Promise.resolve();
+
+    expect(state.clearConnection).toHaveBeenCalledTimes(1);
   });
 
   it('renders a Codex-style left rail with toolbar actions and dense thread rows', function () {

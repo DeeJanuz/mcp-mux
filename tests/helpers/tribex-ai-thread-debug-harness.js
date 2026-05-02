@@ -41,7 +41,7 @@ export function createThreadDebugHarness(options) {
   var reviewDecisionPayloads = [];
 
   var threadContext = {
-    organization: { name: 'TribeX' },
+    organization: { name: 'Acme AI Harness' },
     workspace: { name: 'Debug Workspace' },
     project: { name: 'Debug Project' },
     thread: baseThread(options.thread || {}),

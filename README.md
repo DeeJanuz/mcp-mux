@@ -103,6 +103,10 @@ For the full manifest schema and auth reference, see [Plugin System Reference](d
 - **Node.js sidecar**: SSE bridge for remote server connections
 - **System tray**: Hide-to-tray, click to show, auto-start on login
 
+## Hosted AI Providers
+
+The bundled AI workspace can be pointed at a compatible hosted AI provider instead of a house service. Set `MCPVIEWS_AI_PROVIDER_BASE_URL` to your control-plane URL and implement the thread/runtime contract documented in [Hosted AI Thread Provider Contract](docs/hosted-ai-provider-contract.md). Existing `MCPVIEWS_FIRST_PARTY_AI_*` and `PROPAASAI_*` environment variables remain supported as legacy aliases.
+
 ## Building from Source
 
 Requires Rust, Node.js 20+, and platform-specific system libraries.
@@ -196,7 +200,7 @@ mcpviews/
 │   └── styles.css          # Shared app styles and workspace shell layout
 ├── public/                 # Static assets (copied to dist)
 │   ├── main.js             # App bootstrap (Tauri IPC)
-│   └── renderers/          # Built-in content renderers + hosted workspace surfaces
+│   └── renderers/          # Built-in content renderers + hosted AI provider surfaces
 ├── sidecar/                # Node.js SSE bridge
 │   ├── sse-bridge.ts
 │   └── build.sh
@@ -214,7 +218,7 @@ mcpviews/
 
 MCPViews supports plugins that extend the app with tools from third-party MCP servers. Each plugin is a JSON manifest that declares renderer mappings, MCP server configuration, and authentication. Plugins are stored as individual JSON files in `~/.mcpviews/plugins/`.
 
-For hosted AI workspace durable file storage, see [Workspace File Browser](./docs/workspace-file-browser.md). MCPViews uses ProPaasAI sandbox routes and short-lived signed worker URLs; Cloudflare R2 credentials stay in the hosted control plane and worker environment.
+For hosted AI workspace durable file storage, see [Workspace File Browser](./docs/workspace-file-browser.md). MCPViews uses provider-owned sandbox routes and short-lived signed worker URLs; storage credentials stay in the hosted control plane and worker environment.
 
 Bundled manifests can also ship with the app under `bundled-plugins/`; MCPViews seeds them into the local plugin store during startup so example or compatibility experiences are available immediately without changing the public plugin contract.
 

@@ -44,7 +44,9 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub registry_sources: Vec<RegistrySource>,
 
-    /// First-party ProPaasAI integration config
+    /// Hosted AI provider compatibility config.
+    ///
+    /// The field name remains `first_party_ai` for existing installations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_party_ai: Option<FirstPartyAiSettings>,
 }

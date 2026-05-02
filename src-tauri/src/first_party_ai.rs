@@ -28,11 +28,19 @@ fn has_persisted_session(auth_dir: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+fn first_non_empty_override<F>(keys: &[&str], mut lookup: F) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    keys.iter().find_map(|key| {
+        lookup(key)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
 fn env_override(keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| std::env::var(key).ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+    first_non_empty_override(keys, |key| std::env::var(key).ok())
 }
 
 fn env_override_i64(keys: &[&str]) -> Option<i64> {
@@ -170,22 +178,39 @@ pub(crate) fn load_settings() -> mcpviews_shared::settings::FirstPartyAiSettings
         .first_party_ai
         .unwrap_or_default();
 
-    if let Some(value) = env_override(&["MCPVIEWS_FIRST_PARTY_AI_BASE_URL", "PROPAASAI_BASE_URL"]) {
+    if let Some(value) = env_override(&[
+        "MCPVIEWS_AI_PROVIDER_BASE_URL",
+        "MCPVIEWS_FIRST_PARTY_AI_BASE_URL",
+        "PROPAASAI_BASE_URL",
+    ]) {
         cfg.base_url = Some(trim_trailing_slash(&value));
     } else if let Some(value) = cfg.base_url.clone() {
         cfg.base_url = Some(trim_trailing_slash(&value));
     }
 
-    if let Some(value) = env_override(&["MCPVIEWS_FIRST_PARTY_AI_AUTH_URL", "PROPAASAI_AUTH_URL"]) {
+    if let Some(value) = env_override(&[
+        "MCPVIEWS_AI_PROVIDER_AUTH_URL",
+        "MCPVIEWS_FIRST_PARTY_AI_AUTH_URL",
+        "PROPAASAI_AUTH_URL",
+    ]) {
         cfg.auth_url = Some(value);
     }
-    if let Some(value) = env_override(&["MCPVIEWS_FIRST_PARTY_AI_TOKEN_URL", "PROPAASAI_TOKEN_URL"]) {
+    if let Some(value) = env_override(&[
+        "MCPVIEWS_AI_PROVIDER_TOKEN_URL",
+        "MCPVIEWS_FIRST_PARTY_AI_TOKEN_URL",
+        "PROPAASAI_TOKEN_URL",
+    ]) {
         cfg.token_url = Some(value);
     }
-    if let Some(value) = env_override(&["MCPVIEWS_FIRST_PARTY_AI_CLIENT_ID", "PROPAASAI_CLIENT_ID"]) {
+    if let Some(value) = env_override(&[
+        "MCPVIEWS_AI_PROVIDER_CLIENT_ID",
+        "MCPVIEWS_FIRST_PARTY_AI_CLIENT_ID",
+        "PROPAASAI_CLIENT_ID",
+    ]) {
         cfg.client_id = Some(value);
     }
     if let Some(value) = env_override(&[
+        "MCPVIEWS_AI_PROVIDER_RELAY_BASE_URL",
         "MCPVIEWS_FIRST_PARTY_AI_RELAY_BASE_URL",
         "PROPAASAI_RELAY_BASE_URL",
     ]) {
@@ -194,6 +219,7 @@ pub(crate) fn load_settings() -> mcpviews_shared::settings::FirstPartyAiSettings
         cfg.relay_base_url = Some(trim_trailing_slash(&value));
     }
     if let Some(value) = env_override(&[
+        "MCPVIEWS_AI_PROVIDER_DEVICE_BASE_URL",
         "MCPVIEWS_FIRST_PARTY_AI_DEVICE_BASE_URL",
         "PROPAASAI_DEVICE_BASE_URL",
     ]) {
@@ -202,18 +228,21 @@ pub(crate) fn load_settings() -> mcpviews_shared::settings::FirstPartyAiSettings
         cfg.device_base_url = Some(trim_trailing_slash(&value));
     }
     if let Some(value) = env_override(&[
+        "MCPVIEWS_AI_PROVIDER_RELAY_TOKEN",
         "MCPVIEWS_FIRST_PARTY_AI_RELAY_TOKEN",
         "PROPAASAI_RELAY_TOKEN",
     ]) {
         cfg.relay_token = Some(value);
     }
     if let Some(value) = env_override_i64(&[
+        "MCPVIEWS_AI_PROVIDER_RELAY_TOKEN_EXPIRES_AT",
         "MCPVIEWS_FIRST_PARTY_AI_RELAY_TOKEN_EXPIRES_AT",
         "PROPAASAI_RELAY_TOKEN_EXPIRES_AT",
     ]) {
         cfg.relay_token_expires_at = Some(value);
     }
     if let Some(value) = env_override(&[
+        "MCPVIEWS_AI_PROVIDER_RELAY_DEVICE_ID",
         "MCPVIEWS_FIRST_PARTY_AI_RELAY_DEVICE_ID",
         "PROPAASAI_RELAY_DEVICE_ID",
     ]) {
@@ -251,7 +280,7 @@ pub(crate) fn build_request_url(path: &str) -> Result<String, String> {
     let cfg = load_settings();
     let base_url = cfg
         .base_url
-        .ok_or_else(|| "First-party AI base URL is not configured".to_string())?;
+        .ok_or_else(|| "Hosted AI provider base URL is not configured".to_string())?;
     Ok(join_url(&base_url, path))
 }
 
@@ -260,7 +289,7 @@ pub(crate) fn build_relay_request_url(path: &str) -> Result<String, String> {
     let base_url = cfg
         .relay_base_url
         .or(cfg.base_url)
-        .ok_or_else(|| "First-party AI relay base URL is not configured".to_string())?;
+        .ok_or_else(|| "Hosted AI provider relay base URL is not configured".to_string())?;
     Ok(join_url(&base_url, path))
 }
 
@@ -270,7 +299,7 @@ pub(crate) fn build_device_request_url(path: &str) -> Result<String, String> {
         .device_base_url
         .or(cfg.relay_base_url)
         .or(cfg.base_url)
-        .ok_or_else(|| "First-party AI device base URL is not configured".to_string())?;
+        .ok_or_else(|| "Hosted AI provider device base URL is not configured".to_string())?;
     Ok(join_url(&base_url, path))
 }
 
@@ -281,7 +310,7 @@ pub async fn get_auth_header(state: &Arc<AppState>) -> Result<String, String> {
         return Ok(format!("Bearer {}", stored.access_token));
     }
 
-    Err("First-party AI uses the session cookie established by magic-link sign-in.".to_string())
+    Err("Hosted AI provider auth uses the session cookie established by magic-link sign-in.".to_string())
 }
 
 pub(crate) async fn get_relay_auth_header(state: &Arc<AppState>) -> Result<String, String> {
@@ -295,7 +324,7 @@ pub(crate) async fn get_relay_auth_header(state: &Arc<AppState>) -> Result<Strin
     if let Some(token) = cfg.relay_token {
         if let Some(expires_at) = cfg.relay_token_expires_at {
             if current_unix_timestamp() >= expires_at {
-                return Err("First-party AI relay token has expired. Refresh the desktop relay session.".to_string());
+                return Err("Hosted AI provider relay token has expired. Refresh the desktop relay session.".to_string());
             }
         }
         return Ok(format!("Bearer {}", token));
@@ -305,7 +334,7 @@ pub(crate) async fn get_relay_auth_header(state: &Arc<AppState>) -> Result<Strin
         return Ok(header);
     }
 
-    Err("First-party AI relay token is not configured.".to_string())
+    Err("Hosted AI provider relay token is not configured.".to_string())
 }
 
 pub(crate) fn persist_relay_auth_with_paths(
@@ -655,7 +684,7 @@ pub async fn probe_local_runtime_host(
 
 pub async fn start_auth(state: &Arc<AppState>) -> Result<String, String> {
     let _ = state;
-    Err("First-party AI now uses magic-link sign-in. Send a magic link, then verify it, instead of starting an OAuth flow.".to_string())
+    Err("Hosted AI provider auth uses magic-link sign-in. Send a magic link, then verify it, instead of starting an OAuth flow.".to_string())
 }
 
 pub async fn get_session(state: &Arc<AppState>) -> Result<Value, String> {
@@ -1039,6 +1068,69 @@ mod tests {
             url_origin("https://ai.example.com/sign-in").as_deref(),
             Some("https://ai.example.com")
         );
+    }
+
+    #[test]
+    fn provider_env_aliases_take_precedence_over_legacy_names() {
+        let values = [
+            ("MCPVIEWS_AI_PROVIDER_BASE_URL", "https://generic.example.com"),
+            ("MCPVIEWS_FIRST_PARTY_AI_BASE_URL", "https://first-party.example.com"),
+            ("PROPAASAI_BASE_URL", "https://propaas.example.com"),
+        ]
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+
+        let value = first_non_empty_override(
+            &[
+                "MCPVIEWS_AI_PROVIDER_BASE_URL",
+                "MCPVIEWS_FIRST_PARTY_AI_BASE_URL",
+                "PROPAASAI_BASE_URL",
+            ],
+            |key| values.get(key).map(|value| value.to_string()),
+        );
+
+        assert_eq!(value.as_deref(), Some("https://generic.example.com"));
+    }
+
+    #[test]
+    fn legacy_provider_env_names_remain_supported() {
+        let values = [
+            ("MCPVIEWS_FIRST_PARTY_AI_RELAY_TOKEN", "legacy-relay-token"),
+            ("PROPAASAI_RELAY_TOKEN", "propaas-relay-token"),
+        ]
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+
+        let value = first_non_empty_override(
+            &[
+                "MCPVIEWS_AI_PROVIDER_RELAY_TOKEN",
+                "MCPVIEWS_FIRST_PARTY_AI_RELAY_TOKEN",
+                "PROPAASAI_RELAY_TOKEN",
+            ],
+            |key| values.get(key).map(|value| value.to_string()),
+        );
+
+        assert_eq!(value.as_deref(), Some("legacy-relay-token"));
+    }
+
+    #[test]
+    fn empty_provider_env_aliases_fall_back_to_legacy_names() {
+        let values = [
+            ("MCPVIEWS_AI_PROVIDER_BASE_URL", " "),
+            ("MCPVIEWS_FIRST_PARTY_AI_BASE_URL", "https://legacy.example.com"),
+        ]
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+
+        let value = first_non_empty_override(
+            &[
+                "MCPVIEWS_AI_PROVIDER_BASE_URL",
+                "MCPVIEWS_FIRST_PARTY_AI_BASE_URL",
+            ],
+            |key| values.get(key).map(|value| value.to_string()),
+        );
+
+        assert_eq!(value.as_deref(), Some("https://legacy.example.com"));
     }
 
     #[test]

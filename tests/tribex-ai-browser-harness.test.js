@@ -26,7 +26,7 @@ afterEach(function () {
   vi.useRealTimers();
 });
 
-describe('tribex ai browser harness loader', function () {
+describe('hosted ai browser harness loader', function () {
   it('does not install browser shims without the explicit harness flag', function () {
     loadHarnessAt('/');
 
@@ -34,7 +34,7 @@ describe('tribex ai browser harness loader', function () {
     expect(window.__MCPVIEWS_AI_BROWSER_HARNESS__).toBeUndefined();
   });
 
-  it('installs a deterministic first-party AI Tauri shim when enabled', async function () {
+  it('installs a deterministic hosted AI provider Tauri shim when enabled', async function () {
     loadHarnessAt('/?mcpviews_harness=ai&auto_open=0');
 
     expect(window.__TAURI__).toBeTruthy();
@@ -52,7 +52,7 @@ describe('tribex ai browser harness loader', function () {
     })).resolves.toMatchObject({
       organizations: [
         expect.objectContaining({
-          name: 'Local Persona Lab',
+          name: 'Acme AI Harness',
         }),
       ],
     });
@@ -83,7 +83,7 @@ describe('tribex ai browser harness loader', function () {
     window.__tribexAiClient.listenToRuntimeEvents(threadId, function (event) {
       newThreadEvents.push(event);
     });
-    window.__tribexAiClient.listenToRuntimeEvents('thread-new-chat-3', function (event) {
+    window.__tribexAiClient.listenToRuntimeEvents('thread-provider-contract', function (event) {
       seedThreadEvents.push(event);
     });
 

@@ -21,7 +21,7 @@ The command:
 target/aarch64-apple-darwin/release/bundle/macos/MCPViews.app/Contents/MacOS/mcpviews
 ```
 
-5. Enables `MCPVIEWS_ENABLE_LOCAL_AI_DEBUG=1` for that launched process. This exposes the local-only `POST /api/debug/first-party-ai` proxy through the running app's own first-party AI session for debugging UI/runtime divergence.
+5. Enables `MCPVIEWS_ENABLE_LOCAL_AI_DEBUG=1` for that launched process. This exposes the local-only `POST /api/debug/first-party-ai` compatibility proxy through the running app's configured hosted AI provider session for debugging UI/runtime divergence.
 6. Prints the launched process id, the built app path, and the log file path.
 
 ## Inspection

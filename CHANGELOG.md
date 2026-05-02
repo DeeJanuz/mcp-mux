@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.1] - 2026-05-02
+
 ### Changed
 - `.github/workflows/build-release.yml`: versioned manual release runs now pass the created tag/version into downstream macOS, Windows, and release jobs so the same workflow run can build and publish the tagged release artifacts.
 - Release-candidate versions with prerelease semver suffixes are now marked as prereleases in GitHub Releases.

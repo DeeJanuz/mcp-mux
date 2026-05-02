@@ -10,7 +10,7 @@ Set the normal first-party AI control-plane URL and sign in through MCPViews:
 MCPVIEWS_FIRST_PARTY_AI_BASE_URL="https://your-propaasai.example.com"
 ```
 
-You can also set `first_party_ai.base_url` in `~/.mcpviews/config.json`. Do not put R2 access keys or Cloudflare API tokens in MCPViews.
+You can also set `first_party_ai.base_url` in `~/.mcpviews/config.json`. Use the AI workspace footer's sign-out action to clear the local session, relay token, and bundled TribeX AI plugin tokens before switching accounts. Do not put R2 access keys or Cloudflare API tokens in MCPViews.
 
 ## ProPaasAI / Worker Configuration
 

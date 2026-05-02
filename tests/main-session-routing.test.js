@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 var __dirnameResolved = dirname(fileURLToPath(import.meta.url));
-var mainCode = readFileSync(join(__dirnameResolved, '../public/main.js'), 'utf8');
+var mainCode = readFileSync(join(__dirnameResolved, '../public/main.js'), 'utf8').replace(/\r\n/g, '\n');
 
 function loadMain() {
   var instrumented = mainCode.replace(

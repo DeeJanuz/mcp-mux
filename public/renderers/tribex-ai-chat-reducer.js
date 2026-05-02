@@ -1,5 +1,5 @@
 // @ts-check
-/* Codex-like TribeX AI chat lifecycle reducer and selectors */
+/* Hosted AI workspace chat lifecycle reducer and selectors */
 
 (function () {
   'use strict';

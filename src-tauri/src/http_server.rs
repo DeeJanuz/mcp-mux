@@ -677,7 +677,7 @@ async fn first_party_ai_debug_handler(
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({
-                "error": "Local first-party AI debug proxy is disabled."
+                "error": "Local hosted AI provider debug proxy is disabled."
             })),
         );
     }

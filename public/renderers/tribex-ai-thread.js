@@ -1,5 +1,5 @@
 // @ts-check
-/* Codex-like hosted workspace thread renderer */
+/* Hosted AI workspace thread renderer */
 
 (function () {
   'use strict';

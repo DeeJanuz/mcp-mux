@@ -124,7 +124,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
       submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
       getThreadContext: vi.fn(function () {
         return {
-          organization: { name: 'TribeX' },
+          organization: { name: 'Acme AI Harness' },
           workspace: { name: 'Dev Deploy' },
           project: { name: 'AI UX Rewrite' },
           thread: baseThread({

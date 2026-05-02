@@ -5,7 +5,7 @@
  *   http://localhost:1420/?mcpviews_harness=ai
  *
  * The harness installs a Tauri-compatible browser shim and deterministic
- * first-party AI backend so the normal MCPViews shell can run inside the
+ * hosted AI provider backend so the normal MCPViews shell can run inside the
  * Codex in-app browser.
  */
 (function () {
@@ -92,24 +92,24 @@
     organization: 'org-browser-harness',
     workspace: 'workspace-browser-harness',
     project: 'project-browser-harness',
-    thread: 'thread-new-chat-3',
-    childA: 'thread-new-chat-3-child-a',
-    childB: 'thread-new-chat-3-child-b',
+    thread: 'thread-provider-contract',
+    childA: 'thread-provider-contract-child-a',
+    childB: 'thread-provider-contract-child-b',
   };
 
   var db = {
     organizations: [
       {
         id: ids.organization,
-        name: 'Local Persona Lab',
-        slug: 'local-persona-lab',
+        name: 'Acme AI Harness',
+        slug: 'acme-ai-harness',
         role: 'owner',
       },
     ],
     packages: [
       {
-        key: 'persona-lab',
-        name: 'Persona Lab',
+        key: 'general-ai',
+        name: 'General AI Workspace',
         version: 'browser-harness',
         lifecycle: 'development',
       },
@@ -119,9 +119,9 @@
         id: ids.workspace,
         organizationId: ids.organization,
         name: 'Persona Lab Workspace',
-        slug: 'persona-lab-workspace',
-        packageKey: 'persona-lab',
-        packageName: 'Persona Lab',
+        slug: 'provider-workspace',
+        packageKey: 'general-ai',
+        packageName: 'General AI Workspace',
         packageVersion: 'browser-harness',
         status: 'ready',
       },
@@ -131,8 +131,8 @@
         id: ids.project,
         workspaceId: ids.workspace,
         organizationId: ids.organization,
-        name: 'Persona Lab Project',
-        summary: 'Browser harness project for AI chat UX debugging.',
+        name: 'Provider Contract Project',
+        summary: 'Browser harness project for hosted AI provider compatibility debugging.',
         lastActivityAt: nowIso(0),
       },
     ],
@@ -144,7 +144,7 @@
     projectId: ids.project,
     workspaceId: ids.workspace,
     organizationId: ids.organization,
-    title: 'New Chat 3',
+    title: 'Provider Contract Thread',
     preview: 'Summarize inboxes from the past 24 hours.',
     messages: [],
     pendingHumanInputs: [],

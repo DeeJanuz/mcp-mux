@@ -5,7 +5,7 @@
   "renderer_definitions": [
     {
       "name": "tribex_ai_thread",
-      "description": "Chat-first hosted thread surface with transcript, composer, tool activity, and reconnect context.",
+      "description": "Hosted AI thread surface with transcript, composer, tool activity, and reconnect context.",
       "scope": "universal",
       "data_hint": "{ thread_id: string }",
       "display_mode": "replace",
@@ -13,12 +13,12 @@
     }
   ],
   "registry_index": {
-    "summary": "Bundled first-party AI thread surface for MCPViews.",
+    "summary": "Bundled hosted AI workspace compatibility surface for MCPViews.",
     "tags": [
       "ai",
       "workspace",
       "threads",
-      "first-party"
+      "provider-compatible"
     ],
     "tool_groups": [],
     "renderer_names": [
@@ -26,6 +26,6 @@
     ]
   },
   "plugin_rules": [
-    "The bundled TribeX AI surface is a first-party chat thread renderer that works with the built-in navigator shell."
+    "The bundled hosted AI workspace surface is a compatibility thread renderer that works with the built-in navigator shell."
   ]
 }

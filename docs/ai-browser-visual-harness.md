@@ -26,7 +26,7 @@ Latency profiles:
 ## What It Covers
 
 - Normal MCPViews shell, AI navigator, thread renderer, reducer, composer, and CSS.
-- Deterministic hosted workspace data for `New Chat 3`.
+- Deterministic hosted AI provider data for `Provider Contract Thread`.
 - Submit, running, delegated subagent projection, review preparation, waiting-on-review, background churn, review submission, and completion states.
 - Fast, realistic, stalled, and jittered latency profiles.
 - Screenshot polling from the Codex in-app browser.
@@ -45,7 +45,7 @@ Use the native build workflow for those checks. The browser harness is intention
 1. Use the native build workflow first when the issue may involve the real client.
 2. Start the dev app with `npm run dev` only for fast browser-harness regression checks.
 3. Open the harness URL in the Codex in-app browser.
-4. Capture an initial screenshot of the mounted `New Chat 3` thread.
+4. Capture an initial screenshot of the mounted `Provider Contract Thread`.
 5. Submit a prompt through the real composer.
 6. Poll screenshots as the harness advances through `sending`, `delegating`, `preparing-review`, `waiting-on-review`, and `review-churn-*`.
 7. Verify the review card remains stable while background refreshes happen.

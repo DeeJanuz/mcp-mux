@@ -1,20 +1,20 @@
 # Workspace File Browser
 
-MCPViews can browse the active ProPaasAI workspace sandbox from the AI workspace UI. The desktop app does not need direct Cloudflare R2 credentials; it only talks to the configured ProPaasAI control plane and uses short-lived signed worker URLs returned by the sandbox file routes.
+MCPViews can browse the active hosted AI provider workspace sandbox from the AI workspace UI. The desktop app does not need direct storage credentials; it only talks to the configured provider control plane and uses short-lived signed worker URLs returned by the sandbox file routes.
 
 ## MCPViews Configuration
 
-Set the normal first-party AI control-plane URL and sign in through MCPViews:
+Set the hosted AI provider control-plane URL and sign in through MCPViews:
 
 ```bash
-MCPVIEWS_FIRST_PARTY_AI_BASE_URL="https://your-propaasai.example.com"
+MCPVIEWS_AI_PROVIDER_BASE_URL="https://ai.example.com"
 ```
 
-You can also set `first_party_ai.base_url` in `~/.mcpviews/config.json`. Use the AI workspace footer's sign-out action to clear the local session, relay token, and bundled TribeX AI plugin tokens before switching accounts. Do not put R2 access keys or Cloudflare API tokens in MCPViews.
+You can also set `first_party_ai.base_url` in `~/.mcpviews/config.json`; the key name remains for compatibility with existing installs. Legacy `MCPVIEWS_FIRST_PARTY_AI_BASE_URL` and `PROPAASAI_BASE_URL` variables still work, but new providers should document the generic `MCPVIEWS_AI_PROVIDER_*` variables from [Hosted AI Thread Provider Contract](./hosted-ai-provider-contract.md). Use the AI workspace footer's sign-out action to clear the local session, relay token, and bundled hosted AI workspace plugin tokens before switching accounts. Do not put storage access keys, provider API tokens, or Cloudflare API tokens in MCPViews.
 
-## ProPaasAI / Worker Configuration
+## Provider / Worker Configuration
 
-The hosted ProPaasAI deployment owns the durable storage configuration. A bring-your-own Cloudflare setup needs these variables on the control plane:
+The hosted provider deployment owns the durable storage configuration. A bring-your-own Cloudflare setup can use variables like these on the control plane:
 
 ```bash
 CLOUDFLARE_AGENTS_WORKER_URL="https://your-agents-worker.example.workers.dev"
@@ -30,10 +30,10 @@ The Cloudflare Agents worker needs the matching runtime secret and control-plane
 
 ```bash
 RUNTIME_SESSION_SECRET="<same shared long secret>"
-TRIBEX_CONTROL_PLANE_URL="https://your-propaasai.example.com"
+AI_PROVIDER_CONTROL_PLANE_URL="https://ai.example.com"
 ```
 
-If the worker uses a local R2 binding for development, configure `USER_WORKSPACE_FILES_BUCKET_NAME` and `USER_WORKSPACE_FILES_LOCAL_BUCKET` in the worker environment. In hosted R2 mode, ProPaasAI mints temporary scoped credentials and the worker mounts the requested bucket/prefix for each signed operation.
+If the worker uses a local R2 binding for development, configure `USER_WORKSPACE_FILES_BUCKET_NAME` and `USER_WORKSPACE_FILES_LOCAL_BUCKET` in the worker environment. In hosted R2 mode, the provider mints temporary scoped credentials and the worker mounts the requested bucket/prefix for each signed operation.
 
 ## Supported Browser Actions
 

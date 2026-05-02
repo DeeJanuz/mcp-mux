@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.4] - 2026-05-02
+
 ### Changed
 - Manual macOS release builds can now disable notarization while keeping code signing enabled, allowing release-candidate artifacts when Apple notarization agreements need renewal.
 - Release builds now use the npm-pinned Tauri CLI instead of compiling `cargo-tauri` in CI.

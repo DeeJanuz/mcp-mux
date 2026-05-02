@@ -15,6 +15,11 @@ on:
           - all
           - macos
           - windows
+      notarize_macos:
+        description: 'Notarize macOS app when signing credentials are available'
+        required: false
+        default: true
+        type: boolean
   push:
     tags:
       - 'v*'
@@ -120,6 +125,7 @@ jobs:
     environment: production
     env:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      NOTARIZE_MACOS: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.notarize_macos == 'true' }}
     steps:
       - name: Validate signing secrets
         if: ${{ env.APPLE_CERTIFICATE != '' }}
@@ -133,9 +139,13 @@ jobs:
           missing=()
           [ -z "$APPLE_CERTIFICATE_PASSWORD" ] && missing+=("APPLE_CERTIFICATE_PASSWORD")
           [ -z "$APPLE_SIGNING_IDENTITY" ] && missing+=("APPLE_SIGNING_IDENTITY")
-          [ -z "$APPLE_ID" ] && missing+=("APPLE_ID")
-          [ -z "$APPLE_PASSWORD" ] && missing+=("APPLE_PASSWORD")
-          [ -z "$APPLE_TEAM_ID" ] && missing+=("APPLE_TEAM_ID")
+          if [ "$NOTARIZE_MACOS" = "true" ]; then
+            [ -z "$APPLE_ID" ] && missing+=("APPLE_ID")
+            [ -z "$APPLE_PASSWORD" ] && missing+=("APPLE_PASSWORD")
+            [ -z "$APPLE_TEAM_ID" ] && missing+=("APPLE_TEAM_ID")
+          else
+            echo "macOS notarization disabled for this run; validating signing-only secrets"
+          fi
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::Missing required signing secrets: ${missing[*]}"
             exit 1
@@ -157,7 +167,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin/cargo-tauri
           key: macos-cargo-registry-${{ hashFiles('Cargo.lock') }}
           restore-keys: macos-cargo-registry-
 
@@ -169,9 +178,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Install Tauri CLI
-        run: command -v cargo-tauri || cargo install tauri-cli
 
       - name: Import Apple signing certificate
         if: ${{ env.APPLE_CERTIFICATE != '' }}
@@ -212,7 +218,12 @@ jobs:
           APPLE_ID: ${{ vars.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-        run: cargo tauri build --target aarch64-apple-darwin
+        run: |
+          if [ "$NOTARIZE_MACOS" != "true" ]; then
+            echo "macOS notarization disabled; clearing notarization credentials for Tauri"
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
+          npm run build -- --target aarch64-apple-darwin
 
       - name: Verify code signature
         if: ${{ env.APPLE_CERTIFICATE != '' }}
@@ -220,8 +231,12 @@ jobs:
           APP_PATH="target/aarch64-apple-darwin/release/bundle/macos/MCPViews.app"
           echo "=== Verifying code signature ==="
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-          echo "=== Verifying Gatekeeper acceptance ==="
-          spctl --assess --type execute --verbose=2 "$APP_PATH"
+          if [ "$NOTARIZE_MACOS" = "true" ]; then
+            echo "=== Verifying Gatekeeper acceptance ==="
+            spctl --assess --type execute --verbose=2 "$APP_PATH"
+          else
+            echo "Skipping Gatekeeper assessment because notarization is disabled"
+          fi
 
       - name: Cleanup signing artifacts
         if: always()
@@ -266,7 +281,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin/cargo-tauri.exe
           key: windows-cargo-registry-${{ hashFiles('Cargo.lock') }}
           restore-keys: windows-cargo-registry-
 
@@ -288,15 +302,8 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-targets
 
-      - name: Install Tauri CLI
-        run: |
-          if (!(Get-Command cargo-tauri -ErrorAction SilentlyContinue)) {
-            cargo install tauri-cli
-          }
-        shell: pwsh
-
       - name: Build Tauri app
-        run: cargo tauri build
+        run: npm run build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

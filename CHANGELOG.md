@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Main session routing tests now normalize CRLF line endings before instrumenting `public/main.js`, so Windows release CI can run the same assertions as macOS/Linux.
+
 ## [0.2.5-rc.2] - 2026-05-02
 
 ### Changed

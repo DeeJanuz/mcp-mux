@@ -330,6 +330,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
+          prerelease: ${{ contains(needs.prepare-release.outputs.version || github.ref_name, '-') }}
           fail_on_unmatched_files: false
           files: |
             mcpviews-macos-arm64/**/*.dmg

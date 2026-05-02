@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `.github/workflows/build-release.yml`: versioned manual release runs now pass the created tag/version into downstream macOS, Windows, and release jobs so the same workflow run can build and publish the tagged release artifacts.
+- Release-candidate versions with prerelease semver suffixes are now marked as prereleases in GitHub Releases.
+- Windows release builds now run frontend tests, a frontend production build, and Rust workspace tests before packaging.
+
+### Fixed
+- Replaced deprecated `tempfile::TempDir::into_path()` usage in the MCP tools update-preference test and removed the committed `.DS_Store` file while ignoring future copies.
+
 ## [0.2.4] - 2026-04-07
 
 ### Fixed

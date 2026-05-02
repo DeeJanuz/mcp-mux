@@ -57,6 +57,7 @@ jobs:
         run: |
           # package.json
           jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
+          jq --arg v "$VERSION" '.version = $v | .packages[""].version = $v' package-lock.json > tmp.json && mv tmp.json package-lock.json
 
           # tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
@@ -65,6 +66,24 @@ jobs:
           for f in src-tauri/Cargo.toml shared/Cargo.toml cli/Cargo.toml; do
             sed -i "0,/^version = \".*\"/s//version = \"$VERSION\"/" "$f"
           done
+
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          path = Path("Cargo.lock")
+          text = path.read_text()
+
+          for name in ("mcpviews", "mcpviews-cli", "mcpviews-shared"):
+              pattern = rf'(\[\[package\]\]\nname = "{re.escape(name)}"\nversion = ")[^"]+(")'
+              text, count = re.subn(pattern, rf"\g<1>{version}\2", text)
+              if count != 1:
+                  raise SystemExit(f"Expected one Cargo.lock package entry for {name}, found {count}")
+
+          path.write_text(text)
+          PY
 
       - name: Update install page download links
         run: |
@@ -145,7 +164,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -254,7 +273,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies

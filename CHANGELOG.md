@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Release builds now install Node.js 24 on GitHub Actions to match current package engine requirements.
+
+### Fixed
+- `package-lock.json` is back in sync with `package.json`, and the release workflow now bumps package and Cargo lockfile versions during release preparation so `npm ci` can run in release builds and release tags stay consistent.
+
 ## [0.2.5-rc.1] - 2026-05-02
 
 ### Changed

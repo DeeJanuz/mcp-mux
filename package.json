@@ -1,6 +1,6 @@
 {
   "name": "mcpviews",
-  "version": "0.2.5-rc.4",
+  "version": "0.2.5-rc.5",
   "private": true,
   "scripts": {
     "dev": "tauri dev",

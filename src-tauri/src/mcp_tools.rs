@@ -3069,7 +3069,7 @@ mod tests {
     #[test]
     fn test_evaluate_update_preferences_no_updates() {
         let store = mcpviews_shared::plugin_store::PluginStore::with_dir(
-            tempfile::tempdir().unwrap().into_path(),
+            tempfile::tempdir().unwrap().keep(),
         );
         let result = evaluate_update_preferences(&[], &store);
         assert!(result["auto_update"].as_array().unwrap().is_empty());

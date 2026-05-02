@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Manual macOS release builds can now disable notarization while keeping code signing enabled, allowing release-candidate artifacts when Apple notarization agreements need renewal.
+- Release builds now use the npm-pinned Tauri CLI instead of compiling `cargo-tauri` in CI.
+
+### Fixed
+- macOS release verification now skips Gatekeeper assessment when notarization is intentionally disabled.
+
 ## [0.2.5-rc.3] - 2026-05-02
 
 ### Fixed

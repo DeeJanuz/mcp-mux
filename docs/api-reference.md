@@ -601,7 +601,7 @@ sequenceDiagram
 
 ### `await_review`
 
-Block until a user submits a decision for a pending review session. If the transport connection drops, the agent can call `await_review` again with the same `session_id` -- the review session persists on the server and the deadline resets on reconnect.
+Block until a user submits a decision for a pending review session. If the transport connection drops, the agent can call `await_review` again with the same `session_id` -- the review session persists on the server and the deadline resets on reconnect. If a previous `await_review` call received the decision internally but the response was lost to the caller, retrying `await_review` returns the stored decision payload from the preview session while that session remains in memory.
 
 **Parameters:**
 | Field | Type | Required | Description |
@@ -695,7 +695,7 @@ After calling `push_review` to display the structured data review and `await_rev
 
 ### `push_check`
 
-Non-blocking status check for a review session. Returns the current status without waiting. Use `await_review` to block until a decision is submitted.
+Non-blocking status check for a review session. Returns the current status without waiting. Use `await_review` to block until a decision is submitted. Once a review is decided, the response also includes the stored decision details (`operation_decisions`, `comments`, `modifications`, `additions`, `suggestion_decisions`, and `table_decisions`) when present.
 
 **Parameters:**
 | Field | Type | Required | Description |
@@ -1109,7 +1109,15 @@ listen('push_preview', (event) => {
   "meta": {},
   "reviewRequired": false,
   "timeoutSecs": null,
-  "createdAt": 1711388400000
+  "createdAt": 1711388400000,
+  "decidedAt": null,
+  "decision": null,
+  "operationDecisions": null,
+  "comments": null,
+  "modifications": null,
+  "additions": null,
+  "suggestionDecisions": null,
+  "tableDecisions": null
 }
 ```
 

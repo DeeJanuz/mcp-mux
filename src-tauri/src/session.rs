@@ -28,6 +28,16 @@ pub struct PreviewSession {
     pub decision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_decisions: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comments: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modifications: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additions: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion_decisions: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_decisions: Option<HashMap<String, serde_json::Value>>,
 }
 
 fn take_backend_callback(
@@ -164,6 +174,11 @@ mod tests {
             decided_at: None,
             decision: None,
             operation_decisions: None,
+            comments: None,
+            modifications: None,
+            additions: None,
+            suggestion_decisions: None,
+            table_decisions: None,
         };
 
         let snapshot = session.renderer_snapshot();

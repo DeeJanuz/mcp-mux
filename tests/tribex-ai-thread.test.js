@@ -1029,6 +1029,18 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(stylesCode).toContain('overflow: visible');
   });
 
+  it('keeps critical loading affordances animated when reduced motion is reported', function () {
+    expect(stylesCode).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(stylesCode).toContain('animation: ai-reduced-loading-line-pulse 1.8s ease-in-out infinite !important;');
+    expect(stylesCode).toContain('animation: ai-reduced-loading-pulse 1.8s ease-in-out infinite !important;');
+    expect(stylesCode).toContain('.ai-run-answer-streaming .ai-run-answer-body::after');
+    expect(stylesCode).toContain('.ai-codex-status-running .ai-codex-status-dot');
+    expect(stylesCode).toContain('.ai-codex-session-queued .ai-codex-session-dot');
+    expect(stylesCode).toContain('.ai-codex-pulse');
+    expect(stylesCode).toContain('@keyframes ai-reduced-loading-pulse');
+    expect(stylesCode).toContain('@keyframes ai-reduced-loading-line-pulse');
+  });
+
   it('maps structured-data row decisions to the control-plane review payload shape', async function () {
     var submitDecision = vi.fn(function () { return Promise.resolve({ ok: true }); });
     window.__tribexAiClient = {

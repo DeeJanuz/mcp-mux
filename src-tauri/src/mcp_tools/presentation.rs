@@ -184,7 +184,13 @@ pub(super) async fn call_push_check(
                 "status": if has_decision { "decided" } else { "pending" },
                 "review_required": session.review_required,
                 "has_decision": has_decision,
-                "decision": session.decision,
+                "decision": session.decision.clone(),
+                "operation_decisions": session.operation_decisions.clone(),
+                "comments": session.comments.clone(),
+                "modifications": session.modifications.clone(),
+                "additions": session.additions.clone(),
+                "suggestion_decisions": session.suggestion_decisions.clone(),
+                "table_decisions": session.table_decisions.clone(),
             })
         }
         None => {

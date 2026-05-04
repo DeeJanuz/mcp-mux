@@ -3767,10 +3767,41 @@ html[data-theme] .collapsible-body {
   #connection-status .dot.connected { animation: none; }
   .session-busy-indicator::before,
   .session-busy-indicator::after {
-    animation: none !important;
+    animation: ai-reduced-loading-line-pulse 1.8s ease-in-out infinite !important;
     opacity: 0.72;
     transform: scaleX(1);
   }
+  .session-busy-indicator::after {
+    animation-delay: 0.3s !important;
+  }
+  .ai-thread-hydration-pulse span,
+  .ai-run-answer-streaming .ai-run-answer-body::after,
+  .ai-codex-status-running .ai-codex-status-dot,
+  .ai-codex-status-sending .ai-codex-status-dot,
+  .ai-codex-status-queued .ai-codex-status-dot,
+  .ai-codex-session-running .ai-codex-session-dot,
+  .ai-codex-session-sending .ai-codex-session-dot,
+  .ai-codex-session-queued .ai-codex-session-dot,
+  .ai-codex-pulse {
+    animation: ai-reduced-loading-pulse 1.8s ease-in-out infinite !important;
+    transform: none !important;
+  }
+  .ai-thread-hydration-pulse span:nth-child(2) {
+    animation-delay: 0.12s !important;
+  }
+  .ai-thread-hydration-pulse span:nth-child(3) {
+    animation-delay: 0.24s !important;
+  }
+}
+
+@keyframes ai-reduced-loading-pulse {
+  0%, 100% { opacity: 0.48; }
+  50% { opacity: 1; }
+}
+
+@keyframes ai-reduced-loading-line-pulse {
+  0%, 100% { opacity: 0.42; }
+  50% { opacity: 0.86; }
 }
 
 /* Responsive: stack below 600px */

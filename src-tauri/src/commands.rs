@@ -80,8 +80,6 @@ fn build_review_decision(
 fn resolve_local_review_decision(
     state: &Arc<AppState>,
     session_id: &str,
-    decision: &str,
-    operation_decisions: Option<HashMap<String, String>>,
     review_decision: ReviewDecision,
 ) -> Option<serde_json::Value> {
     let backend_callback = {
@@ -98,8 +96,13 @@ fn resolve_local_review_decision(
                 .as_millis() as u64;
             session.meta = sanitize_renderer_meta(session.meta.clone());
             session.decided_at = Some(now);
-            session.decision = Some(decision.to_string());
-            session.operation_decisions = operation_decisions;
+            session.decision = review_decision.decision.clone();
+            session.operation_decisions = review_decision.operation_decisions.clone();
+            session.comments = review_decision.comments.clone();
+            session.modifications = review_decision.modifications.clone();
+            session.additions = review_decision.additions.clone();
+            session.suggestion_decisions = review_decision.suggestion_decisions.clone();
+            session.table_decisions = review_decision.table_decisions.clone();
             callback
         })
     }
@@ -136,8 +139,6 @@ pub async fn submit_decision(
     let backend_callback = resolve_local_review_decision(
         state.inner(),
         &session_id,
-        &decision,
-        operation_decisions,
         review_decision.clone(),
     );
 
@@ -996,6 +997,11 @@ mod tests {
                 decided_at: None,
                 decision: None,
                 operation_decisions: None,
+                comments: None,
+                modifications: None,
+                additions: None,
+                suggestion_decisions: None,
+                table_decisions: None,
             });
         }
         let receiver = {
@@ -1003,35 +1009,59 @@ mod tests {
             reviews.add_pending(session_id.to_string())
         };
 
-        let review_decision = build_review_decision(
-            session_id.to_string(),
-            "accept".to_string(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+        let mut operation_decisions = HashMap::new();
+        operation_decisions.insert("row-1".to_string(), "accept".to_string());
+        let mut comments = HashMap::new();
+        comments.insert("row-1".to_string(), "ship it".to_string());
+        let mut modifications = HashMap::new();
+        modifications.insert("row-1.details".to_string(), "updated".to_string());
+        let additions = serde_json::json!({ "user_edits": { "row-1.details": "updated" } });
+        let mut suggestion_decisions = HashMap::new();
+        suggestion_decisions.insert("s1".to_string(), serde_json::json!({ "status": "accept" }));
+        let mut table_decisions = HashMap::new();
+        table_decisions.insert(
+            "t1".to_string(),
+            serde_json::json!({ "decisions": { "row-1": "accept" } }),
         );
 
-        let extracted_callback = resolve_local_review_decision(
-            &state,
-            session_id,
-            "accept",
-            None,
-            review_decision,
+        let review_decision = build_review_decision(
+            session_id.to_string(),
+            "partial".to_string(),
+            Some(operation_decisions.clone()),
+            Some(comments.clone()),
+            Some(modifications.clone()),
+            Some(additions.clone()),
+            Some(suggestion_decisions.clone()),
+            Some(table_decisions.clone()),
         );
+
+        let extracted_callback = resolve_local_review_decision(&state, session_id, review_decision);
 
         assert_eq!(extracted_callback, Some(callback));
 
         let sessions = state.sessions.lock().unwrap();
         let session = sessions.get(session_id).unwrap();
-        assert_eq!(session.decision.as_deref(), Some("accept"));
+        assert_eq!(session.decision.as_deref(), Some("partial"));
+        assert_eq!(session.operation_decisions, Some(operation_decisions.clone()));
+        assert_eq!(session.comments, Some(comments.clone()));
+        assert_eq!(session.modifications, Some(modifications.clone()));
+        assert_eq!(session.additions, Some(additions.clone()));
+        assert_eq!(
+            session.suggestion_decisions,
+            Some(suggestion_decisions.clone())
+        );
+        assert_eq!(session.table_decisions, Some(table_decisions.clone()));
         assert!(session.decided_at.is_some());
         assert!(session.meta.get("backendCallback").is_none());
 
         let resolved = receiver.borrow().clone().unwrap();
-        assert_eq!(resolved.decision.as_deref(), Some("accept"));
+        assert_eq!(resolved.decision.as_deref(), Some("partial"));
+        assert_eq!(resolved.operation_decisions, Some(operation_decisions));
+        assert_eq!(resolved.comments, Some(comments));
+        assert_eq!(resolved.modifications, Some(modifications));
+        assert_eq!(resolved.additions, Some(additions));
+        assert_eq!(resolved.suggestion_decisions, Some(suggestion_decisions));
+        assert_eq!(resolved.table_decisions, Some(table_decisions));
     }
 
     #[test]

@@ -338,14 +338,17 @@ pub async fn store_push(
         decided_at: None,
         decision: None,
         operation_decisions: None,
+        comments: None,
+        modifications: None,
+        additions: None,
+        suggestion_decisions: None,
+        table_decisions: None,
     };
-
-    store_preview_session(state, session).await;
 
     if review_required {
         let state_guard = state.lock().await;
 
-        // Register pending review and set up deadline
+        // Register pending review before the WebView can submit a decision.
         {
             let mut reviews = state_guard.inner.reviews.lock().unwrap();
             reviews.add_pending(session_id.clone());
@@ -359,7 +362,11 @@ pub async fn store_push(
             deadlines.insert(session_id.clone(), (deadline.clone(), timeout_secs));
         }
         drop(state_guard);
+    }
 
+    store_preview_session(state, session).await;
+
+    if review_required {
         ExecutePushResult::Pending { session_id }
     } else {
         ExecutePushResult::Stored { session_id }
@@ -453,12 +460,32 @@ async fn append_streaming_push(
                 decided_at: None,
                 decision: None,
                 operation_decisions: None,
+                comments: None,
+                modifications: None,
+                additions: None,
+                suggestion_decisions: None,
+                table_decisions: None,
             }
         }
     };
 
     store_preview_session(state, session).await;
     ExecutePushResult::Stored { session_id }
+}
+
+fn decision_from_session(session: &PreviewSession) -> Option<ReviewDecision> {
+    session.decided_at?;
+    Some(ReviewDecision {
+        session_id: session.session_id.clone(),
+        status: "decision_received".to_string(),
+        decision: session.decision.clone(),
+        operation_decisions: session.operation_decisions.clone(),
+        comments: session.comments.clone(),
+        modifications: session.modifications.clone(),
+        additions: session.additions.clone(),
+        suggestion_decisions: session.suggestion_decisions.clone(),
+        table_decisions: session.table_decisions.clone(),
+    })
 }
 
 /// Subscribe to a watch channel and block until the user submits a decision or the deadline expires.
@@ -472,21 +499,62 @@ pub async fn await_decision(
     // Subscribe to the watch channel
     let mut rx = {
         let state_guard = state.lock().await;
-        let reviews = state_guard.inner.reviews.lock().unwrap();
-        match reviews.subscribe(session_id) {
-            Some(rx) => rx,
-            None => {
-                return ExecutePushResult::Decision(ReviewDecision {
-                    session_id: session_id.to_string(),
-                    status: "error".to_string(),
-                    decision: Some("not_found".to_string()),
-                    operation_decisions: None,
-                    comments: None,
-                    modifications: None,
-                    additions: None,
-                    suggestion_decisions: None,
-                    table_decisions: None,
-                }.into());
+        if let Some(rx) = {
+            let reviews = state_guard.inner.reviews.lock().unwrap();
+            reviews.subscribe(session_id)
+        } {
+            rx
+        } else {
+            let session = {
+                let sessions = state_guard.inner.sessions.lock().unwrap();
+                sessions.get(session_id).cloned()
+            };
+            match session {
+                Some(session) => {
+                    if let Some(decision) = decision_from_session(&session) {
+                        return ExecutePushResult::Decision(decision.into());
+                    }
+                    if !session.review_required {
+                        return ExecutePushResult::Decision(ReviewDecision {
+                            session_id: session_id.to_string(),
+                            status: "error".to_string(),
+                            decision: Some("not_found".to_string()),
+                            operation_decisions: None,
+                            comments: None,
+                            modifications: None,
+                            additions: None,
+                            suggestion_decisions: None,
+                            table_decisions: None,
+                        }.into());
+                    }
+
+                    let timeout_secs = session.timeout_secs.unwrap_or(120);
+                    let rx = {
+                        let mut reviews = state_guard.inner.reviews.lock().unwrap();
+                        reviews.add_pending(session_id.to_string())
+                    };
+                    let deadline = Arc::new(TokioMutex::new(
+                        tokio::time::Instant::now() + Duration::from_secs(timeout_secs),
+                    ));
+                    {
+                        let mut deadlines = state_guard.inner.review_deadlines.lock().unwrap();
+                        deadlines.insert(session_id.to_string(), (deadline, timeout_secs));
+                    }
+                    rx
+                }
+                None => {
+                    return ExecutePushResult::Decision(ReviewDecision {
+                        session_id: session_id.to_string(),
+                        status: "error".to_string(),
+                        decision: Some("not_found".to_string()),
+                        operation_decisions: None,
+                        comments: None,
+                        modifications: None,
+                        additions: None,
+                        suggestion_decisions: None,
+                        table_decisions: None,
+                    }.into());
+                }
             }
         }
     };
@@ -1452,6 +1520,11 @@ mod tests {
             decided_at: None,
             decision: None,
             operation_decisions: None,
+            comments: None,
+            modifications: None,
+            additions: None,
+            suggestion_decisions: None,
+            table_decisions: None,
         };
 
         append_streaming_session_data(

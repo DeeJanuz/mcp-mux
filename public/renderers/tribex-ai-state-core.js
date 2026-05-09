@@ -938,6 +938,8 @@
         threadComposerOpen: state.ui.threadComposerOpen,
         threadRenameOpen: state.ui.threadRenameOpen,
         fileBrowserOpen: state.ui.fileBrowserOpen,
+        workspaceFolderComposerOpen: state.ui.workspaceFolderComposerOpen,
+        workspaceFileMoveOpen: state.ui.workspaceFileMoveOpen,
         searchTerm: state.ui.searchTerm,
         packages: clone(state.packages),
         composer: clone(state.composer),

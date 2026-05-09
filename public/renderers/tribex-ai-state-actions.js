@@ -1586,6 +1586,8 @@
         state.organizations = [];
         state.ui.projectComposerOpen = false;
         state.ui.threadComposerOpen = false;
+        state.ui.workspaceFolderComposerOpen = false;
+        state.ui.workspaceFileMoveOpen = false;
         state.workspacesById = {};
         state.workspaceFilesByWorkspaceId = {};
         state.workspaceFileBrowser = {
@@ -1607,6 +1609,10 @@
           uploadProgress: null,
           downloading: false,
           downloadProgress: null,
+          folderDraftName: '',
+          creatingFolder: false,
+          moveDraftPath: '',
+          movingFile: false,
         };
         state.organizationUiById = {};
         state.selectedWorkspaceId = null;
@@ -1754,14 +1760,43 @@
       return type.indexOf('image/') === 0 || /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
     }
 
+    function normalizeWorkspaceBrowserPath(path) {
+      return String(path || '')
+        .replace(/\\/g, '/')
+        .split('/')
+        .map(function (segment) { return segment.trim(); })
+        .filter(Boolean)
+        .join('/');
+    }
+
+    function joinWorkspaceBrowserPath(folderPath, entryPath) {
+      var folder = normalizeWorkspaceBrowserPath(folderPath);
+      var entry = normalizeWorkspaceBrowserPath(entryPath);
+      return folder && entry ? folder + '/' + entry : (folder || entry);
+    }
+
+    function workspaceBasename(path) {
+      var parts = normalizeWorkspaceBrowserPath(path).split('/').filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : '';
+    }
+
+    function isWorkspaceFolderMarker(file) {
+      return !!(
+        file &&
+        file.metadata &&
+        typeof file.metadata === 'object' &&
+        file.metadata.isFolderMarker === true
+      );
+    }
+
     function selectWorkspaceFolder(folderPath) {
       resetWorkspaceFilePreview();
       state.workspaceFileBrowser.selectedType = 'folder';
       state.workspaceFileBrowser.selectedFileId = null;
-      state.workspaceFileBrowser.selectedFolderPath = folderPath || '';
+      state.workspaceFileBrowser.selectedFolderPath = normalizeWorkspaceBrowserPath(folderPath);
       state.workspaceFileBrowser.error = null;
       api.notify();
-      return Promise.resolve(folderPath || '');
+      return Promise.resolve(state.workspaceFileBrowser.selectedFolderPath);
     }
 
     function selectWorkspaceFile(fileId) {
@@ -1838,8 +1873,11 @@
         });
     }
 
-    function fileRelativePath(file) {
-      return String((file && file.webkitRelativePath) || (file && file.name) || '').replace(/^\/+/, '');
+    function fileRelativePath(file, folderPath) {
+      return joinWorkspaceBrowserPath(
+        folderPath,
+        String((file && file.webkitRelativePath) || (file && file.name) || '').replace(/^\/+/, '')
+      );
     }
 
     function uploadWorkspaceFiles(fileList) {
@@ -1859,7 +1897,10 @@
       state.workspaceFileBrowser.error = null;
       api.notify();
 
-      var uploadPromise = folderMode ? uploadWorkspaceFolderBatch(workspace.id, files) : uploadWorkspaceFileSet(workspace.id, files);
+      var targetFolder = state.workspaceFileBrowser.selectedFolderPath || '';
+      var uploadPromise = folderMode
+        ? uploadWorkspaceFolderBatch(workspace.id, files, targetFolder)
+        : uploadWorkspaceFileSet(workspace.id, files, targetFolder);
       return uploadPromise
         .then(function () {
           return refreshWorkspaceFiles(true);
@@ -1870,16 +1911,17 @@
         })
         .finally(function () {
           state.workspaceFileBrowser.uploading = false;
+          state.workspaceFileBrowser.uploadProgress = null;
           api.notify();
         });
     }
 
-    function uploadWorkspaceFileSet(workspaceId, files) {
+    function uploadWorkspaceFileSet(workspaceId, files, folderPath) {
       var sequence = Promise.resolve();
       files.forEach(function (file) {
         sequence = sequence.then(function () {
           return window.__tribexAiClient.initWorkspaceFileUpload(workspaceId, {
-            relativePath: fileRelativePath(file),
+            relativePath: fileRelativePath(file, folderPath),
             contentType: file.type || null,
             sizeBytes: file.size || 0,
           }).then(function (init) {
@@ -1893,21 +1935,21 @@
       return sequence;
     }
 
-    function uploadWorkspaceFolderBatch(workspaceId, files) {
+    function uploadWorkspaceFolderBatch(workspaceId, files, folderPath) {
       var metadata = {
         uploadedFrom: 'mcpviews-file-browser',
         fileCount: files.length,
       };
       return window.__tribexAiClient.createWorkspaceFileBatch(workspaceId, files.map(function (file) {
         return {
-          relativePath: fileRelativePath(file),
+          relativePath: fileRelativePath(file, folderPath),
           contentType: file.type || null,
           sizeBytes: file.size || 0,
         };
       }), metadata).then(function (batch) {
         var byPath = {};
         files.forEach(function (file) {
-          byPath[fileRelativePath(file)] = file;
+          byPath[fileRelativePath(file, folderPath)] = file;
         });
         var items = batch && batch.items ? batch.items : [];
         var index = 0;
@@ -1932,17 +1974,209 @@
       });
     }
 
+    function openWorkspaceFolderComposer() {
+      state.ui.workspaceFolderComposerOpen = true;
+      state.workspaceFileBrowser.folderDraftName = '';
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+    }
+
+    function closeWorkspaceFolderComposer() {
+      state.ui.workspaceFolderComposerOpen = false;
+      state.workspaceFileBrowser.folderDraftName = '';
+      state.workspaceFileBrowser.creatingFolder = false;
+      api.notify();
+    }
+
+    function setWorkspaceFolderDraftName(value) {
+      state.workspaceFileBrowser.folderDraftName = value || '';
+      api.notify();
+    }
+
+    function createWorkspaceFolder() {
+      var workspace = getActiveWorkspaceForFiles();
+      if (!workspace) return Promise.resolve(null);
+      var folderName = normalizeWorkspaceBrowserPath(state.workspaceFileBrowser.folderDraftName);
+      if (!folderName) {
+        state.workspaceFileBrowser.error = 'Enter a folder name.';
+        api.notify();
+        return Promise.resolve(null);
+      }
+      if (folderName.split('/').indexOf('..') >= 0 || folderName.split('/').indexOf('.') >= 0) {
+        state.workspaceFileBrowser.error = 'Folder names cannot contain traversal segments.';
+        api.notify();
+        return Promise.resolve(null);
+      }
+
+      var parentFolder = state.workspaceFileBrowser.selectedType === 'folder'
+        ? state.workspaceFileBrowser.selectedFolderPath
+        : '';
+      var folderPath = joinWorkspaceBrowserPath(parentFolder, folderName);
+      state.workspaceFileBrowser.creatingFolder = true;
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+
+      return window.__tribexAiClient.createWorkspaceFolder(workspace.id, folderPath)
+        .then(function () {
+          return refreshWorkspaceFiles(true);
+        })
+        .then(function () {
+          state.workspaceFileBrowser.selectedType = 'folder';
+          state.workspaceFileBrowser.selectedFileId = null;
+          state.workspaceFileBrowser.selectedFolderPath = folderPath;
+          state.ui.workspaceFolderComposerOpen = false;
+          state.workspaceFileBrowser.folderDraftName = '';
+          resetWorkspaceFilePreview();
+        })
+        .catch(function (error) {
+          state.workspaceFileBrowser.error = error && error.message ? error.message : String(error);
+          return null;
+        })
+        .finally(function () {
+          state.workspaceFileBrowser.creatingFolder = false;
+          api.notify();
+        });
+    }
+
+    function openWorkspaceFileMoveComposer() {
+      var workspace = getActiveWorkspaceForFiles();
+      if (!workspace) return;
+      if (state.workspaceFileBrowser.selectedType === 'file') {
+        var file = findWorkspaceFile(workspace.id, state.workspaceFileBrowser.selectedFileId);
+        if (!file || isWorkspaceFolderMarker(file)) return;
+        state.workspaceFileBrowser.moveDraftPath = file.relativePath
+          ? normalizeWorkspaceBrowserPath(file.relativePath.split('/').slice(0, -1).join('/'))
+          : '';
+      } else if (state.workspaceFileBrowser.selectedType === 'folder' && state.workspaceFileBrowser.selectedFolderPath) {
+        state.workspaceFileBrowser.moveDraftPath = state.workspaceFileBrowser.selectedFolderPath;
+      } else {
+        return;
+      }
+      state.ui.workspaceFileMoveOpen = true;
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+    }
+
+    function closeWorkspaceFileMoveComposer() {
+      state.ui.workspaceFileMoveOpen = false;
+      state.workspaceFileBrowser.moveDraftPath = '';
+      state.workspaceFileBrowser.movingFile = false;
+      api.notify();
+    }
+
+    function setWorkspaceMoveDraftPath(value) {
+      state.workspaceFileBrowser.moveDraftPath = value || '';
+      api.notify();
+    }
+
+    function moveWorkspaceFileToFolder(fileId, folderPath) {
+      var workspace = getActiveWorkspaceForFiles();
+      if (!workspace || !fileId) return Promise.resolve(null);
+      var file = findWorkspaceFile(workspace.id, fileId);
+      if (!file || isWorkspaceFolderMarker(file)) return Promise.resolve(null);
+      var destinationFolder = normalizeWorkspaceBrowserPath(folderPath);
+      var targetPath = joinWorkspaceBrowserPath(destinationFolder, file.name || String(file.relativePath || '').split('/').pop());
+      if (!targetPath || targetPath === file.relativePath) return Promise.resolve(null);
+
+      state.workspaceFileBrowser.movingFile = true;
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+
+      return window.__tribexAiClient.moveWorkspaceFile(workspace.id, file.id, targetPath)
+        .then(function () {
+          return refreshWorkspaceFiles(true);
+        })
+        .then(function () {
+          state.workspaceFileBrowser.selectedType = 'file';
+          state.workspaceFileBrowser.selectedFileId = file.id;
+          state.workspaceFileBrowser.selectedFolderPath = destinationFolder;
+          resetWorkspaceFilePreview();
+          return true;
+        })
+        .catch(function (error) {
+          state.workspaceFileBrowser.error = error && error.message ? error.message : String(error);
+          return false;
+        })
+        .finally(function () {
+          state.workspaceFileBrowser.movingFile = false;
+          api.notify();
+        });
+    }
+
+    function moveWorkspaceFolderToPath(fromFolderPath, toFolderPath) {
+      var workspace = getActiveWorkspaceForFiles();
+      var fromPath = normalizeWorkspaceBrowserPath(fromFolderPath);
+      var targetPath = normalizeWorkspaceBrowserPath(toFolderPath);
+      if (!workspace || !fromPath || !targetPath || fromPath === targetPath) return Promise.resolve(null);
+
+      state.workspaceFileBrowser.movingFile = true;
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+
+      return window.__tribexAiClient.moveWorkspaceFolder(workspace.id, fromPath, targetPath)
+        .then(function () {
+          return refreshWorkspaceFiles(true);
+        })
+        .then(function () {
+          state.workspaceFileBrowser.selectedType = 'folder';
+          state.workspaceFileBrowser.selectedFileId = null;
+          state.workspaceFileBrowser.selectedFolderPath = targetPath;
+          resetWorkspaceFilePreview();
+          return true;
+        })
+        .catch(function (error) {
+          state.workspaceFileBrowser.error = error && error.message ? error.message : String(error);
+          return false;
+        })
+        .finally(function () {
+          state.workspaceFileBrowser.movingFile = false;
+          api.notify();
+        });
+    }
+
+    function moveWorkspaceFolderToFolder(fromFolderPath, parentFolderPath) {
+      var name = workspaceBasename(fromFolderPath);
+      if (!name) return Promise.resolve(null);
+      return moveWorkspaceFolderToPath(fromFolderPath, joinWorkspaceBrowserPath(parentFolderPath, name));
+    }
+
+    function moveSelectedWorkspaceFile() {
+      var workspace = getActiveWorkspaceForFiles();
+      if (!workspace) return Promise.resolve(null);
+      var destination = normalizeWorkspaceBrowserPath(state.workspaceFileBrowser.moveDraftPath);
+      var movePromise;
+      if (state.workspaceFileBrowser.selectedType === 'folder') {
+        movePromise = moveWorkspaceFolderToPath(state.workspaceFileBrowser.selectedFolderPath, destination);
+      } else if (state.workspaceFileBrowser.selectedType === 'file') {
+        var file = findWorkspaceFile(workspace.id, state.workspaceFileBrowser.selectedFileId);
+        if (!file || isWorkspaceFolderMarker(file)) return Promise.resolve(null);
+        movePromise = moveWorkspaceFileToFolder(file.id, destination);
+      } else {
+        return Promise.resolve(null);
+      }
+      return movePromise
+        .then(function (result) {
+          if (result !== false) {
+            state.ui.workspaceFileMoveOpen = false;
+            state.workspaceFileBrowser.moveDraftPath = '';
+          }
+          return result;
+        });
+    }
+
     function getSelectedWorkspaceFiles() {
       var workspace = getActiveWorkspaceForFiles();
       if (!workspace) return [];
       if (state.workspaceFileBrowser.selectedType === 'file') {
         var file = findWorkspaceFile(workspace.id, state.workspaceFileBrowser.selectedFileId);
-        return file ? [file] : [];
+        return file && !isWorkspaceFolderMarker(file) ? [file] : [];
       }
       var folder = state.workspaceFileBrowser.selectedFolderPath || '';
       var prefix = folder ? folder.replace(/\/+$/g, '') + '/' : '';
       return getWorkspaceFiles(workspace.id).filter(function (file) {
-        return file && (!prefix || String(file.relativePath || '').indexOf(prefix) === 0);
+        return file &&
+          !isWorkspaceFolderMarker(file) &&
+          (!prefix || String(file.relativePath || '').indexOf(prefix) === 0);
       });
     }
 
@@ -2052,6 +2286,7 @@
           })
           .finally(function () {
             state.workspaceFileBrowser.downloading = false;
+            state.workspaceFileBrowser.downloadProgress = null;
             api.notify();
           });
       }
@@ -2086,6 +2321,7 @@
         })
         .finally(function () {
           state.workspaceFileBrowser.downloading = false;
+          state.workspaceFileBrowser.downloadProgress = null;
           api.notify();
         });
     }
@@ -2096,6 +2332,17 @@
         return Promise.resolve(null);
       }
       var fileId = state.workspaceFileBrowser.selectedFileId;
+      var file = findWorkspaceFile(workspace.id, fileId);
+      var label = file && (file.relativePath || file.name) ? (file.relativePath || file.name) : 'this file';
+      if (
+        typeof window !== 'undefined' &&
+        typeof window.confirm === 'function' &&
+        !window.confirm('Delete ' + label + '? This removes it from your workspace files.')
+      ) {
+        state.workspaceFileBrowser.error = null;
+        api.notify();
+        return Promise.resolve(false);
+      }
       state.workspaceFileBrowser.error = null;
       return window.__tribexAiClient.deleteWorkspaceFile(workspace.id, fileId)
         .then(function () {
@@ -2389,6 +2636,17 @@
     api.closeWorkspaceFileBrowser = closeWorkspaceFileBrowser;
     api.toggleWorkspaceFileBrowser = toggleWorkspaceFileBrowser;
     api.refreshWorkspaceFiles = refreshWorkspaceFiles;
+    api.openWorkspaceFolderComposer = openWorkspaceFolderComposer;
+    api.closeWorkspaceFolderComposer = closeWorkspaceFolderComposer;
+    api.setWorkspaceFolderDraftName = setWorkspaceFolderDraftName;
+    api.createWorkspaceFolder = createWorkspaceFolder;
+    api.openWorkspaceFileMoveComposer = openWorkspaceFileMoveComposer;
+    api.closeWorkspaceFileMoveComposer = closeWorkspaceFileMoveComposer;
+    api.setWorkspaceMoveDraftPath = setWorkspaceMoveDraftPath;
+    api.moveSelectedWorkspaceFile = moveSelectedWorkspaceFile;
+    api.moveWorkspaceFileToFolder = moveWorkspaceFileToFolder;
+    api.moveWorkspaceFolderToFolder = moveWorkspaceFolderToFolder;
+    api.moveWorkspaceFolderToPath = moveWorkspaceFolderToPath;
     api.selectWorkspaceFile = selectWorkspaceFile;
     api.selectWorkspaceFolder = selectWorkspaceFolder;
     api.uploadWorkspaceFiles = uploadWorkspaceFiles;

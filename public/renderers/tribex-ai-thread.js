@@ -27,6 +27,80 @@
     return button;
   }
 
+  function normalizeExternalActionUrl(value) {
+    if (!value) return null;
+    try {
+      var url = new URL(String(value));
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function isTerminalPauseTaskStatus(value) {
+    var status = String(value || '').trim().toUpperCase();
+    return (
+      status === 'COMPLETED' ||
+      status === 'COMPLETE' ||
+      status === 'DONE' ||
+      status === 'SUCCESS' ||
+      status === 'SUCCEEDED' ||
+      status === 'FAILED' ||
+      status === 'ERROR' ||
+      status === 'CANCELED' ||
+      status === 'CANCELLED' ||
+      status === 'SKIPPED'
+    );
+  }
+
+  function openExternalActionUrl(value) {
+    var url = normalizeExternalActionUrl(value);
+    if (!url) return Promise.resolve(false);
+
+    return openSystemBrowser(url).then(function (opened) {
+      if (opened) return true;
+      return openBrowserWindow(url);
+    }).catch(function () {
+      return openBrowserWindow(url);
+    });
+  }
+
+  function openSystemBrowser(url) {
+    if (
+      window.__TAURI__ &&
+      window.__TAURI__.core &&
+      typeof window.__TAURI__.core.invoke === 'function'
+    ) {
+      return Promise.resolve(window.__TAURI__.core.invoke('open_external_url', { url: url })).then(function () {
+        return true;
+      });
+    }
+
+    if (
+      window.__TAURI__ &&
+      window.__TAURI__.shell &&
+      typeof window.__TAURI__.shell.open === 'function'
+    ) {
+      return Promise.resolve(window.__TAURI__.shell.open(url)).then(function () {
+        return true;
+      }).catch(function () {
+        return false;
+      });
+    }
+
+    return Promise.resolve(false);
+  }
+
+  function openBrowserWindow(url) {
+    if (typeof window.open !== 'function') return Promise.resolve(false);
+    try {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return Promise.resolve(true);
+    } catch (_error) {
+      return Promise.resolve(false);
+    }
+  }
+
   function renderMarkdown(content, className, options) {
     var body = createEl('div', className);
     if (
@@ -290,6 +364,8 @@
             title: task.title || null,
             detail: task.detail || null,
             status: task.status || null,
+            actionLabel: task.actionLabel || null,
+            actionUrl: task.actionUrl || null,
           };
         }),
       } : null,
@@ -1019,8 +1095,22 @@
       tasks.forEach(function (task) {
         var row = createEl('div', 'ai-codex-pause-task');
         row.appendChild(createEl('strong', '', displayText(task.title, 'Required step')));
-        if (task.detail) row.appendChild(createEl('span', '', displayText(task.detail)));
+        if (task.detail) row.appendChild(createEl('span', 'ai-codex-pause-task-detail', displayText(task.detail)));
         row.appendChild(createEl('span', 'ai-codex-pause-task-status', titleCase(task.status || 'pending')));
+        var actionUrl = normalizeExternalActionUrl(task.actionUrl);
+        if (actionUrl && !isTerminalPauseTaskStatus(task.status)) {
+          row.appendChild(createButton(
+            'ai-secondary-btn ai-codex-small-btn ai-codex-pause-task-action',
+            displayText(task.actionLabel, 'Open'),
+            function () {
+              openExternalActionUrl(actionUrl);
+            },
+            {
+              title: actionUrl,
+              ariaLabel: displayText(task.actionLabel, 'Open action') + ': ' + displayText(task.title, 'Required step'),
+            }
+          ));
+        }
         list.appendChild(row);
       });
       card.appendChild(list);

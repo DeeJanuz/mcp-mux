@@ -1884,6 +1884,132 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(continueThreadPause).toHaveBeenCalledWith('thread-1', 'pause-1');
   });
 
+  it('renders generic pause task action URLs as system-browser external actions', async function () {
+    var originalOpen = window.open;
+    var originalTauri = window.__TAURI__;
+    var invoke = vi.fn(function () { return Promise.resolve(true); });
+    window.open = vi.fn(function () { return null; });
+    window.__TAURI__ = { core: { invoke: invoke } };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            activePause: {
+              id: 'pause-1',
+              status: 'BLOCKED',
+              title: 'Authenticate inbox to continue',
+              detail: 'The agent needs an external sign-in step.',
+              tasks: [
+                {
+                  title: 'Authenticate user@gmail.com',
+                  detail: 'Complete Gmail sign-in.',
+                  status: 'PENDING',
+                  actionLabel: 'Authenticate',
+                  actionUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=safe',
+                },
+                {
+                  title: 'Ignore unsupported callback',
+                  status: 'PENDING',
+                  actionLabel: 'Open callback',
+                  actionUrl: 'javascript:alert(1)',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+      checkThreadPause: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    try {
+      renderThread('thread-1');
+
+      var card = document.querySelector('.ai-codex-pause-card');
+      expect(card.textContent).toContain('Authenticate user@gmail.com');
+      expect(card.textContent).not.toContain('Open callback');
+
+      var actionButton = Array.from(card.querySelectorAll('button')).find(function (button) {
+        return button.textContent === 'Authenticate';
+      });
+      expect(actionButton).toBeTruthy();
+
+      actionButton.click();
+      await Promise.resolve();
+
+      expect(invoke).toHaveBeenCalledWith('open_external_url', {
+        url: 'https://accounts.google.com/o/oauth2/v2/auth?state=safe',
+      });
+      expect(window.open).not.toHaveBeenCalled();
+    } finally {
+      window.open = originalOpen;
+      window.__TAURI__ = originalTauri;
+    }
+  });
+
+  it('falls back to browser window opening when native system-browser opening fails', async function () {
+    var originalOpen = window.open;
+    var originalTauri = window.__TAURI__;
+    var invoke = vi.fn(function () { return Promise.reject(new Error('blocked')); });
+    window.open = vi.fn(function () { return null; });
+    window.__TAURI__ = { core: { invoke: invoke } };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            activePause: {
+              id: 'pause-1',
+              status: 'BLOCKED',
+              title: 'Authenticate inbox to continue',
+              tasks: [
+                {
+                  title: 'Authenticate user@gmail.com',
+                  status: 'PENDING',
+                  actionLabel: 'Authenticate',
+                  actionUrl: 'https://accounts.google.com/o/oauth2/v2/auth?state=safe',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+      checkThreadPause: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    try {
+      renderThread('thread-1');
+
+      var actionButton = Array.from(document.querySelectorAll('.ai-codex-pause-card button')).find(function (button) {
+        return button.textContent === 'Authenticate';
+      });
+      expect(actionButton).toBeTruthy();
+
+      actionButton.click();
+      await new Promise(function (resolve) { setTimeout(resolve, 0); });
+
+      expect(invoke).toHaveBeenCalledWith('open_external_url', {
+        url: 'https://accounts.google.com/o/oauth2/v2/auth?state=safe',
+      });
+      expect(window.open).toHaveBeenCalledWith(
+        'https://accounts.google.com/o/oauth2/v2/auth?state=safe',
+        '_blank',
+        'noopener,noreferrer'
+      );
+    } finally {
+      window.open = originalOpen;
+      window.__TAURI__ = originalTauri;
+    }
+  });
+
   it('shows delegated work pauses as agent waits instead of user waits', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),

@@ -208,6 +208,7 @@ fn main() {
             commands::submit_decision,
             commands::dismiss_session,
             commands::get_health,
+            commands::open_external_url,
             commands::list_plugins,
             commands::install_plugin,
             commands::uninstall_plugin,

@@ -25,6 +25,7 @@ afterEach(function () {
   vi.useRealTimers();
   vi.restoreAllMocks();
   delete globalThis.fetch;
+  delete window.confirm;
 });
 
 describe('tribex-ai-state', function () {
@@ -5091,6 +5092,265 @@ describe('tribex-ai-state', function () {
     expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser).toMatchObject({
       selectedType: 'folder',
       selectedFolderPath: 'reports',
+    });
+  });
+
+  it('creates folders and moves workspace files or folders through the sandbox API client', async function () {
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchPackages: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      listWorkspaceFiles: vi.fn(function () {
+        return Promise.resolve({
+          files: [
+            { id: 'file-1', relativePath: 'reports/april.csv', name: 'april.csv', sizeBytes: 42 },
+            {
+              id: 'folder-archive',
+              relativePath: 'archive/.tribex-folder',
+              name: '.tribex-folder',
+              sizeBytes: 0,
+              metadata: { isFolderMarker: true, folderPath: 'archive' },
+            },
+          ],
+        });
+      }),
+      createWorkspaceFolder: vi.fn(function () {
+        return Promise.resolve({ folder: { path: 'reports/archive' }, created: true });
+      }),
+      moveWorkspaceFile: vi.fn(function () {
+        return Promise.resolve({ file: { id: 'file-1', relativePath: 'archive/april.csv' }, moved: true });
+      }),
+      moveWorkspaceFolder: vi.fn(function () {
+        return Promise.resolve({ folder: { fromPath: 'reports', path: 'archive/reports' }, moved: true, files: [] });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    await window.__tribexAiState.openWorkspaceFileBrowser();
+    await window.__tribexAiState.selectWorkspaceFolder('reports');
+    window.__tribexAiState.setWorkspaceFolderDraftName('archive');
+    await window.__tribexAiState.createWorkspaceFolder();
+
+    expect(client.createWorkspaceFolder).toHaveBeenCalledWith('workspace-1', 'reports/archive');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser).toMatchObject({
+      selectedType: 'folder',
+      selectedFolderPath: 'reports/archive',
+    });
+
+    await window.__tribexAiState.moveWorkspaceFileToFolder('file-1', 'archive');
+    expect(client.moveWorkspaceFile).toHaveBeenCalledWith('workspace-1', 'file-1', 'archive/april.csv');
+
+    await window.__tribexAiState.moveWorkspaceFolderToFolder('reports', 'archive');
+    expect(client.moveWorkspaceFolder).toHaveBeenCalledWith('workspace-1', 'reports', 'archive/reports');
+  });
+
+  it('requires confirmation before deleting a selected workspace file', async function () {
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchPackages: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      listWorkspaceFiles: vi.fn(function () {
+        return Promise.resolve({
+          files: [{
+            id: 'file-1',
+            relativePath: 'reports/april.csv',
+            name: 'april.csv',
+            contentType: 'text/csv',
+            sizeBytes: 7,
+          }],
+        });
+      }),
+      getWorkspaceFile: vi.fn(function () {
+        return Promise.resolve({
+          file: { id: 'file-1', relativePath: 'reports/april.csv', contentType: 'text/csv' },
+          download: { url: 'https://worker.example/__sandbox/workspace-file?token=download' },
+        });
+      }),
+      fetchSignedFileBytes: vi.fn(function () {
+        return Promise.resolve({
+          bytes: new Uint8Array([97, 44, 98, 10, 49, 44, 50]),
+          contentType: 'text/csv',
+        });
+      }),
+      deleteWorkspaceFile: vi.fn(function () {
+        return Promise.resolve({ deleted: true });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+    var confirm = vi.fn(function () { return false; });
+    window.confirm = confirm;
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    await window.__tribexAiState.openWorkspaceFileBrowser();
+    await window.__tribexAiState.selectWorkspaceFile('file-1');
+    await window.__tribexAiState.deleteSelectedWorkspaceFile();
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('reports/april.csv'));
+    expect(client.deleteWorkspaceFile).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    await window.__tribexAiState.deleteSelectedWorkspaceFile();
+
+    expect(client.deleteWorkspaceFile).toHaveBeenCalledWith('workspace-1', 'file-1');
+    expect(window.__tribexAiState.getSnapshot().workspaceFiles).toEqual([]);
+  });
+
+  it('builds text, image, and unsupported workspace file previews', async function () {
+    var detailsById = {
+      'file-text': {
+        file: { id: 'file-text', relativePath: 'notes/readme.md', contentType: 'text/markdown' },
+        download: { url: 'https://worker.example/text' },
+      },
+      'file-image': {
+        file: { id: 'file-image', relativePath: 'images/chart.png', contentType: 'image/png' },
+        download: { url: 'https://worker.example/image' },
+      },
+      'file-binary': {
+        file: { id: 'file-binary', relativePath: 'exports/archive.bin', contentType: 'application/octet-stream' },
+        download: { url: 'https://worker.example/binary' },
+      },
+    };
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchPackages: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      listWorkspaceFiles: vi.fn(function () {
+        return Promise.resolve({
+          files: [
+            { id: 'file-text', relativePath: 'notes/readme.md', name: 'readme.md', contentType: 'text/markdown', sizeBytes: 6 },
+            { id: 'file-image', relativePath: 'images/chart.png', name: 'chart.png', contentType: 'image/png', sizeBytes: 3 },
+            { id: 'file-binary', relativePath: 'exports/archive.bin', name: 'archive.bin', contentType: 'application/octet-stream', sizeBytes: 3 },
+          ],
+        });
+      }),
+      getWorkspaceFile: vi.fn(function (_workspaceId, fileId) {
+        return Promise.resolve(detailsById[fileId]);
+      }),
+      fetchSignedFileBytes: vi.fn(function (download) {
+        if (download.url.indexOf('/text') !== -1) {
+          return Promise.resolve({ bytes: new Uint8Array([35, 32, 72, 105, 10, 33]), contentType: 'text/markdown' });
+        }
+        if (download.url.indexOf('/image') !== -1) {
+          return Promise.resolve({ bytes: new Uint8Array([1, 2, 3]), contentType: 'image/png' });
+        }
+        return Promise.resolve({ bytes: new Uint8Array([1, 2, 3]), contentType: 'application/octet-stream' });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    await window.__tribexAiState.openWorkspaceFileBrowser();
+
+    await window.__tribexAiState.selectWorkspaceFile('file-text');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      status: 'ready',
+      text: '# Hi\n!',
+    });
+
+    await window.__tribexAiState.selectWorkspaceFile('file-image');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      status: 'ready',
+      objectUrl: expect.stringContaining('blob:'),
+    });
+
+    await window.__tribexAiState.selectWorkspaceFile('file-binary');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      status: 'unsupported',
+      objectUrl: null,
     });
   });
 

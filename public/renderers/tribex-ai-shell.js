@@ -8,6 +8,9 @@
   var expandedThreadLists = Object.create(null);
   var pendingFocusKey = null;
   var searchVisible = false;
+  var FILE_BROWSER_WIDTH_KEY = 'tribex-ai-workspace-file-browser-width';
+  var FILE_BROWSER_MIN_WIDTH = 360;
+  var FILE_BROWSER_MAX_WIDTH = 760;
 
   var ICONS = {
     project:
@@ -1139,18 +1142,90 @@
     return (index === 0 ? bytes.toFixed(0) : bytes.toFixed(bytes >= 10 ? 1 : 2)) + ' ' + units[index];
   }
 
+  function clampFileBrowserWidth(width) {
+    var viewportLimit = Math.max(FILE_BROWSER_MIN_WIDTH, (window.innerWidth || 1024) - 96);
+    return Math.min(Math.max(Number(width) || 440, FILE_BROWSER_MIN_WIDTH), Math.min(FILE_BROWSER_MAX_WIDTH, viewportLimit));
+  }
+
+  function readFileBrowserWidth() {
+    try {
+      return clampFileBrowserWidth(window.localStorage && window.localStorage.getItem(FILE_BROWSER_WIDTH_KEY));
+    } catch (_error) {
+      return clampFileBrowserWidth(440);
+    }
+  }
+
+  function persistFileBrowserWidth(width) {
+    try {
+      if (window.localStorage) window.localStorage.setItem(FILE_BROWSER_WIDTH_KEY, String(Math.round(width)));
+    } catch (_error) {}
+  }
+
+  function attachFileBrowserResize(handle, panel) {
+    if (!handle || !panel) return;
+    handle.addEventListener('pointerdown', function (event) {
+      if (event.button && event.button !== 0) return;
+      event.preventDefault();
+      var startX = event.clientX || 0;
+      var startWidth = panel.getBoundingClientRect().width || readFileBrowserWidth();
+      panel.classList.add('resizing');
+      if (typeof handle.setPointerCapture === 'function' && event.pointerId) {
+        try { handle.setPointerCapture(event.pointerId); } catch (_error) {}
+      }
+
+      function onMove(moveEvent) {
+        var width = clampFileBrowserWidth(startWidth + startX - (moveEvent.clientX || startX));
+        panel.style.width = width + 'px';
+        persistFileBrowserWidth(width);
+      }
+
+      function onUp() {
+        panel.classList.remove('resizing');
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+      }
+
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+  }
+
+  function isWorkspaceFolderMarker(file) {
+    return !!(
+      file &&
+      file.metadata &&
+      typeof file.metadata === 'object' &&
+      file.metadata.isFolderMarker === true
+    );
+  }
+
+  function folderPathFromMarker(file) {
+    if (
+      file &&
+      file.metadata &&
+      typeof file.metadata === 'object' &&
+      typeof file.metadata.folderPath === 'string'
+    ) {
+      return file.metadata.folderPath;
+    }
+    var path = String(file && file.relativePath || '');
+    return path.split('/').slice(0, -1).join('/');
+  }
+
   function buildFileTree(files) {
     var root = { type: 'folder', name: '', path: '', children: {}, files: [] };
     (files || []).forEach(function (file) {
-      var parts = String(file.relativePath || file.name || '').split('/').filter(Boolean);
+      var parts = String(isWorkspaceFolderMarker(file) ? folderPathFromMarker(file) : (file.relativePath || file.name || '')).split('/').filter(Boolean);
       var node = root;
-      parts.slice(0, -1).forEach(function (part, index) {
+      var folderParts = isWorkspaceFolderMarker(file) ? parts : parts.slice(0, -1);
+      folderParts.forEach(function (part, index) {
         var path = parts.slice(0, index + 1).join('/');
         if (!node.children[part]) {
           node.children[part] = { type: 'folder', name: part, path: path, children: {}, files: [] };
         }
         node = node.children[part];
       });
+      if (isWorkspaceFolderMarker(file)) return;
       node.files.push(file);
     });
     return root;
@@ -1164,6 +1239,46 @@
     return count;
   }
 
+  function workspaceBasename(path) {
+    var parts = String(path || '').split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+  }
+
+  function collectFolderPaths(files) {
+    var root = buildFileTree(files || []);
+    var paths = [''];
+    function walk(node) {
+      Object.keys(node.children || {}).sort().forEach(function (key) {
+        var folder = node.children[key];
+        paths.push(folder.path);
+        walk(folder);
+      });
+    }
+    walk(root);
+    return paths;
+  }
+
+  function attachWorkspaceFolderDrop(row, folderPath, aiState) {
+    row.addEventListener('dragover', function (event) {
+      event.preventDefault();
+      row.classList.add('drop-target');
+    });
+    row.addEventListener('dragleave', function () {
+      row.classList.remove('drop-target');
+    });
+    row.addEventListener('drop', function (event) {
+      event.preventDefault();
+      row.classList.remove('drop-target');
+      var fileId = event.dataTransfer && event.dataTransfer.getData('text/workspace-file-id');
+      var sourceFolder = event.dataTransfer && event.dataTransfer.getData('text/workspace-folder-path');
+      if (fileId && aiState.moveWorkspaceFileToFolder) {
+        aiState.moveWorkspaceFileToFolder(fileId, folderPath).catch(function () {});
+      } else if (sourceFolder && aiState.moveWorkspaceFolderToFolder) {
+        aiState.moveWorkspaceFolderToFolder(sourceFolder, folderPath).catch(function () {});
+      }
+    });
+  }
+
   function appendFileTree(parent, node, snapshot, aiState, depth) {
     var folders = Object.keys(node.children || {}).sort();
     folders.forEach(function (folderName) {
@@ -1174,11 +1289,19 @@
         snapshot.workspaceFileBrowser.selectedFolderPath === folder.path ? ' active' : ''
       );
       row.type = 'button';
+      row.draggable = true;
       row.style.setProperty('--depth', String(depth));
       row.title = folder.path;
       row.addEventListener('click', function () {
         aiState.selectWorkspaceFolder(folder.path);
       });
+      row.addEventListener('dragstart', function (event) {
+        if (event.dataTransfer) {
+          event.dataTransfer.setData('text/workspace-folder-path', folder.path);
+          event.dataTransfer.effectAllowed = 'move';
+        }
+      });
+      attachWorkspaceFolderDrop(row, folder.path, aiState);
       row.innerHTML = '<span class="workspace-file-chevron">⌄</span><span class="workspace-file-glyph">▸</span>';
       var label = document.createElement('span');
       label.className = 'workspace-file-name';
@@ -1201,10 +1324,17 @@
         snapshot.workspaceFileBrowser.selectedFileId === file.id ? ' active' : ''
       );
       row.type = 'button';
+      row.draggable = true;
       row.style.setProperty('--depth', String(depth));
       row.title = file.relativePath;
       row.addEventListener('click', function () {
         aiState.selectWorkspaceFile(file.id).catch(function () {});
+      });
+      row.addEventListener('dragstart', function (event) {
+        if (event.dataTransfer) {
+          event.dataTransfer.setData('text/workspace-file-id', file.id);
+          event.dataTransfer.effectAllowed = 'move';
+        }
       });
       row.innerHTML = '<span class="workspace-file-spacer"></span><span class="workspace-file-glyph">□</span>';
       var label = document.createElement('span');
@@ -1223,7 +1353,7 @@
     var fileId = snapshot.workspaceFileBrowser && snapshot.workspaceFileBrowser.selectedFileId;
     if (!fileId) return null;
     return (snapshot.workspaceFiles || []).find(function (file) {
-      return file && file.id === fileId;
+      return file && file.id === fileId && !isWorkspaceFolderMarker(file);
     }) || null;
   }
 
@@ -1253,7 +1383,7 @@
     } else if (browser.selectedType === 'folder') {
       var prefix = browser.selectedFolderPath ? browser.selectedFolderPath.replace(/\/+$/g, '') + '/' : '';
       var count = (snapshot.workspaceFiles || []).filter(function (candidate) {
-        return !prefix || String(candidate.relativePath || '').indexOf(prefix) === 0;
+        return !isWorkspaceFolderMarker(candidate) && (!prefix || String(candidate.relativePath || '').indexOf(prefix) === 0);
       }).length;
       meta.textContent = count + ' file' + (count === 1 ? '' : 's');
     } else {
@@ -1292,6 +1422,18 @@
         aiState.downloadSelectedWorkspaceEntry().catch(function () {});
       },
     }));
+    actions.appendChild(createButton('workspace-file-text-button', 'New folder', {
+      disabled: !!browser.creatingFolder || !!browser.loading,
+      onClick: function () {
+        aiState.openWorkspaceFolderComposer();
+      },
+    }));
+    actions.appendChild(createButton('workspace-file-text-button', 'Move', {
+      disabled: (!!browser.movingFile) || (!file && !(browser.selectedType === 'folder' && browser.selectedFolderPath)),
+      onClick: function () {
+        aiState.openWorkspaceFileMoveComposer();
+      },
+    }));
     actions.appendChild(createIconButton('workspace-file-icon-button danger', 'Delete file', ICONS.trash, {
       disabled: !file,
       onClick: function () {
@@ -1300,6 +1442,148 @@
     }));
     details.appendChild(actions);
     root.appendChild(details);
+  }
+
+  function renderWorkspaceFolderComposerModal(shell, snapshot, aiState) {
+    if (!snapshot.workspaceFolderComposerOpen) return;
+
+    var browser = snapshot.workspaceFileBrowser || {};
+    var parentPath = browser.selectedType === 'folder' ? (browser.selectedFolderPath || '') : '';
+    var backdrop = document.createElement('div');
+    backdrop.className = 'ai-nav-modal-backdrop';
+
+    var modal = document.createElement('section');
+    modal.className = 'ai-nav-modal';
+
+    var header = document.createElement('div');
+    header.className = 'ai-nav-modal-header';
+    var title = document.createElement('strong');
+    title.textContent = 'New folder';
+    header.appendChild(title);
+    header.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Cancel', {
+      onClick: function () {
+        aiState.closeWorkspaceFolderComposer();
+      },
+    }));
+    modal.appendChild(header);
+
+    var form = document.createElement('div');
+    form.className = 'ai-nav-auth-form';
+    if (parentPath) {
+      var helper = document.createElement('p');
+      helper.className = 'ai-nav-helper';
+      helper.textContent = 'Parent: ' + parentPath;
+      form.appendChild(helper);
+    }
+
+    var input = document.createElement('input');
+    input.className = 'ai-nav-auth-input';
+    input.type = 'text';
+    input.setAttribute('data-focus-key', 'workspace-folder-name');
+    input.placeholder = 'Folder name';
+    input.value = browser.folderDraftName || '';
+    input.addEventListener('input', function (event) {
+      aiState.setWorkspaceFolderDraftName(event.target.value);
+    });
+    form.appendChild(input);
+
+    if (browser.error) {
+      var error = document.createElement('p');
+      error.className = 'ai-nav-helper ai-nav-helper-error';
+      error.textContent = browser.error;
+      form.appendChild(error);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'ai-nav-auth-actions';
+    actions.appendChild(createButton('ai-nav-action ai-nav-action-primary', browser.creatingFolder ? 'Creating...' : 'Create folder', {
+      disabled: !!browser.creatingFolder,
+      onClick: function () {
+        aiState.createWorkspaceFolder().catch(function () {});
+      },
+    }));
+    form.appendChild(actions);
+    modal.appendChild(form);
+    backdrop.appendChild(modal);
+    shell.appendChild(backdrop);
+  }
+
+  function renderWorkspaceMoveModal(shell, snapshot, aiState) {
+    if (!snapshot.workspaceFileMoveOpen) return;
+
+    var browser = snapshot.workspaceFileBrowser || {};
+    var file = selectedFile(snapshot);
+    var movingFolder = !file && browser.selectedType === 'folder' && !!browser.selectedFolderPath;
+    var folderPaths = collectFolderPaths(snapshot.workspaceFiles || []);
+    var datalistId = 'workspace-folder-path-options';
+    var backdrop = document.createElement('div');
+    backdrop.className = 'ai-nav-modal-backdrop';
+
+    var modal = document.createElement('section');
+    modal.className = 'ai-nav-modal';
+
+    var header = document.createElement('div');
+    header.className = 'ai-nav-modal-header';
+    var title = document.createElement('strong');
+    title.textContent = movingFolder ? 'Move folder' : 'Move file';
+    header.appendChild(title);
+    header.appendChild(createButton('ai-nav-action ai-nav-action-secondary', 'Cancel', {
+      onClick: function () {
+        aiState.closeWorkspaceFileMoveComposer();
+      },
+    }));
+    modal.appendChild(header);
+
+    var form = document.createElement('div');
+    form.className = 'ai-nav-auth-form';
+    var helper = document.createElement('p');
+    helper.className = 'ai-nav-helper';
+    helper.textContent = movingFolder
+      ? 'Current: ' + browser.selectedFolderPath
+      : 'File: ' + (file ? (file.relativePath || file.name) : '');
+    form.appendChild(helper);
+
+    var input = document.createElement('input');
+    input.className = 'ai-nav-auth-input';
+    input.type = 'text';
+    input.setAttribute('data-focus-key', 'workspace-move-path');
+    input.placeholder = movingFolder ? 'New folder path' : 'Destination folder';
+    input.value = browser.moveDraftPath || '';
+    input.setAttribute('list', datalistId);
+    input.addEventListener('input', function (event) {
+      aiState.setWorkspaceMoveDraftPath(event.target.value);
+    });
+    form.appendChild(input);
+
+    var datalist = document.createElement('datalist');
+    datalist.id = datalistId;
+    folderPaths.forEach(function (path) {
+      var option = document.createElement('option');
+      option.value = path;
+      option.label = path || 'Workspace root';
+      datalist.appendChild(option);
+    });
+    form.appendChild(datalist);
+
+    if (browser.error) {
+      var error = document.createElement('p');
+      error.className = 'ai-nav-helper ai-nav-helper-error';
+      error.textContent = browser.error;
+      form.appendChild(error);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'ai-nav-auth-actions';
+    actions.appendChild(createButton('ai-nav-action ai-nav-action-primary', browser.movingFile ? 'Moving...' : 'Move', {
+      disabled: !!browser.movingFile,
+      onClick: function () {
+        aiState.moveSelectedWorkspaceFile().catch(function () {});
+      },
+    }));
+    form.appendChild(actions);
+    modal.appendChild(form);
+    backdrop.appendChild(modal);
+    shell.appendChild(backdrop);
   }
 
   function renderFileBrowser(snapshot, aiState) {
@@ -1318,6 +1602,15 @@
     panel.id = 'workspace-file-browser';
     panel.className = 'workspace-file-browser open';
     panel.setAttribute('aria-label', 'Workspace file browser');
+    panel.style.width = readFileBrowserWidth() + 'px';
+
+    var resizeHandle = document.createElement('div');
+    resizeHandle.className = 'workspace-file-resize-handle';
+    resizeHandle.setAttribute('role', 'separator');
+    resizeHandle.setAttribute('aria-orientation', 'vertical');
+    resizeHandle.title = 'Resize file browser';
+    attachFileBrowserResize(resizeHandle, panel);
+    panel.appendChild(resizeHandle);
 
     var header = document.createElement('div');
     header.className = 'workspace-file-header';
@@ -1361,6 +1654,12 @@
         aiState.refreshWorkspaceFiles(true).catch(function () {});
       },
     }));
+    actions.appendChild(createIconButton('workspace-file-icon-button', 'Create workspace folder', ICONS.projectAdd, {
+      disabled: !!browser.creatingFolder || !!browser.loading,
+      onClick: function () {
+        aiState.openWorkspaceFolderComposer();
+      },
+    }));
     actions.appendChild(createButton('workspace-file-text-button', 'Upload', {
       disabled: !!browser.uploading,
       onClick: function () {
@@ -1402,9 +1701,17 @@
     var tree = document.createElement('div');
     tree.className = 'workspace-file-tree';
     if (browser.loading) {
-      tree.textContent = 'Loading files...';
+      tree.classList.add('workspace-file-empty');
+      tree.textContent = 'Loading workspace files...';
+    } else if (snapshot.integration && snapshot.integration.status !== 'authenticated') {
+      tree.classList.add('workspace-file-empty');
+      tree.textContent = 'Sign in to browse workspace files.';
+    } else if (!snapshot.selectedWorkspace) {
+      tree.classList.add('workspace-file-empty');
+      tree.textContent = 'Select a workspace to browse files.';
     } else if (!(snapshot.workspaceFiles || []).length) {
-      tree.textContent = 'No files yet.';
+      tree.classList.add('workspace-file-empty');
+      tree.textContent = 'No files yet. Persona-generated files and uploads will appear here.';
     } else {
       var root = buildFileTree(snapshot.workspaceFiles || []);
       var rootRow = createButton('workspace-file-row workspace-file-folder' + (
@@ -1415,6 +1722,7 @@
         },
       });
       rootRow.style.setProperty('--depth', '0');
+      attachWorkspaceFolderDrop(rootRow, '', aiState);
       tree.appendChild(rootRow);
       appendFileTree(tree, root, snapshot, aiState, 1);
     }
@@ -1490,6 +1798,8 @@
       renderProjectRenameModal(shell, snapshot, aiState);
       renderThreadComposerModal(shell, snapshot, aiState);
       renderThreadRenameModal(shell, snapshot, aiState);
+      renderWorkspaceFolderComposerModal(shell, snapshot, aiState);
+      renderWorkspaceMoveModal(shell, snapshot, aiState);
       renderFileBrowser(snapshot, aiState);
       restoreFocusState(shell, focusState);
       return;
@@ -1514,6 +1824,8 @@
     renderProjectRenameModal(shell, snapshot, aiState);
     renderThreadComposerModal(shell, snapshot, aiState);
     renderThreadRenameModal(shell, snapshot, aiState);
+    renderWorkspaceFolderComposerModal(shell, snapshot, aiState);
+    renderWorkspaceMoveModal(shell, snapshot, aiState);
     renderFileBrowser(snapshot, aiState);
     restoreFocusState(shell, focusState);
     applyPendingFocus(shell);

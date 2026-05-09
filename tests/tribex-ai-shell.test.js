@@ -37,8 +37,16 @@ function createState(snapshot) {
     openProjectComposer: vi.fn(),
     openThreadComposer: vi.fn(function () { return Promise.resolve(); }),
     closeWorkspaceFileBrowser: vi.fn(),
+    closeWorkspaceFileMoveComposer: vi.fn(),
+    closeWorkspaceFolderComposer: vi.fn(),
+    createWorkspaceFolder: vi.fn(function () { return Promise.resolve(); }),
     deleteSelectedWorkspaceFile: vi.fn(function () { return Promise.resolve(); }),
     downloadSelectedWorkspaceEntry: vi.fn(function () { return Promise.resolve(); }),
+    moveSelectedWorkspaceFile: vi.fn(function () { return Promise.resolve(); }),
+    moveWorkspaceFileToFolder: vi.fn(function () { return Promise.resolve(); }),
+    moveWorkspaceFolderToFolder: vi.fn(function () { return Promise.resolve(); }),
+    openWorkspaceFileMoveComposer: vi.fn(),
+    openWorkspaceFolderComposer: vi.fn(),
     refreshWorkspaceFiles: vi.fn(function () { return Promise.resolve(); }),
     selectWorkspaceFile: vi.fn(function () { return Promise.resolve(); }),
     selectWorkspaceFolder: vi.fn(function () { return Promise.resolve(); }),
@@ -67,6 +75,16 @@ function createState(snapshot) {
     setProjectDraftName: vi.fn(function (value) {
       current.composer = current.composer || {};
       current.composer.projectName = value;
+      if (subscriber) subscriber(current);
+    }),
+    setWorkspaceFolderDraftName: vi.fn(function (value) {
+      current.workspaceFileBrowser = current.workspaceFileBrowser || {};
+      current.workspaceFileBrowser.folderDraftName = value;
+      if (subscriber) subscriber(current);
+    }),
+    setWorkspaceMoveDraftPath: vi.fn(function (value) {
+      current.workspaceFileBrowser = current.workspaceFileBrowser || {};
+      current.workspaceFileBrowser.moveDraftPath = value;
       if (subscriber) subscriber(current);
     }),
     setSearchTerm: vi.fn(function (value) {
@@ -650,6 +668,8 @@ describe('tribex-ai-shell', function () {
     expect(state.selectProject).toHaveBeenCalledWith('project-1', { expand: true });
     document.querySelector('.ai-nav-project-thread-action').click();
     expect(state.openThreadComposer).toHaveBeenCalledWith({ projectId: 'project-1' });
+    document.querySelector('[title="Open file browser"]').click();
+    expect(state.toggleWorkspaceFileBrowser).toHaveBeenCalled();
     document.querySelector('[title="Create folder"]').click();
     expect(state.openProjectComposer).toHaveBeenCalled();
     expect(document.querySelector('.ai-nav-org-switcher')).toBeNull();
@@ -673,6 +693,14 @@ describe('tribex-ai-shell', function () {
       packages: [],
       workspaceFiles: [
         { id: 'file-1', relativePath: 'reports/april.csv', name: 'april.csv', sizeBytes: 42, contentType: 'text/csv' },
+        {
+          id: 'folder-archive',
+          relativePath: 'archive/.tribex-folder',
+          name: '.tribex-folder',
+          sizeBytes: 0,
+          contentType: 'application/x-tribex-workspace-folder',
+          metadata: { isFolderMarker: true, folderPath: 'archive' },
+        },
       ],
       workspaceFileBrowser: {
         loading: false,
@@ -721,13 +749,209 @@ describe('tribex-ai-shell', function () {
     expect(Array.from(document.querySelectorAll('.workspace-file-folder')).map(function (node) {
       return node.textContent;
     }).join(' ')).toContain('reports');
+    expect(Array.from(document.querySelectorAll('.workspace-file-folder')).map(function (node) {
+      return node.textContent;
+    }).join(' ')).toContain('archive');
+    expect(document.querySelector('#workspace-file-browser').textContent).not.toContain('.tribex-folder');
     expect(document.querySelector('.workspace-file-leaf.active').textContent).toContain('april.csv');
     expect(document.querySelector('.workspace-file-preview').textContent).toContain('a,b');
+    expect(document.querySelector('.workspace-file-resize-handle')).not.toBeNull();
 
     document.querySelector('.workspace-file-leaf').click();
     expect(state.selectWorkspaceFile).toHaveBeenCalledWith('file-1');
+    document.querySelector('[title="Create workspace folder"]').click();
+    expect(state.openWorkspaceFolderComposer).toHaveBeenCalled();
+    document.querySelector('[title="Refresh files"]').click();
+    expect(state.refreshWorkspaceFiles).toHaveBeenCalledWith(true);
+    document.querySelector('[title="Download selection"]').click();
+    expect(state.downloadSelectedWorkspaceEntry).toHaveBeenCalled();
+    Array.from(document.querySelectorAll('.workspace-file-text-button')).find(function (button) {
+      return button.textContent === 'Move';
+    }).click();
+    expect(state.openWorkspaceFileMoveComposer).toHaveBeenCalled();
+    var archiveRow = Array.from(document.querySelectorAll('.workspace-file-folder')).find(function (node) {
+      return node.textContent.indexOf('archive') >= 0;
+    });
+    var dropEvent = new Event('drop', { bubbles: true });
+    Object.defineProperty(dropEvent, 'dataTransfer', {
+      value: {
+        getData: function (type) {
+          return type === 'text/workspace-file-id' ? 'file-1' : '';
+        },
+      },
+    });
+    archiveRow.dispatchEvent(dropEvent);
+    expect(state.moveWorkspaceFileToFolder).toHaveBeenCalledWith('file-1', 'archive');
+    document.querySelector('[title="Delete file"]').click();
+    expect(state.deleteSelectedWorkspaceFile).toHaveBeenCalled();
+    var inputs = document.querySelectorAll('.workspace-file-input');
+    var uploadFile = new File(['a,b\n1,2'], 'april.csv', { type: 'text/csv' });
+    Object.defineProperty(inputs[0], 'files', { value: [uploadFile], configurable: true });
+    inputs[0].dispatchEvent(new Event('change'));
+    expect(state.uploadWorkspaceFiles).toHaveBeenCalledWith([uploadFile]);
     document.querySelector('.workspace-file-close').click();
     expect(state.closeWorkspaceFileBrowser).toHaveBeenCalled();
+  });
+
+  it('renders workspace folder creation and move dialogs', function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      workspaceFolderComposerOpen: true,
+      workspaceFileMoveOpen: false,
+      searchTerm: '',
+      fileBrowserOpen: true,
+      organizations: [{ id: 'org-1', name: 'Org 1' }],
+      selectedOrganization: { id: 'org-1', name: 'Org 1' },
+      selectedWorkspace: { id: 'workspace-1', name: 'Finance', packageKey: 'generic' },
+      selectedProject: null,
+      projectGroups: [],
+      projectExpansion: {},
+      packages: [],
+      workspaceFiles: [
+        { id: 'file-1', relativePath: 'reports/april.csv', name: 'april.csv', sizeBytes: 42, contentType: 'text/csv' },
+      ],
+      workspaceFileBrowser: {
+        loading: false,
+        error: null,
+        selectedType: 'folder',
+        selectedFileId: null,
+        selectedFolderPath: 'reports',
+        folderDraftName: '',
+        creatingFolder: false,
+        moveDraftPath: '',
+        movingFile: false,
+        preview: { status: 'idle' },
+      },
+      composer: {
+        creatingWorkspace: false,
+        projectName: '',
+        creatingProject: false,
+        threadProjectId: null,
+        threadTitle: '',
+        threadPersonasByProjectId: {},
+        loadingThreadPersonas: false,
+        threadPersonaError: null,
+        selectedPersonaKey: '',
+        creatingThread: false,
+      },
+      hasProjects: false,
+      canRunSmokeTest: false,
+      activeProjectId: null,
+      activeThreadId: null,
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    expect(document.querySelector('.ai-nav-modal-header').textContent).toContain('New folder');
+    document.querySelector('[data-focus-key="workspace-folder-name"]').value = 'Archive';
+    document.querySelector('[data-focus-key="workspace-folder-name"]').dispatchEvent(new Event('input'));
+    expect(state.setWorkspaceFolderDraftName).toHaveBeenCalledWith('Archive');
+    document.querySelector('.ai-nav-modal .ai-nav-action-primary').click();
+    expect(state.createWorkspaceFolder).toHaveBeenCalled();
+
+    state.updateSnapshot(Object.assign({}, snapshot, {
+      workspaceFolderComposerOpen: false,
+      workspaceFileMoveOpen: true,
+      workspaceFileBrowser: Object.assign({}, snapshot.workspaceFileBrowser, {
+        selectedType: 'file',
+        selectedFileId: 'file-1',
+        selectedFolderPath: 'reports',
+        moveDraftPath: 'reports',
+      }),
+    }));
+
+    expect(document.querySelector('.ai-nav-modal-header').textContent).toContain('Move file');
+    document.querySelector('[data-focus-key="workspace-move-path"]').value = 'archive';
+    document.querySelector('[data-focus-key="workspace-move-path"]').dispatchEvent(new Event('input'));
+    expect(state.setWorkspaceMoveDraftPath).toHaveBeenCalledWith('archive');
+    document.querySelector('.ai-nav-modal .ai-nav-action-primary').click();
+    expect(state.moveSelectedWorkspaceFile).toHaveBeenCalled();
+  });
+
+  it('explains empty workspace file states in the side browser', function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      searchTerm: '',
+      fileBrowserOpen: true,
+      organizations: [{ id: 'org-1', name: 'Org 1' }],
+      selectedOrganization: { id: 'org-1', name: 'Org 1' },
+      selectedWorkspace: { id: 'workspace-1', name: 'Finance', packageKey: 'generic' },
+      selectedProject: null,
+      projectGroups: [],
+      projectExpansion: {},
+      packages: [],
+      workspaceFiles: [],
+      workspaceFileBrowser: {
+        loading: false,
+        error: null,
+        selectedType: null,
+        selectedFileId: null,
+        selectedFolderPath: '',
+        preview: { status: 'idle' },
+      },
+      composer: {
+        creatingWorkspace: false,
+        projectName: '',
+        creatingProject: false,
+        threadProjectId: null,
+        threadTitle: '',
+        threadPersonasByProjectId: {},
+        loadingThreadPersonas: false,
+        threadPersonaError: null,
+        selectedPersonaKey: '',
+        creatingThread: false,
+      },
+      hasProjects: false,
+      canRunSmokeTest: false,
+      activeProjectId: null,
+      activeThreadId: null,
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    expect(document.querySelector('.workspace-file-tree').textContent).toContain('Persona-generated files and uploads');
+
+    state.updateSnapshot(Object.assign({}, snapshot, {
+      integration: Object.assign({}, snapshot.integration, { status: 'unauthenticated' }),
+    }));
+
+    expect(document.querySelector('.workspace-file-tree').textContent).toContain('Sign in to browse workspace files');
   });
 
   it('shows a compact show more control for long thread lists', function () {

@@ -1972,6 +1972,26 @@
     ]).then(normalizeWorkspaceFileBatch);
   }
 
+  function createWorkspaceFolder(workspaceId, folderPath) {
+    return requestVariants('POST', [
+      {
+        path: '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/folders',
+        body: {
+          folderPath: folderPath,
+        },
+      },
+    ]).then(function (raw) {
+      raw = raw || {};
+      return {
+        environment: raw.environment || null,
+        folder: raw.folder || null,
+        file: raw.file ? normalizeWorkspaceFile(raw.file, 0) : null,
+        created: raw.created !== false,
+        raw: raw,
+      };
+    });
+  }
+
   function getWorkspaceFileBatch(workspaceId, batchId) {
     return requestCandidates('GET', [
       '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/file-batches/' + encodeURIComponent(batchId),
@@ -1990,6 +2010,38 @@
     return requestCandidates('GET', [
       '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/files/' + encodeURIComponent(fileId),
     ]).then(normalizeWorkspaceFileEnvelope);
+  }
+
+  function moveWorkspaceFile(workspaceId, fileId, relativePath) {
+    return requestVariants('PATCH', [
+      {
+        path: '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/files/' + encodeURIComponent(fileId),
+        body: {
+          relativePath: relativePath,
+        },
+      },
+    ]).then(normalizeWorkspaceFileEnvelope);
+  }
+
+  function moveWorkspaceFolder(workspaceId, fromFolderPath, toFolderPath) {
+    return requestVariants('PATCH', [
+      {
+        path: '/workspaces/' + encodeURIComponent(workspaceId) + '/user-sandbox/folders',
+        body: {
+          fromFolderPath: fromFolderPath,
+          toFolderPath: toFolderPath,
+        },
+      },
+    ]).then(function (raw) {
+      raw = raw || {};
+      return {
+        environment: raw.environment || null,
+        folder: raw.folder || null,
+        files: extractArray(raw, ['files', 'items', 'results']).map(normalizeWorkspaceFile),
+        moved: raw.moved !== false,
+        raw: raw,
+      };
+    });
   }
 
   function deleteWorkspaceFile(workspaceId, fileId) {
@@ -2198,6 +2250,7 @@
     createWorkspace: createWorkspace,
     createThread: createThread,
     createWorkspaceFileBatch: createWorkspaceFileBatch,
+    createWorkspaceFolder: createWorkspaceFolder,
     buildSmokePrompt: buildSmokePrompt,
     configureThreadRuntime: configureThreadRuntime,
     deleteWorkspaceFile: deleteWorkspaceFile,
@@ -2221,6 +2274,8 @@
     ensureRuntimeSession: ensureRuntimeSession,
     initWorkspaceFileUpload: initWorkspaceFileUpload,
     listWorkspaceFiles: listWorkspaceFiles,
+    moveWorkspaceFile: moveWorkspaceFile,
+    moveWorkspaceFolder: moveWorkspaceFolder,
     listenToRuntimeEvents: listenToRuntimeEvents,
     listenToDesktopPresenceEvents: listenToDesktopPresenceEvents,
     listenToDesktopRelayEvents: listenToDesktopRelayEvents,

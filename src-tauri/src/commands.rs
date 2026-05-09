@@ -174,6 +174,35 @@ pub fn get_health() -> serde_json::Value {
     })
 }
 
+fn open_system_browser(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
+
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(url).spawn();
+
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn();
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    let result: Result<std::process::Child, std::io::Error> =
+        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Unsupported platform"));
+
+    result.map_err(|e| format!("Failed to open browser: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
+    match parsed.scheme() {
+        "http" | "https" => open_system_browser(parsed.as_str()),
+        scheme => Err(format!("Unsupported URL protocol: {}", scheme)),
+    }
+}
+
 #[tauri::command]
 pub fn list_plugins(state: State<'_, Arc<AppState>>) -> Vec<PluginInfo> {
     let registry = state.plugin_registry.lock().unwrap();

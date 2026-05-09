@@ -2604,10 +2604,29 @@ describe('tribex-ai-client', function () {
           upload: { url: 'https://worker.example/__sandbox/workspace-file?token=upload' },
         });
       }
-      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/user-sandbox/files/file-1') {
+      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/user-sandbox/files/file-1' && args.method === 'GET') {
         return Promise.resolve({
           file: { id: 'file-1', relativePath: 'reports/april.csv' },
           download: { url: 'https://worker.example/__sandbox/workspace-file?token=download' },
+        });
+      }
+      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/user-sandbox/folders' && args.method === 'POST') {
+        return Promise.resolve({
+          folder: { path: args.body.folderPath },
+          created: true,
+        });
+      }
+      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/user-sandbox/files/file-1' && args.method === 'PATCH') {
+        return Promise.resolve({
+          file: { id: 'file-1', relativePath: args.body.relativePath },
+          moved: true,
+        });
+      }
+      if (command === 'first_party_ai_request' && args.path === '/workspaces/workspace-123/user-sandbox/folders' && args.method === 'PATCH') {
+        return Promise.resolve({
+          folder: { fromPath: args.body.fromFolderPath, path: args.body.toFolderPath },
+          files: [{ id: 'file-1', relativePath: args.body.toFolderPath + '/april.csv' }],
+          moved: true,
         });
       }
       return Promise.reject(new Error('unexpected request ' + JSON.stringify(args)));
@@ -2631,6 +2650,17 @@ describe('tribex-ai-client', function () {
       file: { id: 'file-1' },
       download: { url: expect.stringContaining('download') },
     });
+    await expect(window.__tribexAiClient.createWorkspaceFolder('workspace-123', 'archive')).resolves.toMatchObject({
+      folder: { path: 'archive' },
+      created: true,
+    });
+    await expect(window.__tribexAiClient.moveWorkspaceFile('workspace-123', 'file-1', 'archive/april.csv')).resolves.toMatchObject({
+      file: { id: 'file-1', relativePath: 'archive/april.csv' },
+    });
+    await expect(window.__tribexAiClient.moveWorkspaceFolder('workspace-123', 'reports', 'archive/reports')).resolves.toMatchObject({
+      folder: { fromPath: 'reports', path: 'archive/reports' },
+      files: [{ id: 'file-1', relativePath: 'archive/reports/april.csv' }],
+    });
 
     expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
       method: 'GET',
@@ -2640,6 +2670,21 @@ describe('tribex-ai-client', function () {
       method: 'POST',
       path: '/workspaces/workspace-123/user-sandbox/files',
       body: expect.objectContaining({ relativePath: 'uploads/a.txt' }),
+    }));
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'POST',
+      path: '/workspaces/workspace-123/user-sandbox/folders',
+      body: { folderPath: 'archive' },
+    }));
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'PATCH',
+      path: '/workspaces/workspace-123/user-sandbox/files/file-1',
+      body: { relativePath: 'archive/april.csv' },
+    }));
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'PATCH',
+      path: '/workspaces/workspace-123/user-sandbox/folders',
+      body: { fromFolderPath: 'reports', toFolderPath: 'archive/reports' },
     }));
   });
 

@@ -224,15 +224,90 @@
     return String(value || '');
   }
 
+  function safeJson(value) {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (_error) {
+      return '{}';
+    }
+  }
+
+  function buildVariableContext(skill, values, emailAccounts) {
+    var accounts = normalizeEmailAccounts(emailAccounts);
+    var context = {
+      skill: {
+        key: skill && skill.key ? skill.key : '',
+        name: skill && skill.name ? skill.name : '',
+      },
+      variables: {},
+    };
+    asArray(skill && skill.variables).forEach(function (variable) {
+      var value = values ? values[variable.name] : null;
+      context.variables[variable.name] = {
+        label: variable.label,
+        type: variable.type,
+        required: variable.required !== false,
+        value: value === undefined ? null : value,
+        displayValue: formatVariableChip(variable, value, accounts),
+        promptValue: formatVariableForPrompt(variable, value, accounts),
+      };
+    });
+    return context;
+  }
+
+  function buildVariableJsonBlock(skill, values, emailAccounts) {
+    if (!skill || !asArray(skill.variables).length) return '';
+    return [
+      'Skill variable values (defensive JSON context; use if any merge token was not fully resolved):',
+      '```json',
+      safeJson(buildVariableContext(skill, values || {}, emailAccounts)),
+      '```',
+    ].join('\n');
+  }
+
   function substituteTemplate(template, skill, values, emailAccounts) {
     var byName = {};
     asArray(skill && skill.variables).forEach(function (variable) {
       byName[variable.name] = variable;
     });
-    return String(template || '').replace(/{{\s*([A-Za-z0-9_-]+)\s*}}|\$\{\s*([A-Za-z0-9_-]+)\s*\}/g, function (_match, first, second) {
-      var name = first || second;
-      return formatVariableForPrompt(byName[name], values ? values[name] : null, emailAccounts);
-    });
+    var source = String(template || '');
+    var output = '';
+    var index = 0;
+    var mergeNamePattern = /^[A-Za-z0-9_-]+$/;
+    var parseMergeToken = function (openToken, closeToken) {
+      var closeIndex = source.indexOf(closeToken, index + openToken.length);
+      if (closeIndex < 0) return null;
+      var name = source.slice(index + openToken.length, closeIndex).trim();
+      if (!mergeNamePattern.test(name)) return null;
+      return {
+        end: closeIndex + closeToken.length,
+        name: name,
+        raw: source.slice(index, closeIndex + closeToken.length),
+      };
+    };
+    var resolveMergeToken = function (token) {
+      if (!byName[token.name]) return token.raw;
+      return formatVariableForPrompt(byName[token.name], values ? values[token.name] : null, emailAccounts);
+    };
+
+    while (index < source.length) {
+      var token = null;
+      if (source.slice(index, index + 2) === '{{') {
+        token = parseMergeToken('{{', '}}');
+      } else if (source.slice(index, index + 2) === '${') {
+        token = parseMergeToken('${', '}');
+      } else if (source.charAt(index) === '{') {
+        token = parseMergeToken('{', '}');
+      }
+      if (token) {
+        output += resolveMergeToken(token);
+        index = token.end;
+      } else {
+        output += source.charAt(index);
+        index += 1;
+      }
+    }
+    return output;
   }
 
   function buildDisplayPrompt(userText, skill, values, emailAccounts) {
@@ -272,7 +347,9 @@
     var text = String(userText || '').trim();
     if (!skill) return text;
     var expanded = substituteTemplate(skill.promptTemplate, skill, values || {}, emailAccounts);
-    return text ? (text + '\n\n' + expanded) : expanded;
+    var variableJson = buildVariableJsonBlock(skill, values || {}, emailAccounts);
+    var skillPrompt = variableJson ? (expanded + '\n\n' + variableJson) : expanded;
+    return text ? (text + '\n\n' + skillPrompt) : skillPrompt;
   }
 
   function filterSkills(skills, query) {
@@ -305,6 +382,7 @@
     buildDisplayPrompt: buildDisplayPrompt,
     buildRuntimePrompt: buildRuntimePrompt,
     buildSkillInvocation: buildSkillInvocation,
+    buildVariableJsonBlock: buildVariableJsonBlock,
     detectSlashSkillQuery: detectSlashSkillQuery,
     filterSkills: filterSkills,
     formatVariableChip: formatVariableChip,

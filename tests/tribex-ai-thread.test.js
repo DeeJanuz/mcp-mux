@@ -562,6 +562,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(payload.runtimePrompt).toContain('primary@example.com (provider: GMAIL, account id: acct-primary)');
     expect(payload.runtimePrompt).toContain('work@example.com (provider: GMAIL, account id: acct-work)');
     expect(payload.runtimePrompt).toContain('Start: 2026-04-26T12:00:00Z');
+    expect(payload.runtimePrompt).toContain('Skill variable values (defensive JSON context');
     expect(payload.skillInvocation).toMatchObject({
       key: 'email-analysis',
       selectedAccounts: [

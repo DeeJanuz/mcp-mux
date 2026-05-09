@@ -79,9 +79,51 @@ describe('tribex-ai persona skills', function () {
     expect(runtimePrompt).toContain('Use the Email Coordinator persona');
     expect(runtimePrompt).toContain('primary@example.com (provider: GMAIL, account id: acct-primary)');
     expect(runtimePrompt).toContain('work@example.com (provider: GMAIL, account id: acct-work)');
+    expect(runtimePrompt).toContain('Skill variable values (defensive JSON context');
+    expect(runtimePrompt).toContain('"inboxes"');
+    expect(runtimePrompt).toContain('"promptValue"');
     expect(invocation.selectedAccounts).toEqual([
       expect.objectContaining({ id: 'acct-primary', emailAddress: 'primary@example.com' }),
       expect.objectContaining({ id: 'acct-work', emailAddress: 'work@example.com' }),
     ]);
+  });
+
+  it('keeps unknown merge tokens visible and passes known variables as defensive JSON', function () {
+    var skill = window.__tribexAiSkills.normalizeSkill({
+      key: 'weekly-review',
+      name: 'Weekly Review',
+      promptTemplate: 'Summarize for {{audience}} and keep {{missing_value}} visible.',
+      variables: [
+        { name: 'audience', label: 'Audience', type: 'text', default: 'leadership' },
+      ],
+    }, 0);
+    var runtimePrompt = window.__tribexAiSkills.buildRuntimePrompt('', skill, {
+      audience: 'support leads',
+    }, []);
+
+    expect(runtimePrompt).toContain('Summarize for support leads');
+    expect(runtimePrompt).toContain('{{missing_value}}');
+    expect(runtimePrompt).toContain('"audience"');
+    expect(runtimePrompt).toContain('"value": "support leads"');
+  });
+
+  it('expands single-brace merge variables in custom skill prompts', function () {
+    var skill = window.__tribexAiSkills.normalizeSkill({
+      key: 'date-check',
+      name: 'Date Check',
+      promptTemplate: 'Use {datevar1} and {{datevar2}}. Keep {missing_value} visible.',
+      variables: [
+        { name: 'datevar1', label: 'Date 1', type: 'text' },
+        { name: 'datevar2', label: 'Date 2', type: 'text' },
+      ],
+    }, 0);
+    var runtimePrompt = window.__tribexAiSkills.buildRuntimePrompt('', skill, {
+      datevar1: '11/02/2021',
+      datevar2: '12/03/2021',
+    }, []);
+
+    expect(runtimePrompt).toContain('Use 11/02/2021 and 12/03/2021.');
+    expect(runtimePrompt).toContain('{missing_value}');
+    expect(runtimePrompt).not.toContain('{datevar1}');
   });
 });

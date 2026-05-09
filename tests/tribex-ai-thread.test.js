@@ -824,7 +824,8 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-review-card').textContent).toContain('Approve revised table');
     expect(document.querySelector('.ai-codex-review-preview').getAttribute('role')).toBe('region');
     expect(document.querySelector('.ai-codex-review-preview').getAttribute('aria-label')).toBe('Approve revised table preview');
-    expect(document.querySelector('.ai-codex-blocker-header .ai-primary-btn').textContent).toBe('Submit decisions');
+    expect(document.querySelector('.ai-codex-blocker-header .ai-primary-btn')).toBeNull();
+    expect(document.querySelector('.ai-codex-action-dock .ai-primary-btn').textContent).toBe('Submit decisions');
     expect(document.querySelector('.ai-codex-review-card').textContent).not.toContain('Submit reviewed decision');
     expect(window.__renderers.structured_data).toHaveBeenCalledWith(
       expect.any(HTMLElement),
@@ -839,7 +840,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
       expect.any(Function),
     );
 
-    document.querySelector('.ai-codex-blocker-header .ai-primary-btn').click();
+    document.querySelector('.ai-codex-action-dock .ai-primary-btn').click();
     await Promise.resolve();
     await Promise.resolve();
 
@@ -947,7 +948,8 @@ describe('tribex-ai-thread Codex-like surface', function () {
     });
     expect(submitButtons).toHaveLength(1);
     expect(document.querySelector('[data-review-bundle-submit="true"]')).not.toBeNull();
-    expect(document.querySelector('.ai-codex-review-bundle-sticky')).not.toBeNull();
+    expect(document.querySelector('.ai-codex-action-dock [data-review-bundle-submit="true"]')).not.toBeNull();
+    expect(document.querySelector('.ai-codex-review-bundle-sticky')).toBeNull();
     expect(Array.from(document.querySelectorAll('.ai-codex-review-decision-badge')).map(function (badge) {
       return badge.textContent;
     })).toEqual(['0/1 decided', '0/1 decided']);
@@ -1012,9 +1014,11 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(refreshActiveThread).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps bundled review controls sticky, lean, and removes nested review preview scrolling', function () {
-    expect(stylesCode).toContain('.ai-codex-review-bundle-sticky');
-    expect(stylesCode).toContain('position: sticky');
+  it('keeps bundled review controls in the bottom action dock and removes nested review preview scrolling', function () {
+    expect(stylesCode).not.toContain('.ai-codex-review-bundle-sticky');
+    expect(stylesCode).not.toContain('position: sticky;\n  top: 10px;');
+    expect(stylesCode).toContain('.ai-codex-action-dock');
+    expect(stylesCode).toContain('grid-template-rows: auto minmax(0, 1fr) auto auto');
     expect(stylesCode).toContain('.ai-codex-session {');
     expect(stylesCode).toContain('max-width: none');
     expect(stylesCode).toContain('.ai-codex-review-bundle {');
@@ -1197,10 +1201,11 @@ describe('tribex-ai-thread Codex-like surface', function () {
     renderThread('thread-1');
 
     expect(window.__renderers.rich_content).toHaveBeenCalled();
-    expect(document.querySelector('.ai-codex-review-card').textContent).toContain('Submit reviewed decision');
+    expect(document.querySelector('.ai-codex-review-card').textContent).not.toContain('Submit reviewed decision');
+    expect(document.querySelector('.ai-codex-action-dock').textContent).toContain('Submit decisions');
 
-    var fallbackSubmit = Array.from(document.querySelectorAll('.ai-codex-review-card .ai-codex-blocker-actions button')).find(function (button) {
-      return button.textContent === 'Submit reviewed decision';
+    var fallbackSubmit = Array.from(document.querySelectorAll('.ai-codex-action-dock button')).find(function (button) {
+      return button.textContent === 'Submit decisions';
     });
     fallbackSubmit.click();
     await Promise.resolve();
@@ -1273,7 +1278,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-review-status').textContent).toContain('Review submitted');
   });
 
-  it('renders blocking reviews before queued follow-up context', function () {
+  it('renders blocking reviews after queued follow-up context', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),
       refreshActiveThread: vi.fn(),
@@ -1337,7 +1342,8 @@ describe('tribex-ai-thread Codex-like surface', function () {
 
     expect(blockerIndex).toBeGreaterThan(-1);
     expect(queuedIndex).toBeGreaterThan(-1);
-    expect(blockerIndex).toBeLessThan(queuedIndex);
+    expect(blockerIndex).toBeGreaterThan(queuedIndex);
+    expect(document.querySelector('.ai-codex-action-dock').textContent).toContain('Review archive candidates');
   });
 
   it('labels queued context rows consistently after the active session completes', function () {
@@ -1698,6 +1704,82 @@ describe('tribex-ai-thread Codex-like surface', function () {
 
       expect(nextTimeline.scrollTop).toBe(nextTimeline.scrollHeight);
     }
+  });
+
+  it('preserves reading-history scroll when a new action arrives and jumps only on request', function () {
+    var subscription = null;
+    var rafCallbacks = [];
+    window.requestAnimationFrame = function (callback) {
+      rafCallbacks.push(callback);
+      return rafCallbacks.length;
+    };
+    function flushNextFrame() {
+      var callback = rafCallbacks.shift();
+      if (callback) callback();
+    }
+    var threadContext = {
+      thread: baseThread({
+        runs: [
+          {
+            id: 'run-1',
+            user: { id: 'u1', role: 'user', content: 'Review the historical context.' },
+            answer: { id: 'a1', role: 'assistant', content: 'Historical answer.' },
+          },
+        ],
+      }),
+      loading: false,
+      pending: false,
+      error: null,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function (listener) {
+        subscription = listener;
+        return vi.fn();
+      }),
+      getThreadContext: vi.fn(function () { return threadContext; }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+    flushNextFrame();
+    var initialTimeline = document.querySelector('.ai-codex-timeline');
+    Object.defineProperty(initialTimeline, 'scrollHeight', { configurable: true, value: 1800 });
+    Object.defineProperty(initialTimeline, 'clientHeight', { configurable: true, value: 500 });
+    initialTimeline.scrollTop = 300;
+    initialTimeline.dispatchEvent(new Event('scroll'));
+
+    threadContext.thread.lastActivityAt = '2026-04-24T18:06:00.000Z';
+    threadContext.thread.pendingHumanInputs = [
+      {
+        id: 'human-input-1',
+        renderer: 'structured_data',
+        title: 'Approve new action',
+        reviewSessionId: 'review-session-1',
+        rendererPayload: {
+          data: { title: 'Action review' },
+        },
+      },
+    ];
+    subscription();
+    flushNextFrame();
+
+    var nextTimeline = document.querySelector('.ai-codex-timeline');
+    Object.defineProperty(nextTimeline, 'scrollHeight', { configurable: true, value: 2200 });
+    Object.defineProperty(nextTimeline, 'clientHeight', { configurable: true, value: 500 });
+    var actionCard = document.querySelector('.ai-codex-review-card');
+    Object.defineProperty(actionCard, 'offsetTop', { configurable: true, value: 1600 });
+    flushNextFrame();
+
+    expect(nextTimeline.scrollTop).toBe(300);
+    expect(nextTimeline.getAttribute('data-scroll-mode')).toBe('reading_history');
+    expect(document.querySelector('.ai-codex-action-dock').textContent).toContain('Approve new action');
+
+    Array.from(document.querySelectorAll('.ai-codex-action-dock button')).find(function (button) {
+      return button.textContent === 'Jump to action';
+    }).click();
+
+    expect(nextTimeline.scrollTop).toBe(1588);
   });
 
   it('suppresses markdown entry animation while assistant text is streaming', function () {

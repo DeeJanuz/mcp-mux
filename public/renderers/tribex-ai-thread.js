@@ -194,6 +194,8 @@
         existing.reviewCardCollapsed = {};
         existing.timelineScrollTop = null;
         existing.timelineWasNearBottom = false;
+        existing.timelineScrollMode = 'pinned_to_latest';
+        existing.timelineElement = null;
         existing.lastBlockerSignature = null;
         existing.lastRenderSignature = null;
       }
@@ -224,6 +226,8 @@
       reviewCardCollapsed: {},
       timelineScrollTop: null,
       timelineWasNearBottom: false,
+      timelineScrollMode: 'pinned_to_latest',
+      timelineElement: null,
       lastBlockerSignature: null,
       renderScheduled: false,
       lastRenderSignature: null,
@@ -389,11 +393,13 @@
   }
 
   function getTimelineScrollSnapshot(timeline) {
-    if (!timeline) return { scrollTop: null, wasNearBottom: false };
+    if (!timeline) return { scrollTop: null, wasNearBottom: true, mode: 'pinned_to_latest' };
     var remaining = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight;
+    var wasNearBottom = remaining <= 48;
     return {
       scrollTop: timeline.scrollTop,
-      wasNearBottom: remaining <= 48,
+      wasNearBottom: wasNearBottom,
+      mode: wasNearBottom ? 'pinned_to_latest' : 'reading_history',
     };
   }
 
@@ -401,6 +407,7 @@
     var snapshot = getTimelineScrollSnapshot(timeline);
     state.timelineScrollTop = snapshot.scrollTop;
     state.timelineWasNearBottom = snapshot.wasNearBottom;
+    state.timelineScrollMode = snapshot.mode;
     if (
       state.threadId &&
       window.__tribexAiState &&
@@ -411,12 +418,29 @@
   }
 
   function attachTimelineBehavior(timeline, state) {
+    state.timelineElement = timeline;
     timeline.tabIndex = 0;
     timeline.setAttribute('role', 'region');
     timeline.setAttribute('aria-label', 'AI thread timeline');
+    timeline.setAttribute('data-scroll-mode', state.timelineScrollMode || 'pinned_to_latest');
     timeline.addEventListener('scroll', function () {
       rememberTimelineScroll(state, timeline);
+      timeline.setAttribute('data-scroll-mode', state.timelineScrollMode || 'pinned_to_latest');
     });
+  }
+
+  function pinTimelineToLatest(state) {
+    state.timelineScrollMode = 'pinned_to_latest';
+    state.timelineWasNearBottom = true;
+  }
+
+  function scrollTimelineToAction(state, target) {
+    var timeline = state.timelineElement;
+    if (!timeline || !target) return;
+    state.timelineScrollMode = 'programmatic_reveal';
+    timeline.setAttribute('data-scroll-mode', 'programmatic_reveal');
+    timeline.scrollTop = Math.max(0, target.offsetTop - 12);
+    rememberTimelineScroll(state, timeline);
   }
 
   function getBlockerSignature(viewModel) {
@@ -429,21 +453,11 @@
 
   function restoreTimelineScroll(timeline, state, viewModel, previousSnapshot) {
     var blockerSignature = getBlockerSignature(viewModel);
-    var hasBlockers = !!blockerSignature;
-    var shouldRevealBlocker = hasBlockers && state.lastBlockerSignature !== blockerSignature;
     state.lastBlockerSignature = blockerSignature || null;
 
     var run = function () {
       if (!timeline || !timeline.isConnected) return;
-      if (shouldRevealBlocker) {
-        var blockers = timeline.querySelector('.ai-codex-blockers');
-        if (blockers) {
-          timeline.scrollTop = Math.max(0, blockers.offsetTop - 12);
-          rememberTimelineScroll(state, timeline);
-          return;
-        }
-      }
-      if (previousSnapshot && previousSnapshot.wasNearBottom) {
+      if (!previousSnapshot || previousSnapshot.wasNearBottom || previousSnapshot.mode === 'pinned_to_latest') {
         timeline.scrollTop = timeline.scrollHeight;
         rememberTimelineScroll(state, timeline);
         return;
@@ -457,6 +471,17 @@
     };
     if (window.requestAnimationFrame) window.requestAnimationFrame(run);
     else window.setTimeout(run, 0);
+  }
+
+  function getPreviousTimelineSnapshot(state, previousTimeline) {
+    var snapshot = previousTimeline
+      ? getTimelineScrollSnapshot(previousTimeline)
+      : { scrollTop: null, wasNearBottom: true, mode: 'pinned_to_latest' };
+    if (state.timelineScrollMode === 'pinned_to_latest' && state.timelineWasNearBottom) {
+      snapshot.wasNearBottom = true;
+      snapshot.mode = 'pinned_to_latest';
+    }
+    return snapshot;
   }
 
   function appendStatusPill(parent, lifecycle, label) {
@@ -902,11 +927,6 @@
         previewApplyDecision = rendererResultApplyDecision(renderResult);
         previewGetDecisionSummary = rendererResultGetDecisionSummary(renderResult);
         refreshDecisionSummary();
-        if (previewSubmitDecision && !bundled) {
-          headerMeta.appendChild(createButton('ai-primary-btn ai-codex-small-btn', 'Submit decisions', function () {
-            previewSubmitDecision().catch(function () {});
-          }));
-        }
       } catch (error) {
           preview.textContent = error && error.message ? error.message : 'Review preview failed.';
       }
@@ -915,11 +935,6 @@
     var statusEl = createEl('div', 'ai-codex-review-status', '');
     body.appendChild(statusEl);
     var actions = createEl('div', 'ai-codex-blocker-actions');
-    if (!bundled && !previewSubmitDecision && !previewProvidesDecisionSubmit) {
-      actions.appendChild(createButton('ai-primary-btn', 'Submit reviewed decision', function () {
-        submitReviewDecision(state.threadId, input, { decision: 'approved' }, card).catch(function () {});
-      }));
-    }
     actions.appendChild(createButton('ai-secondary-btn', 'Refresh', function () {
       if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
         window.__tribexAiState.refreshActiveThread();
@@ -934,7 +949,13 @@
       try {
         result = previewSubmitDecision
           ? previewSubmitDecision()
-          : submitReviewDecision(state.threadId, input, { decision: 'partial' }, card, submissionOptions || {});
+          : submitReviewDecision(
+            state.threadId,
+            input,
+            previewProvidesDecisionSubmit ? { decision: 'partial' } : { decision: 'approved' },
+            card,
+            submissionOptions || {}
+          );
       } catch (error) {
         submissionOptions = null;
         return Promise.reject(error);
@@ -1002,36 +1023,6 @@
         if (statusEl) statusEl.textContent = error && error.message ? error.message : 'Bundled review submission failed.';
         throw error;
       });
-  }
-
-  function renderReviewBundleControls(state, inputs) {
-    var card = createEl('section', 'ai-codex-blocker ai-codex-review-bundle ai-codex-review-bundle-sticky');
-    var header = createEl('div', 'ai-codex-blocker-header');
-    header.appendChild(createEl('strong', '', 'Bundled decision review'));
-    header.appendChild(createEl('span', 'ai-codex-blocker-badge', String(inputs.length) + ' reviews'));
-    card.appendChild(header);
-
-    var status = createEl('div', 'ai-codex-review-status', '');
-    var actions = createEl('div', 'ai-codex-blocker-actions');
-    actions.appendChild(createButton('ai-secondary-btn ai-codex-approve-all', 'Approve All', function () {
-      applyBundleDecision(state, inputs, 'accept', status);
-    }));
-    actions.appendChild(createButton('ai-secondary-btn ai-codex-reject-all', 'Reject All', function () {
-      applyBundleDecision(state, inputs, 'reject', status);
-    }));
-    var submit = createButton('ai-primary-btn', 'Submit Decisions', function () {
-      submitBundleReviewDecisions(state, inputs, card, status).catch(function () {});
-    });
-    submit.setAttribute('data-review-bundle-submit', 'true');
-    actions.appendChild(submit);
-    actions.appendChild(createButton('ai-secondary-btn', 'Refresh', function () {
-      if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
-        window.__tribexAiState.refreshActiveThread();
-      }
-    }));
-    card.appendChild(actions);
-    card.appendChild(status);
-    return card;
   }
 
   function isDelegatedPause(activePause) {
@@ -1151,9 +1142,6 @@
     inputs.forEach(function (input) {
       wrap.appendChild(renderReviewCard(state, input, { bundled: bundled }));
     });
-    if (bundled) {
-      wrap.insertBefore(renderReviewBundleControls(state, inputs), wrap.firstChild);
-    }
     if (pause && !inputs.length) {
       var card = renderPauseCard(state, pause);
       if (card) wrap.appendChild(card);
@@ -1187,11 +1175,6 @@
     attachTimelineBehavior(timeline, state);
     renderRecovery(timeline, state, threadContext, viewModel);
     var hasBlockers = (viewModel.pendingHumanInputs || []).length || viewModel.activePause;
-    var blockersRendered = false;
-    if (hasBlockers) {
-      renderBlockers(timeline, state, viewModel);
-      blockersRendered = true;
-    }
     if (!viewModel.sessions.length) {
       var empty = createEl('section', 'ai-codex-empty');
       empty.appendChild(createEl('h2', '', 'Start a working session'));
@@ -1199,16 +1182,105 @@
       timeline.appendChild(empty);
     } else {
       viewModel.sessions.forEach(function (session, index) {
-        if (hasBlockers && !blockersRendered && session.lifecycle === 'queued') {
-          renderBlockers(timeline, state, viewModel);
-          blockersRendered = true;
-        }
         timeline.appendChild(renderSession(session, index, state, viewModel));
       });
     }
-    if (hasBlockers && !blockersRendered) renderBlockers(timeline, state, viewModel);
     renderArtifactCards(timeline, state, viewModel);
+    if (hasBlockers) renderBlockers(timeline, state, viewModel);
     root.appendChild(timeline);
+  }
+
+  function latestActionTarget(state, input, activePause) {
+    var timeline = state.timelineElement;
+    if (!timeline) return null;
+    if (input) {
+      var reviewId = input && input.id ? input.id : 'review';
+      var cards = Array.from(timeline.querySelectorAll('[data-review-id]'));
+      return cards.find(function (card) {
+        return card.getAttribute('data-review-id') === reviewId;
+      }) || null;
+    }
+    if (activePause) return timeline.querySelector('.ai-codex-pause-card');
+    return null;
+  }
+
+  function renderLatestActionDock(root, state, viewModel) {
+    var inputs = viewModel.pendingHumanInputs || [];
+    var activePause = viewModel.activePause;
+    if (activePause && isDelegatedPause(activePause) && String(activePause.status || '').toUpperCase() === 'RESUMING') {
+      activePause = null;
+    }
+    if (!inputs.length && !activePause) return;
+
+    var latestInput = inputs.length ? inputs[inputs.length - 1] : null;
+    var dock = createEl('section', cx('ai-codex-action-dock', inputs.length > 1 && 'ai-codex-review-bundle'));
+    dock.setAttribute('aria-label', 'Latest required action');
+    var copy = createEl('div', 'ai-codex-action-dock-copy');
+    copy.appendChild(createEl('span', 'ai-codex-action-eyebrow', 'Latest required action'));
+    copy.appendChild(createEl('strong', '', inputs.length > 1
+      ? String(inputs.length) + ' reviews need decisions'
+      : latestInput
+        ? displayText(latestInput.title, 'Review required')
+        : displayText(activePause.title, 'Action required')));
+    if (latestInput && (latestInput.detail || latestInput.description)) {
+      copy.appendChild(createEl('p', '', displayText(latestInput.detail || latestInput.description)));
+    } else if (!latestInput && activePause && (activePause.detail || activePause.progressSummary)) {
+      copy.appendChild(createEl('p', '', displayText(activePause.detail || activePause.progressSummary)));
+    }
+    dock.appendChild(copy);
+
+    var status = createEl('div', 'ai-codex-review-status', '');
+    var controls = createEl('div', 'ai-codex-action-dock-controls');
+    controls.appendChild(createButton('ai-secondary-btn', 'Jump to action', function () {
+      scrollTimelineToAction(state, latestActionTarget(state, latestInput, activePause));
+    }));
+
+    if (inputs.length > 1) {
+      controls.appendChild(createButton('ai-secondary-btn ai-codex-approve-all', 'Approve All', function () {
+        applyBundleDecision(state, inputs, 'accept', status);
+      }));
+      controls.appendChild(createButton('ai-secondary-btn ai-codex-reject-all', 'Reject All', function () {
+        applyBundleDecision(state, inputs, 'reject', status);
+      }));
+      var submitBundle = createButton('ai-primary-btn', 'Submit Decisions', function () {
+        pinTimelineToLatest(state);
+        submitBundleReviewDecisions(state, inputs, dock, status).catch(function () {});
+      });
+      submitBundle.setAttribute('data-review-bundle-submit', 'true');
+      controls.appendChild(submitBundle);
+    } else if (latestInput) {
+      var entry = getReviewCardEntry(state, latestInput);
+      if (entry && typeof entry.submitDecision === 'function') {
+        controls.appendChild(createButton('ai-primary-btn', 'Submit decisions', function () {
+          pinTimelineToLatest(state);
+          entry.submitDecision().catch(function () {});
+        }));
+      }
+    } else if (activePause) {
+      var pauseStatus = String(activePause.status || '').toUpperCase();
+      controls.appendChild(createButton('ai-secondary-btn', 'Check status', function () {
+        if (window.__tribexAiState && typeof window.__tribexAiState.checkThreadPause === 'function') {
+          window.__tribexAiState.checkThreadPause(state.threadId, activePause.id);
+        }
+      }));
+      if (pauseStatus === 'READY') {
+        controls.appendChild(createButton('ai-primary-btn', 'Continue', function () {
+          pinTimelineToLatest(state);
+          if (window.__tribexAiState && typeof window.__tribexAiState.continueThreadPause === 'function') {
+            window.__tribexAiState.continueThreadPause(state.threadId, activePause.id);
+          }
+        }));
+      }
+    }
+
+    controls.appendChild(createButton('ai-secondary-btn', 'Refresh', function () {
+      if (window.__tribexAiState && typeof window.__tribexAiState.refreshActiveThread === 'function') {
+        window.__tribexAiState.refreshActiveThread();
+      }
+    }));
+    dock.appendChild(controls);
+    dock.appendChild(status);
+    root.appendChild(dock);
   }
 
   function renderArtifactDrawer(root, state, viewModel) {
@@ -1710,6 +1782,7 @@
       state.skillInsertIndex = 0;
       state.variablePopover = null;
       state.slashQuery = null;
+      pinTimelineToLatest(state);
       textarea.value = '';
       var submitResult = selectedSkill
         ? window.__tribexAiState.submitPrompt(state.threadId, prompt, payload)
@@ -1763,7 +1836,7 @@
   function renderThread(container, state, options) {
     options = options || {};
     var previousTimeline = container.querySelector('.ai-codex-timeline');
-    var previousSnapshot = getTimelineScrollSnapshot(previousTimeline);
+    var previousSnapshot = getPreviousTimelineSnapshot(state, previousTimeline);
     var threadContext = getThreadContext(state.threadId);
     var viewModel = getViewModel(threadContext);
     var signature = viewSignature(threadContext, viewModel);
@@ -1778,6 +1851,7 @@
     renderTimeline(layout, state, threadContext, viewModel);
     renderArtifactDrawer(layout, state, viewModel);
     root.appendChild(layout);
+    renderLatestActionDock(root, state, viewModel);
     renderComposer(root, state, viewModel);
     container.appendChild(root);
     state.hasRenderedThreadContent = true;

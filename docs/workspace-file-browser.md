@@ -38,11 +38,14 @@ If the worker uses a local R2 binding for development, configure `USER_WORKSPACE
 ## Supported Browser Actions
 
 - List active workspace files.
+- Create empty folders through `POST /workspaces/:workspaceId/user-sandbox/folders`.
 - Upload single or multiple files through `POST /workspaces/:workspaceId/user-sandbox/files`.
 - Upload folders through `POST /workspaces/:workspaceId/user-sandbox/file-batches`.
 - Inspect metadata and preview text, JSON, CSV, Markdown, and image files.
 - Download individual files through signed worker URLs.
 - Download folders as client-built zip files.
+- Move individual files through `PATCH /workspaces/:workspaceId/user-sandbox/files/:fileId`.
+- Move folders through `PATCH /workspaces/:workspaceId/user-sandbox/folders`.
 - Delete individual files.
 
-Folder deletion is intentionally not part of the first version.
+The browser renders provider folder markers as folders instead of user files. Folder marker files should set `metadata.isFolderMarker` to `true` and include `metadata.folderPath`. Folder deletion is intentionally not part of the first version.

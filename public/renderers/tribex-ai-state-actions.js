@@ -1780,6 +1780,18 @@
       return parts.length ? parts[parts.length - 1] : '';
     }
 
+    function hasWorkspaceTraversalSegment(path) {
+      return normalizeWorkspaceBrowserPath(path).split('/').some(function (segment) {
+        return segment === '.' || segment === '..';
+      });
+    }
+
+    function rejectWorkspaceMove(message) {
+      state.workspaceFileBrowser.error = message;
+      api.notify();
+      return Promise.resolve(false);
+    }
+
     function isWorkspaceFolderMarker(file) {
       return !!(
         file &&
@@ -2002,7 +2014,7 @@
         api.notify();
         return Promise.resolve(null);
       }
-      if (folderName.split('/').indexOf('..') >= 0 || folderName.split('/').indexOf('.') >= 0) {
+      if (hasWorkspaceTraversalSegment(folderName)) {
         state.workspaceFileBrowser.error = 'Folder names cannot contain traversal segments.';
         api.notify();
         return Promise.resolve(null);
@@ -2075,7 +2087,14 @@
       var file = findWorkspaceFile(workspace.id, fileId);
       if (!file || isWorkspaceFolderMarker(file)) return Promise.resolve(null);
       var destinationFolder = normalizeWorkspaceBrowserPath(folderPath);
-      var targetPath = joinWorkspaceBrowserPath(destinationFolder, file.name || String(file.relativePath || '').split('/').pop());
+      if (hasWorkspaceTraversalSegment(destinationFolder)) {
+        return rejectWorkspaceMove('Folder paths cannot contain traversal segments.');
+      }
+      var fileName = workspaceBasename(file.relativePath || file.name);
+      if (!fileName || hasWorkspaceTraversalSegment(fileName)) {
+        return rejectWorkspaceMove('File names cannot contain traversal segments.');
+      }
+      var targetPath = joinWorkspaceBrowserPath(destinationFolder, fileName);
       if (!targetPath || targetPath === file.relativePath) return Promise.resolve(null);
 
       state.workspaceFileBrowser.movingFile = true;
@@ -2108,6 +2127,12 @@
       var fromPath = normalizeWorkspaceBrowserPath(fromFolderPath);
       var targetPath = normalizeWorkspaceBrowserPath(toFolderPath);
       if (!workspace || !fromPath || !targetPath || fromPath === targetPath) return Promise.resolve(null);
+      if (hasWorkspaceTraversalSegment(fromPath) || hasWorkspaceTraversalSegment(targetPath)) {
+        return rejectWorkspaceMove('Folder paths cannot contain traversal segments.');
+      }
+      if (targetPath.indexOf(fromPath + '/') === 0) {
+        return rejectWorkspaceMove('Folders cannot be moved into themselves or their subfolders.');
+      }
 
       state.workspaceFileBrowser.movingFile = true;
       state.workspaceFileBrowser.error = null;

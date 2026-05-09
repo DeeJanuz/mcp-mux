@@ -6300,7 +6300,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   background: var(--ai-codex-page-bg);
   color: var(--text-primary);
   isolation: isolate;
@@ -6708,17 +6708,8 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   margin-bottom: 0;
 }
 
-.ai-codex-review-bundle-sticky {
-  position: sticky;
-  top: 10px;
-  z-index: 11;
-  background: color-mix(in srgb, var(--ai-codex-surface) 94%, transparent);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: 0 10px 30px rgb(15 23 42 / 16%);
-}
-
-.ai-codex-review-bundle {
+.ai-codex-review-bundle,
+.ai-codex-action-dock.ai-codex-review-bundle {
   padding: 8px 10px;
 }
 
@@ -6726,7 +6717,8 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   margin-bottom: 6px;
 }
 
-.ai-codex-review-bundle .ai-codex-blocker-actions {
+.ai-codex-review-bundle .ai-codex-blocker-actions,
+.ai-codex-review-bundle .ai-codex-action-dock-controls {
   gap: 6px;
 }
 
@@ -6817,6 +6809,72 @@ body.ai-mode-session-active .ai-codex-review-bundle .ai-codex-reject-all:hover {
 
 .ai-codex-review-card.is-submitted .ai-codex-review-status {
   color: var(--color-success-text);
+}
+
+.ai-codex-action-dock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 16px;
+  align-items: center;
+  border-top: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--ai-codex-surface) 96%, transparent);
+  padding: 10px 22px;
+  box-shadow: 0 -10px 24px rgb(15 23 42 / 8%);
+  z-index: 2;
+}
+
+.ai-codex-action-dock-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.ai-codex-action-eyebrow {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ai-codex-action-dock-copy strong {
+  font-size: 14px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.ai-codex-action-dock-copy p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.ai-codex-action-dock-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-codex-action-dock > .ai-codex-review-status {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+.ai-codex-action-dock > .ai-codex-review-status:empty {
+  display: none;
+}
+
+@media (max-width: 820px) {
+  .ai-codex-action-dock {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-codex-action-dock-controls {
+    justify-content: flex-start;
+  }
 }
 
 .ai-codex-pause-tasks {

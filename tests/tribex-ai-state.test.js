@@ -5174,6 +5174,20 @@ describe('tribex-ai-state', function () {
 
     await window.__tribexAiState.moveWorkspaceFolderToFolder('reports', 'archive');
     expect(client.moveWorkspaceFolder).toHaveBeenCalledWith('workspace-1', 'reports', 'archive/reports');
+
+    client.moveWorkspaceFile.mockClear();
+    await expect(window.__tribexAiState.moveWorkspaceFileToFolder('file-1', '../archive')).resolves.toBe(false);
+    expect(client.moveWorkspaceFile).not.toHaveBeenCalled();
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.error).toContain('traversal');
+
+    client.moveWorkspaceFolder.mockClear();
+    await expect(window.__tribexAiState.moveWorkspaceFolderToPath('reports', '../archive')).resolves.toBe(false);
+    expect(client.moveWorkspaceFolder).not.toHaveBeenCalled();
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.error).toContain('traversal');
+
+    await expect(window.__tribexAiState.moveWorkspaceFolderToPath('reports', 'reports/subfolder')).resolves.toBe(false);
+    expect(client.moveWorkspaceFolder).not.toHaveBeenCalled();
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.error).toContain('subfolders');
   });
 
   it('requires confirmation before deleting a selected workspace file', async function () {

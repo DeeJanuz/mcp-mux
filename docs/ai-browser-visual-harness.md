@@ -2,6 +2,8 @@
 
 Use the Codex browser harness only as a fast deterministic regression aid after a native-client issue is understood. For primary MCPViews AI chat debugging, use the native build workflow in [Native Build UI Debug Loop](./native-build-ui-debug-loop.md) so the real Tauri app is built from the current dirty working tree and inspected with Computer Use.
 
+Use [AI Chat UX Pattern](./ai-chat-ux-pattern.md) as the expected behavior contract for timeline order, latest-action placement, and scroll anchoring.
+
 ## URL
 
 ```text

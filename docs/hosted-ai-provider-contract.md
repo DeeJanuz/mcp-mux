@@ -230,6 +230,8 @@ POST /threads/:threadId/human-inputs/:inputId/decision
 
 The body is the renderer decision payload, usually including fields such as `decision`, `decisions`, `comments`, and edited values.
 
+Thread `activePause.tasks[]` entries can include `actionLabel` and `actionUrl` for external user steps such as OAuth or account connection. MCPViews renders non-terminal task actions only when `actionUrl` is an `http` or `https` URL, and opens the URL in the system browser when the native app is available.
+
 ## Runtime Session Contract
 
 Before sending a message, MCPViews requests a runtime session:
@@ -341,12 +343,17 @@ Supported endpoints:
 | `GET` | `/workspaces/:workspaceId/user-sandbox/files` | List files. |
 | `POST` | `/workspaces/:workspaceId/user-sandbox/files` | Create a signed upload target. |
 | `GET` | `/workspaces/:workspaceId/user-sandbox/files/:fileId` | Return metadata and signed download URL. |
+| `PATCH` | `/workspaces/:workspaceId/user-sandbox/files/:fileId` | Move or rename one file by updating `relativePath`. |
 | `DELETE` | `/workspaces/:workspaceId/user-sandbox/files/:fileId` | Delete one file. |
+| `POST` | `/workspaces/:workspaceId/user-sandbox/folders` | Create an empty folder marker. |
+| `PATCH` | `/workspaces/:workspaceId/user-sandbox/folders` | Move a folder from `fromFolderPath` to `toFolderPath`. |
 | `POST` | `/workspaces/:workspaceId/user-sandbox/file-batches` | Create folder/batch upload targets. |
 | `GET` | `/workspaces/:workspaceId/user-sandbox/file-batches/:batchId` | Inspect batch state. |
 | `POST` | `/workspaces/:workspaceId/user-sandbox/file-batches/:batchId/finalize` | Finalize a batch. |
 
 Upload responses should include a short-lived signed `upload.url`; download responses should include a short-lived signed `download.url`. Durable storage credentials stay in the provider control plane.
+
+Folder creation can return either folder metadata or a marker file. When marker files are included in `GET /workspaces/:workspaceId/user-sandbox/files`, set `metadata.isFolderMarker` to `true` and `metadata.folderPath` to the displayed folder path so MCPViews renders the marker as a folder and excludes it from preview, download, and delete file actions.
 
 ## Compatibility Notes
 

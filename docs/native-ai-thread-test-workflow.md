@@ -2,6 +2,8 @@
 
 Use this workflow when the user asks to repeat the MCPViews native AI thread test process.
 
+Use [AI Chat UX Pattern](./ai-chat-ux-pattern.md) as the behavior contract for timeline order, latest-action placement, and scroll anchoring during AI thread validation.
+
 ## First Step
 
 Ask the user what the focus of the test should be before rebuilding or launching anything. Keep the question short, then wait for the answer.

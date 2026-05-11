@@ -128,6 +128,21 @@
       return (workItems || []).some(isRunningActivityItem);
     }
 
+    function hasSettledAssistantAnswer(assistantMessage) {
+      return !!(
+        assistantMessage &&
+        !assistantMessage.isStreaming &&
+        String(assistantMessage.content || '').trim()
+      );
+    }
+
+    function resolveWorkSessionStatus(turn, assistantMessage) {
+      if (turn && turn.status === 'failed' && !hasSettledAssistantAnswer(assistantMessage)) {
+        return 'failed';
+      }
+      return 'completed';
+    }
+
     function copyMessages(messages) {
       return Array.isArray(messages)
         ? messages.filter(Boolean).map(function (message) {
@@ -1816,7 +1831,7 @@
                 id: turn.turnId || ('work-session-' + index),
                 turnId: turn.turnId || null,
                 turnOrdinal: turn.turnOrdinal || null,
-                status: hasRunning ? 'running' : (turn.status === 'failed' ? 'failed' : 'completed'),
+                status: hasRunning ? 'running' : resolveWorkSessionStatus(turn, assistantMessage),
                 startedAt: startedAt,
                 endedAt: hasRunning ? null : endedAt,
                 items: workItems,

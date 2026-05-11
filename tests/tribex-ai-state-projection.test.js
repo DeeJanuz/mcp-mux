@@ -91,6 +91,88 @@ describe('tribex-ai-state projection helpers', function () {
     expect(runs[0].workSession.endedAt).toBe('2026-04-16T10:01:30.000Z');
   });
 
+  it('keeps recovered turns complete when an expected tool guardrail fails', function () {
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var runs = api.buildRunGroups(
+      {
+        turnHistoryById: {},
+        turnCompletedAtById: {
+          'turn-1': '2026-05-11T13:53:00.000Z',
+        },
+      },
+      [
+        {
+          id: 'u1',
+          role: 'user',
+          content: 'Try the blocked write, then recover.',
+          createdAt: '2026-05-11T13:52:35.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: 'Blocked write reported, recovered with createIfMissing, and verified.',
+          createdAt: '2026-05-11T13:53:00.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+          isStreaming: false,
+        },
+      ],
+      [
+        {
+          id: 'activity-1',
+          toolName: 'sandbox_fs_write',
+          status: 'failed',
+          detail: 'Cannot write guardrail.md before reading it.',
+          createdAt: '2026-05-11T13:52:40.000Z',
+          updatedAt: '2026-05-11T13:52:41.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+        {
+          id: 'activity-2',
+          toolName: 'sandbox_fs_write',
+          status: 'completed',
+          detail: 'Created guardrail.md.',
+          createdAt: '2026-05-11T13:52:42.000Z',
+          updatedAt: '2026-05-11T13:52:43.000Z',
+          turnId: 'turn-1',
+          turnOrdinal: 1,
+        },
+      ]
+    );
+
+    expect(runs[0].workSession.status).toBe('completed');
+    expect(runs[0].workSession.items.map(function (item) { return item.status; })).toEqual([
+      'failed',
+      'completed',
+    ]);
+  });
+
   it('preserves tool part order for same-timestamp review workflow activity', function () {
     var context = {
       state: {

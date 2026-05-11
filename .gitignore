@@ -6,3 +6,4 @@ src-tauri/gen/schemas/
 sidecar/dist/
 .env
 .DS_Store
+src-tauri/bundled-plugins/mac-dev/

@@ -706,7 +706,7 @@
     card.appendChild(rail);
     var body = createEl('div', 'ai-codex-session-body');
     var head = createEl('div', 'ai-codex-session-head');
-    head.appendChild(createEl('span', 'ai-codex-session-index', 'Session ' + (index + 1)));
+    head.appendChild(createEl('span', 'ai-codex-session-index', 'Request ' + (index + 1)));
     appendStatusPill(head, session.lifecycle || viewModel.lifecycle, titleCase(session.lifecycle || viewModel.lifecycle));
     body.appendChild(head);
     if (session.user && session.user.content && !isSyntheticReviewResumeMessage(session.user)) {
@@ -719,7 +719,7 @@
     else if (session.lifecycle !== 'complete') {
       var pending = createEl('div', 'ai-codex-pending-answer');
       pending.appendChild(createEl('span', 'ai-codex-pulse'));
-      pending.appendChild(createEl('span', '', session.lifecycle === 'queued' ? 'Queued as context' : viewModel.statusLabel || 'Working'));
+      pending.appendChild(createEl('span', '', session.lifecycle === 'queued' ? 'Queued follow-up' : viewModel.statusLabel || 'Working'));
       body.appendChild(pending);
     }
     card.appendChild(body);
@@ -816,12 +816,14 @@
       : null;
   }
 
+  function previewDecisionSubmitElement(preview) {
+    return preview && preview.querySelector
+      ? preview.querySelector('[data-review-decision-submit="true"]')
+      : null;
+  }
+
   function previewHasDecisionSubmit(preview, result) {
-    return rendererResultProvidesDecisionSubmit(result) || !!(
-      preview &&
-      preview.querySelector &&
-      preview.querySelector('[data-review-decision-submit="true"]')
-    );
+    return rendererResultProvidesDecisionSubmit(result) || !!previewDecisionSubmitElement(preview);
   }
 
   function renderReviewCard(state, input, options) {
@@ -902,11 +904,14 @@
     var renderer = window.__renderers && window.__renderers[normalized.renderer];
     var previewProvidesDecisionSubmit = false;
     var previewSubmitDecision = null;
+    var previewDecisionSubmitButton = null;
     var previewApplyDecision = null;
     var previewGetDecisionSummary = null;
     var submissionOptions = null;
+    var lastRendererSubmitPromise = null;
     function submitDecisionFromRenderer(decision) {
-      return submitReviewDecision(state.threadId, input, decision, card, submissionOptions || {});
+      lastRendererSubmitPromise = submitReviewDecision(state.threadId, input, decision, card, submissionOptions || {});
+      return lastRendererSubmitPromise;
     }
     function refreshDecisionSummary() {
       if (typeof previewGetDecisionSummary === 'function') {
@@ -922,6 +927,7 @@
         var renderResult = renderer(preview, normalized.data, normalized.meta, normalized.toolArgs, true, function (decision) {
           return submitDecisionFromRenderer(decision);
         });
+        previewDecisionSubmitButton = previewDecisionSubmitElement(preview);
         previewProvidesDecisionSubmit = previewHasDecisionSubmit(preview, renderResult);
         previewSubmitDecision = rendererResultSubmitDecision(renderResult);
         previewApplyDecision = rendererResultApplyDecision(renderResult);
@@ -947,15 +953,31 @@
       submissionOptions = options || null;
       var result = null;
       try {
-        result = previewSubmitDecision
-          ? previewSubmitDecision()
-          : submitReviewDecision(
-            state.threadId,
-            input,
-            previewProvidesDecisionSubmit ? { decision: 'partial' } : { decision: 'approved' },
-            card,
-            submissionOptions || {}
-          );
+        lastRendererSubmitPromise = null;
+        if (previewSubmitDecision) {
+          result = previewSubmitDecision();
+          if (result == null && lastRendererSubmitPromise) {
+            result = lastRendererSubmitPromise;
+          }
+        } else {
+          var currentDecisionSubmitButton = previewDecisionSubmitElement(card);
+          if (currentDecisionSubmitButton) {
+            currentDecisionSubmitButton.click();
+            result = lastRendererSubmitPromise || Promise.resolve(null);
+          } else if (previewProvidesDecisionSubmit) {
+            card.classList.add('is-error');
+            if (statusEl) statusEl.textContent = 'Review renderer did not expose a submit decision control.';
+            throw new Error('Review renderer did not expose a submit decision control.');
+          } else {
+            result = submitReviewDecision(
+              state.threadId,
+              input,
+              { decision: 'approved' },
+              card,
+              submissionOptions || {}
+            );
+          }
+        }
       } catch (error) {
         submissionOptions = null;
         return Promise.reject(error);
@@ -971,6 +993,7 @@
       applyDecision: previewApplyDecision,
       getDecisionSummary: previewGetDecisionSummary,
       refreshDecisionSummary: refreshDecisionSummary,
+      canSubmitDecision: !!(previewSubmitDecision || previewDecisionSubmitButton || !previewProvidesDecisionSubmit),
       submitDecision: submitDecision,
     };
     return card;
@@ -979,6 +1002,11 @@
   function getReviewCardEntry(state, input) {
     var reviewKey = input && input.id ? input.id : 'review';
     return state.reviewCards && state.reviewCards[reviewKey] ? state.reviewCards[reviewKey] : null;
+  }
+
+  function canSubmitReviewInput(state, input) {
+    var entry = getReviewCardEntry(state, input);
+    return !entry || entry.canSubmitDecision !== false;
   }
 
   function applyBundleDecision(state, inputs, decision, statusEl) {
@@ -1004,6 +1032,9 @@
     if (statusEl) statusEl.textContent = 'Submitting bundled review decisions...';
     var submissions = inputs.map(function (input) {
       var entry = getReviewCardEntry(state, input);
+      if (entry && entry.canSubmitDecision === false) {
+        return Promise.reject(new Error('Review renderer did not expose a submit decision control.'));
+      }
       if (entry && typeof entry.submitDecision === 'function') {
         return entry.submitDecision({ skipRefresh: true });
       }
@@ -1177,7 +1208,7 @@
     var hasBlockers = (viewModel.pendingHumanInputs || []).length || viewModel.activePause;
     if (!viewModel.sessions.length) {
       var empty = createEl('section', 'ai-codex-empty');
-      empty.appendChild(createEl('h2', '', 'Start a working session'));
+      empty.appendChild(createEl('h2', '', 'Start a request'));
       empty.appendChild(createEl('p', '', 'Ask the agent to do work. Progress, reviews, artifacts, and recovery will appear here.'));
       timeline.appendChild(empty);
     } else {
@@ -1242,15 +1273,17 @@
       controls.appendChild(createButton('ai-secondary-btn ai-codex-reject-all', 'Reject All', function () {
         applyBundleDecision(state, inputs, 'reject', status);
       }));
-      var submitBundle = createButton('ai-primary-btn', 'Submit Decisions', function () {
-        pinTimelineToLatest(state);
-        submitBundleReviewDecisions(state, inputs, dock, status).catch(function () {});
-      });
-      submitBundle.setAttribute('data-review-bundle-submit', 'true');
-      controls.appendChild(submitBundle);
+      if (inputs.every(function (input) { return canSubmitReviewInput(state, input); })) {
+        var submitBundle = createButton('ai-primary-btn', 'Submit Decisions', function () {
+          pinTimelineToLatest(state);
+          submitBundleReviewDecisions(state, inputs, dock, status).catch(function () {});
+        });
+        submitBundle.setAttribute('data-review-bundle-submit', 'true');
+        controls.appendChild(submitBundle);
+      }
     } else if (latestInput) {
       var entry = getReviewCardEntry(state, latestInput);
-      if (entry && typeof entry.submitDecision === 'function') {
+      if (entry && entry.canSubmitDecision !== false && typeof entry.submitDecision === 'function') {
         controls.appendChild(createButton('ai-primary-btn', 'Submit decisions', function () {
           pinTimelineToLatest(state);
           entry.submitDecision().catch(function () {});
@@ -1399,8 +1432,15 @@
     if (!editor) return '';
     var text = '';
     var skillInsertIndex = null;
+    var normalizeNativeTextSubstitutions = function (value) {
+      return String(value || '')
+        .replace(/[\u201c\u201d]/g, '"')
+        .replace(/[\u2018\u2019]/g, "'");
+    };
     var stripEditorSentinels = function (value) {
-      return String(value || '').replace(/\u00a0/g, ' ').replace(/\u200b/g, '');
+      return normalizeNativeTextSubstitutions(value)
+        .replace(/\u00a0/g, ' ')
+        .replace(/\u200b/g, '');
     };
     function walk(node) {
       if (!node) return;
@@ -1744,8 +1784,13 @@
     textarea.contentEditable = 'true';
     textarea.setAttribute('role', 'textbox');
     textarea.setAttribute('aria-multiline', 'true');
+    textarea.setAttribute('spellcheck', 'false');
+    textarea.setAttribute('autocorrect', 'off');
+    textarea.setAttribute('autocapitalize', 'none');
+    textarea.setAttribute('autocomplete', 'off');
+    textarea.spellcheck = false;
     var placeholder = viewModel.busy
-      ? 'Add context to the active working session...'
+      ? 'Add context to the active request...'
       : 'Ask the agent to do something...';
     defineEditorValue(textarea, state);
     renderEditorValue(textarea, state, placeholder);
@@ -1763,7 +1808,7 @@
     renderSkillControls(composer, state);
     renderSkillPicker(composer, state);
     var footer = createEl('div', 'ai-codex-composer-footer');
-    footer.appendChild(createEl('span', 'ai-codex-composer-hint', viewModel.busy ? 'Queued as context for the current session' : 'Cmd/Ctrl+Enter to send'));
+    footer.appendChild(createEl('span', 'ai-codex-composer-hint', viewModel.busy ? 'Queued as context for the current request' : 'Cmd/Ctrl+Enter to send'));
     var send = createButton('ai-primary-btn', viewModel.busy ? 'Add context' : 'Send', function () {
       var currentDraft = readEditorDraft(textarea);
       state.draftText = currentDraft.text || '';

@@ -21,6 +21,19 @@ This document is the product and engineering baseline for future AI chat UX work
 9. Special cases must plug into the contract. A new renderer can add richer content, but it should not create a separate scroll or action model inside the chat.
 10. Native interaction quality is the acceptance test. Browser harness checks are useful regressions, but native Tauri/WebView behavior is the proof path for scroll and review UX.
 
+## User-Facing Nomenclature
+
+Use language that matches how a person experiences the chat. Do not expose `session` as the primary label for AI work in the thread UI; it describes runtime, review, companion, or transport infrastructure, not the user's mental model.
+
+- **Thread**: the full conversation.
+- **Request**: one user prompt or intentional follow-up. This is the top-level timeline unit and should be labeled `Request N` when a numbered label is needed.
+- **Activity**: work the AI performs inside a request, including tool calls, delegated work, file edits, test runs, and generated artifacts.
+- **Decision** or **Action required**: a user checkpoint inside the request, such as a review, approval, auth step, or continue control.
+- **Queued follow-up**: a user message submitted while the active request is still running.
+- **Result**: the assistant's answer or completion output for a request.
+
+Reserve **session** for internal or developer-facing contexts where it is literally correct: MCP review sessions, runtime sessions, companion sessions, auth sessions, and transport sessions. In the AI chat surface, prefer request/activity/decision language so one prompt with multiple pauses or delegated turns still feels like one coherent piece of work.
+
 ## Canonical Layout
 
 The chat surface has four conceptual regions:

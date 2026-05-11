@@ -219,6 +219,18 @@ impl AppState {
         }
         self.notify_tools_changed();
     }
+
+    /// Install or update plugins bundled inside the app resources.
+    ///
+    /// The mac dev bundle stages plugin directories at:
+    /// {resource_dir}/bundled-plugins/mac-dev/{plugin}/manifest.json
+    pub fn ensure_resource_bundled_plugins(
+        &self,
+        resource_dir: &std::path::Path,
+    ) -> Result<Vec<String>, String> {
+        let bundle_root = resource_dir.join("bundled-plugins").join("mac-dev");
+        ensure_bundled_plugin_dirs(&self.plugin_store, &bundle_root)
+    }
 }
 
 fn load_first_party_ai_cookie_store(path: &Path) -> Arc<CookieStoreMutex> {
@@ -276,6 +288,118 @@ fn ensure_bundled_plugins(store: &PluginStore) {
             }
         }
     }
+}
+
+fn ensure_bundled_plugin_dirs(
+    store: &PluginStore,
+    bundle_root: &std::path::Path,
+) -> Result<Vec<String>, String> {
+    if !bundle_root.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut entries = std::fs::read_dir(bundle_root)
+        .map_err(|err| format!("Failed to read bundled plugins: {}", err))?
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.file_name());
+
+    let mut installed = Vec::new();
+    for entry in entries {
+        let plugin_dir = entry.path();
+        if !plugin_dir.is_dir() {
+            continue;
+        }
+
+        let manifest_path = plugin_dir.join("manifest.json");
+        if !manifest_path.exists() {
+            continue;
+        }
+
+        let manifest_json = std::fs::read_to_string(&manifest_path)
+            .map_err(|err| format!("Failed to read bundled plugin manifest: {}", err))?;
+        let manifest = serde_json::from_str::<PluginManifest>(&manifest_json)
+            .map_err(|err| format!("Failed to parse bundled plugin manifest: {}", err))?;
+
+        let target_dir = store.plugin_dir(&manifest.name);
+        if bundled_plugin_needs_install(&plugin_dir, &target_dir, &manifest)? {
+            copy_bundled_plugin_dir(&plugin_dir, &target_dir)?;
+            installed.push(manifest.name);
+        }
+    }
+
+    Ok(installed)
+}
+
+fn bundled_plugin_needs_install(
+    source_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+    source_manifest: &PluginManifest,
+) -> Result<bool, String> {
+    let target_manifest_path = target_dir.join("manifest.json");
+    if !target_manifest_path.exists() {
+        return Ok(true);
+    }
+
+    let target_manifest_json = std::fs::read_to_string(&target_manifest_path)
+        .map_err(|err| format!("Failed to read installed plugin manifest: {}", err))?;
+    let target_manifest = serde_json::from_str::<PluginManifest>(&target_manifest_json)
+        .map_err(|err| format!("Failed to parse installed plugin manifest: {}", err))?;
+    if target_manifest.version != source_manifest.version {
+        return Ok(true);
+    }
+
+    let source_hash = read_bundled_plugin_hash(source_dir);
+    let target_hash = read_bundled_plugin_hash(target_dir);
+    Ok(source_hash.is_some() && source_hash != target_hash)
+}
+
+fn read_bundled_plugin_hash(plugin_dir: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(plugin_dir.join(".mcpviews-bundled-plugin-sha256"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn copy_bundled_plugin_dir(
+    source_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<(), String> {
+    let preserved_preferences = std::fs::read(target_dir.join("preferences.json")).ok();
+    if target_dir.exists() {
+        std::fs::remove_dir_all(target_dir)
+            .map_err(|err| format!("Failed to replace installed bundled plugin: {}", err))?;
+    }
+
+    copy_dir_recursive(source_dir, target_dir)?;
+
+    if let Some(preferences) = preserved_preferences {
+        std::fs::write(target_dir.join("preferences.json"), preferences)
+            .map_err(|err| format!("Failed to restore plugin preferences: {}", err))?;
+    }
+
+    Ok(())
+}
+
+fn copy_dir_recursive(source_dir: &std::path::Path, target_dir: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(target_dir)
+        .map_err(|err| format!("Failed to create bundled plugin directory: {}", err))?;
+
+    let entries = std::fs::read_dir(source_dir)
+        .map_err(|err| format!("Failed to read bundled plugin directory: {}", err))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("Failed to read bundled plugin entry: {}", err))?;
+        let source_path = entry.path();
+        let target_path = target_dir.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else {
+            std::fs::copy(&source_path, &target_path)
+                .map_err(|err| format!("Failed to copy bundled plugin file: {}", err))?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

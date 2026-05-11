@@ -117,7 +117,7 @@ afterEach(function () {
 });
 
 describe('tribex-ai-thread Codex-like surface', function () {
-  it('renders grouped working sessions and opens artifacts in the right drawer', function () {
+  it('renders grouped requests and opens artifacts in the right drawer', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),
       refreshActiveThread: vi.fn(),
@@ -140,7 +140,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
                 answer: {
                   id: 'a1',
                   role: 'assistant',
-                  content: 'The new surface is wired around working sessions.',
+                  content: 'The new surface is wired around requests.',
                   createdAt: '2026-04-24T18:04:12.000Z',
                 },
                 workSession: {
@@ -189,10 +189,12 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-thread')).not.toBeNull();
     expect(document.querySelector('.ai-codex-title').textContent).toContain('New Chat 3');
     expect(document.querySelector('.ai-codex-session').textContent).toContain('Rewrite the chat surface.');
+    expect(document.querySelector('.ai-codex-session-index').textContent).toBe('Request 1');
+    expect(document.querySelector('.ai-codex-session').textContent).not.toContain('Session 1');
     expect(document.querySelector('.ai-codex-activity-group-tool').textContent).toContain('Inspect chat state');
     expect(document.querySelector('.ai-codex-activity-group-artifact').textContent).toContain('Chat Rewrite Plan');
     expect(document.querySelector('.ai-codex-activity-group-subagent').open).toBe(true);
-    expect(document.querySelector('.ai-codex-answer-copy').textContent).toContain('working sessions');
+    expect(document.querySelector('.ai-codex-answer-copy').textContent).toContain('requests');
 
     document.querySelector('.ai-codex-artifact-chip').click();
 
@@ -434,6 +436,8 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-status').textContent).toContain('Editing files');
     expect(document.querySelector('.ai-codex-composer').className).toContain('is-context-mode');
     expect(document.querySelector('.ai-codex-input').value).toBe('Also inspect the review resume path.');
+    expect(document.querySelector('.ai-codex-input').getAttribute('data-placeholder')).toBe('Add context to the active request...');
+    expect(document.querySelector('.ai-codex-composer-footer .ai-codex-composer-hint').textContent).toBe('Queued as context for the current request');
     expect(document.querySelector('.ai-codex-composer-footer button').textContent).toBe('Add context');
 
     document.querySelector('.ai-codex-composer-footer button').click();
@@ -441,6 +445,59 @@ describe('tribex-ai-thread Codex-like surface', function () {
 
     expect(submitPrompt).toHaveBeenCalledWith('thread-1', 'Also inspect the review resume path.');
     expect(document.querySelector('.ai-codex-input').value).toBe('');
+  });
+
+  it('disables native text substitutions in the code-oriented composer', async function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread(),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+      submitPrompt: vi.fn(),
+      interruptThread: vi.fn(),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+
+    var textarea = document.querySelector('.ai-codex-input');
+    expect(textarea.getAttribute('spellcheck')).toBe('false');
+    expect(textarea.getAttribute('autocorrect')).toBe('off');
+    expect(textarea.getAttribute('autocapitalize')).toBe('none');
+    expect(textarea.getAttribute('autocomplete')).toBe('off');
+  });
+
+  it('normalizes smart quotes before submitting code-oriented prompts', async function () {
+    var submitPrompt = vi.fn(function () { return Promise.resolve(true); });
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread(),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+      submitPrompt: submitPrompt,
+      interruptThread: vi.fn(),
+      refreshActiveThread: vi.fn(),
+    };
+
+    renderThread('thread-1');
+    var textarea = document.querySelector('.ai-codex-input');
+    textarea.textContent = '{"phase”:”second”,"owner":’codex’}';
+    textarea.dispatchEvent(new Event('input'));
+
+    document.querySelector('.ai-codex-composer-footer button').click();
+    await Promise.resolve();
+
+    expect(submitPrompt).toHaveBeenCalledWith('thread-1', '{"phase":"second","owner":\'codex\'}');
   });
 
   it('clears the prompt draft before a send re-render can switch into context mode', async function () {
@@ -855,6 +912,120 @@ describe('tribex-ai-thread Codex-like surface', function () {
     );
     expect(refreshActiveThread).toHaveBeenCalled();
     expect(document.querySelector('.ai-codex-review-status').textContent).toContain('Review submitted');
+  });
+
+  it('submits DOM-only custom renderer decisions from the action dock', async function () {
+    var refreshActiveThread = vi.fn(function () { return Promise.resolve(true); });
+    var submitDecision = vi.fn(function () { return Promise.resolve({ ok: true }); });
+    window.__tribexAiClient = {
+      submitThreadHumanInputDecision: submitDecision,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: refreshActiveThread,
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            pendingHumanInputs: [
+              {
+                id: 'human-input-custom',
+                renderer: 'custom_review',
+                title: 'Review custom payload',
+                reviewSessionId: 'review-session-custom',
+                rendererPayload: {
+                  data: { title: 'Custom reviewer' },
+                },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+    window.__renderers.custom_review = vi.fn(function (container, _data, _meta, _toolArgs, _reviewRequired, onDecision) {
+      var submitButton = document.createElement('button');
+      submitButton.type = 'button';
+      submitButton.textContent = 'Submit custom review';
+      submitButton.setAttribute('data-review-decision-submit', 'true');
+      submitButton.addEventListener('click', function () {
+        return onDecision({
+          decision: 'approved',
+          type: 'custom_decisions',
+          customPayload: {
+            selected: ['alpha'],
+          },
+        });
+      });
+      container.appendChild(submitButton);
+      return {
+        providesDecisionSubmit: true,
+      };
+    });
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-action-dock .ai-primary-btn').textContent).toBe('Submit decisions');
+    document.querySelector('.ai-codex-action-dock .ai-primary-btn').click();
+    await flushPromises();
+
+    expect(submitDecision).toHaveBeenCalledWith(
+      'thread-1',
+      'human-input-custom',
+      expect.objectContaining({
+        sessionId: 'review-session-custom',
+        decision: 'approved',
+        type: 'custom_decisions',
+        customPayload: {
+          selected: ['alpha'],
+        },
+      }),
+    );
+    expect(refreshActiveThread).toHaveBeenCalled();
+  });
+
+  it('does not show a dock submit action when a renderer claims custom submit without exposing one', function () {
+    window.__tribexAiClient = {
+      submitThreadHumanInputDecision: vi.fn(function () { return Promise.resolve({ ok: true }); }),
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(function () { return Promise.resolve(true); }),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            pendingHumanInputs: [
+              {
+                id: 'human-input-custom',
+                renderer: 'custom_review',
+                title: 'Review custom payload',
+                reviewSessionId: 'review-session-custom',
+                rendererPayload: {
+                  data: { title: 'Custom reviewer' },
+                },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+    window.__renderers.custom_review = vi.fn(function (container) {
+      container.textContent = 'Custom review';
+      return {
+        providesDecisionSubmit: true,
+      };
+    });
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-action-dock .ai-primary-btn')).toBeNull();
+    expect(document.querySelector('.ai-codex-action-dock').textContent).not.toContain('Submit decisions');
   });
 
   it('batches multiple pending review cards behind one submit control', async function () {
@@ -1346,7 +1517,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-action-dock').textContent).toContain('Review archive candidates');
   });
 
-  it('labels queued context rows consistently after the active session completes', function () {
+  it('labels queued follow-up rows consistently after the active request completes', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),
       refreshActiveThread: vi.fn(),
@@ -1382,7 +1553,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
 
     var queuedSession = document.querySelector('.ai-codex-session-queued');
     expect(queuedSession.textContent).toContain('Queued');
-    expect(queuedSession.textContent).toContain('Queued as context');
+    expect(queuedSession.textContent).toContain('Queued follow-up');
     expect(queuedSession.textContent).not.toContain('Complete');
   });
 

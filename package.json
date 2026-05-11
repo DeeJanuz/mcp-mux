@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:mac-dev-bundle": "node scripts/build-mac-dev-bundle.mjs",
     "dev:frontend": "vite",
     "build:frontend": "vite build",
     "preview": "vite preview",

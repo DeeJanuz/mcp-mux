@@ -51,6 +51,46 @@ fn trim_trailing_slash(value: &str) -> String {
     value.trim().trim_end_matches('/').to_string()
 }
 
+fn bundled_env_value(value: Option<&'static str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(trim_trailing_slash)
+}
+
+fn bundled_first_party_ai_defaults() -> Option<mcpviews_shared::settings::FirstPartyAiSettings> {
+    let base_url = bundled_env_value(option_env!("MCPVIEWS_BUNDLE_AI_PROVIDER_BASE_URL"));
+    let relay_base_url =
+        bundled_env_value(option_env!("MCPVIEWS_BUNDLE_AI_PROVIDER_RELAY_BASE_URL"));
+    let device_base_url =
+        bundled_env_value(option_env!("MCPVIEWS_BUNDLE_AI_PROVIDER_DEVICE_BASE_URL"));
+    let auth_url = bundled_env_value(option_env!("MCPVIEWS_BUNDLE_AI_PROVIDER_AUTH_URL"));
+    let token_url = bundled_env_value(option_env!("MCPVIEWS_BUNDLE_AI_PROVIDER_TOKEN_URL"));
+    let client_id = bundled_env_value(option_env!("MCPVIEWS_BUNDLE_AI_PROVIDER_CLIENT_ID"));
+
+    if base_url.is_none()
+        && relay_base_url.is_none()
+        && device_base_url.is_none()
+        && auth_url.is_none()
+        && token_url.is_none()
+        && client_id.is_none()
+    {
+        return None;
+    }
+
+    Some(mcpviews_shared::settings::FirstPartyAiSettings {
+        base_url,
+        auth_url,
+        token_url,
+        client_id,
+        relay_base_url,
+        device_base_url,
+        relay_token: None,
+        relay_token_expires_at: None,
+        relay_device_id: None,
+    })
+}
+
 fn join_url(base: &str, path: &str) -> String {
     let base = trim_trailing_slash(base);
     if path.starts_with("http://") || path.starts_with("https://") {
@@ -176,6 +216,7 @@ fn current_unix_timestamp() -> i64 {
 pub(crate) fn load_settings() -> mcpviews_shared::settings::FirstPartyAiSettings {
     let mut cfg = mcpviews_shared::settings::Settings::load()
         .first_party_ai
+        .or_else(bundled_first_party_ai_defaults)
         .unwrap_or_default();
 
     if let Some(value) = env_override(&[

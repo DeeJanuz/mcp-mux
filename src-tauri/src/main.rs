@@ -271,6 +271,25 @@ fn main() {
             let handle = app.handle().clone();
             let state = app_state.clone();
 
+            match app.path().resource_dir() {
+                Ok(resource_dir) => match app_state.ensure_resource_bundled_plugins(&resource_dir) {
+                    Ok(installed) if !installed.is_empty() => {
+                        eprintln!(
+                            "[mcpviews] Installed bundled resource plugins: {}",
+                            installed.join(", ")
+                        );
+                        app_state.reload_plugins();
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        eprintln!("[mcpviews] Failed to install bundled resource plugins: {}", error);
+                    }
+                },
+                Err(error) => {
+                    eprintln!("[mcpviews] Failed to resolve resource directory: {}", error);
+                }
+            }
+
             // Pre-bind the TCP listener on the main thread so the port is ready
             // before Claude Code probes it (eliminates MCP startup race condition)
             let std_listener = std::net::TcpListener::bind("0.0.0.0:4200")

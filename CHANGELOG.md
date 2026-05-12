@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.6] - 2026-05-12
+
+### Added
+- Native macOS development bundles now package local plugin assets for AI thread and Persona Studio testing.
+- The AI chat surface now includes the refreshed action dock, workspace controls, and scroll behavior from the updated UX pattern.
+
+### Changed
+- AI chat status, naming, and runtime state handling were refined across native and hosted thread flows.
+- Persona skill variable merging now preserves runtime-provided values more reliably.
+
+### Fixed
+- Replayed MCP review decisions now persist across retries and are documented in the API reference.
+- Delayed assistant output now clears pending thread state when `turn_finish` arrives before the final assistant message.
+
 ## [0.2.5-rc.5] - 2026-05-02
 
 ### Fixed

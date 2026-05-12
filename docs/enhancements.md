@@ -1,17 +1,17 @@
 # Technical Debt & Enhancement Log
 
-**Last Updated:** 2026-04-21
+**Last Updated:** 2026-05-12
 **Total Active Issues:** 0
-**Resolved This Month:** 79
+**Resolved This Month:** 1
 
 ---
 
 ## Latest Session Summary
 
-**Last Review:** 2026-04-21 (commit `377f87d`)
+**Last Review:** 2026-05-12 (commit `9b85f72`)
 
-- Reviewed repeated-prompt snapshot reconciliation in commit `377f87d`; the duplicate-prompt transcript path is covered by focused projection and runtime tests.
-- Current residual risk is ordinary regression risk in metadata-free runtime snapshots where message identity comes only from transcript order, timestamp, and content fallback.
+- Reviewed delayed assistant output cleanup in commit `9b85f72`; the out-of-order `turn_finish` -> `assistant_finish` path is covered by focused runtime and full state tests.
+- Current residual risk is ordinary regression risk in native WebView event timing where runtime completion, assistant output, and snapshot hydration can arrive in different orders.
 
 ---
 
@@ -36,6 +36,10 @@ _None_
 ---
 
 ## Resolved Issues
+
+### Resolved 2026-05-12 (commit `9b85f72`)
+
+- **M-045 (resolved):** Finalized delayed assistant output cleanup when `turn_finish` arrives before assistant text. `assistant_finish` now runs the local completion path so pending indicators, row state, thread errors, pending operations, and active-turn projections clear once the assistant message lands. Thread summaries now accept explicit `rowState: null` patches, and focused Vitest coverage verifies the visible thread leaves the writing-response state and marks the work session complete.
 
 ### Resolved 2026-04-21 (commit `377f87d`)
 

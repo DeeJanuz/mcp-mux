@@ -367,6 +367,13 @@
       });
     }
 
+    function setSubmitProgress(threadId, label, detail, status) {
+      if (typeof api.setActiveTurnPresence !== 'function') return;
+      if (api.setActiveTurnPresence(threadId, label, detail, status ? { status: status } : {})) {
+        api.notify();
+      }
+    }
+
     function ensureDesktopRelay(threadId, options) {
       var thread = api.getThread(threadId);
       if (!thread || !thread.workspaceId || !window.__tribexAiClient) {
@@ -392,9 +399,11 @@
         status: 'connecting',
         error: null,
       });
+      setSubmitProgress(threadId, 'Connecting runtime', 'Opening the first-party AI session and local tool bridge.');
       api.notify();
 
       function startLegacyDesktopRelay() {
+        setSubmitProgress(threadId, 'Registering local tools', 'Publishing the desktop tool catalog for this request.');
         return window.__tribexAiClient.registerDesktopRelay({
           workspaceId: thread.workspaceId,
           threadId: threadId,
@@ -414,6 +423,7 @@
             relayDeviceId: relay && relay.relayDeviceId ? relay.relayDeviceId : null,
             error: null,
           });
+          setSubmitProgress(threadId, 'Listening for tool calls', 'The local bridge is online and waiting for the agent.');
           api.notify();
 
           return Promise.all([
@@ -453,6 +463,7 @@
         if (!relaySessionId || typeof window.__tribexAiClient.startRealtimeRelayStream !== 'function') {
           return Promise.resolve(null);
         }
+        setSubmitProgress(threadId, 'Connecting live tool relay', 'Opening the realtime channel for local tool requests.');
 
         if (typeof window.__tribexAiClient.stopDesktopPresenceHeartbeat === 'function') {
           window.__tribexAiClient.stopDesktopPresenceHeartbeat(threadId).catch(function () {});
@@ -486,6 +497,7 @@
 
       return runtimePromise
         .then(function (envelope) {
+          setSubmitProgress(threadId, 'Preparing local tools', 'Runtime session is ready; connecting the tool relay.');
           return startRealtimeDesktopRelay(envelope).then(function (started) {
             if (started) return started;
             return startLegacyDesktopRelay();
@@ -1134,6 +1146,7 @@
 
       return ensureDesktopRelay(threadId)
         .then(function () {
+          setSubmitProgress(threadId, 'Starting agent', 'The runtime is connected; sending your request now.');
           return window.__tribexAiClient.sendMessage(threadId, runtimePrompt || trimmed, {
             turnId: turnId,
             messageId: messageId || undefined,
@@ -1487,15 +1500,16 @@
     }
 
     function createProject() {
-      var workspace = api.getSelectedWorkspace();
       var name = String(state.composer.projectName || '').trim() || 'General';
-      if (!workspace) return Promise.reject(new Error('No workspace is available for this organization.'));
 
       state.composer.creatingProject = true;
       state.integration.error = null;
       api.notify();
 
-      return window.__tribexAiClient.createProject(workspace, name).then(function (project) {
+      return api.ensureWorkspaceForNewProject().then(function (workspace) {
+        if (!workspace) throw new Error('No workspace is available for this organization.');
+        return window.__tribexAiClient.createProject(workspace, name);
+      }).then(function (project) {
         state.projects = state.projects
           .filter(function (candidate) { return candidate.id !== project.id; })
           .concat([project]);

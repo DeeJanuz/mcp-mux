@@ -19,6 +19,10 @@
     return fallback;
   }
 
+  function isOptimisticThreadId(threadId) {
+    return /^optimistic-thread[-_]/.test(String(threadId || ''));
+  }
+
   function extractArray(value, keys) {
     if (Array.isArray(value)) return value;
     if (!value || typeof value !== 'object') return [];
@@ -1741,6 +1745,7 @@
 
   function fetchThreadSkills(threadId) {
     if (!threadId) return Promise.resolve(fallbackSkills());
+    if (isOptimisticThreadId(threadId)) return Promise.resolve(fallbackSkills());
     return requestVariants('GET', [
       { path: '/threads/' + encodeURIComponent(threadId) + '/skills' },
       { path: '/threads/' + encodeURIComponent(threadId) + '/persona-skills' },
@@ -1761,6 +1766,7 @@
 
   function fetchConnectedEmailAccounts(threadId) {
     if (!threadId) return Promise.resolve([]);
+    if (isOptimisticThreadId(threadId)) return Promise.resolve([]);
     return requestVariants('GET', [
       { path: '/threads/' + encodeURIComponent(threadId) + '/connected-email-accounts' },
       { path: '/threads/' + encodeURIComponent(threadId) + '/email-accounts' },

@@ -92,7 +92,8 @@
     return 'item';
   }
 
-  function sanitizeDisplayText(value) {
+  function sanitizeDisplayText(value, options) {
+    options = options || {};
     var text = String(value || '');
     if (!text) return '';
     if (
@@ -103,6 +104,7 @@
       return 'Checking the connected mailbox for the requested time window. No email changes are made in this step.';
     }
     text = text
+      .replace(/\r\n?/g, '\n')
       .replace(/\b(accountId|account_id|session_id|sessionId|reviewSessionId|review_session_id|humanInputId|human_input_id|operationId|operation_id|threadId|thread_id|runId|run_id|messageId|message_id|toolCallId|tool_call_id|inputId|input_id|emailAddress|email_address|receivedAfter|received_after|receivedBefore|received_before|inInboxOnly|in_inbox_only)\s*[:=]\s*["']?[^,\s;)\]}]+["']?/gi, function (_match, key) {
         return displayKeyLabel(key);
       })
@@ -121,10 +123,19 @@
       .replace(/\baccountId\b/g, 'account')
       .replace(/\binInboxOnly\b/g, 'in the inbox')
       .replace(/\s*,\s*,+/g, ', ')
-      .replace(/\s{2,}/g, ' ')
       .replace(/\(\s*\)/g, '')
       .trim();
+    text = options.preserveLineBreaks
+      ? text
+        .replace(/[^\S\n]{2,}/g, ' ')
+        .replace(/[ \t]*\n[ \t]*/g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+      : text.replace(/\s{2,}/g, ' ');
     return text;
+  }
+
+  function sanitizeMarkdownDisplayText(value) {
+    return sanitizeDisplayText(value, { preserveLineBreaks: true });
   }
 
   function formatThreadTitleForDisplay(value, fallback) {
@@ -296,6 +307,7 @@
     isSyntheticReviewResumeContent: isSyntheticReviewResumeContent,
     matchesSearch: matchesSearch,
     sanitizeDisplayText: sanitizeDisplayText,
+    sanitizeMarkdownDisplayText: sanitizeMarkdownDisplayText,
     sortProjects: sortProjects,
     sortThreads: sortThreads,
     titleCase: titleCase,

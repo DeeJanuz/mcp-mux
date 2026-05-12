@@ -157,6 +157,32 @@ describe('tribex-ai-chat-reducer', function () {
     expect(viewModel.busy).toBe(true);
   });
 
+  it('shows response-writing progress once delegated pause tasks have completed', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        activePause: {
+          id: 'pause-delegated',
+          status: 'BLOCKED',
+          reasonKind: 'DELEGATED_WORK',
+          title: 'Waiting for 2 delegated tasks',
+          tasks: [
+            { id: 'mailbox-1', title: 'Mailbox check 1', status: 'COMPLETED' },
+            { id: 'mailbox-2', title: 'Mailbox check 2', status: 'COMPLETED' },
+          ],
+        },
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('running');
+    expect(viewModel.statusLabel).toBe('Writing response');
+    expect(viewModel.statusDetail).toContain('Delegated work is complete');
+    expect(viewModel.busy).toBe(true);
+  });
+
   it('progressively recovers stale running sessions from heartbeat age', function () {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-24T18:05:30.000Z'));
@@ -180,6 +206,33 @@ describe('tribex-ai-chat-reducer', function () {
     expect(viewModel.statusLabel).toBe('Checking status');
     expect(viewModel.heartbeat.stale).toBe(true);
     expect(viewModel.heartbeat.recovering).toBe(true);
+  });
+
+  it('keeps the latest agent progress label visible during a long-running step', function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-24T18:05:30.000Z'));
+
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        activeTurn: {
+          turnId: 'turn-stale',
+          operationId: 'op-stale',
+          status: 'running',
+          presenceLabel: 'Checking mailbox',
+          presenceDetail: 'Scanning the requested date range.',
+          lastPresenceAt: '2026-04-24T18:04:00.000Z',
+        },
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('recovering');
+    expect(viewModel.statusLabel).toBe('Checking mailbox');
+    expect(viewModel.statusDetail).toContain('Scanning the requested date range.');
+    expect(viewModel.statusDetail).toContain('checking the run status');
   });
 
   it('groups activity chronologically while preserving kind labels', function () {

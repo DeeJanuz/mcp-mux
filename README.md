@@ -148,6 +148,9 @@ cargo build
 
 # Build full Tauri app (frontend + backend + installer)
 npm run build
+
+# Build a macOS dev app/dmg with local sibling plugins bundled
+npm run build:mac-dev-bundle
 ```
 
 ## Testing the Push API
@@ -216,11 +219,11 @@ mcpviews/
 
 ## Plugin System
 
-MCPViews supports plugins that extend the app with tools from third-party MCP servers. Each plugin is a JSON manifest that declares renderer mappings, MCP server configuration, and authentication. Plugins are stored as individual JSON files in `~/.mcpviews/plugins/`.
+MCPViews supports plugins that extend the app with tools from third-party MCP servers. Each plugin declares renderer mappings, MCP server configuration, and authentication in a JSON manifest. Installed plugins live under `~/.mcpviews/plugins/{plugin-name}/`, with `manifest.json` plus any packaged renderer, prompt, tool, or preference files.
 
 For hosted AI workspace durable file storage, see [Workspace File Browser](./docs/workspace-file-browser.md). MCPViews uses provider-owned sandbox routes and short-lived signed worker URLs; storage credentials stay in the hosted control plane and worker environment.
 
-Bundled manifests can also ship with the app under `bundled-plugins/`; MCPViews seeds them into the local plugin store during startup so example or compatibility experiences are available immediately without changing the public plugin contract.
+Bundled manifests and resource plugin directories can also ship with the app. MCPViews seeds built-in compatibility manifests on startup, and mac dev bundles can install full plugin directories from app resources under `bundled-plugins/mac-dev/` so local plugin worktrees are available immediately without changing the public plugin contract.
 
 For full documentation, see [docs/plugins.md](docs/plugins.md). For a step-by-step guide to creating your own plugin, see [docs/plugin-development.md](docs/plugin-development.md).
 

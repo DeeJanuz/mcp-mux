@@ -51,6 +51,25 @@ describe('tribex-ai-utils', function () {
     expect(utils.formatActivityTitleForDisplay({ title: 'User Email Search' })).toBe('Searching mailbox');
   });
 
+  it('preserves markdown line breaks while redacting internal assistant output', function () {
+    var raw = [
+      'I inspected the inbox.',
+      '',
+      '### daenonjanis8@gmail.com',
+      '',
+      '- **Needs Review:** Monarch budget alert.',
+      '- Archive review archive_review_cmobypfhy0000l904abcd1234 for accountId=cmobypfhy0000l904abcd1234.',
+    ].join('\n');
+
+    var sanitized = utils.sanitizeMarkdownDisplayText(raw);
+
+    expect(sanitized).toContain('\n\n### daenonjanis8@gmail.com');
+    expect(sanitized).toContain('- **Needs Review:** Monarch budget alert.');
+    expect(sanitized).not.toContain('archive_review_');
+    expect(sanitized).not.toContain('accountId=');
+    expect(utils.sanitizeDisplayText(raw)).not.toContain('\n\n###');
+  });
+
   it('builds project groups with sorted threads and search filtering', function () {
     var groups = utils.buildProjectGroups(
       [

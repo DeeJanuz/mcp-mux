@@ -109,6 +109,10 @@
     ) {
       var rendered = window.__companionUtils.renderMarkdown(content || '');
       if (rendered) {
+        if (typeof rendered === 'string') {
+          body.innerHTML = rendered;
+          return body;
+        }
         if (options && options.suppressEntryAnimation && rendered.classList) {
           rendered.classList.add('md-content-no-entry-animation');
         }
@@ -121,6 +125,14 @@
     }
     body.textContent = content || '';
     return body;
+  }
+
+  function displayMarkdownText(value) {
+    var text = String(value || '');
+    if (window.__tribexAiUtils && typeof window.__tribexAiUtils.sanitizeMarkdownDisplayText === 'function') {
+      return window.__tribexAiUtils.sanitizeMarkdownDisplayText(text);
+    }
+    return displayText(text);
   }
 
   function formatTime(value) {
@@ -517,6 +529,9 @@
       meta.appendChild(createEl('span', 'ai-codex-meta-chip', formatTime(thread.lastActivityAt)));
     }
     titleBlock.appendChild(meta);
+    if ((viewModel.busy || viewModel.lifecycle === 'recovering') && viewModel.statusDetail) {
+      titleBlock.appendChild(createEl('div', 'ai-codex-status-detail', viewModel.statusDetail));
+    }
     header.appendChild(titleBlock);
 
     var actions = createEl('div', 'ai-codex-header-actions');
@@ -643,7 +658,7 @@
     if (session.answer.createdAt) header.appendChild(createEl('span', 'ai-codex-time', formatTime(session.answer.createdAt)));
     if (session.answer.isStreaming) header.appendChild(createEl('span', 'ai-codex-live-chip', 'streaming'));
     answer.appendChild(header);
-    answer.appendChild(renderMarkdown(displayText(session.answer.content), 'ai-codex-answer-copy', {
+    answer.appendChild(renderMarkdown(displayMarkdownText(session.answer.content), 'ai-codex-answer-copy', {
       suppressEntryAnimation: !!session.answer.isStreaming || !!(state && state.hasRenderedThreadContent),
     }));
     return answer;
@@ -719,7 +734,12 @@
     else if (session.lifecycle !== 'complete') {
       var pending = createEl('div', 'ai-codex-pending-answer');
       pending.appendChild(createEl('span', 'ai-codex-pulse'));
-      pending.appendChild(createEl('span', '', session.lifecycle === 'queued' ? 'Queued follow-up' : viewModel.statusLabel || 'Working'));
+      var pendingCopy = createEl('div', 'ai-codex-pending-copy');
+      pendingCopy.appendChild(createEl('span', '', session.lifecycle === 'queued' ? 'Queued follow-up' : viewModel.statusLabel || 'Working'));
+      if (viewModel.statusDetail) {
+        pendingCopy.appendChild(createEl('small', '', viewModel.statusDetail));
+      }
+      pending.appendChild(pendingCopy);
       body.appendChild(pending);
     }
     card.appendChild(body);
@@ -1096,27 +1116,49 @@
     });
   }
 
+  function displayPauseTaskTitle(task, index, activePause) {
+    var rawTitle = displayText(task && task.title, '');
+    var normalized = rawTitle.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+    if (isDelegatedPause(activePause) && (!rawTitle || normalized === 'sub agent item' || normalized === 'subagent item')) {
+      return 'Mailbox check ' + (index + 1);
+    }
+    return rawTitle || 'Required step';
+  }
+
+  function delegatedPauseTasksComplete(activePause) {
+    if (!isDelegatedPause(activePause)) return false;
+    var tasks = Array.isArray(activePause.tasks) ? activePause.tasks : [];
+    return tasks.length > 0 && tasks.every(function (task) {
+      return isTerminalPauseTaskStatus(task && task.status);
+    });
+  }
+
   function renderPauseCard(state, activePause) {
     if (!activePause) return null;
     var status = String(activePause.status || '').toUpperCase();
     if (isDelegatedPause(activePause) && status === 'RESUMING') return null;
+    var delegatedComplete = delegatedPauseTasksComplete(activePause);
     var badgeLabel = isDelegatedPause(activePause) && status === 'BLOCKED'
-      ? 'Waiting'
+      ? delegatedComplete ? 'Writing response' : 'Waiting'
       : titleCase(status || 'waiting');
     var card = createEl('section', 'ai-codex-blocker ai-codex-pause-card');
     var header = createEl('div', 'ai-codex-blocker-header');
-    header.appendChild(createEl('strong', '', displayText(activePause.title, status === 'READY' ? 'Ready to continue' : 'Action required')));
+    header.appendChild(createEl('strong', '', displayText(activePause.title, status === 'READY' ? 'Ready to continue' : delegatedComplete ? 'Writing response' : 'Action required')));
     header.appendChild(createEl('span', 'ai-codex-blocker-badge', badgeLabel));
     card.appendChild(header);
-    if (activePause.detail || activePause.progressSummary) {
-      card.appendChild(createEl('p', 'ai-codex-blocker-detail', displayText(activePause.detail || activePause.progressSummary)));
+    if (activePause.detail || activePause.progressSummary || delegatedComplete) {
+      card.appendChild(createEl(
+        'p',
+        'ai-codex-blocker-detail',
+        displayText(activePause.detail || activePause.progressSummary, delegatedComplete ? 'Delegated work is complete; composing the final answer.' : '')
+      ));
     }
     var tasks = Array.isArray(activePause.tasks) ? activePause.tasks : [];
     if (tasks.length) {
       var list = createEl('div', 'ai-codex-pause-tasks');
-      tasks.forEach(function (task) {
+      tasks.forEach(function (task, taskIndex) {
         var row = createEl('div', 'ai-codex-pause-task');
-        row.appendChild(createEl('strong', '', displayText(task.title, 'Required step')));
+        row.appendChild(createEl('strong', '', displayPauseTaskTitle(task, taskIndex, activePause)));
         if (task.detail) row.appendChild(createEl('span', 'ai-codex-pause-task-detail', displayText(task.detail)));
         row.appendChild(createEl('span', 'ai-codex-pause-task-status', titleCase(task.status || 'pending')));
         var actionUrl = normalizeExternalActionUrl(task.actionUrl);
@@ -1238,7 +1280,14 @@
   function renderLatestActionDock(root, state, viewModel) {
     var inputs = viewModel.pendingHumanInputs || [];
     var activePause = viewModel.activePause;
-    if (activePause && isDelegatedPause(activePause) && String(activePause.status || '').toUpperCase() === 'RESUMING') {
+    if (
+      activePause &&
+      isDelegatedPause(activePause) &&
+      (
+        String(activePause.status || '').toUpperCase() === 'RESUMING' ||
+        delegatedPauseTasksComplete(activePause)
+      )
+    ) {
       activePause = null;
     }
     if (!inputs.length && !activePause) return;
@@ -1384,8 +1433,25 @@
     return window.__tribexAiSkills || {};
   }
 
+  function isOptimisticThreadId(threadId) {
+    return /^optimistic-thread[-_]/.test(String(threadId || ''));
+  }
+
   function ensureComposerResources(state) {
     var api = getSkillsApi();
+    if (isOptimisticThreadId(state.threadId)) {
+      if (state.skillsLoadedForThreadId !== state.threadId) {
+        state.skills = api.builtinSkills ? api.builtinSkills() : [];
+        state.skillsLoadedForThreadId = state.threadId;
+        state.skillsLoading = false;
+      }
+      if (state.emailAccountsLoadedForThreadId !== state.threadId) {
+        state.emailAccounts = [];
+        state.emailAccountsLoadedForThreadId = state.threadId;
+        state.emailAccountsLoading = false;
+      }
+      return;
+    }
     if (state.skillsLoadedForThreadId !== state.threadId && !state.skillsLoading) {
       state.skillsLoading = true;
       state.skillsLoadedForThreadId = state.threadId;

@@ -154,6 +154,30 @@
     });
   }
 
+  function isTerminalPauseTaskStatus(value) {
+    var status = normalizeStatus(value);
+    return (
+      status === 'completed' ||
+      status === 'complete' ||
+      status === 'done' ||
+      status === 'success' ||
+      status === 'succeeded' ||
+      status === 'failed' ||
+      status === 'error' ||
+      status === 'canceled' ||
+      status === 'cancelled' ||
+      status === 'skipped'
+    );
+  }
+
+  function delegatedPauseTasksComplete(activePause) {
+    if (!isDelegatedPause(activePause)) return false;
+    var tasks = asArray(activePause.tasks);
+    return tasks.length > 0 && tasks.every(function (task) {
+      return isTerminalPauseTaskStatus(task && task.status);
+    });
+  }
+
   function isRendererContentType(value) {
     var normalized = String(value || '').trim();
     return normalized === 'rich_content' || normalized === 'structured_data';
@@ -652,12 +676,7 @@
     };
   }
 
-  function labelForLifecycle(lifecycle, thread, heartbeat) {
-    if (lifecycle === LIFECYCLE.RUNNING && isDelegatedPause(thread && thread.activePause)) {
-      return 'Waiting on delegated work';
-    }
-    if (heartbeat && heartbeat.recovering) return 'Checking status';
-    if (heartbeat && heartbeat.stale) return 'Still working';
+  function activePresenceForLifecycle(lifecycle, thread) {
     var activeTurn = thread && thread.activeTurn;
     if (
       activeTurn &&
@@ -672,6 +691,20 @@
     ) {
       return activeTurn.presenceLabel;
     }
+    return '';
+  }
+
+  function labelForLifecycle(lifecycle, thread, heartbeat) {
+    if (lifecycle === LIFECYCLE.RUNNING && isDelegatedPause(thread && thread.activePause)) {
+      if (delegatedPauseTasksComplete(thread && thread.activePause)) {
+        return activePresenceForLifecycle(lifecycle, thread) || 'Writing response';
+      }
+      return 'Waiting on delegated work';
+    }
+    var presenceLabel = activePresenceForLifecycle(lifecycle, thread);
+    if (presenceLabel) return presenceLabel;
+    if (heartbeat && heartbeat.recovering) return 'Checking status';
+    if (heartbeat && heartbeat.stale) return 'Still working';
     switch (lifecycle) {
       case LIFECYCLE.SENDING: return 'Sending';
       case LIFECYCLE.QUEUED: return 'Queued';
@@ -684,6 +717,27 @@
       case LIFECYCLE.COMPLETE: return 'Complete';
       default: return 'Ready';
     }
+  }
+
+  function detailForLifecycle(lifecycle, thread, heartbeat) {
+    var activeTurn = thread && thread.activeTurn;
+    var activePause = thread && thread.activePause;
+    var detail = activeTurn && activeTurn.presenceDetail
+      ? activeTurn.presenceDetail
+      : '';
+    if (!detail && lifecycle === LIFECYCLE.RUNNING && isDelegatedPause(activePause)) {
+      detail = delegatedPauseTasksComplete(activePause)
+        ? 'Delegated work is complete; composing the final answer.'
+        : activePause.detail || activePause.progressSummary || '';
+    }
+    var signal = heartbeat && heartbeat.at ? 'Last signal ' + formatRelative(heartbeat.at) : '';
+    if (heartbeat && heartbeat.recovering) {
+      return [detail, signal ? signal + '; checking the run status.' : 'Checking the run status.'].filter(Boolean).join(' ');
+    }
+    if (heartbeat && heartbeat.stale) {
+      return [detail, signal ? signal + '; still waiting on the current step.' : 'Still waiting on the current step.'].filter(Boolean).join(' ');
+    }
+    return [detail, signal].filter(Boolean).join(' ');
   }
 
   function appendActiveTurnSession(sessions, thread, lifecycle) {
@@ -768,9 +822,7 @@
       canSend: !!(thread && thread.id),
       composerMode: busy ? 'context' : 'prompt',
       statusLabel: labelForLifecycle(lifecycle, thread, heartbeat),
-      statusDetail: heartbeat.at
-        ? 'Last signal ' + formatRelative(heartbeat.at)
-        : '',
+      statusDetail: detailForLifecycle(lifecycle, thread, heartbeat),
       heartbeat: heartbeat,
       sessions: sessions,
       artifacts: artifacts,

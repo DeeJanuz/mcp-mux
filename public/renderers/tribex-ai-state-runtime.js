@@ -816,7 +816,8 @@
         },
         assistantMessage: null,
         startedAt: createdAt,
-        presenceLabel: 'Sending message',
+        presenceLabel: options.presenceLabel || 'Connecting runtime',
+        presenceDetail: options.presenceDetail || 'Opening the first-party AI session and local tool bridge.',
         lastPresenceAt: createdAt,
       };
       applyOperationMetadata(detail.activeTurn, operation);
@@ -827,6 +828,23 @@
       api.rememberTurnHistory(detail);
       api.syncThreadSummaryFromRecord(detail);
       return detail.activeTurn;
+    }
+
+    function setActiveTurnPresence(threadId, label, detailText, options) {
+      if (!threadId) return null;
+      options = options || {};
+      var detail = (state.threadDetails && state.threadDetails[threadId])
+        || (state.threadEntitiesById && state.threadEntitiesById[threadId])
+        || null;
+      if (!detail || !detail.activeTurn) return null;
+      var activeTurn = detail.activeTurn;
+      if (options.status) activeTurn.status = options.status;
+      if (label) activeTurn.presenceLabel = label;
+      if (detailText !== undefined) activeTurn.presenceDetail = detailText || null;
+      activeTurn.lastPresenceAt = options.createdAt || api.nowIso();
+      api.rememberTurnHistory(detail);
+      api.syncThreadSummaryFromRecord(detail);
+      return activeTurn;
     }
 
     function markPauseResumePending(threadId, pause, note, options) {
@@ -1223,6 +1241,25 @@
       return true;
     }
 
+    function markActiveTurnWritingResponse(threadId, detail, event) {
+      if (!threadId || !detail || !detail.activeTurn) return false;
+      var activeTurn = detail.activeTurn;
+      var createdAt = (event && event.createdAt) || api.nowIso();
+      activeTurn.status = 'running';
+      activeTurn.presenceLabel = 'Writing response';
+      activeTurn.presenceDetail = (event && event.detail) || 'Delegated work is complete; composing the final answer.';
+      activeTurn.lastPresenceAt = createdAt;
+      if (activeTurn.assistantMessage) {
+        activeTurn.assistantMessage.isStreaming = true;
+      }
+      state.pendingThreadIds[threadId] = true;
+      state.threadErrors[threadId] = null;
+      detail.rowState = 'pending';
+      api.rememberTurnHistory(detail);
+      api.syncThreadSummaryFromRecord(detail);
+      return true;
+    }
+
     function applyRuntimePresence(threadId, event) {
       var detail = api.ensureThreadDetailRecord(threadId);
       var activeTurn = detail.activeTurn;
@@ -1263,7 +1300,9 @@
       applyOperationMetadata(activeTurn, event);
 
       if (status === 'finalized') {
-        completeActiveTurnFromLocalOutput(threadId, detail, event);
+        if (!completeActiveTurnFromLocalOutput(threadId, detail, event)) {
+          markActiveTurnWritingResponse(threadId, detail, event);
+        }
       } else if (status === 'failed') {
         failActiveTurnLocally(threadId, event.detail || event.label || 'Runtime turn failed.', {
           turnId: event.turnId || null,
@@ -1853,12 +1892,18 @@
       }
 
       if (event.type === 'turn_finish') {
-        if (event.turnId) {
-          detail.turnCompletedAtById[event.turnId] = event.createdAt || api.nowIso();
-        } else if (detail.activeTurn && detail.activeTurn.turnId) {
-          detail.turnCompletedAtById[detail.activeTurn.turnId] = event.createdAt || api.nowIso();
-        }
+        var completedAt = event.createdAt || api.nowIso();
         if (detail.activeTurn && (!event.turnId || !detail.activeTurn.turnId || detail.activeTurn.turnId === event.turnId)) {
+          if (!activeTurnHasAssistantContent(detail.activeTurn) && detail.activeTurn.status !== 'failed') {
+            markActiveTurnWritingResponse(threadId, detail, event);
+            api.notify();
+            return;
+          }
+          if (event.turnId) {
+            detail.turnCompletedAtById[event.turnId] = completedAt;
+          } else if (detail.activeTurn.turnId) {
+            detail.turnCompletedAtById[detail.activeTurn.turnId] = completedAt;
+          }
           detail.lastTurnId = detail.activeTurn.turnId || detail.lastTurnId || null;
           detail.lastTurnOrdinal = detail.activeTurn.turnOrdinal || detail.lastTurnOrdinal || 0;
           if (detail.activeTurn.assistantMessage) {
@@ -1868,6 +1913,8 @@
             detail.activeTurn.status = 'finalized';
           }
           api.rememberTurnHistory(detail);
+        } else if (event.turnId) {
+          detail.turnCompletedAtById[event.turnId] = completedAt;
         }
         delete state.pendingThreadIds[threadId];
         if (state.pendingThreadOperations && detail.activeTurn && detail.activeTurn.operationId) {
@@ -1895,6 +1942,7 @@
     api.mergeThreadDetail = mergeThreadDetail;
     api.startActiveTurn = startActiveTurn;
     api.queueLocalTurn = queueLocalTurn;
+    api.setActiveTurnPresence = setActiveTurnPresence;
     api.markActiveTurnUncertain = markActiveTurnUncertain;
     api.markPauseResumePending = markPauseResumePending;
     api.clearPauseResumePending = clearPauseResumePending;

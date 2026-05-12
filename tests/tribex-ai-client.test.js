@@ -597,6 +597,24 @@ describe('tribex-ai-client', function () {
     ]);
   });
 
+  it('does not query remote skill or email account endpoints for optimistic thread ids', async function () {
+    var invoke = vi.fn(function () {
+      return Promise.reject(new Error('optimistic ids should not hit the control plane'));
+    });
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(window.__tribexAiClient.fetchThreadSkills('optimistic-thread-123')).resolves.toEqual([
+      expect.objectContaining({ key: 'email-analysis' }),
+    ]);
+    await expect(window.__tribexAiClient.fetchConnectedEmailAccounts('optimistic-thread-123')).resolves.toEqual([]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
   it('fetches connected email account options without exposing backend-only token fields', async function () {
     var invoke = vi.fn(function (command, args) {
       if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/connected-email-accounts') {

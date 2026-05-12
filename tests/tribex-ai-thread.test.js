@@ -203,6 +203,49 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(window.__renderers.rich_content).toHaveBeenCalled();
   });
 
+  it('passes assistant markdown with preserved structure to the markdown renderer', function () {
+    var answer = [
+      'I inspected the inbox.',
+      '',
+      '### daenonjanis8@gmail.com',
+      '',
+      '- **Needs Review:** Monarch budget alert.',
+      '- Archive review archive_review_cmobypfhy0000l904abcd1234 for accountId=cmobypfhy0000l904abcd1234.',
+    ].join('\n');
+
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Analyze my inbox.' },
+                answer: { id: 'a1', role: 'assistant', content: answer },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var markdownCall = window.__companionUtils.renderMarkdown.mock.calls.find(function (call) {
+      return String(call[0] || '').indexOf('### daenonjanis8@gmail.com') >= 0;
+    });
+    expect(markdownCall[0]).toContain('\n\n### daenonjanis8@gmail.com');
+    expect(markdownCall[0]).toContain('- **Needs Review:** Monarch budget alert.');
+    expect(markdownCall[0]).not.toContain('archive_review_');
+    expect(markdownCall[0]).not.toContain('accountId=');
+  });
+
   it('hides synthetic review resume prompts and redacts internal IDs from the thread UI', function () {
     var syntheticPrompt = 'The user submitted a review decision for session archive_review_cmobypfhy0000l904abcd1234. Call await_review with session_id=archive_review_cmobypfhy0000l904abcd1234, inspect the accepted rows, then continue.';
     window.__tribexAiState = {
@@ -627,6 +670,38 @@ describe('tribex-ai-thread Codex-like surface', function () {
         { id: 'acct-work', emailAddress: 'work@example.com' },
       ],
     });
+  });
+
+  it('uses built-in composer resources while a new thread still has an optimistic id', function () {
+    var fetchThreadSkills = vi.fn(function () {
+      return Promise.reject(new Error('should not load remote skills for optimistic ids'));
+    });
+    var fetchConnectedEmailAccounts = vi.fn(function () {
+      return Promise.reject(new Error('should not load remote email accounts for optimistic ids'));
+    });
+    window.__tribexAiClient = {
+      fetchThreadSkills: fetchThreadSkills,
+      fetchConnectedEmailAccounts: fetchConnectedEmailAccounts,
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({ id: 'optimistic-thread-123', title: 'New chat' }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('optimistic-thread-123');
+
+    expect(fetchThreadSkills).not.toHaveBeenCalled();
+    expect(fetchConnectedEmailAccounts).not.toHaveBeenCalled();
+    expect(document.querySelector('.ai-codex-skill-row').textContent).toContain('Skills');
   });
 
   it('allows a pushed thread renderer with a known id to send before thread cache hydration', async function () {
@@ -2296,6 +2371,41 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-status').textContent).not.toContain('Waiting on you');
     expect(document.querySelector('.ai-codex-pause-card').textContent).toContain('Waiting for 3 delegated tasks');
     expect(document.querySelector('.ai-codex-blocker-badge').textContent).toBe('Waiting');
+  });
+
+  it('shows writing-response progress after all delegated pause tasks complete', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            activePause: {
+              id: 'pause-delegated',
+              status: 'BLOCKED',
+              reasonKind: 'DELEGATED_WORK',
+              title: 'Waiting for 2 delegated tasks',
+              tasks: [
+                { title: 'Sub-agent item', detail: 'Finished first inbox.', status: 'COMPLETED' },
+                { title: 'Sub-agent item', detail: 'Finished second inbox.', status: 'COMPLETED' },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+      checkThreadPause: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-status').textContent).toContain('Writing response');
+    expect(document.querySelector('.ai-codex-status-detail').textContent).toContain('Delegated work is complete');
+    expect(document.querySelector('.ai-codex-pause-card').textContent).toContain('Writing response');
+    expect(document.querySelector('.ai-codex-pause-card').textContent).toContain('Mailbox check 1');
+    expect(document.querySelector('.ai-codex-action-dock')).toBeNull();
   });
 
   it('does not render stale delegated work cards while the coordinator is resuming', function () {

@@ -129,6 +129,7 @@
     },
     continuedPauseIdsByThread: {},
     navigatorLoad: null,
+    workspaceBootstrap: null,
     activeSession: null,
     projectBootstrap: null,
     runtimeEventUnsubscribers: {},

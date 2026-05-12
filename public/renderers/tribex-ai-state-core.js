@@ -498,18 +498,72 @@
       return getSelectedWorkspace();
     }
 
+    function resolveDefaultWorkspacePackageKey() {
+      var packages = Array.isArray(state.packages) ? state.packages : [];
+      var preferred = packages.find(function (pkg) {
+        return !!(pkg && pkg.default);
+      }) || packages.find(function (pkg) {
+        return pkg && pkg.key === 'general';
+      }) || packages.find(function (pkg) {
+        return pkg && pkg.key === 'generic';
+      }) || packages[0] || null;
+      return preferred && preferred.key ? preferred.key : null;
+    }
+
+    function ensureWorkspaceForNewProject() {
+      var existingWorkspace = getSelectedWorkspace();
+      if (existingWorkspace) return Promise.resolve(existingWorkspace);
+
+      var organization = getSelectedOrganization();
+      if (!organization || !organization.id) {
+        return Promise.reject(new Error('No organization is selected for this AI workspace.'));
+      }
+      if (!window.__tribexAiClient || typeof window.__tribexAiClient.createWorkspace !== 'function') {
+        return Promise.reject(new Error('The AI workspace provider does not support workspace creation.'));
+      }
+
+      if (context.workspaceBootstrap) return context.workspaceBootstrap;
+
+      context.workspaceBootstrap = window.__tribexAiClient
+        .createWorkspace(organization.id, 'AI Workspace', resolveDefaultWorkspacePackageKey())
+        .then(function (workspace) {
+          if (!workspace || !workspace.id) {
+            throw new Error('Workspace creation did not return a workspace.');
+          }
+          state.workspacesById[workspace.id] = workspace;
+          state.selectedWorkspaceId = workspace.id;
+          rememberOrganizationContext(
+            workspace.organizationId || organization.id,
+            null,
+            null,
+            workspace.id
+          );
+          notify();
+          return workspace;
+        })
+        .finally(function () {
+          context.workspaceBootstrap = null;
+        });
+
+      return context.workspaceBootstrap;
+    }
+
     function ensureProjectForNewThread() {
       var existingProjectId = resolveSelectedProjectId();
       if (existingProjectId) return Promise.resolve(existingProjectId);
 
-      var workspace = getSelectedWorkspace();
-      if (!workspace || !window.__tribexAiClient || typeof window.__tribexAiClient.createProject !== 'function') {
+      if (!window.__tribexAiClient || typeof window.__tribexAiClient.createProject !== 'function') {
         return Promise.resolve(null);
       }
 
       if (context.projectBootstrap) return context.projectBootstrap;
 
-      context.projectBootstrap = window.__tribexAiClient.createProject(workspace, 'General')
+      context.projectBootstrap = ensureWorkspaceForNewProject().then(function (workspace) {
+        if (!workspace || !window.__tribexAiClient || typeof window.__tribexAiClient.createProject !== 'function') {
+          return null;
+        }
+        return window.__tribexAiClient.createProject(workspace, 'General');
+      })
         .then(function (project) {
           if (!project || !project.id) return null;
           state.projects = state.projects
@@ -812,11 +866,44 @@
     }
 
     function openThreadComposer(options) {
-      var targetProjectId = options && options.projectId ? options.projectId : resolveSelectedProjectId();
-      if (!targetProjectId) return Promise.resolve(null);
+      var requestedProjectId = options && options.projectId ? options.projectId : null;
+      var targetProjectId = requestedProjectId || resolveSelectedProjectId();
+      if (!targetProjectId && !requestedProjectId) {
+        state.ui.threadComposerOpen = true;
+        state.ui.projectComposerOpen = false;
+        state.ui.projectRenameOpen = false;
+        state.ui.threadRenameOpen = false;
+        state.composer.threadProjectId = null;
+        state.composer.threadTitle = state.composer.threadTitle || 'New chat';
+        state.composer.threadPersonaError = null;
+        state.composer.loadingThreadPersonas = true;
+        state.integration.error = null;
+        notify();
+
+        return ensureProjectForNewThread().then(function (bootstrappedProjectId) {
+          if (!bootstrappedProjectId) {
+            state.integration.error = 'No folder is available for this AI workspace yet.';
+            state.composer.loadingThreadPersonas = false;
+            notify();
+            return null;
+          }
+          return openThreadComposer(Object.assign({}, options || {}, {
+            projectId: bootstrappedProjectId,
+          }));
+        }).catch(function (error) {
+          state.integration.error = error && error.message ? error.message : String(error);
+          state.composer.loadingThreadPersonas = false;
+          notify();
+          throw error;
+        });
+      }
 
       var project = getProject(targetProjectId);
-      if (!project) return Promise.resolve(null);
+      if (!project) {
+        state.integration.error = 'The selected folder could not be found.';
+        notify();
+        return Promise.resolve(null);
+      }
 
       state.ui.threadComposerOpen = true;
       state.ui.projectComposerOpen = false;
@@ -1002,6 +1089,7 @@
     api.expandThreadAncestors = expandThreadAncestors;
     api.resolveSelectedProjectId = resolveSelectedProjectId;
     api.resolvePreferredWorkspace = resolvePreferredWorkspace;
+    api.ensureWorkspaceForNewProject = ensureWorkspaceForNewProject;
     api.ensureProjectForNewThread = ensureProjectForNewThread;
     api.restoreOrganizationContext = restoreOrganizationContext;
     api.isThreadSession = isThreadSession;

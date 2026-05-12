@@ -24,6 +24,18 @@ target/aarch64-apple-darwin/release/bundle/macos/MCPViews.app/Contents/MacOS/mcp
 5. Enables `MCPVIEWS_ENABLE_LOCAL_AI_DEBUG=1` for that launched process. This exposes the local-only `POST /api/debug/first-party-ai` compatibility proxy through the running app's configured hosted AI provider session for debugging UI/runtime divergence.
 6. Prints the launched process id, the built app path, and the log file path.
 
+## Mac Dev Plugin Bundle
+
+Use this command when the native build also needs local plugin changes from sibling worktrees:
+
+```sh
+npm run build:mac-dev-bundle
+```
+
+It stages local copies of `../tribe-x-ai-plugin`, `../ludflow-mcpviews`, and `../decidr-plugin` under `src-tauri/bundled-plugins/mac-dev/`, writes content hashes for startup comparison, and then runs a macOS Tauri build for `app,dmg`. The staged directory is ignored by Git; regenerate it from the sibling plugin worktrees instead of editing it directly.
+
+The mac dev bundle bakes in hosted AI provider defaults for `https://dev.app.tribexai.com` unless the corresponding `MCPVIEWS_BUNDLE_AI_PROVIDER_*` environment variables are set for the build.
+
 ## Inspection
 
 After launch, inspect the real client with Computer Use against bundle id `com.mcpviews.app`. Capture screenshots after meaningful UI interactions, then compare the visible state with terminal logs and runtime state when behavior looks wrong.

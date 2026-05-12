@@ -104,6 +104,129 @@ describe('tribex-ai-state', function () {
     expect(window.__companionUtils.openSession).toHaveBeenCalled();
   });
 
+  it('bootstraps a default project before opening the first chat composer', async function () {
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      createProject: vi.fn(function () {
+        return Promise.resolve({
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        });
+      }),
+      fetchProjectThreadPersonas: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'persona-1',
+          key: 'general',
+          displayName: 'General',
+        }]);
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    await window.__tribexAiState.openThreadComposer();
+
+    var snapshot = window.__tribexAiState.getSnapshot();
+    expect(client.createProject).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'workspace-1' }),
+      'General',
+    );
+    expect(client.fetchProjectThreadPersonas).toHaveBeenCalledWith('project-1');
+    expect(snapshot.threadComposerOpen).toBe(true);
+    expect(snapshot.selectedProject).toMatchObject({ id: 'project-1' });
+    expect(snapshot.composer.threadProjectId).toBe('project-1');
+    expect(snapshot.composer.selectedPersonaKey).toBe('general');
+  });
+
+  it('creates a workspace before creating the first project when none exists', async function () {
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchPackages: vi.fn(function () {
+        return Promise.resolve([{ key: 'consultant', name: 'Consultant Workspace', default: true }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      createWorkspace: vi.fn(function () {
+        return Promise.resolve({
+          id: 'workspace-1',
+          organizationId: 'org-1',
+          name: 'AI Workspace',
+          packageKey: 'consultant',
+        });
+      }),
+      createProject: vi.fn(function (workspace, name) {
+        return Promise.resolve({
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: workspace.id,
+          name: name,
+          workspaceName: workspace.name,
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.setProjectDraftName('Client Planning');
+    await window.__tribexAiState.createProject();
+
+    var snapshot = window.__tribexAiState.getSnapshot();
+    expect(client.createWorkspace).toHaveBeenCalledWith('org-1', 'AI Workspace', 'consultant');
+    expect(client.createProject).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'workspace-1' }),
+      'Client Planning',
+    );
+    expect(snapshot.selectedWorkspace).toMatchObject({ id: 'workspace-1' });
+    expect(snapshot.selectedProject).toMatchObject({ id: 'project-1' });
+    expect(snapshot.integration.error).toBeNull();
+  });
+
   it('renames a project and updates project context for its threads', async function () {
     var client = {
       getConfig: vi.fn(function () {
@@ -2955,6 +3078,116 @@ describe('tribex-ai-state', function () {
       startedAt: '2026-04-15T10:41:01.000Z',
       endedAt: '2026-04-15T10:41:16.000Z',
     });
+  });
+
+  it('keeps a visible writing-response state when turn_finish arrives before assistant text', async function () {
+    var runtimeHandler = null;
+
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'Email Coordinator',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'Email Coordinator',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messagesSource: 'runtime',
+          messages: [],
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToRuntimeEvents: vi.fn(function (_threadId, handler) {
+        runtimeHandler = handler;
+        return function () {};
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1', { connectStream: false });
+    await Promise.resolve();
+
+    runtimeHandler({
+      type: 'user_accepted',
+      turnId: 'turn-1',
+      turnOrdinal: 1,
+      createdAt: '2026-05-12T13:30:00.000Z',
+      message: {
+        id: 'user-1',
+        role: 'user',
+        content: 'Run the email analysis.',
+        createdAt: '2026-05-12T13:30:00.000Z',
+      },
+    });
+    runtimeHandler({
+      type: 'activity_update',
+      turnId: 'turn-1',
+      item: {
+        id: 'subagent-1',
+        toolName: 'subagent_listen',
+        title: 'Mailbox check 1',
+        status: 'completed',
+        detail: 'Mailbox analysis completed.',
+        createdAt: '2026-05-12T13:30:05.000Z',
+        updatedAt: '2026-05-12T13:30:08.000Z',
+        completedAt: '2026-05-12T13:30:08.000Z',
+      },
+    });
+    runtimeHandler({
+      type: 'turn_finish',
+      turnId: 'turn-1',
+      createdAt: '2026-05-12T13:30:09.000Z',
+    });
+
+    var threadContext = window.__tribexAiState.getThreadContext('thread-1');
+    expect(threadContext.pending).toBe(true);
+    expect(threadContext.thread.activeTurn).toMatchObject({
+      turnId: 'turn-1',
+      status: 'running',
+      presenceLabel: 'Writing response',
+      presenceDetail: 'Delegated work is complete; composing the final answer.',
+    });
+    expect(threadContext.thread.runs[0].workSession.status).toBe('running');
   });
 
   it('preserves thread metadata when runtime updates omit project and workspace ids', async function () {

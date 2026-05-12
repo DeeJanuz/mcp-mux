@@ -632,6 +632,10 @@
           next.parentThreadId = value || null;
           return;
         }
+        if (key === 'rowState') {
+          next.rowState = value || null;
+          return;
+        }
         if (value === undefined || value === null) return;
         if (key === 'lastActivityAt') {
           next.lastActivityAt = maxActivityTimestamp(next.lastActivityAt, value);

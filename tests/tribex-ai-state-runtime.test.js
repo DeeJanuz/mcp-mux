@@ -127,6 +127,7 @@ describe('tribex-ai-state runtime helpers', function () {
       activeTurn: {
         turnId: 'turn-1',
         turnOrdinal: 1,
+        operationId: 'op-1',
         status: 'running',
         userMessage: { id: 'user-1', role: 'user', content: 'Summarize email' },
         assistantMessage: null,
@@ -149,6 +150,7 @@ describe('tribex-ai-state runtime helpers', function () {
       ensureThreadDetailRecord: function () { return detail; },
       rememberTurnHistory: vi.fn(),
       syncThreadSummaryFromRecord: vi.fn(),
+      reconcileActiveTurn: vi.fn(),
       notify: vi.fn(),
       nowIso: function () { return '2026-04-16T10:02:00.000Z'; },
     };
@@ -166,6 +168,29 @@ describe('tribex-ai-state runtime helpers', function () {
     expect(context.state.pendingThreadIds['thread-1']).toBe(true);
     expect(detail.rowState).toBe('pending');
     expect(api.rememberTurnHistory).toHaveBeenCalledWith(detail);
+
+    api.handleRuntimeEvent('thread-1', {
+      type: 'assistant_finish',
+      turnId: 'turn-1',
+      createdAt: '2026-04-16T10:02:01.000Z',
+      message: {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Done.',
+        createdAt: '2026-04-16T10:02:01.000Z',
+      },
+    });
+
+    expect(detail.turnCompletedAtById['turn-1']).toBe('2026-04-16T10:02:01.000Z');
+    expect(detail.activeTurn.status).toBe('finalized');
+    expect(detail.activeTurn.presenceLabel).toBe('Completed');
+    expect(detail.activeTurn.assistantMessage.content).toBe('Done.');
+    expect(detail.activeTurn.assistantMessage.isStreaming).toBe(false);
+    expect(context.state.pendingThreadIds['thread-1']).toBeUndefined();
+    expect(context.state.pendingThreadOperations['thread-1']).toBeUndefined();
+    expect(context.state.threadErrors['thread-1']).toBeNull();
+    expect(detail.rowState).toBeNull();
+    expect(api.reconcileActiveTurn).toHaveBeenCalledWith(detail);
   });
 
   it('applies runtime presence without creating assistant prose', function () {

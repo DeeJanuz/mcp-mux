@@ -3188,6 +3188,29 @@ describe('tribex-ai-state', function () {
       presenceDetail: 'Delegated work is complete; composing the final answer.',
     });
     expect(threadContext.thread.runs[0].workSession.status).toBe('running');
+
+    runtimeHandler({
+      type: 'assistant_finish',
+      turnId: 'turn-1',
+      createdAt: '2026-05-12T13:30:10.000Z',
+      message: {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: 'Mailbox analysis is complete.',
+        createdAt: '2026-05-12T13:30:10.000Z',
+      },
+    });
+
+    threadContext = window.__tribexAiState.getThreadContext('thread-1');
+    expect(threadContext.pending).toBe(false);
+    expect(threadContext.thread.rowState).toBeNull();
+    expect(threadContext.thread.activeTurn).toMatchObject({
+      turnId: 'turn-1',
+      status: 'finalized',
+      presenceLabel: 'Completed',
+    });
+    expect(threadContext.thread.runs[0].answer.content).toBe('Mailbox analysis is complete.');
+    expect(threadContext.thread.runs[0].workSession.status).toBe('completed');
   });
 
   it('preserves thread metadata when runtime updates omit project and workspace ids', async function () {

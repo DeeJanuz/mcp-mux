@@ -1230,7 +1230,7 @@
         detail.activeTurn.assistantMessage.isStreaming = false;
       }
       delete state.pendingThreadIds[threadId];
-      if (state.pendingThreadOperations && detail.activeTurn.operationId) {
+      if (state.pendingThreadOperations) {
         delete state.pendingThreadOperations[threadId];
       }
       state.threadErrors[threadId] = null;
@@ -1818,7 +1818,7 @@
         if (event.turnId) {
           detail.turnCompletedAtById[event.turnId] = (event.message && event.message.createdAt) || event.createdAt || api.nowIso();
         }
-        updateActiveAssistant(threadId, function (message, activeTurn) {
+        var finishedDetail = updateActiveAssistant(threadId, function (message, activeTurn) {
           message.id = event.message && event.message.id ? event.message.id : message.id;
           message.messageId = event.message && event.message.messageId ? event.message.messageId : (message.messageId || null);
           message.createdAt = event.message && event.message.createdAt ? event.message.createdAt : (event.createdAt || message.createdAt);
@@ -1826,7 +1826,7 @@
           message.isStreaming = false;
           activeTurn.status = 'finalized';
         });
-        api.rememberTurnHistory(detail);
+        completeActiveTurnFromLocalOutput(threadId, finishedDetail, event);
         api.notify();
         return;
       }

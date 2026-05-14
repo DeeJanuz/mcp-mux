@@ -15,6 +15,9 @@
  *     "id": "t1", "name": "users",
  *     "columns": [{ "id": "c1", "name": "Col", "change": null }],
  *     "rows": [{ "id": "r1", "cells": { "c1": { "value": "v", "change": null } }, "children": [] }]
+ *   }],
+ *   graphs: [{                         // Optional — embedded universal_graph charts
+ *     "id": "g1", "type": "line", "data": { "columns": [...], "rows": [...] }, "encoding": { ... }
  *   }]
  * }
  *
@@ -41,12 +44,33 @@
   }
 
   /**
+   * Pre-process graph embed fenced blocks into placeholder divs before markdown parsing.
+   * Replaces ```universal_graph:graphId``` blocks with <div data-graph-embed="graphId"></div>
+   */
+  function preprocessGraphEmbeds(text) {
+    return text.replace(/```universal_graph:([^\s`]+)\s*\n?```/g, function (match, graphId) {
+      return '<div data-graph-embed="' + graphId.replace(/"/g, '&quot;') + '"></div>';
+    });
+  }
+
+  /**
    * Find a table by ID from the tables array.
    */
   function findTableById(tables, id) {
     if (!tables) return null;
     for (var i = 0; i < tables.length; i++) {
       if (tables[i].id === id) return tables[i];
+    }
+    return null;
+  }
+
+  /**
+   * Find a graph by ID from the graphs array.
+   */
+  function findGraphById(graphs, id) {
+    if (!graphs) return null;
+    for (var i = 0; i < graphs.length; i++) {
+      if (graphs[i].id === id) return graphs[i];
     }
     return null;
   }
@@ -81,6 +105,30 @@
       // Build the table container (no per-table onDecision — combined submit handles it)
       var tableContainer = embed.buildTableContainer(tableData, tableStates[tableId], reviewRequired, null);
       ph.parentNode.replaceChild(tableContainer, ph);
+    });
+  }
+
+  /**
+   * Hydrate graph embed placeholders with universal_graph components.
+   */
+  function hydrateGraphEmbeds(container, graphs) {
+    var embed = window.__universalGraphEmbed;
+    if (!embed) return;
+
+    embed.injectStyles();
+
+    var placeholders = container.querySelectorAll('[data-graph-embed]');
+    placeholders.forEach(function (ph) {
+      var graphId = ph.getAttribute('data-graph-embed');
+      var graphData = findGraphById(graphs, graphId);
+      if (!graphData) {
+        ph.textContent = 'Graph not found: ' + graphId;
+        ph.style.cssText = 'color: var(--color-error-text); padding: 8px; font-style: italic;';
+        return;
+      }
+
+      var graphContainer = embed.buildGraphContainer(graphData);
+      ph.parentNode.replaceChild(graphContainer, ph);
     });
   }
 
@@ -297,12 +345,16 @@
       var hasCitations = data.citations && typeof data.citations === 'object' && Object.keys(data.citations).length > 0;
       var hasSuggestions = data.suggestions && typeof data.suggestions === 'object' && Object.keys(data.suggestions).length > 0;
       var hasTables = data.tables && Array.isArray(data.tables) && data.tables.length > 0;
+      var hasGraphs = data.graphs && Array.isArray(data.graphs) && data.graphs.length > 0;
       var tableStates = {};
       var bodyText = stripDuplicateLeadingTitle(data.body, data.title);
 
-      // Step 1: Pre-process table embeds (before markdown parsing)
+      // Step 1: Pre-process embeds (before markdown parsing)
       if (hasTables) {
         bodyText = preprocessTableEmbeds(bodyText);
+      }
+      if (hasGraphs) {
+        bodyText = preprocessGraphEmbeds(bodyText);
       }
 
       // Step 2: Render markdown (with suggestions or citations if present)
@@ -333,6 +385,9 @@
         // Step 4: Hydrate table embeds
         if (hasTables) {
           hydrateTableEmbeds(contentEl, data.tables, reviewRequired, tableStates);
+        }
+        if (hasGraphs) {
+          hydrateGraphEmbeds(contentEl, data.graphs);
         }
 
         // Step 5: Render mermaid diagrams

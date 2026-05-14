@@ -180,7 +180,7 @@
 
   function isRendererContentType(value) {
     var normalized = String(value || '').trim();
-    return normalized === 'rich_content' || normalized === 'structured_data';
+    return normalized === 'rich_content' || normalized === 'structured_data' || normalized === 'universal_graph';
   }
 
   function hasArtifactMetadata(item) {

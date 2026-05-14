@@ -300,9 +300,13 @@
         Object.prototype.hasOwnProperty.call(value, 'body') ||
         Object.prototype.hasOwnProperty.call(value, 'title') ||
         Object.prototype.hasOwnProperty.call(value, 'tables') ||
+        Object.prototype.hasOwnProperty.call(value, 'graphs') ||
         Object.prototype.hasOwnProperty.call(value, 'suggestions') ||
         Object.prototype.hasOwnProperty.call(value, 'citations')
       );
+    }
+    if (contentType === 'universal_graph') {
+      return Array.isArray(value.graphs);
     }
     return false;
   }
@@ -317,7 +321,7 @@
   }
 
   function shouldInlineRendererPayload(contentType, meta, _sessionId) {
-    if (contentType !== 'rich_content' && contentType !== 'structured_data') {
+    if (contentType !== 'rich_content' && contentType !== 'structured_data' && contentType !== 'universal_graph') {
       return false;
     }
     return !isReviewRequiredMeta(meta);
@@ -368,7 +372,7 @@
       };
     }
 
-    if (normalizedToolName !== 'rich_content' && normalizedToolName !== 'structured_data') {
+    if (normalizedToolName !== 'rich_content' && normalizedToolName !== 'structured_data' && normalizedToolName !== 'universal_graph') {
       return null;
     }
 
@@ -1168,8 +1172,10 @@
     return (
       type === 'tool-rich_content' ||
       type === 'tool-structured_data' ||
+      type === 'tool-universal_graph' ||
       toolName === 'rich_content' ||
-      toolName === 'structured_data'
+      toolName === 'structured_data' ||
+      toolName === 'universal_graph'
     );
   }
 

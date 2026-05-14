@@ -403,9 +403,13 @@ function hasRendererDataShape(contentType, value) {
       'body' in value ||
       'title' in value ||
       'tables' in value ||
+      'graphs' in value ||
       'suggestions' in value ||
       'citations' in value
     );
+  }
+  if (contentType === 'universal_graph') {
+    return Array.isArray(value.graphs);
   }
   return false;
 }
@@ -426,7 +430,7 @@ function buildRendererPayload(contentType, data, meta, toolArgs, reviewRequired)
 }
 
 function shouldInlineRendererPayload(contentType, meta, reviewRequired, _sessionId) {
-  if (contentType !== 'rich_content' && contentType !== 'structured_data') {
+  if (contentType !== 'rich_content' && contentType !== 'structured_data' && contentType !== 'universal_graph') {
     return false;
   }
   if (reviewRequired) {
@@ -474,7 +478,7 @@ function extractRendererActivityPayload(toolName, value) {
   if (toolName === 'push_review') {
     return extractWrappedRendererPayload(value, true);
   }
-  if (toolName !== 'rich_content' && toolName !== 'structured_data') {
+  if (toolName !== 'rich_content' && toolName !== 'structured_data' && toolName !== 'universal_graph') {
     return null;
   }
 

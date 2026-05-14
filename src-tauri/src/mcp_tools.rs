@@ -225,15 +225,22 @@ fn infer_renderer_tool_name(data: &Value) -> Option<&'static str> {
     let object = data.as_object()?;
 
     if object.contains_key("body")
-        || object.contains_key("title")
         || object.contains_key("suggestions")
         || object.contains_key("citations")
     {
         return Some("rich_content");
     }
 
+    if object.contains_key("graphs") {
+        return Some("universal_graph");
+    }
+
     if object.contains_key("tables") {
         return Some("structured_data");
+    }
+
+    if object.contains_key("title") {
+        return Some("rich_content");
     }
 
     None
@@ -266,10 +273,40 @@ const MERMAID_DIAGRAM_STARTERS: &[&str] = &[
     "architecture-beta",
 ];
 
+const UNIVERSAL_GRAPH_TYPES: &[&str] = &[
+    "line",
+    "area",
+    "bar",
+    "stacked_bar",
+    "grouped_bar",
+    "scatter",
+    "bubble",
+    "combo",
+    "histogram",
+    "boxplot",
+    "heatmap",
+    "matrix",
+    "pie",
+    "donut",
+    "waterfall",
+    "funnel",
+    "gauge",
+    "radar",
+    "candlestick",
+    "timeline",
+    "gantt",
+    "tree",
+    "network",
+    "treemap",
+    "sunburst",
+    "sankey",
+];
+
 #[derive(Debug, Clone)]
 enum RichContentFenceKind {
     Mermaid,
     StructuredData(String),
+    UniversalGraph(String),
 }
 
 #[derive(Debug, Clone)]
@@ -283,6 +320,7 @@ fn validate_push_payload(tool_name: &str, data: &Value) -> Result<(), String> {
     match tool_name {
         "rich_content" => validate_rich_content_payload(data),
         "structured_data" => validate_structured_data_payload(data),
+        "universal_graph" => validate_universal_graph_payload(data),
         _ => Ok(()),
     }
 }
@@ -295,12 +333,16 @@ fn validate_rich_content_payload(data: &Value) -> Result<(), String> {
         Some(tables) => validate_tables_value(tables, "rich_content.data.tables")?,
         None => Vec::new(),
     };
+    let graph_ids = match object.get("graphs") {
+        Some(graphs) => validate_graphs_value(graphs, "rich_content.data.graphs")?,
+        None => Vec::new(),
+    };
 
     if let Some(body) = object.get("body") {
         let body = body
             .as_str()
             .ok_or("rich_content.data.body must be a string.".to_string())?;
-        validate_rich_content_body(body, &table_ids)?;
+        validate_rich_content_body(body, &table_ids, &graph_ids)?;
     }
 
     Ok(())
@@ -314,6 +356,17 @@ fn validate_structured_data_payload(data: &Value) -> Result<(), String> {
         .get("tables")
         .ok_or("structured_data.data.tables is required.".to_string())?;
     validate_tables_value(tables, "structured_data.data.tables")?;
+    Ok(())
+}
+
+fn validate_universal_graph_payload(data: &Value) -> Result<(), String> {
+    let object = data
+        .as_object()
+        .ok_or("universal_graph data must be a JSON object.".to_string())?;
+    let graphs = object
+        .get("graphs")
+        .ok_or("universal_graph.data.graphs is required.".to_string())?;
+    validate_graphs_value(graphs, "universal_graph.data.graphs")?;
     Ok(())
 }
 
@@ -374,6 +427,218 @@ fn validate_tables_value(tables: &Value, context: &str) -> Result<Vec<String>, S
     Ok(table_ids)
 }
 
+fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, String> {
+    let graphs = graphs
+        .as_array()
+        .ok_or(format!("{} must be an array.", context))?;
+    if graphs.is_empty() {
+        return Err(format!("{} must contain at least one graph.", context));
+    }
+
+    let mut graph_ids = Vec::new();
+    for (graph_index, graph) in graphs.iter().enumerate() {
+        let graph_context = format!("{}[{}]", context, graph_index);
+        let graph = graph
+            .as_object()
+            .ok_or(format!("{} must be an object.", graph_context))?;
+        let graph_id = graph
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.id must be a non-empty string.", graph_context))?
+            .to_string();
+
+        if graph_ids.iter().any(|existing| existing == &graph_id) {
+            return Err(format!("{} contains duplicate graph id `{}`.", context, graph_id));
+        }
+
+        let graph_type = graph
+            .get("type")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.type must be a non-empty string.", graph_context))?;
+        if !UNIVERSAL_GRAPH_TYPES.iter().any(|candidate| candidate == &graph_type) {
+            return Err(format!(
+                "{}.type `{}` is not supported. Supported universal_graph types: {}.",
+                graph_context,
+                graph_type,
+                UNIVERSAL_GRAPH_TYPES.join(", ")
+            ));
+        }
+
+        let data = graph
+            .get("data")
+            .and_then(|value| value.as_object())
+            .ok_or(format!("{}.data must be an object.", graph_context))?;
+        let column_ids = validate_graph_columns(data, &format!("{}.data", graph_context))?;
+        validate_graph_rows(data, &format!("{}.data", graph_context))?;
+
+        let encoding = graph
+            .get("encoding")
+            .and_then(|value| value.as_object())
+            .ok_or(format!("{}.encoding must be an object.", graph_context))?;
+        validate_graph_required_encodings(
+            graph_type,
+            encoding,
+            &format!("{}.encoding", graph_context),
+        )?;
+        validate_graph_encoding_references(
+            encoding,
+            &column_ids,
+            &format!("{}.encoding", graph_context),
+        )?;
+
+        graph_ids.push(graph_id);
+    }
+
+    Ok(graph_ids)
+}
+
+fn validate_graph_columns(
+    data: &serde_json::Map<String, Value>,
+    context: &str,
+) -> Result<Vec<String>, String> {
+    let columns = data
+        .get("columns")
+        .and_then(|value| value.as_array())
+        .ok_or(format!("{}.columns must be an array.", context))?;
+    if columns.is_empty() {
+        return Err(format!("{}.columns must contain at least one column.", context));
+    }
+
+    let mut column_ids = Vec::new();
+    for (column_index, column) in columns.iter().enumerate() {
+        let column_context = format!("{}.columns[{}]", context, column_index);
+        let column = column
+            .as_object()
+            .ok_or(format!("{} must be an object.", column_context))?;
+        let column_id = column
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.id must be a non-empty string.", column_context))?
+            .to_string();
+
+        if column_ids.iter().any(|existing| existing == &column_id) {
+            return Err(format!("{}.columns contains duplicate column id `{}`.", context, column_id));
+        }
+
+        column_ids.push(column_id);
+    }
+
+    Ok(column_ids)
+}
+
+fn validate_graph_rows(data: &serde_json::Map<String, Value>, context: &str) -> Result<(), String> {
+    let rows = data
+        .get("rows")
+        .and_then(|value| value.as_array())
+        .ok_or(format!("{}.rows must be an array.", context))?;
+    for (row_index, row) in rows.iter().enumerate() {
+        row.as_object()
+            .ok_or(format!("{}.rows[{}] must be an object.", context, row_index))?;
+    }
+    Ok(())
+}
+
+fn validate_graph_required_encodings(
+    graph_type: &str,
+    encoding: &serde_json::Map<String, Value>,
+    context: &str,
+) -> Result<(), String> {
+    let required: &[&str] = match graph_type {
+        "line" | "area" | "bar" | "stacked_bar" | "grouped_bar" | "scatter" | "bubble"
+        | "combo" => &["x", "y"],
+        "histogram" | "boxplot" => &["value"],
+        "heatmap" | "matrix" => &["x", "y", "value"],
+        "pie" | "donut" | "funnel" | "gauge" | "radar" | "waterfall" => &["label", "value"],
+        "candlestick" => &["x", "open", "high", "low", "close"],
+        "timeline" | "gantt" => &["label", "start", "end"],
+        "tree" | "treemap" | "sunburst" => &["label", "value"],
+        "network" => &["source", "target"],
+        "sankey" => &["source", "target", "value"],
+        _ => &[],
+    };
+
+    for key in required {
+        let value = encoding.get(*key).ok_or(format!(
+            "{}.{} is required for universal_graph type `{}`.",
+            context, key, graph_type
+        ))?;
+        validate_graph_encoding_value_shape(value, &format!("{}.{}", context, key))?;
+    }
+
+    Ok(())
+}
+
+fn validate_graph_encoding_value_shape(value: &Value, context: &str) -> Result<(), String> {
+    if value.as_str().map(str::trim).is_some_and(|text| !text.is_empty()) {
+        return Ok(());
+    }
+    if let Some(values) = value.as_array() {
+        if values.is_empty() {
+            return Err(format!("{} must not be an empty array.", context));
+        }
+        for (index, item) in values.iter().enumerate() {
+            item.as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .ok_or(format!("{}[{}] must be a non-empty string.", context, index))?;
+        }
+        return Ok(());
+    }
+    Err(format!("{} must be a non-empty string or array of strings.", context))
+}
+
+fn validate_graph_encoding_references(
+    encoding: &serde_json::Map<String, Value>,
+    column_ids: &[String],
+    context: &str,
+) -> Result<(), String> {
+    for (key, value) in encoding {
+        validate_graph_encoding_reference_value(key, value, column_ids, context)?;
+    }
+    Ok(())
+}
+
+fn validate_graph_encoding_reference_value(
+    key: &str,
+    value: &Value,
+    column_ids: &[String],
+    context: &str,
+) -> Result<(), String> {
+    if let Some(column_id) = value.as_str().map(str::trim).filter(|text| !text.is_empty()) {
+        if !column_ids.iter().any(|candidate| candidate == column_id) {
+            return Err(format!(
+                "{}.{} references missing data column `{}`.",
+                context, key, column_id
+            ));
+        }
+        return Ok(());
+    }
+
+    if let Some(values) = value.as_array() {
+        for (index, item) in values.iter().enumerate() {
+            let column_id = item
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .ok_or(format!("{}.{}[{}] must be a non-empty string.", context, key, index))?;
+            if !column_ids.iter().any(|candidate| candidate == column_id) {
+                return Err(format!(
+                    "{}.{}[{}] references missing data column `{}`.",
+                    context, key, index, column_id
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_table_rows(rows: &[Value], context: &str) -> Result<(), String> {
     for (row_index, row) in rows.iter().enumerate() {
         let row_context = format!("{}[{}]", context, row_index);
@@ -403,7 +668,11 @@ fn validate_table_rows(rows: &[Value], context: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_rich_content_body(body: &str, table_ids: &[String]) -> Result<(), String> {
+fn validate_rich_content_body(
+    body: &str,
+    table_ids: &[String],
+    graph_ids: &[String],
+) -> Result<(), String> {
     let mut active_fence: Option<RichContentFence> = None;
 
     for (line_index, line) in body.lines().enumerate() {
@@ -412,7 +681,7 @@ fn validate_rich_content_body(body: &str, table_ids: &[String]) -> Result<(), St
 
         if let Some(fence) = active_fence.as_mut() {
             if trimmed == "```" {
-                validate_rich_content_fence(fence, table_ids)?;
+                validate_rich_content_fence(fence, table_ids, graph_ids)?;
                 active_fence = None;
             } else {
                 fence.lines.push(line.to_string());
@@ -460,6 +729,29 @@ fn validate_rich_content_body(body: &str, table_ids: &[String]) -> Result<(), St
                     line_number
                 ));
             }
+
+            if let Some(graph_id) = info_string.strip_prefix("universal_graph:") {
+                let graph_id = graph_id.trim();
+                if graph_id.is_empty() {
+                    return Err(format!(
+                        "Invalid embedded universal_graph block at line {}: expected ```universal_graph:<graph-id>.",
+                        line_number
+                    ));
+                }
+                active_fence = Some(RichContentFence {
+                    kind: RichContentFenceKind::UniversalGraph(graph_id.to_string()),
+                    start_line: line_number,
+                    lines: Vec::new(),
+                });
+                continue;
+            }
+
+            if info_string.starts_with("universal_graph") {
+                return Err(format!(
+                    "Invalid embedded universal_graph block at line {}: expected ```universal_graph:<graph-id>.",
+                    line_number
+                ));
+            }
         }
     }
 
@@ -473,17 +765,28 @@ fn validate_rich_content_body(body: &str, table_ids: &[String]) -> Result<(), St
                 "Invalid embedded structured_data block for table `{}`: missing closing ``` for block starting at line {}.",
                 table_id, fence.start_line
             ),
+            RichContentFenceKind::UniversalGraph(graph_id) => format!(
+                "Invalid embedded universal_graph block for graph `{}`: missing closing ``` for block starting at line {}.",
+                graph_id, fence.start_line
+            ),
         });
     }
 
     Ok(())
 }
 
-fn validate_rich_content_fence(fence: &RichContentFence, table_ids: &[String]) -> Result<(), String> {
+fn validate_rich_content_fence(
+    fence: &RichContentFence,
+    table_ids: &[String],
+    graph_ids: &[String],
+) -> Result<(), String> {
     match &fence.kind {
         RichContentFenceKind::Mermaid => validate_mermaid_fence(fence),
         RichContentFenceKind::StructuredData(table_id) => {
             validate_embedded_structured_data_fence(fence, table_id, table_ids)
+        }
+        RichContentFenceKind::UniversalGraph(graph_id) => {
+            validate_embedded_universal_graph_fence(fence, graph_id, graph_ids)
         }
     }
 }
@@ -529,6 +832,28 @@ fn validate_embedded_structured_data_fence(
         return Err(format!(
             "Embedded structured_data block references table `{}`, but no matching entry exists in data.tables.",
             table_id
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_embedded_universal_graph_fence(
+    fence: &RichContentFence,
+    graph_id: &str,
+    graph_ids: &[String],
+) -> Result<(), String> {
+    if fence.lines.iter().any(|line| !line.trim().is_empty()) {
+        return Err(format!(
+            "Embedded universal_graph block for graph `{}` should be empty. Define the graph in data.graphs and keep the fence body empty.",
+            graph_id
+        ));
+    }
+
+    if !graph_ids.iter().any(|candidate| candidate == graph_id) {
+        return Err(format!(
+            "Embedded universal_graph block references graph `{}`, but no matching entry exists in data.graphs.",
+            graph_id
         ));
     }
 
@@ -1412,7 +1737,7 @@ pub(crate) fn setup_instructions(agent_type: &str) -> String {
 
 // ─── Renderer definitions ───
 
-const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, plugin citations. Default choice. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document.";
+const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical charts/graphs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views. Do not use for approval/review decisions in V1.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main artifact is a visual analysis rather than prose.";
 
 const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call rich_content, structured_data, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
 
@@ -1484,6 +1809,35 @@ Include table data in `data.tables`:
 ```
 
 Table data shape matches structured_data (columns with id/name/change, rows with id/cells/children). Tables are fully interactive in review mode (accept/reject rows, edit cells).
+
+## Embedded universal_graph charts (rich_content only)
+
+Embed read-only analytical charts within markdown using empty fenced code blocks:
+
+````
+Context paragraph explaining the graph.
+
+```universal_graph:g1
+```
+
+Interpretation after the graph.
+````
+
+Include graph specs in `data.graphs`:
+```json
+{
+  "body": "Context\n\n```universal_graph:g1\n```",
+  "graphs": [{
+    "id": "g1",
+    "title": "Revenue by Month",
+    "type": "line",
+    "data": { "columns": [...], "rows": [...] },
+    "encoding": { "x": "month", "y": "revenue" }
+  }]
+}
+```
+
+Embedded graph fences must be empty and must reference a matching entry in `data.graphs`. Graph embeds are read-only in V1; use standalone `universal_graph` when the main artifact is a graph pack rather than a prose document.
 
 ## Combined review payload
 
@@ -1741,6 +2095,53 @@ push_review response contains user decisions:
 - **Always use `children` for parent-child relationships** — do not flatten hierarchies into extra columns
 - Nested rows auto-expand to depth 2; deeper rows start collapsed"#;
 
+const UNIVERSAL_GRAPH_RULE: &str = r#"Use universal_graph for read-only analytical charts and graphs that should be rendered by MCPViews instead of authored as custom code.
+
+## Choose the right call pattern
+
+- Use `push_content` + `universal_graph` for standalone graph packs and dashboards.
+- Embed graphs inside `rich_content` when prose needs inline visual support, using empty fenced blocks like:
+
+````markdown
+```universal_graph:revenue_by_month
+```
+````
+
+and define the matching graph in `data.graphs`.
+
+## Payload shape
+
+`data` must be a JSON object with `graphs`, an array of graph specs:
+
+```json
+{
+  "title": "Optional dashboard title",
+  "description": "Optional context",
+  "graphs": [{
+    "id": "revenue_by_month",
+    "title": "Revenue by Month",
+    "type": "line",
+    "data": {
+      "columns": [
+        { "id": "month", "name": "Month", "type": "date" },
+        { "id": "revenue", "name": "Revenue", "type": "number" }
+      ],
+      "rows": [
+        { "month": "2026-01", "revenue": 120000 },
+        { "month": "2026-02", "revenue": 142000 }
+      ]
+    },
+    "encoding": { "x": "month", "y": "revenue" }
+  }]
+}
+```
+
+Supported V1 graph types: line, area, bar, stacked_bar, grouped_bar, scatter, bubble, combo, histogram, boxplot, heatmap, matrix, pie, donut, waterfall, funnel, gauge, radar, candlestick, timeline, gantt, tree, network, treemap, sunburst, sankey.
+
+Validation is strict: graph IDs must be unique, graph types must be supported, required encodings must be present for the selected type, and encoding fields must reference existing `data.columns` IDs. If a requested graph type is unsupported, choose a supported type and retry. If no supported graph honestly fits the data, provide an explanation plus structured_data table as a last resort.
+
+V1 is read-only: use tooltips, legends, focus/highlight, source-data inspection, and zoom/pan where useful. Do not encode approve/reject review state in graphs."#;
+
 fn builtin_renderer_definitions() -> Vec<RendererDef> {
     vec![
         RendererDef {
@@ -1748,7 +2149,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Universal markdown display with mermaid diagrams, tables, code blocks, and citations. Use for any rich text content.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional heading", "body": "Markdown with ```mermaid blocks and {{suggest:id=X}} markers", "suggestions": { "s1": { "old": "text", "new": "replacement" } }, "tables": [{ "id": "t1", "name": "Name", "columns": [...], "rows": [...] }], "citations": { "plugin": [{ "index": 1, "source": "ludflow", "type": "code_unit", "id": "abc123", "label": "name" }] } } — data must be a JSON object, not a string. suggestions and tables are optional, used with push_review."#.into()),
+            data_hint: Some(r#"{ "title": "Optional heading", "body": "Markdown with ```mermaid blocks, ```structured_data:t1 embeds, ```universal_graph:g1 embeds, and {{suggest:id=X}} markers", "suggestions": { "s1": { "old": "text", "new": "replacement" } }, "tables": [{ "id": "t1", "name": "Name", "columns": [...], "rows": [...] }], "graphs": [{ "id": "g1", "type": "line", "data": { "columns": [...], "rows": [...] }, "encoding": { "x": "field", "y": "field" } }], "citations": { "plugin": [{ "index": 1, "source": "ludflow", "type": "code_unit", "id": "abc123", "label": "name" }] } } — data must be a JSON object, not a string. suggestions/tables are optional for push_review; graphs are read-only embeds."#.into()),
             rule: Some(RICH_CONTENT_RULE.into()),
             display_mode: None,
             invoke_schema: None,
@@ -1768,6 +2169,19 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             standalone: false,
             standalone_label: None,
             rule: Some(STRUCTURED_DATA_RULE.into()),
+        },
+        RendererDef {
+            name: "universal_graph".into(),
+            description: "Native read-only analytical graph renderer for common chart, hierarchy, network, flow, timeline, matrix, and distribution views.".into(),
+            scope: "universal".into(),
+            tools: vec![],
+            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "encoding": { "x": "field", "y": "field", "label": "field", "value": "field", "source": "field", "target": "field" } }] }"#.into()),
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
+            standalone: false,
+            standalone_label: None,
+            rule: Some(UNIVERSAL_GRAPH_RULE.into()),
         },
     ]
 }
@@ -1893,7 +2307,7 @@ fn direct_renderer_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
         .filter(|tool| {
             matches!(
                 tool.get("name").and_then(|value| value.as_str()),
-                Some("rich_content" | "structured_data")
+                Some("rich_content" | "structured_data" | "universal_graph")
             )
         })
         .collect()
@@ -2371,8 +2785,10 @@ mod tests {
         let tools = builtin_tool_definitions(&renderers);
         let rich_content = tools.iter().find(|t| t["name"] == "rich_content").expect("rich_content tool should exist");
         let structured_data = tools.iter().find(|t| t["name"] == "structured_data").expect("structured_data tool should exist");
+        let universal_graph = tools.iter().find(|t| t["name"] == "universal_graph").expect("universal_graph tool should exist");
         assert_eq!(rich_content["inputSchema"]["type"], "object");
         assert_eq!(structured_data["inputSchema"]["required"], serde_json::json!(["tables"]));
+        assert_eq!(universal_graph["inputSchema"]["required"], serde_json::json!(["graphs"]));
         assert!(tools.iter().any(|tool| tool["name"] == "push_content"), "push_content compatibility alias should remain available locally");
     }
 
@@ -2381,6 +2797,7 @@ mod tests {
         let filtered = filter_hosted_model_facing_tools(vec![
             serde_json::json!({ "name": "rich_content" }),
             serde_json::json!({ "name": "structured_data" }),
+            serde_json::json!({ "name": "universal_graph" }),
             serde_json::json!({ "name": "push_content" }),
             serde_json::json!({ "name": "push_review" }),
         ]);
@@ -2390,6 +2807,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(tool_names.contains(&"rich_content"));
         assert!(tool_names.contains(&"structured_data"));
+        assert!(tool_names.contains(&"universal_graph"));
         assert!(tool_names.contains(&"push_review"));
         assert!(!tool_names.contains(&"push_content"));
     }
@@ -2399,6 +2817,7 @@ mod tests {
         let connector = build_core_hosted_connector(&[
             serde_json::json!({ "name": "rich_content" }),
             serde_json::json!({ "name": "structured_data" }),
+            serde_json::json!({ "name": "universal_graph" }),
             serde_json::json!({ "name": "push_review" }),
             serde_json::json!({ "name": "describe_connector" }),
         ]).expect("core connector should exist");
@@ -2412,6 +2831,7 @@ mod tests {
 
         assert!(presentation_tools.contains(&"rich_content"));
         assert!(presentation_tools.contains(&"structured_data"));
+        assert!(presentation_tools.contains(&"universal_graph"));
         assert!(!presentation_tools.contains(&"push_content"));
     }
 
@@ -2424,7 +2844,7 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
             .collect::<Vec<_>>();
 
-        assert_eq!(direct_names, vec!["rich_content", "structured_data"]);
+        assert_eq!(direct_names, vec!["rich_content", "structured_data", "universal_graph"]);
 
         let registry_tools = builtin_registry::builtin_tool_definitions(&renderers);
         for name in direct_names {
@@ -3368,6 +3788,61 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_push_params_infers_universal_graph_when_tool_name_is_missing() {
+        let args = serde_json::json!({
+            "data": {
+                "title": "Revenue Trend",
+                "graphs": [{
+                    "id": "revenue_by_month",
+                    "title": "Revenue by Month",
+                    "type": "line",
+                    "data": {
+                        "columns": [
+                            { "id": "month", "name": "Month", "type": "date" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [
+                            { "month": "2026-01", "revenue": 120000 },
+                            { "month": "2026-02", "revenue": 142000 }
+                        ]
+                    },
+                    "encoding": { "x": "month", "y": "revenue" }
+                }]
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "universal_graph");
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_valid_universal_graph_renderer_payload() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "title": "Revenue Trend",
+                "graphs": [{
+                    "id": "revenue_by_month",
+                    "title": "Revenue by Month",
+                    "type": "line",
+                    "data": {
+                        "columns": [
+                            { "id": "month", "name": "Month", "type": "date" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [
+                            { "month": "2026-01", "revenue": 120000 },
+                            { "month": "2026-02", "revenue": 142000 }
+                        ]
+                    },
+                    "encoding": { "x": "month", "y": "revenue" }
+                }]
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "universal_graph");
+    }
+
+    #[test]
     fn test_extract_push_params_rejects_invalid_mermaid_blocks() {
         let args = serde_json::json!({
             "tool_name": "rich_content",
@@ -3396,6 +3871,46 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_push_params_rejects_missing_embedded_universal_graph() {
+        let args = serde_json::json!({
+            "tool_name": "rich_content",
+            "data": {
+                "title": "Missing graph",
+                "body": "Context\n\n```universal_graph:revenue_by_month\n```"
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("revenue_by_month"));
+        assert!(err.contains("data.graphs"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_non_empty_embedded_universal_graph() {
+        let args = serde_json::json!({
+            "tool_name": "rich_content",
+            "data": {
+                "title": "Graph body should be empty",
+                "body": "Context\n\n```universal_graph:revenue_by_month\ncustom code\n```",
+                "graphs": [{
+                    "id": "revenue_by_month",
+                    "title": "Revenue by Month",
+                    "type": "line",
+                    "data": {
+                        "columns": [
+                            { "id": "month", "name": "Month", "type": "date" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [{ "month": "2026-01", "revenue": 120000 }]
+                    },
+                    "encoding": { "x": "month", "y": "revenue" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("should be empty"));
+    }
+
+    #[test]
     fn test_extract_push_params_accepts_valid_rich_content_renderer_payload() {
         let args = serde_json::json!({
             "tool_name": "rich_content",
@@ -3412,6 +3927,136 @@ mod tests {
         });
         let params = extract_push_params(&args, false).unwrap();
         assert_eq!(params.tool_name, "rich_content");
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_valid_rich_content_universal_graph_embed() {
+        let args = serde_json::json!({
+            "tool_name": "rich_content",
+            "data": {
+                "title": "Revenue Plan",
+                "body": "Here is the trend.\n\n```universal_graph:revenue_by_month\n```",
+                "graphs": [{
+                    "id": "revenue_by_month",
+                    "title": "Revenue by Month",
+                    "type": "line",
+                    "data": {
+                        "columns": [
+                            { "id": "month", "name": "Month", "type": "date" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [
+                            { "month": "2026-01", "revenue": 120000 },
+                            { "month": "2026-02", "revenue": 142000 }
+                        ]
+                    },
+                    "encoding": { "x": "month", "y": "revenue" }
+                }]
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "rich_content");
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_type() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "map_1",
+                    "type": "choropleth",
+                    "data": {
+                        "columns": [{ "id": "region", "name": "Region" }],
+                        "rows": [{ "region": "West" }]
+                    },
+                    "encoding": { "label": "region", "value": "region" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("choropleth"));
+        assert!(err.contains("Supported universal_graph types"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_duplicate_universal_graph_ids() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [
+                    {
+                        "id": "revenue",
+                        "type": "bar",
+                        "data": {
+                            "columns": [
+                                { "id": "month", "name": "Month" },
+                                { "id": "revenue", "name": "Revenue" }
+                            ],
+                            "rows": [{ "month": "Jan", "revenue": 10 }]
+                        },
+                        "encoding": { "x": "month", "y": "revenue" }
+                    },
+                    {
+                        "id": "revenue",
+                        "type": "bar",
+                        "data": {
+                            "columns": [
+                                { "id": "month", "name": "Month" },
+                                { "id": "revenue", "name": "Revenue" }
+                            ],
+                            "rows": [{ "month": "Feb", "revenue": 12 }]
+                        },
+                        "encoding": { "x": "month", "y": "revenue" }
+                    }
+                ]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("duplicate graph id `revenue`"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_universal_graph_missing_required_encoding() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "revenue",
+                    "type": "bar",
+                    "data": {
+                        "columns": [
+                            { "id": "month", "name": "Month" },
+                            { "id": "revenue", "name": "Revenue" }
+                        ],
+                        "rows": [{ "month": "Jan", "revenue": 10 }]
+                    },
+                    "encoding": { "x": "month" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("encoding.y is required"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_universal_graph_missing_column_reference() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "revenue",
+                    "type": "line",
+                    "data": {
+                        "columns": [{ "id": "month", "name": "Month" }],
+                        "rows": [{ "month": "Jan", "revenue": 10 }]
+                    },
+                    "encoding": { "x": "month", "y": "revenue" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("references missing data column `revenue`"));
     }
 
     #[test]

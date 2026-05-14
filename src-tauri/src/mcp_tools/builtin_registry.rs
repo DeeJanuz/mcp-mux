@@ -55,11 +55,16 @@ fn rich_content_definition(renderers: &[RendererDef]) -> Value {
             "type": "object",
             "properties": {
                 "title": { "type": "string", "description": "Optional heading shown above the rich content body." },
-                "body": { "type": "string", "description": "Markdown body. Supports mermaid fences, code blocks, suggestions, and embedded structured_data table references." },
+                "body": { "type": "string", "description": "Markdown body. Supports mermaid fences, code blocks, suggestions, embedded structured_data table references, and embedded universal_graph graph references." },
                 "suggestions": { "type": "object", "description": "Optional inline text suggestions keyed by suggestion id." },
                 "tables": {
                     "type": "array",
                     "description": "Optional embedded structured_data tables referenced from the body.",
+                    "items": { "type": "object" }
+                },
+                "graphs": {
+                    "type": "array",
+                    "description": "Optional embedded universal_graph graph specs referenced from the body.",
                     "items": { "type": "object" }
                 },
                 "citations": { "type": "object", "description": "Optional citation metadata keyed by source." }
@@ -87,6 +92,30 @@ fn structured_data_definition(renderers: &[RendererDef]) -> Value {
                 }
             },
             "required": ["tables"]
+        }
+    })
+}
+
+fn universal_graph_definition(renderers: &[RendererDef]) -> Value {
+    serde_json::json!({
+        "name": "universal_graph",
+        "description": super::renderer_description(
+            renderers,
+            "universal_graph",
+            "Display native read-only analytical charts and graphs in the MCPViews window using semantic graph specs."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": { "type": "string", "description": "Optional heading shown above the graph pack." },
+                "description": { "type": "string", "description": "Optional context shown above the graphs." },
+                "graphs": {
+                    "type": "array",
+                    "description": "Graph definitions. Each graph must include id, type, data.columns, data.rows, and encoding.",
+                    "items": { "type": "object" }
+                }
+            },
+            "required": ["graphs"]
         }
     })
 }
@@ -451,6 +480,13 @@ fn structured_data_handler<'a>(
     direct_renderer_handler("structured_data", arguments, state)
 }
 
+fn universal_graph_handler<'a>(
+    arguments: Value,
+    state: &'a Arc<TokioMutex<AsyncAppState>>,
+) -> BuiltinToolFuture<'a> {
+    direct_renderer_handler("universal_graph", arguments, state)
+}
+
 fn push_content_handler<'a>(
     arguments: Value,
     state: &'a Arc<TokioMutex<AsyncAppState>>,
@@ -585,6 +621,13 @@ pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
             name: "structured_data",
             definition: structured_data_definition,
             handler: structured_data_handler,
+            hosted_visibility: HostedVisibility::HostedModelFacing,
+            core_connector_group: Some(presentation_group),
+        },
+        BuiltinToolSpec {
+            name: "universal_graph",
+            definition: universal_graph_definition,
+            handler: universal_graph_handler,
             hosted_visibility: HostedVisibility::HostedModelFacing,
             core_connector_group: Some(presentation_group),
         },

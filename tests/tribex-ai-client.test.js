@@ -1069,6 +1069,40 @@ describe('tribex-ai-client', function () {
     });
   });
 
+  it('preserves universal_graph payloads for inline thread rendering', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      toolName: 'universal_graph',
+      toolArgs: { threadId: 'thread-1' },
+      result: {
+        data: {
+          title: 'Revenue Trend',
+          graphs: [{
+            id: 'revenue_by_month',
+            type: 'line',
+            data: {
+              columns: [{ id: 'month', name: 'Month' }, { id: 'revenue', name: 'Revenue' }],
+              rows: [{ month: 'Jan', revenue: 10 }],
+            },
+            encoding: { x: 'month', y: 'revenue' },
+          }],
+        },
+      },
+    }, 0)).toMatchObject({
+      role: 'tool',
+      toolName: 'universal_graph',
+      resultContentType: 'universal_graph',
+      artifactKey: null,
+      inlineDisplay: true,
+      resultData: {
+        title: 'Revenue Trend',
+        graphs: [{
+          id: 'revenue_by_month',
+          type: 'line',
+        }],
+      },
+    });
+  });
+
   it('unwraps push_content renderer payloads into structured_data tool messages', function () {
     expect(window.__tribexAiClient.normalizeMessage({
       toolName: 'push_content',
@@ -1113,6 +1147,50 @@ describe('tribex-ai-client', function () {
           rows: [{
             id: 'row-1',
           }],
+        }],
+      },
+    });
+  });
+
+  it('unwraps push_content renderer payloads into universal_graph tool messages', function () {
+    expect(window.__tribexAiClient.normalizeMessage({
+      toolName: 'push_content',
+      toolArgs: { threadId: 'thread-1' },
+      result: {
+        data: {
+          tool_name: 'universal_graph',
+          data: {
+            title: 'Revenue Trend',
+            graphs: [{
+              id: 'revenue_by_month',
+              title: 'Revenue by Month',
+              type: 'line',
+              data: {
+                columns: [{ id: 'month', name: 'Month' }, { id: 'revenue', name: 'Revenue' }],
+                rows: [{ month: 'Jan', revenue: 10 }],
+              },
+              encoding: { x: 'month', y: 'revenue' },
+            }],
+          },
+          meta: {
+            source: 'push-content',
+          },
+        },
+      },
+    }, 0)).toMatchObject({
+      role: 'tool',
+      toolName: 'universal_graph',
+      resultContentType: 'universal_graph',
+      artifactKey: null,
+      inlineDisplay: true,
+      resultMeta: {
+        source: 'push-content',
+      },
+      resultData: {
+        title: 'Revenue Trend',
+        graphs: [{
+          id: 'revenue_by_month',
+          title: 'Revenue by Month',
         }],
       },
     });

@@ -919,6 +919,103 @@ describe('tribex-ai-state projection helpers', function () {
     ]);
   });
 
+  it('keeps completed universal_graph activity inline by default', function () {
+    window.__renderers = {
+      universal_graph: function () {},
+    };
+
+    var context = {
+      state: {
+        threadDetails: {},
+        loadingThreadIds: {},
+        pendingThreadIds: {},
+        threadErrors: {},
+        relayStates: {},
+        streamStatuses: {},
+        workspacesById: {},
+      },
+      activeSession: null,
+    };
+    var api = {
+      stringifyPreview: function (value) { return JSON.stringify(value); },
+      parseActivityTimestamp: function (value) { return value ? Date.parse(value) : null; },
+      mergeThreadSummary: vi.fn(),
+      clone: function (value) { return JSON.parse(JSON.stringify(value)); },
+      getSelectedOrganization: function () { return null; },
+      getThread: function () { return null; },
+      getProject: function () { return null; },
+    };
+
+    window.__createTribexAiStateProjection(context, api);
+
+    var record = {
+      id: 'thread-1',
+      activity: {
+        itemsById: {
+          'graph-1': {
+            id: 'graph-1',
+            toolCallId: 'tool-graph-1',
+            toolName: 'universal_graph',
+            status: 'completed',
+            resultData: {
+              title: 'Revenue Trend',
+              graphs: [{
+                id: 'revenue_by_month',
+                type: 'line',
+                data: {
+                  columns: [{ id: 'month', name: 'Month' }, { id: 'revenue', name: 'Revenue' }],
+                  rows: [{ month: 'Jan', revenue: 10 }],
+                },
+                encoding: { x: 'month', y: 'revenue' },
+              }],
+            },
+            createdAt: '2026-04-16T10:00:30.000Z',
+            updatedAt: '2026-04-16T10:00:30.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+        },
+        order: ['graph-1'],
+      },
+      base: {
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Graph this',
+            createdAt: '2026-04-16T10:00:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'Inline below.',
+            createdAt: '2026-04-16T10:01:00.000Z',
+            turnId: 'turn-1',
+            turnOrdinal: 1,
+          },
+        ],
+      },
+      artifactDrawer: {
+        drawerId: 'tribex-ai-thread-artifacts:thread-1',
+        selectedArtifactKey: null,
+      },
+      turnHistoryById: {},
+      turnCompletedAtById: {},
+    };
+
+    var projection = api.buildThreadProjection(record);
+
+    expect(projection.artifacts).toEqual([]);
+    expect(projection.runs[0].answer.inlineResults).toEqual([
+      expect.objectContaining({
+        id: 'graph-1',
+        contentType: 'universal_graph',
+      }),
+    ]);
+  });
+
   it('includes legacy message-backed renderer artifacts in the shared artifact projection', function () {
     window.__renderers = {
       structured_data: function () {},

@@ -103,6 +103,18 @@ globalThis.window.__structuredDataEmbed = {
   },
 };
 
+// Mock universalGraphEmbed
+globalThis.window.__universalGraphEmbed = {
+  injectStyles: function () {},
+  buildGraphContainer: function (graphData) {
+    var el = document.createElement('div');
+    el.className = 'ug-card';
+    el.setAttribute('data-graph-id', graphData.id);
+    el.textContent = graphData.title || graphData.id;
+    return el;
+  },
+};
+
 // Load rich-content.js IIFE
 var code = readFileSync(join(__dirname_resolved, '../public/renderers/rich-content.js'), 'utf8');
 var fn = new Function(code);
@@ -119,8 +131,14 @@ var extractCode = `
       return '<div data-table-embed="' + tableId.replace(/"/g, '&quot;') + '"></div>';
     });
   }
+  function preprocessGraphEmbeds(text) {
+    return text.replace(/\`\`\`universal_graph:([^\\s\`]+)\\s*\\n?\`\`\`/g, function (match, graphId) {
+      return '<div data-graph-embed="' + graphId.replace(/"/g, '&quot;') + '"></div>';
+    });
+  }
   window.__testHelpers = window.__testHelpers || {};
   window.__testHelpers.preprocessTableEmbeds = preprocessTableEmbeds;
+  window.__testHelpers.preprocessGraphEmbeds = preprocessGraphEmbeds;
 })();
 `;
 var extractFn = new Function(extractCode);

@@ -2,6 +2,7 @@ import './rich-content-embeds-setup.js';
 import { describe, it, expect, beforeEach } from 'vitest';
 
 var preprocessTableEmbeds = window.__testHelpers.preprocessTableEmbeds;
+var preprocessGraphEmbeds = window.__testHelpers.preprocessGraphEmbeds;
 var renderer = window.__renderers.rich_content;
 
 describe('preprocessTableEmbeds', function () {
@@ -37,6 +38,36 @@ describe('preprocessTableEmbeds', function () {
     var text = '```structured_data:table"name\n```';
     var result = preprocessTableEmbeds(text);
     expect(result).toContain('data-table-embed="table&quot;name"');
+  });
+});
+
+describe('preprocessGraphEmbeds', function () {
+  it('replaces universal_graph fenced block with placeholder div', function () {
+    var text = 'Before\n```universal_graph:g1\n```\nAfter';
+    var result = preprocessGraphEmbeds(text);
+    expect(result).toContain('<div data-graph-embed="g1"></div>');
+    expect(result).toContain('Before');
+    expect(result).toContain('After');
+  });
+
+  it('handles multiple graph embeds', function () {
+    var text = '```universal_graph:g1\n```\nMiddle\n```universal_graph:g2\n```';
+    var result = preprocessGraphEmbeds(text);
+    expect(result).toContain('data-graph-embed="g1"');
+    expect(result).toContain('data-graph-embed="g2"');
+    expect(result).toContain('Middle');
+  });
+
+  it('preserves non-graph fenced code blocks', function () {
+    var text = '```javascript\nvar x = 1;\n```';
+    var result = preprocessGraphEmbeds(text);
+    expect(result).toBe(text);
+  });
+
+  it('escapes quotes in graph IDs', function () {
+    var text = '```universal_graph:graph"name\n```';
+    var result = preprocessGraphEmbeds(text);
+    expect(result).toContain('data-graph-embed="graph&quot;name"');
   });
 });
 
@@ -147,6 +178,28 @@ describe('buildCombinedSubmitBar (via renderer)', function () {
     expect(receivedPayload.type).toBe('rich_content_decisions');
     expect(receivedPayload.table_decisions).not.toBeNull();
     expect(receivedPayload.table_decisions.t1).toBeDefined();
+  });
+
+  it('hydrates embedded universal_graph blocks through the graph embed helper', function () {
+    var data = {
+      body: 'Text\n```universal_graph:g1\n```',
+      graphs: [{
+        id: 'g1',
+        title: 'Revenue by Month',
+        type: 'line',
+        data: {
+          columns: [{ id: 'month', name: 'Month' }, { id: 'revenue', name: 'Revenue' }],
+          rows: [{ month: 'Jan', revenue: 10 }],
+        },
+        encoding: { x: 'month', y: 'revenue' },
+      }],
+    };
+    renderer(container, data, null, null, false, null);
+
+    var graph = container.querySelector('.ug-card[data-graph-id="g1"]');
+    expect(graph).not.toBeNull();
+    expect(graph.textContent).toContain('Revenue by Month');
+    expect(container.querySelector('[data-graph-embed]')).toBeNull();
   });
 
   it('does not render submit bar when not in review mode', function () {

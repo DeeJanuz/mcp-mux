@@ -908,7 +908,7 @@
     }
 
     function isInlineCapableContentType(contentType) {
-      return contentType === 'rich_content' || contentType === 'structured_data';
+      return contentType === 'rich_content' || contentType === 'structured_data' || contentType === 'universal_graph';
     }
 
     function resolveActivityDisplayMode(previous, contentType, reviewRequired, explicitInlineDisplay) {
@@ -1077,9 +1077,13 @@
           typeof data.body === 'string' ||
           typeof data.title === 'string' ||
           Array.isArray(data.tables) ||
+          Array.isArray(data.graphs) ||
           (data.citations && typeof data.citations === 'object') ||
           (data.suggestions && typeof data.suggestions === 'object')
         );
+      }
+      if (contentType === 'universal_graph') {
+        return Array.isArray(data.graphs);
       }
       return false;
     }

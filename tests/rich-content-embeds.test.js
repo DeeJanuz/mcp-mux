@@ -158,4 +158,29 @@ describe('buildCombinedSubmitBar (via renderer)', function () {
     var submitBar = container.querySelector('.sd-submit-bar');
     expect(submitBar).toBeNull();
   });
+
+  it('does not render a duplicate leading markdown heading when it matches the rich content title', function () {
+    var title = 'Enterprise Customer Onboarding SOP';
+    var data = {
+      title: title,
+      body: '# Enterprise Customer Onboarding SOP\n\nEnterprise onboarding coordinates legal and security work.',
+    };
+
+    renderer(container, data, null, null, false, null);
+
+    expect(container.querySelector('.rc-title').textContent).toBe(title);
+    expect(container.children[1].textContent).toBe('Enterprise onboarding coordinates legal and security work.');
+    expect(container.querySelector('.rc-raw-markdown code').textContent).toBe(data.body);
+  });
+
+  it('keeps a leading markdown heading when it differs from the rich content title', function () {
+    var data = {
+      title: 'Enterprise Customer Onboarding SOP',
+      body: '# Demo-Ready Operating View\n\nEnterprise onboarding coordinates legal and security work.',
+    };
+
+    renderer(container, data, null, null, false, null);
+
+    expect(container.children[1].textContent).toContain('# Demo-Ready Operating View');
+  });
 });

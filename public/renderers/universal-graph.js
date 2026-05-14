@@ -115,52 +115,14 @@
     if (el.setAttribute) el.setAttribute('data-ug-native-title-suppressed', 'true');
   }
 
-  var LABEL_ALIASES = {
-    'opening material risk': 'Opening',
-    'opening risk': 'Opening',
-    'residual risk': 'Residual',
-    'ending total': 'Residual',
-    'corrective trades': 'Trades',
-    'pending evidence': 'Evidence',
-    'evidence pending': 'Evidence',
-    'evidence gaps': 'Evidence',
-    'approval/evidence records': 'Records',
-    'approval/evidence gaps': 'Gaps',
-    'warnings and breaches': 'Alerts',
-    'rule evaluations': 'Checks',
-    'material deviations': 'Deviations',
-    'decision records': 'Decisions',
-    'recommended reviews': 'Reviews',
-    'beta-band trim': 'Beta trim',
-    'managed futures rebalance': 'MF rebalance',
-    'managed-futures rebalance': 'MF rebalance',
-    'distribution funding decision': 'Funding',
-    'remaining sector-cap exposure': 'Sector cap',
-    'growth households': 'Growth',
-    'concentrated equity': 'Concentrated',
-    'retirement income': 'Retirement',
-    'liquidity funding': 'Liquidity',
-    'taxable core': 'Taxable',
-    'technology sector-cap exception': 'Tech cap',
-    'review sector-cap exception': 'Sector review',
-    'review managed-futures rebalance': 'MF review',
-    'review beta-band trim': 'Beta review',
-    'review non-liquidation evidence': 'Evidence review',
-  };
-
   function compactLabel(text) {
     var key = String(text || '').trim().toLowerCase();
-    if (LABEL_ALIASES[key]) return LABEL_ALIASES[key];
-    if (/^[a-z]+ [a-z]+ approval gap$/.test(key)) return 'Approval gap';
-    if (/^[a-z]+ [a-z]+ approval evidence$/.test(key)) return 'Evidence';
+    if (/\bapproval gap$/.test(key)) return 'Approval gap';
+    if (/\bapproval evidence$/.test(key)) return 'Evidence';
     return String(text || '')
       .replace(/\bmaterial\b/ig, '')
       .replace(/\bremaining\b/ig, '')
       .replace(/\bhouseholds?\b/ig, '')
-      .replace(/\bdecision records?\b/ig, 'Decisions')
-      .replace(/\brecommended reviews?\b/ig, 'Reviews')
-      .replace(/\bmanaged[- ]futures\b/ig, 'MF')
-      .replace(/\bsector[- ]cap\b/ig, 'Sector cap')
       .replace(/\s+/g, ' ')
       .trim();
   }

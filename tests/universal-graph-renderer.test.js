@@ -229,10 +229,11 @@ describe('universal_graph renderer', function () {
     var bar = graphFor('bar');
     var waterfall = graphFor('waterfall');
     waterfall.data.rows = [
-      { label: 'Opening material risk', value: 96 },
-      { label: 'Corrective trades', value: -18 },
-      { label: 'Pending evidence', value: 7 },
+      { label: 'Opening', value: 96 },
+      { label: 'Trades', value: -18 },
+      { label: 'Evidence', value: 7 },
     ];
+    waterfall.options = { totalLabel: 'Residual' };
 
     var container = renderGraphs([heatmap, bar, waterfall]);
     var heatValues = Array.from(container.querySelectorAll('.ug-card[data-graph-id="heatmap_graph"] .ug-heat-value')).map(function (label) {
@@ -259,7 +260,7 @@ describe('universal_graph renderer', function () {
     expect(waterfallAxisLabels).toEqual(expect.arrayContaining(['Opening', 'Trades', 'Evidence', 'Residual']));
     expect(Array.from(container.querySelectorAll('.ug-card[data-graph-id="waterfall_graph"] .ug-axis-label title')).map(function (title) {
       return title.textContent;
-    })).toEqual(expect.arrayContaining(['Opening material risk', 'Corrective trades', 'Pending evidence', 'Ending total']));
+    })).toEqual(expect.arrayContaining(['Opening', 'Trades', 'Evidence', 'Residual']));
   });
 
   it('lets users inspect source data for a graph', function () {

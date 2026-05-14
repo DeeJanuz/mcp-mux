@@ -18,7 +18,7 @@ Returns server status.
 
 ### `POST /api/push`
 
-Push content to the viewer. For reviews, returns immediately with a `session_id` (see `POST /api/await-decision` or MCP `await_review` to wait until the user decides).
+Push content to the viewer. Non-review pushes store a session immediately. For HTTP compatibility, review pushes keep the request open until the user submits a decision or the review deadline expires. MCP agents should prefer the non-blocking `push_review` + `await_review` flow documented below.
 
 **Request Body**
 ```json
@@ -55,20 +55,11 @@ Content type (renderer name) is resolved by searching all loaded plugin manifest
 }
 ```
 
-**Response (review)** `200 OK`
+**Response (review)** `200 OK` or `408 Request Timeout`
 
-Reviews use a two-step flow. `POST /api/push` with `reviewRequired: true` returns immediately with a pending status:
+`POST /api/push` with `reviewRequired: true` composes the same store + wait steps inside one HTTP request. The request returns when the user decides or the review deadline expires. There is no separate HTTP `/api/await-decision` endpoint. MCP `push_review` is the non-blocking two-step form: it returns a pending `session_id` immediately, and the caller uses MCP `await_review` or `push_check` to wait or poll for the decision.
 
-```json
-{
-  "sessionId": "uuid",
-  "status": "pending"
-}
-```
-
-The caller then uses `POST /api/await-decision` (or the MCP `await_review` tool) to wait for the user decision. MCP `await_review` returns a pending response before the transport safety window is hit if the user has not decided yet; callers can retry with the same `sessionId` or poll `push_check`. The review session persists on the server and completed decisions are replayed from stored session state while the session remains in memory.
-
-**Decision responses** (returned by `await-decision`):
+**Decision responses** (returned by HTTP review pushes or MCP `await_review`):
 
 Accepted:
 ```json

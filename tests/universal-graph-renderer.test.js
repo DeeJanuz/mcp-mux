@@ -1033,6 +1033,45 @@ describe('universal_graph renderer', function () {
     expect(panel.textContent).toContain('120');
   });
 
+  it('disables transient hover details while preserving pinned mark details', function () {
+    var graph = {
+      id: 'no_hover_details',
+      type: 'grouped_bar',
+      interactions: {
+        hover: 'none',
+        details: { titleField: 'segment', fields: ['segment', 'revenue', 'risk'] },
+      },
+      data: {
+        columns: [
+          { id: 'segment', name: 'Segment' },
+          { id: 'revenue', name: 'Revenue', type: 'number' },
+          { id: 'risk', name: 'Risk', type: 'number' },
+        ],
+        rows: [
+          { segment: 'Enterprise', revenue: 120, risk: 18 },
+          { segment: 'SMB', revenue: 80, risk: 29 },
+        ],
+      },
+      encoding: { x: 'segment', y: ['revenue', 'risk'] },
+    };
+
+    var container = renderGraphs([graph]);
+    var mark = container.querySelector('rect.ug-mark');
+    mark.dispatchEvent(new window.MouseEvent('pointerover', { bubbles: true, clientX: 120, clientY: 120 }));
+
+    expect(container.querySelector('.ug-tooltip').hidden).toBe(true);
+    expect(container.querySelectorAll('.ug-highlighted, .ug-dimmed')).toHaveLength(0);
+    expect(mark.querySelector('title')).toBeNull();
+    expect(mark.getAttribute('data-ug-native-title-suppressed')).toBe('true');
+
+    mark.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    var panel = container.querySelector('.ug-detail-panel');
+    expect(panel.hidden).toBe(false);
+    expect(panel.textContent).toContain('Enterprise');
+    expect(panel.textContent).toContain('Revenue');
+    expect(panel.textContent).toContain('120');
+  });
+
   it('switches metrics through read-only metric controls', function () {
     var graph = graphFor('bar');
     graph.interactions = {

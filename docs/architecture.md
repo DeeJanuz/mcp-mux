@@ -10,7 +10,7 @@ The current hosted AI workspace implementation is still present in the repo as c
 
 ## Data Flow
 
-The following diagram illustrates the end-to-end data flow from an MCP agent push through rendering and review back to the agent.
+The following diagram illustrates the end-to-end data flow from an MCP `push_review` call through rendering and review back to the agent.
 
 ```mermaid
 sequenceDiagram
@@ -21,7 +21,7 @@ sequenceDiagram
     participant WebView as WebView
     participant User as User
 
-    Agent->>HTTP: push_review (or POST /api/push)
+    Agent->>HTTP: push_review
     HTTP->>Store: Store session
     HTTP->>Review: Add pending review (watch channel)
     HTTP->>WebView: tauri::emit("push_preview")
@@ -154,7 +154,7 @@ Standalone Node.js script that bridges a remote server's SSE stream to the local
 
 ## Review Workflow Flow
 
-Reviews use a non-blocking two-step flow. `push_review` (or `POST /api/push` with `reviewRequired: true`) returns immediately with a `session_id`. The agent then calls `await_review(session_id)` to wait for the user decision. If no decision arrives before the MCP transport safety window, `await_review` returns pending while the review stays open; the agent calls `await_review` again with the same `session_id` or polls `push_check`.
+MCP reviews use a non-blocking two-step flow. `push_review` returns immediately with a `session_id`. The agent then calls `await_review(session_id)` to wait for the user decision. If no decision arrives before the MCP transport safety window, `await_review` returns pending while the review stays open; the agent calls `await_review` again with the same `session_id` or polls `push_check`. HTTP `POST /api/push` reviews use the same store and await path internally, but keep the HTTP request open for compatibility until a decision or review timeout.
 
 ```mermaid
 sequenceDiagram
@@ -165,7 +165,7 @@ sequenceDiagram
     participant WebView as WebView
     participant User as User
 
-    Agent->>HTTP: push_review (or POST /api/push reviewRequired: true)
+    Agent->>HTTP: push_review
     HTTP->>Review: Create watch channel
     HTTP->>Store: Store session
     HTTP->>WebView: emit push_preview
@@ -194,12 +194,14 @@ The axum server runs on `std::thread::spawn` with its own `tokio::Runtime`, not 
 Each push creates a new session tab in a Chrome-style tab bar. Clicking a tab switches to its cached content; closing a tab dismisses the session. Review tabs display a countdown timer that resets on user activity (click, scroll, keydown). Tab labels use `data.title` (falling back to `data.name`, then `toolArgs.title`, then `toolName`) for clarity.
 
 ### Review Workflow
-Reviews use a non-blocking two-step flow to avoid transport timeouts:
+MCP reviews use a non-blocking two-step flow to avoid transport timeouts:
 
 1. **`push_review` / `store_push`**: Creates a `tokio::sync::watch` channel, registers the review deadline, stores the session, emits to the WebView, and returns immediately with `{ session_id, status: "pending" }`
 2. **`await_review` / `await_decision`**: Subscribes to the watch channel and waits until the user submits a decision, the review deadline expires, or the shorter MCP transport safety wait elapses. A transport pending return does not remove the watch channel or deadline. If the transient watch entry was already consumed but the session has a completed decision, `await_decision()` returns the stored payload from `SessionStore`
 3. When the user clicks accept/reject in the WebView, the `submit_decision` IPC command stores the full decision payload on the preview session and resolves the watch channel
 4. **`push_check`**: Non-blocking status poll -- returns `"pending"` or `"decided"` without waiting, including stored decision details when a decision exists
+
+HTTP `POST /api/push` with `reviewRequired: true` composes the same `store_push` + `await_decision` sequence inside one request for compatibility; it does not expose a separate HTTP await endpoint.
 
 ### Window Management
 - Main window created programmatically via `WebviewWindowBuilder` (not declaratively in `tauri.conf.json`) to support dynamic CSP injection via `on_web_resource_request` hooks
@@ -227,7 +229,7 @@ Session management is handled by `McpSessionManager` which tracks sessions in a 
 The HTTP push API on `:4200` is fully compatible with the existing MCP server push logic:
 - Same `POST /api/push` request shape (`PushRequest`)
 - Same response shape (`PushResponse`)
-- Reviews use a non-blocking two-step flow: `push_review` returns immediately with a `session_id`; the agent calls `await_review(session_id)` to wait for the user's decision. If no decision arrives before the transport safety window, `await_review` returns pending and the agent calls it again. The session persists, the deadline resets, and completed decision payloads are replayed from the preview session if an earlier response was lost
+- MCP reviews use a non-blocking two-step flow: `push_review` returns immediately with a `session_id`; the agent calls `await_review(session_id)` to wait for the user's decision. If no decision arrives before the transport safety window, `await_review` returns pending and the agent calls it again. HTTP `POST /api/push` reviews keep the HTTP request open while using the same underlying store and await path. The session persists, the deadline resets, and completed decision payloads are replayed from the preview session if an earlier response was lost
 - `push_check` provides lightweight non-blocking status polling
 - CORS headers now include `DELETE` method and expose `mcp-session-id` header
 - `GET /health` returns version and uptime

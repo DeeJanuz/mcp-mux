@@ -681,6 +681,13 @@
     return graph && graph.interactions && typeof graph.interactions === 'object' ? graph.interactions : {};
   }
 
+  function hoverMode(graph) {
+    var hover = graphInteractions(graph).hover;
+    if (hover === false) return 'none';
+    if (typeof hover === 'string' && hover.trim().toLowerCase() === 'none') return 'none';
+    return 'auto';
+  }
+
   function detailConfig(graph) {
     var details = graphInteractions(graph).details;
     return details && typeof details === 'object' ? details : {};
@@ -2416,6 +2423,7 @@
   }
 
   function activateGraphInteractions(card, graph, registry, stack) {
+    var hover = hoverMode(graph);
     var tooltip = document.createElement('div');
     tooltip.className = 'ug-tooltip';
     tooltip.hidden = true;
@@ -2439,30 +2447,34 @@
       highlightRelated(card, target);
     }
 
-    card.addEventListener('pointerover', function (event) {
-      var target = closestTooltipTarget(event.target, card);
-      if (target) showForTarget(target, event);
-    });
-    card.addEventListener('pointermove', function (event) {
-      var target = closestTooltipTarget(event.target, card);
-      if (!target) {
-        if (!tooltip.hidden) hideHoverTooltip();
-        return;
-      }
-      if (target !== activeTarget || tooltip.hidden) showForTarget(target, event);
-      else positionTooltip(card, tooltip, event, activeTarget);
-    });
-    card.addEventListener('pointerout', function (event) {
-      if (closestTooltipTarget(event.relatedTarget, card)) return;
-      hideHoverTooltip();
-    });
-    card.addEventListener('focusin', function (event) {
-      var target = closestTooltipTarget(event.target, card);
-      if (target) showForTarget(target, event);
-    });
-    card.addEventListener('focusout', function () {
-      hideHoverTooltip();
-    });
+    if (hover === 'none') {
+      Array.prototype.slice.call(card.querySelectorAll('[data-ug-interactive="true"], [data-ug-tooltip-title]')).forEach(suppressNativeSvgTitle);
+    } else {
+      card.addEventListener('pointerover', function (event) {
+        var target = closestTooltipTarget(event.target, card);
+        if (target) showForTarget(target, event);
+      });
+      card.addEventListener('pointermove', function (event) {
+        var target = closestTooltipTarget(event.target, card);
+        if (!target) {
+          if (!tooltip.hidden) hideHoverTooltip();
+          return;
+        }
+        if (target !== activeTarget || tooltip.hidden) showForTarget(target, event);
+        else positionTooltip(card, tooltip, event, activeTarget);
+      });
+      card.addEventListener('pointerout', function (event) {
+        if (closestTooltipTarget(event.relatedTarget, card)) return;
+        hideHoverTooltip();
+      });
+      card.addEventListener('focusin', function (event) {
+        var target = closestTooltipTarget(event.target, card);
+        if (target) showForTarget(target, event);
+      });
+      card.addEventListener('focusout', function () {
+        hideHoverTooltip();
+      });
+    }
     card.addEventListener('click', function (event) {
       var target = closestTooltipTarget(event.target, card);
       var detail = detailFromTarget(target);

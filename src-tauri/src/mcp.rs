@@ -84,7 +84,7 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
             }
             instructions.push_str("\n");
         }
-        instructions.push_str("\n**Quick selection guide:** Use `rich_content` for prose, diagrams, and simple tables. Use `structured_data` for standalone interactive tables with explicit `tables[] -> columns[]/rows[] -> cells/children` structure. Use `push_content` with `structured_data` for read-only tables. Use `push_review` with `structured_data` when the user must approve row/column/cell changes. **For batch MCP actions (2+ mutations), use `structured_data` with `push_review` to let the user accept/reject each action individually.** `push_review` returns immediately with a `session_id` — call `await_review(session_id)` to block until the user's decision. If your connection times out, call `await_review` again — the session persists on the server. Call `init_session` for full renderer documentation and examples.\n");
+        instructions.push_str("\n**Quick selection guide:** Use `rich_content` for prose, diagrams, simple tables, and read-only embedded universal_graph charts. Use `structured_data` for standalone interactive tables with explicit `tables[] -> columns[]/rows[] -> cells/children` structure. Use `universal_graph` for standalone read-only graph packs and dashboards; call `describe_tool(\"universal_graph\")` for the current graph schema before complex payloads. Use `push_content` with a renderer name for compatibility when direct renderer tools are unavailable. Use `push_review` with `structured_data` when the user must approve row/column/cell changes; rich_content review payloads may include read-only graph context. **For batch MCP actions (2+ mutations), use `structured_data` with `push_review` to let the user accept/reject each action individually.** `push_review` returns immediately with a `session_id` — call `await_review(session_id)` to wait for the user's decision. If `await_review` returns pending before the user decides, call it again — the session persists on the server. Call `init_session` for full renderer documentation, hosted breadcrumb discovery, and examples.\n");
     }
 
     instructions.push_str("\n## Sub-Agent Restriction\n\n");
@@ -106,9 +106,11 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
     instructions.push_str("\n## Session Initialization\n\n");
     instructions.push_str(
         "IMPORTANT: You MUST call `init_session` at the start of every conversation to receive \
-         full renderer documentation, payload examples, behavioral rules, and plugin status. \
-         The brief descriptions above are insufficient for correct usage — `init_session` returns \
-         the complete reference. If this is your first time using MCPViews, call `mcpviews_setup` \
+         full renderer documentation, payload examples, behavioral rules, plugin status, and hosted \
+         breadcrumb discovery. The brief descriptions above are insufficient for correct usage — \
+         `init_session` returns the complete reference. For renderer discovery, inspect \
+         `describe_connector` with key `mcpviews-core` and `describe_tool` for tools such as \
+         `universal_graph`. If this is your first time using MCPViews, call `mcpviews_setup` \
          to configure automatic session initialization for your platform.\n"
     );
 

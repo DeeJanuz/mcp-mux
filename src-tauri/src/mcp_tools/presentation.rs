@@ -2,7 +2,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::http_server::{await_decision, execute_push, store_push, AsyncAppState, ExecutePushResult};
+use crate::http_server::{await_decision_for_transport, execute_push, store_push, AsyncAppState, ExecutePushResult};
+use crate::session::PreviewSession;
 
 pub(super) async fn call_push_content(
     arguments: Value,
@@ -109,13 +110,24 @@ pub(super) async fn call_await_review(
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: session_id")?;
 
-    let result = await_decision(state, session_id).await;
+    let result = await_decision_for_transport(state, session_id).await;
 
     match result {
         ExecutePushResult::Decision(resp) => Ok(serde_json::json!({
             "content": [{
                 "type": "text",
                 "text": serde_json::to_string(&resp).unwrap()
+            }]
+        })),
+        ExecutePushResult::Pending { session_id } => Ok(serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": serde_json::to_string(&serde_json::json!({
+                    "session_id": session_id,
+                    "status": "pending",
+                    "review_required": true,
+                    "message": "Review is still pending. Call await_review again with the same session_id, or use push_check for a non-blocking status check."
+                })).unwrap()
             }]
         })),
         _ => Err(format!("No pending review for session_id: {}", session_id)),
@@ -176,7 +188,18 @@ pub(super) async fn call_push_check(
     let state_guard = state.lock().await;
     let sessions = state_guard.inner.sessions.lock().unwrap();
 
-    let result = match sessions.get(&session_id) {
+    let result = push_check_payload(&session_id, sessions.get(&session_id));
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&result).unwrap()
+        }]
+    }))
+}
+
+fn push_check_payload(session_id: &str, session: Option<&PreviewSession>) -> Value {
+    match session {
         Some(session) => {
             let has_decision = session.decided_at.is_some();
             serde_json::json!({
@@ -201,12 +224,51 @@ pub(super) async fn call_push_check(
                 "has_decision": false,
             })
         }
-    };
+    }
+}
 
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&result).unwrap()
-        }]
-    }))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(decided: bool) -> PreviewSession {
+        PreviewSession {
+            session_id: "review-1".to_string(),
+            tool_name: "structured_data".to_string(),
+            tool_args: serde_json::json!({}),
+            content_type: "structured_data".to_string(),
+            data: serde_json::json!({ "tables": [] }),
+            meta: serde_json::json!({}),
+            backend_callback: None,
+            review_required: true,
+            timeout_secs: Some(120),
+            created_at: 1,
+            decided_at: if decided { Some(2) } else { None },
+            decision: if decided { Some("approved".to_string()) } else { None },
+            operation_decisions: None,
+            comments: None,
+            modifications: None,
+            additions: None,
+            suggestion_decisions: None,
+            table_decisions: None,
+        }
+    }
+
+    #[test]
+    fn push_check_payload_returns_pending_without_waiting() {
+        let session = session(false);
+        let payload = push_check_payload("review-1", Some(&session));
+        assert_eq!(payload["status"], "pending");
+        assert_eq!(payload["review_required"], true);
+        assert_eq!(payload["has_decision"], false);
+    }
+
+    #[test]
+    fn push_check_payload_replays_completed_decision() {
+        let session = session(true);
+        let payload = push_check_payload("review-1", Some(&session));
+        assert_eq!(payload["status"], "decided");
+        assert_eq!(payload["decision"], "approved");
+        assert_eq!(payload["has_decision"], true);
+    }
 }

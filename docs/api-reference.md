@@ -18,7 +18,7 @@ Returns server status.
 
 ### `POST /api/push`
 
-Push content to the viewer. For reviews, returns immediately with a `session_id` (see `POST /api/await-decision` to block until the user decides).
+Push content to the viewer. For reviews, returns immediately with a `session_id` (see `POST /api/await-decision` or MCP `await_review` to wait until the user decides).
 
 **Request Body**
 ```json
@@ -66,7 +66,7 @@ Reviews use a two-step flow. `POST /api/push` with `reviewRequired: true` return
 }
 ```
 
-The caller then uses `POST /api/await-decision` (or the MCP `await_review` tool) to block until the user submits their decision. If the transport times out, the caller can call `await-decision` again with the same `sessionId` -- the review session persists on the server and the deadline resets on reconnect.
+The caller then uses `POST /api/await-decision` (or the MCP `await_review` tool) to wait for the user decision. MCP `await_review` returns a pending response before the transport safety window is hit if the user has not decided yet; callers can retry with the same `sessionId` or poll `push_check`. The review session persists on the server and completed decisions are replayed from stored session state while the session remains in memory.
 
 **Decision responses** (returned by `await-decision`):
 
@@ -548,7 +548,7 @@ Display content in the MCPViews window. Supports multiple content types.
 
 ### `push_review`
 
-Display content for user review. Returns immediately with a `session_id` and `"pending"` status. The agent then calls `await_review(session_id)` to block until the user submits their decision.
+Display content for user review. Returns immediately with a `session_id` and `"pending"` status. The agent then calls `await_review(session_id)` to wait until the user submits their decision.
 
 **Parameters:**
 | Field | Type | Required | Description |
@@ -566,7 +566,7 @@ Display content for user review. Returns immediately with a `session_id` and `"p
 }
 ```
 
-The following diagram shows the two-step `push_review` + `await_review` flow, including transport timeout reconnection.
+The following diagram shows the two-step `push_review` + `await_review` flow, including pending returns before transport timeout.
 
 ```mermaid
 sequenceDiagram
@@ -579,7 +579,7 @@ sequenceDiagram
     MV->>WebView: Render review UI
     MV->>Agent: { session_id, status: "pending" }
     Agent->>MV: await_review(session_id)
-    Note over MV: Blocks on watch channel
+    Note over MV: Waits on watch channel or returns pending at transport safety window
 
     alt User decides before timeout
         User->>WebView: Review and decide
@@ -587,9 +587,10 @@ sequenceDiagram
         MV->>Agent: Decision response
     end
 
-    alt Transport timeout (connection drops)
+    alt No decision before transport safety window
+        MV->>Agent: { session_id, status: "pending" }
         Agent->>MV: await_review(session_id) [reconnect]
-        Note over MV: Deadline resets, blocks again
+        Note over MV: Deadline resets, returns pending again if no decision
         User->>WebView: Review and decide
         WebView->>MV: submit_decision
         MV->>Agent: Decision response
@@ -602,14 +603,23 @@ sequenceDiagram
 
 ### `await_review`
 
-Block until a user submits a decision for a pending review session. If the transport connection drops, the agent can call `await_review` again with the same `session_id` -- the review session persists on the server and the deadline resets on reconnect. If a previous `await_review` call received the decision internally but the response was lost to the caller, retrying `await_review` returns the stored decision payload from the preview session while that session remains in memory.
+Wait for a user decision for a pending review session. If no decision arrives before the MCP transport safety window, `await_review` returns a pending status before the longer review deadline expires; call `await_review` again with the same `session_id`, or use `push_check` for a non-blocking poll. If a previous wait received the decision internally but the response was lost to the caller, retrying `await_review` returns the stored decision payload from the preview session while that session remains in memory.
 
 **Parameters:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `session_id` | string | Yes | The session ID returned by `push_review`. |
 
-**Response:** The user's decision (same shape as the decision responses documented under `POST /api/push`).
+**Response:** The user's decision (same shape as the decision responses documented under `POST /api/push`) or a pending status when the transport safety wait elapses before the user decides.
+
+```json
+{
+  "session_id": "uuid",
+  "status": "pending",
+  "review_required": true,
+  "message": "Review is still pending. Call await_review again with the same session_id, or use push_check for a non-blocking status check."
+}
+```
 
 #### structured_data renderer
 
@@ -696,9 +706,9 @@ After calling `push_review` to display the structured data review and `await_rev
 
 #### universal_graph renderer
 
-`universal_graph` is a built-in read-only renderer for analytical charts, hierarchies, networks, flows, timelines, matrices, and distributions. Use it when the main output is visual analysis rather than prose or a review table.
+`universal_graph` is a built-in read-only renderer for analytical charts, hierarchies, networks, flows, timelines, matrices, and distributions. Use it when the main output is visual analysis rather than prose or a review table. Connected agents should call `describe_tool` with `name: "universal_graph"` before constructing complex graph packs, because that hosted breadcrumb description carries the current schema summary.
 
-**Standalone display via `push_content`:**
+**Standalone display via `push_content` compatibility wrapper:**
 
 ```json
 {
@@ -728,7 +738,7 @@ After calling `push_review` to display the structured data review and `await_rev
 
 **Direct `universal_graph` tool call:**
 
-Use the same graph payload at the top level, without the `tool_name`/`data` wrapper:
+Prefer the direct tool when it is available in the agent's tool list. Use the same graph payload at the top level, without the `tool_name`/`data` wrapper:
 
 ```json
 {
@@ -748,16 +758,72 @@ Use the same graph payload at the top level, without the `tool_name`/`data` wrap
         { "month": "2026-02", "revenue": 142000 }
       ]
     },
-    "encoding": { "x": "month", "y": "revenue" }
+    "encoding": { "x": "month", "y": "revenue" },
+    "axes": {
+      "x": { "label": "Month", "description": "Calendar month at period end" },
+      "y": "Revenue in dollars"
+    }
   }]
 }
 ```
 
 Supported V1 graph types: `line`, `area`, `bar`, `stacked_bar`, `grouped_bar`, `scatter`, `bubble`, `combo`, `histogram`, `boxplot`, `heatmap`, `matrix`, `pie`, `donut`, `waterfall`, `funnel`, `gauge`, `radar`, `candlestick`, `timeline`, `gantt`, `tree`, `network`, `treemap`, `sunburst`, and `sankey`.
 
-Graph specs are strictly validated: graph IDs must be unique, graph types must be supported, required encodings must be present, and every encoding field must reference an existing `data.columns[].id`.
+Graph specs are strictly validated before new pushes are stored: graph IDs must be unique, graph types must be supported, required encodings must be present, supported options must be well-formed, every encoding field must reference an existing `data.columns[].id`, and required numeric/time row values must be valid. Stored or legacy payloads that reach the renderer are handled best-effort with visible graph warnings.
 
-**Embedded in rich_content:**
+Optional per-graph `options`:
+
+```json
+{
+  "options": {
+    "xScale": "auto",
+    "yScale": "auto",
+    "maxVisibleItems": 24,
+    "showAll": false,
+    "otherBucket": "separate",
+    "binCount": 12
+  }
+}
+```
+
+`xScale`/`yScale` support `auto`, `category`, `linear`, or `time`. `showAll` renders all marks, but labels may still be sampled or culled to avoid overlap. `otherBucket` supports `separate` (default), `inline`, or `hidden` for dense categorical summaries. `binCount` controls histogram bins and is clamped by the renderer to a safe range.
+
+Optional per-graph `axes` can provide visible axis context:
+
+```json
+{
+  "axes": {
+    "x": { "label": "Customer segment", "description": "Commercial segment assigned in CRM" },
+    "y": "ARR movement in thousands of dollars"
+  }
+}
+```
+
+Each axis can be a string label or an object with `label` and optional `description`. When omitted, supported charts derive axis titles from encoded column names.
+
+Optional per-graph `role` can be `primary` (default) or `drilldown`. Drilldown graphs are hidden from the initial graph list but can be opened by interactions from a primary graph. Optional `interactions` support read-only exploration: `details` selects fields for visible hover and pinned detail panels, `hover` controls highlight behavior, `drilldowns[]` maps a clicked mark/node/link value to a target graph field, and `metricControls` lets the user swap `encoding.y` or `encoding.value` among validated numeric fields.
+
+```json
+{
+  "role": "primary",
+  "interactions": {
+    "details": { "titleField": "segment", "fields": ["segment", "revenue", "retention"] },
+    "hover": "auto",
+    "drilldowns": [{
+      "id": "segment_detail",
+      "label": "Open segment detail",
+      "targetGraphId": "segment_detail_graph",
+      "trigger": "mark",
+      "match": { "source": "segment", "targetField": "segment" }
+    }],
+    "metricControls": { "target": "y", "fields": ["revenue", "retention"] }
+  }
+}
+```
+
+Dense graphs auto-summarize by default with visible disclosure: sampled ticks, top-N categories with a separated Other callout, capped timeline/funnel rows, duplicate candlestick/time-key aggregation, duplicate network/sankey link aggregation, and source-table truncation notices. Very dense scatter/bubble, heatmap/matrix, network, and sankey views render compact native layers with sampled focus marks so all visual marks remain represented without creating thousands of DOM nodes. Scatter and bubble charts use numeric/time x-positioning when the x column supports it. Histograms label numeric ranges and render a single meaningful bin for zero-variance data. Gauges can read `encoding.min`/`encoding.max` fields, falling back to `graph.min`/`graph.max`, and display under-limit or over-limit values with clamped arcs. Funnels preserve a uniform side slope while using vertical stage thickness to encode relative value; exact values remain available in labels, tooltips, pinned details, and source rows. Tree and sunburst hierarchy traversal is cycle-safe and stack-safe; extremely deep sunbursts disclose compressed thin rings. Sunburst uses `encoding.parent` when supplied and falls back to donut only when no hierarchy exists. Sankey data with cycles or self-links falls back to network rendering with a warning.
+
+**Embedded in rich_content or rich_content review payloads:**
 
 ````json
 {
@@ -782,11 +848,11 @@ Graph specs are strictly validated: graph IDs must be unique, graph types must b
 }
 ````
 
-The fenced `universal_graph:<graph-id>` block must be empty and must reference a matching graph in `data.graphs`.
+The fenced `universal_graph:<graph-id>` block must be empty and must reference a matching graph in `data.graphs`. Graph embeds are read-only context in review surfaces; approve/reject state still belongs to suggestions and structured_data tables.
 
 ### `push_check`
 
-Non-blocking status check for a review session. Returns the current status without waiting. Use `await_review` to block until a decision is submitted. Once a review is decided, the response also includes the stored decision details (`operation_decisions`, `comments`, `modifications`, `additions`, `suggestion_decisions`, and `table_decisions`) when present.
+Non-blocking status check for a review session. Returns the current status without waiting. Use `await_review` to wait until a decision is submitted. Once a review is decided, the response also includes the stored decision details (`operation_decisions`, `comments`, `modifications`, `additions`, `suggestion_decisions`, and `table_decisions`) when present.
 
 **Parameters:**
 | Field | Type | Required | Description |
@@ -795,9 +861,9 @@ Non-blocking status check for a review session. Returns the current status witho
 
 ### `init_session`
 
-Initialize MCPViews for the current session. Returns current renderer definitions, behavioral rules, plugin auth status, and persistence instructions. Must be called at the start of every conversation, chat session, or interaction -- not just once.
+Initialize MCPViews for the current session. Returns current renderer definitions, behavioral rules, plugin auth status, hosted breadcrumb discovery, and persistence instructions. Must be called at the start of every conversation, chat session, or interaction -- not just once.
 
-The following diagram shows the two-tier lazy-loading approach for plugin documentation.
+The following diagram shows the two-tier lazy-loading approach for plugin documentation plus hosted breadcrumb discovery for core renderer tools.
 
 ```mermaid
 sequenceDiagram
@@ -806,6 +872,10 @@ sequenceDiagram
 
     Agent->>MV: init_session
     MV->>Agent: Compact plugin_registry index + built-in rules
+    Agent->>MV: describe_connector(key: "mcpviews-core")
+    MV->>Agent: Core renderer/review/discovery breadcrumbs
+    Agent->>MV: describe_tool(name: "universal_graph")
+    MV->>Agent: Current universal graph schema summary
     Note over Agent: Agent identifies needed plugin
     Agent->>MV: get_plugin_docs(plugin, filters)
     MV->>Agent: Detailed plugin rules + data hints
@@ -844,7 +914,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "5",
+  "rules_version": "9",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -888,17 +958,17 @@ sequenceDiagram
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
   "rules_update": {
-    "current_version": "5",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 5..."
+    "current_version": "9",
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 9..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 5 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for checking and refreshing stale rules files.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 9 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`.
 
-The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters.
+The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
 The `plugin_updates` array lists plugins that have newer versions available in the registry. Each entry includes the plugin name, installed version, and available version. Call `update_plugins` to apply updates.
 
@@ -1108,7 +1178,7 @@ One-time setup for MCPViews. Returns instructions for persisting a rule that ens
 ```json
 {
   "rules": [ ... ],
-  "rules_version": "3",
+  "rules_version": "9",
   "plugin_status": [ ... ],
   "persistence_instructions": "Persist each rule as a memory file...",
   "setup_instructions": "Add a rule in `.claude/rules/mcpviews-init.md` containing: ..."

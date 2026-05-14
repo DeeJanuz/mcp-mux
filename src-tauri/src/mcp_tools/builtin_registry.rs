@@ -102,7 +102,7 @@ fn universal_graph_definition(renderers: &[RendererDef]) -> Value {
         "description": super::renderer_description(
             renderers,
             "universal_graph",
-            "Display native read-only analytical charts and graphs in the MCPViews window using semantic graph specs."
+            "Display native read-only analytical graph packs in the MCPViews window using semantic graph specs. Supports standalone graph dashboards plus read-only rich_content and review embeds."
         ),
         "inputSchema": {
             "type": "object",
@@ -111,7 +111,7 @@ fn universal_graph_definition(renderers: &[RendererDef]) -> Value {
                 "description": { "type": "string", "description": "Optional context shown above the graphs." },
                 "graphs": {
                     "type": "array",
-                    "description": "Graph definitions. Each graph must include id, type, data.columns, data.rows, and encoding.",
+                    "description": "Graph definitions. Each graph must include id, type, data.columns, data.rows, and encoding. Per-graph axes provide x/y labels and descriptions for business context. Per-graph role may be primary or drilldown. Per-graph options may include xScale/yScale, maxVisibleItems, showAll, otherBucket, and binCount. Per-graph interactions may include details, hover, drilldowns, and metricControls. Dense graphs auto-summarize with source-data inspection; funnels use uniform side slope with vertical stage thickness encoding value.",
                     "items": { "type": "object" }
                 }
             },
@@ -148,7 +148,7 @@ fn push_content_definition(renderers: &[RendererDef]) -> Value {
 fn push_review_definition(renderers: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "push_review",
-        "description": "Display content in the MCPViews companion window for user review. Use this with structured_data when the user must approve row, column, or cell changes. Returns immediately with a session_id. Call await_review(session_id) to wait for the user's decision. If your transport times out, call await_review again with the same session_id — the review session persists on the server.",
+        "description": "Display content in the MCPViews companion window for user review. Use this with structured_data when the user must approve row, column, or cell changes. Returns immediately with a session_id. Call await_review(session_id) to wait for the user's decision. If await_review returns pending before the user decides, call it again with the same session_id — the review session persists on the server.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -185,7 +185,7 @@ fn push_review_definition(renderers: &[RendererDef]) -> Value {
 fn await_review_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "await_review",
-        "description": "Wait for a pending review decision. Blocks until the user submits their review in the companion window, or the server-side timeout expires. If your transport times out before the user decides, call this again with the same session_id to reconnect — the review session persists. Returns the full decision payload: status, decision, operationDecisions (structured_data rows), comments, modifications, suggestionDecisions (rich_content inline suggestions), tableDecisions (rich_content embedded tables).",
+        "description": "Wait for a pending review decision. Returns the full decision payload when the user submits. If no decision arrives before the MCP transport safety window, returns status=pending before the longer server-side review deadline expires; call await_review again or use push_check. Completed decisions are replayed from stored session state if an earlier wait response was lost.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -202,7 +202,7 @@ fn await_review_definition(_: &[RendererDef]) -> Value {
 fn push_check_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "push_check",
-        "description": "Non-blocking status check for a review session. Returns current status without waiting. Use await_review to block until decision.",
+        "description": "Non-blocking status check for a review session. Returns current status without waiting. Use await_review to wait for the decision.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -602,7 +602,7 @@ fn save_update_preference_handler<'a>(
 pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
     let presentation_group = CoreConnectorGroupMeta {
         name: "Presentation",
-        hint: "Open or review renderer-backed MCPViews content.",
+        hint: "Open renderer-backed MCPViews content: graph packs, rich text embeds, structured tables, and review surfaces.",
     };
     let discovery_group = CoreConnectorGroupMeta {
         name: "Discovery",

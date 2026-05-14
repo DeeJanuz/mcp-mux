@@ -228,9 +228,16 @@
     var timerEl = tabBar.querySelector('.tab[data-session-id="' + sessionId + '"] .tab-timer');
     if (!timer || !timerEl) return;
     var remaining = Math.max(0, Math.ceil((timer.deadline - Date.now()) / 1000));
+    if (remaining <= 0) {
+      timerEl.textContent = 'Pending';
+      timerEl.classList.add('urgent');
+      timerEl.classList.add('pending');
+      return;
+    }
     var mins = Math.floor(remaining / 60);
     var secs = remaining % 60;
     timerEl.textContent = mins + ':' + (secs < 10 ? '0' : '') + secs;
+    timerEl.classList.remove('pending');
     if (remaining <= 30) {
       timerEl.classList.add('urgent');
     } else {

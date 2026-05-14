@@ -220,4 +220,30 @@ describe('main session routing', function () {
     expect(document.querySelector('.tab-name').textContent).toBe('Persona Studio');
     expect(document.getElementById('main-title').textContent).toBe('Persona Studio');
   });
+
+  it('shows expired review timers as pending instead of 0:00', function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-14T12:00:00Z'));
+    try {
+      loadMain();
+
+      window.__mainTest.handlePush({
+        sessionId: 'review-session',
+        toolName: 'structured_data',
+        contentType: 'rich_content',
+        data: { title: 'Review Session' },
+        meta: { headerTitle: 'Review Session' },
+        toolArgs: {},
+        reviewRequired: true,
+        timeoutSecs: 1,
+      });
+
+      expect(document.querySelector('.tab-timer').textContent).toBe('0:01');
+      vi.advanceTimersByTime(1000);
+      expect(document.querySelector('.tab-timer').textContent).toBe('Pending');
+      expect(document.querySelector('.tab-timer').classList.contains('pending')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

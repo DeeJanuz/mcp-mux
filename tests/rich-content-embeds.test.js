@@ -202,6 +202,39 @@ describe('buildCombinedSubmitBar (via renderer)', function () {
     expect(container.querySelector('[data-graph-embed]')).toBeNull();
   });
 
+  it('passes the full graph registry to embedded universal_graph cards for drilldowns', function () {
+    var data = {
+      body: 'Text\n```universal_graph:g1\n```',
+      graphs: [
+        {
+          id: 'g1',
+          title: 'Overview',
+          type: 'bar',
+          data: {
+            columns: [{ id: 'label', name: 'Label' }, { id: 'value', name: 'Value' }],
+            rows: [{ label: 'A', value: 1 }],
+          },
+          encoding: { x: 'label', y: 'value' },
+        },
+        {
+          id: 'g2',
+          role: 'drilldown',
+          title: 'Detail',
+          type: 'bar',
+          data: {
+            columns: [{ id: 'label', name: 'Label' }, { id: 'value', name: 'Value' }],
+            rows: [{ label: 'A', value: 1 }],
+          },
+          encoding: { x: 'label', y: 'value' },
+        },
+      ],
+    };
+    renderer(container, data, null, null, false, null);
+
+    var graph = container.querySelector('.ug-card[data-graph-id="g1"]');
+    expect(graph.getAttribute('data-registry-count')).toBe('2');
+  });
+
   it('does not render submit bar when not in review mode', function () {
     var data = {
       body: 'Simple content',

@@ -106,10 +106,11 @@ globalThis.window.__structuredDataEmbed = {
 // Mock universalGraphEmbed
 globalThis.window.__universalGraphEmbed = {
   injectStyles: function () {},
-  buildGraphContainer: function (graphData) {
+  buildGraphContainer: function (graphData, graphs) {
     var el = document.createElement('div');
     el.className = 'ug-card';
     el.setAttribute('data-graph-id', graphData.id);
+    el.setAttribute('data-registry-count', String((graphs || []).length));
     el.textContent = graphData.title || graphData.id;
     return el;
   },

@@ -127,7 +127,7 @@
         return;
       }
 
-      var graphContainer = embed.buildGraphContainer(graphData);
+      var graphContainer = embed.buildGraphContainer(graphData, graphs);
       ph.parentNode.replaceChild(graphContainer, ph);
     });
   }

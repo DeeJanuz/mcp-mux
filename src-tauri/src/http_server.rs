@@ -11,6 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::future;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -135,6 +136,8 @@ pub enum ExecutePushResult {
     Pending { session_id: String },
     Decision(PushResponse),
 }
+
+const AWAIT_REVIEW_TRANSPORT_WAIT: Duration = Duration::from_secs(25);
 
 fn get_nested_value<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
     let mut current = value;
@@ -488,124 +491,109 @@ fn decision_from_session(session: &PreviewSession) -> Option<ReviewDecision> {
     })
 }
 
-/// Subscribe to a watch channel and block until the user submits a decision or the deadline expires.
-/// Called by the MCP `await_review` tool (via `call_await_review`) and by `execute_push` for
-/// HTTP `/api/push` backward compatibility. The deadline resets to the full timeout on each call,
-/// so agents can reconnect after a transport timeout without losing the review session.
-pub async fn await_decision(
-    state: &Arc<TokioMutex<AsyncAppState>>,
+fn error_review_response(session_id: &str, decision: &str) -> ExecutePushResult {
+    ExecutePushResult::Decision(ReviewDecision {
+        session_id: session_id.to_string(),
+        status: "error".to_string(),
+        decision: Some(decision.to_string()),
+        operation_decisions: None,
+        comments: None,
+        modifications: None,
+        additions: None,
+        suggestion_decisions: None,
+        table_decisions: None,
+    }.into())
+}
+
+enum AwaitDecisionOutcome {
+    Decision(ReviewDecision),
+    Expired,
+    Pending,
+}
+
+async fn sleep_optional(deadline: Option<tokio::time::Instant>) {
+    if let Some(deadline) = deadline {
+        tokio::time::sleep_until(deadline).await;
+    } else {
+        future::pending::<()>().await;
+    }
+}
+
+/// Subscribe to a review watch channel and wait for the user decision. When
+/// `transport_wait` is set, return Pending before the MCP transport can time out
+/// while leaving the review session and deadline active.
+pub(crate) async fn await_decision_from_app_state(
+    state: &Arc<AppState>,
     session_id: &str,
+    transport_wait: Option<Duration>,
 ) -> ExecutePushResult {
-    // Subscribe to the watch channel
-    let mut rx = {
-        let state_guard = state.lock().await;
-        if let Some(rx) = {
-            let reviews = state_guard.inner.reviews.lock().unwrap();
-            reviews.subscribe(session_id)
-        } {
-            rx
-        } else {
-            let session = {
-                let sessions = state_guard.inner.sessions.lock().unwrap();
-                sessions.get(session_id).cloned()
-            };
-            match session {
-                Some(session) => {
-                    if let Some(decision) = decision_from_session(&session) {
-                        return ExecutePushResult::Decision(decision.into());
-                    }
-                    if !session.review_required {
-                        return ExecutePushResult::Decision(ReviewDecision {
-                            session_id: session_id.to_string(),
-                            status: "error".to_string(),
-                            decision: Some("not_found".to_string()),
-                            operation_decisions: None,
-                            comments: None,
-                            modifications: None,
-                            additions: None,
-                            suggestion_decisions: None,
-                            table_decisions: None,
-                        }.into());
-                    }
-
-                    let timeout_secs = session.timeout_secs.unwrap_or(120);
-                    let rx = {
-                        let mut reviews = state_guard.inner.reviews.lock().unwrap();
-                        reviews.add_pending(session_id.to_string())
-                    };
-                    let deadline = Arc::new(TokioMutex::new(
-                        tokio::time::Instant::now() + Duration::from_secs(timeout_secs),
-                    ));
-                    {
-                        let mut deadlines = state_guard.inner.review_deadlines.lock().unwrap();
-                        deadlines.insert(session_id.to_string(), (deadline, timeout_secs));
-                    }
-                    rx
-                }
-                None => {
-                    return ExecutePushResult::Decision(ReviewDecision {
-                        session_id: session_id.to_string(),
-                        status: "error".to_string(),
-                        decision: Some("not_found".to_string()),
-                        operation_decisions: None,
-                        comments: None,
-                        modifications: None,
-                        additions: None,
-                        suggestion_decisions: None,
-                        table_decisions: None,
-                    }.into());
-                }
-            }
-        }
-    };
-
-    // Check if decision already arrived
-    {
-        let current = rx.borrow().clone();
-        if let Some(decision) = current {
-            // Clean up
-            let state_guard = state.lock().await;
-            let mut deadlines = state_guard.inner.review_deadlines.lock().unwrap();
-            deadlines.remove(session_id);
-            drop(deadlines);
-            let mut reviews = state_guard.inner.reviews.lock().unwrap();
-            reviews.remove_resolved(session_id);
-            return ExecutePushResult::Decision(decision.into());
-        }
+    if let Some(decision) = {
+        let sessions = state.sessions.lock().unwrap();
+        sessions.get(session_id).and_then(decision_from_session)
+    } {
+        return ExecutePushResult::Decision(decision.into());
     }
 
-    // Get the deadline arc
+    let mut rx = if let Some(rx) = {
+        let reviews = state.reviews.lock().unwrap();
+        reviews.subscribe(session_id)
+    } {
+        rx
+    } else {
+        let session = {
+            let sessions = state.sessions.lock().unwrap();
+            sessions.get(session_id).cloned()
+        };
+
+        let Some(session) = session else {
+            return error_review_response(session_id, "not_found");
+        };
+
+        if let Some(decision) = decision_from_session(&session) {
+            return ExecutePushResult::Decision(decision.into());
+        }
+
+        if !session.review_required {
+            return error_review_response(session_id, "not_found");
+        }
+
+        let timeout_secs = session.timeout_secs.unwrap_or(120);
+        let rx = {
+            let mut reviews = state.reviews.lock().unwrap();
+            reviews.add_pending(session_id.to_string())
+        };
+        let deadline = Arc::new(TokioMutex::new(
+            tokio::time::Instant::now() + Duration::from_secs(timeout_secs),
+        ));
+        {
+            let mut deadlines = state.review_deadlines.lock().unwrap();
+            deadlines.insert(session_id.to_string(), (deadline, timeout_secs));
+        }
+        rx
+    };
+
+    if let Some(decision) = rx.borrow().clone() {
+        let mut deadlines = state.review_deadlines.lock().unwrap();
+        deadlines.remove(session_id);
+        drop(deadlines);
+        let mut reviews = state.reviews.lock().unwrap();
+        reviews.remove_resolved(session_id);
+        return ExecutePushResult::Decision(decision.into());
+    }
+
     let deadline = {
-        let state_guard = state.lock().await;
-        let deadlines = state_guard.inner.review_deadlines.lock().unwrap();
+        let deadlines = state.review_deadlines.lock().unwrap();
         match deadlines.get(session_id) {
             Some((dl, _)) => dl.clone(),
-            None => {
-                // No deadline means review already cleaned up
-                return ExecutePushResult::Decision(ReviewDecision {
-                    session_id: session_id.to_string(),
-                    status: "error".to_string(),
-                    decision: Some("expired".to_string()),
-                    operation_decisions: None,
-                    comments: None,
-                    modifications: None,
-                    additions: None,
-                    suggestion_decisions: None,
-                    table_decisions: None,
-                }.into());
-            }
+            None => return error_review_response(session_id, "expired"),
         }
     };
 
     let session_id_owned = session_id.to_string();
 
-    // Reset deadline to full timeout from now — await_review may arrive long
-    // after store_push created the original deadline (e.g. after a transport
-    // timeout + reconnect).
     {
         let timeout_secs = {
-            let state_guard = state.lock().await;
-            let deadlines = state_guard.inner.review_deadlines.lock().unwrap();
+            let deadlines = state.review_deadlines.lock().unwrap();
             deadlines.get(&session_id_owned).map(|(_, t)| *t)
         };
         if let Some(t) = timeout_secs {
@@ -614,8 +602,8 @@ pub async fn await_decision(
         }
     }
 
-    // Resettable timeout loop
-    let result = loop {
+    let transport_deadline = transport_wait.map(|wait| tokio::time::Instant::now() + wait);
+    let outcome = loop {
         let current_deadline = *deadline.lock().await;
         tokio::select! {
             changed = rx.changed() => {
@@ -623,14 +611,10 @@ pub async fn await_decision(
                     Ok(()) => {
                         let val = rx.borrow().clone();
                         if let Some(decision) = val {
-                            break Some(decision);
+                            break AwaitDecisionOutcome::Decision(decision);
                         }
-                        // None means spurious wake, continue
                     }
-                    Err(_) => {
-                        // Sender dropped
-                        break None;
-                    }
+                    Err(_) => break AwaitDecisionOutcome::Expired,
                 }
             }
             _ = tokio::time::sleep_until(current_deadline) => {
@@ -638,32 +622,31 @@ pub async fn await_decision(
                 let dl = *deadline.lock().await;
                 if dl > now {
                     eprintln!("[mcpviews] Review {}: deadline was bumped, continuing", session_id_owned);
-                    continue; // deadline was bumped by heartbeat
+                    continue;
                 }
                 eprintln!("[mcpviews] Review {}: truly expired", session_id_owned);
-                break None; // truly expired
+                break AwaitDecisionOutcome::Expired;
+            }
+            _ = sleep_optional(transport_deadline) => {
+                break AwaitDecisionOutcome::Pending;
             }
         }
     };
 
-    // Clean up deadline entry
-    {
-        let state_guard = state.lock().await;
-        let mut deadlines = state_guard.inner.review_deadlines.lock().unwrap();
-        deadlines.remove(&session_id_owned);
-    }
-
-    match result {
-        Some(decision) => {
-            let state_guard = state.lock().await;
-            let mut reviews = state_guard.inner.reviews.lock().unwrap();
+    match outcome {
+        AwaitDecisionOutcome::Decision(decision) => {
+            let mut deadlines = state.review_deadlines.lock().unwrap();
+            deadlines.remove(&session_id_owned);
+            drop(deadlines);
+            let mut reviews = state.reviews.lock().unwrap();
             reviews.remove_resolved(&session_id_owned);
             ExecutePushResult::Decision(decision.into())
         }
-        None => {
-            // Timeout or channel dropped — dismiss
-            let state_guard = state.lock().await;
-            let mut reviews = state_guard.inner.reviews.lock().unwrap();
+        AwaitDecisionOutcome::Expired => {
+            let mut deadlines = state.review_deadlines.lock().unwrap();
+            deadlines.remove(&session_id_owned);
+            drop(deadlines);
+            let mut reviews = state.reviews.lock().unwrap();
             reviews.dismiss(&session_id_owned);
             reviews.remove_resolved(&session_id_owned);
             ExecutePushResult::Decision(ReviewDecision {
@@ -678,7 +661,36 @@ pub async fn await_decision(
                 table_decisions: None,
             }.into())
         }
+        AwaitDecisionOutcome::Pending => ExecutePushResult::Pending {
+            session_id: session_id_owned,
+        },
     }
+}
+
+/// Subscribe to a watch channel and block until the user submits a decision or the review deadline expires.
+/// Used by HTTP `/api/push` for backward compatibility.
+pub async fn await_decision(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+    session_id: &str,
+) -> ExecutePushResult {
+    let app_state = {
+        let state_guard = state.lock().await;
+        Arc::clone(&state_guard.inner)
+    };
+    await_decision_from_app_state(&app_state, session_id, None).await
+}
+
+/// Wait for an MCP `await_review` decision without holding the MCP transport open until
+/// the longer user-facing review deadline. Returns Pending when the short transport wait elapses.
+pub async fn await_decision_for_transport(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+    session_id: &str,
+) -> ExecutePushResult {
+    let app_state = {
+        let state_guard = state.lock().await;
+        Arc::clone(&state_guard.inner)
+    };
+    await_decision_from_app_state(&app_state, session_id, Some(AWAIT_REVIEW_TRANSPORT_WAIT)).await
 }
 
 /// Core push logic shared by HTTP `/api/push` and MCP `push_content` tools.
@@ -789,6 +801,22 @@ async fn push_handler(
             );
         }
     };
+    if let Err(message) = crate::mcp_tools::validate_push_payload(&normalized.tool_name, &normalized.data) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(PushResponse {
+                session_id: String::new(),
+                status: message,
+                decision: None,
+                operation_decisions: None,
+                comments: None,
+                modifications: None,
+                additions: None,
+                suggestion_decisions: None,
+                table_decisions: None,
+            }),
+        );
+    }
 
     let result = match normalized.update_mode {
         PushUpdateMode::Replace => {
@@ -1250,6 +1278,36 @@ mod tests {
         }
     }
 
+    fn test_app_state() -> (Arc<AppState>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().join("plugins"));
+        let state = AppState::new_with_store_and_auth_dir(store, dir.path().join("auth"));
+        (Arc::new(state), dir)
+    }
+
+    fn review_session(session_id: &str) -> PreviewSession {
+        PreviewSession {
+            session_id: session_id.to_string(),
+            tool_name: "structured_data".to_string(),
+            tool_args: serde_json::json!({}),
+            content_type: "structured_data".to_string(),
+            data: serde_json::json!({ "tables": [] }),
+            meta: serde_json::json!({}),
+            backend_callback: None,
+            review_required: true,
+            timeout_secs: Some(30),
+            created_at: 1,
+            decided_at: None,
+            decision: None,
+            operation_decisions: None,
+            comments: None,
+            modifications: None,
+            additions: None,
+            suggestion_decisions: None,
+            table_decisions: None,
+        }
+    }
+
     #[test]
     fn test_resolve_content_type_with_mapping() {
         let (mut registry, _dir) = empty_registry();
@@ -1545,5 +1603,118 @@ mod tests {
         assert_eq!(session.data["body"], "Hello world");
         assert_eq!(session.meta["sequence"], 2);
         assert_eq!(session.tool_args["threadId"], "thread-1");
+    }
+
+    #[tokio::test]
+    async fn await_decision_replays_completed_session_decision() {
+        let (state, _dir) = test_app_state();
+        let mut session = review_session("review-complete");
+        session.decided_at = Some(2);
+        session.decision = Some("approved".to_string());
+        session.suggestion_decisions = Some(HashMap::from([(
+            "s1".to_string(),
+            serde_json::json!({ "decision": "accept" }),
+        )]));
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            sessions.set(session);
+        }
+
+        let result = await_decision_from_app_state(
+            &state,
+            "review-complete",
+            Some(Duration::from_millis(5)),
+        )
+        .await;
+
+        match result {
+            ExecutePushResult::Decision(response) => {
+                assert_eq!(response.session_id, "review-complete");
+                assert_eq!(response.decision.as_deref(), Some("approved"));
+                assert!(response.suggestion_decisions.is_some());
+            }
+            _ => panic!("expected stored decision replay"),
+        }
+    }
+
+    #[tokio::test]
+    async fn await_decision_returns_pending_before_transport_timeout() {
+        let (state, _dir) = test_app_state();
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            sessions.set(review_session("review-pending"));
+        }
+
+        let result = await_decision_from_app_state(
+            &state,
+            "review-pending",
+            Some(Duration::from_millis(10)),
+        )
+        .await;
+
+        match result {
+            ExecutePushResult::Pending { session_id } => assert_eq!(session_id, "review-pending"),
+            _ => panic!("expected pending result before review deadline"),
+        }
+        assert!(state.reviews.lock().unwrap().has_pending("review-pending"));
+        assert!(state.review_deadlines.lock().unwrap().contains_key("review-pending"));
+    }
+
+    #[tokio::test]
+    async fn await_decision_reconnect_gets_decision_after_pending_return() {
+        let (state, _dir) = test_app_state();
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            sessions.set(review_session("review-reconnect"));
+        }
+
+        let result = await_decision_from_app_state(
+            &state,
+            "review-reconnect",
+            Some(Duration::from_millis(5)),
+        )
+        .await;
+        assert!(matches!(result, ExecutePushResult::Pending { .. }));
+
+        let decision = ReviewDecision {
+            session_id: "review-reconnect".to_string(),
+            status: "decision_received".to_string(),
+            decision: Some("approved".to_string()),
+            operation_decisions: Some(HashMap::from([("row-1".to_string(), "accept".to_string())])),
+            comments: None,
+            modifications: None,
+            additions: None,
+            suggestion_decisions: None,
+            table_decisions: None,
+        };
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            let session = sessions.get_mut("review-reconnect").unwrap();
+            session.decided_at = Some(2);
+            session.decision = decision.decision.clone();
+            session.operation_decisions = decision.operation_decisions.clone();
+        }
+        {
+            let mut reviews = state.reviews.lock().unwrap();
+            reviews.resolve("review-reconnect", decision);
+        }
+
+        let result = await_decision_from_app_state(
+            &state,
+            "review-reconnect",
+            Some(Duration::from_millis(5)),
+        )
+        .await;
+
+        match result {
+            ExecutePushResult::Decision(response) => {
+                assert_eq!(response.decision.as_deref(), Some("approved"));
+                assert_eq!(
+                    response.operation_decisions.unwrap().get("row-1").map(String::as_str),
+                    Some("accept")
+                );
+            }
+            _ => panic!("expected completed decision on reconnect"),
+        }
     }
 }

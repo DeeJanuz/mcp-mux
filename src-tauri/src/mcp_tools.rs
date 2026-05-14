@@ -14,7 +14,7 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "5"; // Bump when built-in rules change
+const RULES_VERSION: &str = "9"; // Bump when built-in rules change
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -316,7 +316,7 @@ struct RichContentFence {
     lines: Vec<String>,
 }
 
-fn validate_push_payload(tool_name: &str, data: &Value) -> Result<(), String> {
+pub(crate) fn validate_push_payload(tool_name: &str, data: &Value) -> Result<(), String> {
     match tool_name {
         "rich_content" => validate_rich_content_payload(data),
         "structured_data" => validate_structured_data_payload(data),
@@ -436,6 +436,7 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
     }
 
     let mut graph_ids = Vec::new();
+    let mut graph_columns_by_id: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     for (graph_index, graph) in graphs.iter().enumerate() {
         let graph_context = format!("{}[{}]", context, graph_index);
         let graph = graph
@@ -452,6 +453,28 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
         if graph_ids.iter().any(|existing| existing == &graph_id) {
             return Err(format!("{} contains duplicate graph id `{}`.", context, graph_id));
         }
+        let data = graph
+            .get("data")
+            .and_then(|value| value.as_object())
+            .ok_or(format!("{}.data must be an object.", graph_context))?;
+        let column_ids = validate_graph_columns(data, &format!("{}.data", graph_context))?;
+        graph_columns_by_id.insert(graph_id.clone(), column_ids);
+        graph_ids.push(graph_id);
+    }
+
+    for (graph_index, graph) in graphs.iter().enumerate() {
+        let graph_context = format!("{}[{}]", context, graph_index);
+        let graph = graph
+            .as_object()
+            .ok_or(format!("{} must be an object.", graph_context))?;
+        let graph_id = graph
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.id must be a non-empty string.", graph_context))?
+            .to_string();
+        validate_graph_role(graph.get("role"), &format!("{}.role", graph_context))?;
 
         let graph_type = graph
             .get("type")
@@ -489,11 +512,615 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
             &column_ids,
             &format!("{}.encoding", graph_context),
         )?;
-
-        graph_ids.push(graph_id);
+        validate_graph_options(graph.get("options"), &format!("{}.options", graph_context))?;
+        validate_graph_axes(graph.get("axes"), &format!("{}.axes", graph_context))?;
+        validate_graph_required_row_values(
+            &graph_id,
+            graph_type,
+            data,
+            encoding,
+            graph.get("options"),
+            &graph_context,
+        )?;
+        validate_graph_interactions(
+            graph.get("interactions"),
+            data,
+            &column_ids,
+            &graph_ids,
+            &graph_columns_by_id,
+            &format!("{}.interactions", graph_context),
+        )?;
     }
 
     Ok(graph_ids)
+}
+
+fn validate_graph_role(role: Option<&Value>, context: &str) -> Result<(), String> {
+    let Some(role) = role else {
+        return Ok(());
+    };
+    let role = role
+        .as_str()
+        .map(str::trim)
+        .ok_or(format!("{} must be either primary or drilldown.", context))?;
+    if !matches!(role, "primary" | "drilldown") {
+        return Err(format!("{} `{}` is not supported. Use primary or drilldown.", context, role));
+    }
+    Ok(())
+}
+
+fn validate_graph_options(options: Option<&Value>, context: &str) -> Result<(), String> {
+    let Some(options) = options else {
+        return Ok(());
+    };
+    let options = options
+        .as_object()
+        .ok_or(format!("{} must be an object when provided.", context))?;
+
+    for key in ["xScale", "yScale"] {
+        if let Some(value) = options.get(key) {
+            let scale = value
+                .as_str()
+                .map(str::trim)
+                .ok_or(format!("{}.{} must be one of auto, category, linear, or time.", context, key))?;
+            if !matches!(scale, "auto" | "category" | "linear" | "time") {
+                return Err(format!(
+                    "{}.{} `{}` is not supported. Use auto, category, linear, or time.",
+                    context, key, scale
+                ));
+            }
+        }
+    }
+
+    if let Some(value) = options.get("maxVisibleItems") {
+        let Some(max_visible) = value.as_u64() else {
+            return Err(format!("{}.maxVisibleItems must be a positive integer.", context));
+        };
+        if max_visible == 0 {
+            return Err(format!("{}.maxVisibleItems must be greater than 0.", context));
+        }
+    }
+
+    if let Some(value) = options.get("showAll") {
+        if !value.is_boolean() {
+            return Err(format!("{}.showAll must be a boolean.", context));
+        }
+    }
+
+    if let Some(value) = options.get("otherBucket") {
+        let mode = value
+            .as_str()
+            .map(str::trim)
+            .ok_or(format!("{}.otherBucket must be one of separate, inline, or hidden.", context))?;
+        if !matches!(mode, "separate" | "inline" | "hidden") {
+            return Err(format!(
+                "{}.otherBucket `{}` is not supported. Use separate, inline, or hidden.",
+                context, mode
+            ));
+        }
+    }
+
+    if let Some(value) = options.get("binCount") {
+        let Some(bin_count) = value.as_u64() else {
+            return Err(format!("{}.binCount must be a positive integer.", context));
+        };
+        if bin_count == 0 {
+            return Err(format!("{}.binCount must be greater than 0.", context));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_graph_axes(axes: Option<&Value>, context: &str) -> Result<(), String> {
+    let Some(axes) = axes else {
+        return Ok(());
+    };
+    let axes = axes
+        .as_object()
+        .ok_or(format!("{} must be an object when provided.", context))?;
+
+    for key in axes.keys() {
+        if !matches!(key.as_str(), "x" | "y") {
+            return Err(format!("{}.{} is not supported. Use x or y.", context, key));
+        }
+    }
+
+    for key in ["x", "y"] {
+        let Some(value) = axes.get(key) else {
+            continue;
+        };
+        if value.as_str().is_some() {
+            continue;
+        }
+        let axis = value
+            .as_object()
+            .ok_or(format!("{}.{} must be a string label or an object.", context, key))?;
+        for field in ["label", "description"] {
+            if let Some(value) = axis.get(field) {
+                value
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or(format!("{}.{}.{} must be a non-empty string.", context, key, field))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_graph_interactions(
+    interactions: Option<&Value>,
+    data: &serde_json::Map<String, Value>,
+    column_ids: &[String],
+    graph_ids: &[String],
+    graph_columns_by_id: &std::collections::HashMap<String, Vec<String>>,
+    context: &str,
+) -> Result<(), String> {
+    let Some(interactions) = interactions else {
+        return Ok(());
+    };
+    let interactions = interactions
+        .as_object()
+        .ok_or(format!("{} must be an object when provided.", context))?;
+
+    if let Some(details) = interactions.get("details") {
+        validate_graph_details(details, column_ids, &format!("{}.details", context))?;
+    }
+
+    if let Some(hover) = interactions.get("hover") {
+        if let Some(value) = hover.as_str().map(str::trim) {
+            if !matches!(value, "auto" | "none") {
+                return Err(format!("{}.hover `{}` is not supported. Use auto or none.", context, value));
+            }
+        } else if !hover.is_object() && !hover.is_boolean() {
+            return Err(format!("{}.hover must be auto, none, a boolean, or an object.", context));
+        }
+    }
+
+    if let Some(drilldowns) = interactions.get("drilldowns") {
+        let drilldowns = drilldowns
+            .as_array()
+            .ok_or(format!("{}.drilldowns must be an array.", context))?;
+        for (index, drilldown) in drilldowns.iter().enumerate() {
+            validate_graph_drilldown(
+                drilldown,
+                column_ids,
+                graph_ids,
+                graph_columns_by_id,
+                &format!("{}.drilldowns[{}]", context, index),
+            )?;
+        }
+    }
+
+    if let Some(metric_controls) = interactions.get("metricControls") {
+        validate_graph_metric_controls(metric_controls, data, column_ids, &format!("{}.metricControls", context))?;
+    }
+
+    Ok(())
+}
+
+fn validate_graph_details(details: &Value, column_ids: &[String], context: &str) -> Result<(), String> {
+    let details = details
+        .as_object()
+        .ok_or(format!("{} must be an object when provided.", context))?;
+    if let Some(title_field) = details.get("titleField") {
+        let field = title_field
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.titleField must be a non-empty string.", context))?;
+        if !column_ids.iter().any(|candidate| candidate == field) {
+            return Err(format!("{}.titleField references missing data column `{}`.", context, field));
+        }
+    }
+    if let Some(fields) = details.get("fields") {
+        let fields = fields
+            .as_array()
+            .ok_or(format!("{}.fields must be an array.", context))?;
+        for (index, field) in fields.iter().enumerate() {
+            let field_name = if let Some(text) = field.as_str() {
+                text.trim()
+            } else {
+                field
+                    .as_object()
+                    .and_then(|object| object.get("field"))
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .ok_or(format!("{}.fields[{}] must be a string or object with field.", context, index))?
+            };
+            if field_name.is_empty() {
+                return Err(format!("{}.fields[{}] must reference a non-empty field.", context, index));
+            }
+            if !column_ids.iter().any(|candidate| candidate == field_name) {
+                return Err(format!("{}.fields[{}] references missing data column `{}`.", context, index, field_name));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_graph_drilldown(
+    drilldown: &Value,
+    column_ids: &[String],
+    graph_ids: &[String],
+    graph_columns_by_id: &std::collections::HashMap<String, Vec<String>>,
+    context: &str,
+) -> Result<(), String> {
+    let drilldown = drilldown
+        .as_object()
+        .ok_or(format!("{} must be an object.", context))?;
+    drilldown
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(format!("{}.id must be a non-empty string.", context))?;
+    let target_graph_id = drilldown
+        .get("targetGraphId")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(format!("{}.targetGraphId must be a non-empty string.", context))?;
+    if !graph_ids.iter().any(|candidate| candidate == target_graph_id) {
+        return Err(format!("{}.targetGraphId references missing graph `{}`.", context, target_graph_id));
+    }
+    if let Some(trigger) = drilldown.get("trigger") {
+        let trigger = trigger
+            .as_str()
+            .map(str::trim)
+            .ok_or(format!("{}.trigger must be one of mark, node, link, or legend.", context))?;
+        if !matches!(trigger, "mark" | "node" | "link" | "legend") {
+            return Err(format!("{}.trigger `{}` is not supported. Use mark, node, link, or legend.", context, trigger));
+        }
+    }
+    let match_object = drilldown
+        .get("match")
+        .and_then(|value| value.as_object())
+        .ok_or(format!("{}.match must be an object.", context))?;
+    let source = match_object
+        .get("source")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(format!("{}.match.source must be a non-empty string.", context))?;
+    if !matches!(source, "node.label" | "link.source" | "link.target") && !column_ids.iter().any(|candidate| candidate == source) {
+        return Err(format!("{}.match.source references missing data column or unsupported token `{}`.", context, source));
+    }
+    let target_field = match_object
+        .get("targetField")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(format!("{}.match.targetField must be a non-empty string.", context))?;
+    let target_columns = graph_columns_by_id.get(target_graph_id).cloned().unwrap_or_default();
+    if !target_columns.iter().any(|candidate| candidate == target_field) {
+        return Err(format!("{}.match.targetField references missing target graph column `{}`.", context, target_field));
+    }
+    Ok(())
+}
+
+fn validate_graph_metric_controls(
+    metric_controls: &Value,
+    data: &serde_json::Map<String, Value>,
+    column_ids: &[String],
+    context: &str,
+) -> Result<(), String> {
+    if metric_controls == &Value::Bool(true) {
+        return Ok(());
+    }
+    let controls: Vec<&Value> = if let Some(array) = metric_controls.as_array() {
+        array.iter().collect()
+    } else {
+        vec![metric_controls]
+    };
+    for (index, control) in controls.iter().enumerate() {
+        let control_context = if metric_controls.is_array() {
+            format!("{}[{}]", context, index)
+        } else {
+            context.to_string()
+        };
+        let control = control
+            .as_object()
+            .ok_or(format!("{} must be an object, array of objects, or true.", control_context))?;
+        if let Some(target) = control.get("target") {
+            let target = target
+                .as_str()
+                .map(str::trim)
+                .ok_or(format!("{}.target must be y or value.", control_context))?;
+            if !matches!(target, "y" | "value") {
+                return Err(format!("{}.target `{}` is not supported. Use y or value.", control_context, target));
+            }
+        }
+        if let Some(fields) = control.get("fields") {
+            let fields = fields
+                .as_array()
+                .ok_or(format!("{}.fields must be an array.", control_context))?;
+            if fields.is_empty() {
+                return Err(format!("{}.fields must include at least one field.", control_context));
+            }
+            for (field_index, field) in fields.iter().enumerate() {
+                let field = field
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or(format!("{}.fields[{}] must be a non-empty string.", control_context, field_index))?;
+                if !column_ids.iter().any(|candidate| candidate == field) {
+                    return Err(format!("{}.fields[{}] references missing data column `{}`.", control_context, field_index, field));
+                }
+                if !is_numeric_graph_column(data, field) {
+                    return Err(format!("{}.fields[{}] `{}` must reference a numeric field.", control_context, field_index, field));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_numeric_graph_column(data: &serde_json::Map<String, Value>, field: &str) -> bool {
+    data.get("rows")
+        .and_then(|value| value.as_array())
+        .map(|rows| {
+            !rows.is_empty()
+                && rows.iter().all(|row| {
+                    row.as_object()
+                        .and_then(|object| object.get(field))
+                        .is_some_and(is_numeric_json_value)
+                })
+        })
+        .unwrap_or(false)
+}
+
+fn validate_graph_required_row_values(
+    graph_id: &str,
+    graph_type: &str,
+    data: &serde_json::Map<String, Value>,
+    encoding: &serde_json::Map<String, Value>,
+    options: Option<&Value>,
+    context: &str,
+) -> Result<(), String> {
+    let rows = data
+        .get("rows")
+        .and_then(|value| value.as_array())
+        .ok_or(format!("{}.data.rows must be an array.", context))?;
+    let column_types = graph_column_types(data);
+    let mut numeric_fields: Vec<String> = Vec::new();
+    let mut time_fields: Vec<String> = Vec::new();
+    let mut text_fields: Vec<String> = Vec::new();
+
+    match graph_type {
+        "line" | "area" | "bar" | "stacked_bar" | "grouped_bar" | "combo" => {
+            extend_encoding_fields(&mut numeric_fields, encoding, "y");
+            maybe_require_axis_field(&mut numeric_fields, &mut time_fields, encoding, options, &column_types, "x", false);
+        }
+        "scatter" | "bubble" => {
+            extend_encoding_fields(&mut numeric_fields, encoding, "y");
+            maybe_require_axis_field(&mut numeric_fields, &mut time_fields, encoding, options, &column_types, "x", true);
+            extend_optional_numeric_field(&mut numeric_fields, encoding, "size");
+        }
+        "histogram" | "boxplot" => extend_encoding_fields(&mut numeric_fields, encoding, "value"),
+        "heatmap" | "matrix" => extend_encoding_fields(&mut numeric_fields, encoding, "value"),
+        "pie" | "donut" | "funnel" | "gauge" | "radar" | "waterfall" | "tree" | "treemap" | "sunburst" | "sankey" => {
+            extend_encoding_fields(&mut numeric_fields, encoding, "value");
+        }
+        "candlestick" => {
+            extend_encoding_fields(&mut numeric_fields, encoding, "open");
+            extend_encoding_fields(&mut numeric_fields, encoding, "high");
+            extend_encoding_fields(&mut numeric_fields, encoding, "low");
+            extend_encoding_fields(&mut numeric_fields, encoding, "close");
+            maybe_require_axis_field(&mut numeric_fields, &mut time_fields, encoding, options, &column_types, "x", true);
+        }
+        "timeline" | "gantt" => {
+            extend_encoding_fields(&mut time_fields, encoding, "start");
+            extend_encoding_fields(&mut time_fields, encoding, "end");
+        }
+        _ => {}
+    }
+    match graph_type {
+        "pie" | "donut" | "funnel" | "gauge" | "radar" | "waterfall" | "treemap" | "sunburst" | "tree" => {
+            extend_encoding_fields(&mut text_fields, encoding, "label");
+        }
+        "timeline" | "gantt" => extend_encoding_fields(&mut text_fields, encoding, "label"),
+        "network" | "sankey" => {
+            extend_encoding_fields(&mut text_fields, encoding, "source");
+            extend_encoding_fields(&mut text_fields, encoding, "target");
+        }
+        _ => {}
+    }
+
+    extend_optional_numeric_field(&mut numeric_fields, encoding, "min");
+    extend_optional_numeric_field(&mut numeric_fields, encoding, "max");
+    numeric_fields.sort();
+    numeric_fields.dedup();
+    time_fields.sort();
+    time_fields.dedup();
+    text_fields.sort();
+    text_fields.dedup();
+
+    for (row_index, row) in rows.iter().enumerate() {
+        let Some(row) = row.as_object() else {
+            continue;
+        };
+        for field in &text_fields {
+            let value = row.get(field).ok_or(format!(
+                "{}.data.rows[{}].{} is required and must be non-empty for universal_graph graph `{}` type `{}`.",
+                context, row_index, field, graph_id, graph_type
+            ))?;
+            if !is_non_empty_json_value(value) {
+                return Err(format!(
+                    "{}.data.rows[{}].{} must be non-empty for universal_graph graph `{}` type `{}`.",
+                    context, row_index, field, graph_id, graph_type
+                ));
+            }
+        }
+        for field in &numeric_fields {
+            let value = row.get(field).ok_or(format!(
+                "{}.data.rows[{}].{} is required and must be numeric for universal_graph graph `{}` type `{}`.",
+                context, row_index, field, graph_id, graph_type
+            ))?;
+            if !is_numeric_json_value(value) {
+                return Err(format!(
+                    "{}.data.rows[{}].{} must be a finite number for universal_graph graph `{}` type `{}`.",
+                    context, row_index, field, graph_id, graph_type
+                ));
+            }
+        }
+        for field in &time_fields {
+            let value = row.get(field).ok_or(format!(
+                "{}.data.rows[{}].{} is required and must be a parseable date/time for universal_graph graph `{}` type `{}`.",
+                context, row_index, field, graph_id, graph_type
+            ))?;
+            if !is_time_json_value(value) {
+                return Err(format!(
+                    "{}.data.rows[{}].{} must be a parseable date/time for universal_graph graph `{}` type `{}`.",
+                    context, row_index, field, graph_id, graph_type
+                ));
+            }
+        }
+        if matches!(graph_type, "timeline" | "gantt") {
+            if let (Some(start_field), Some(end_field)) = (
+                first_encoding_field(encoding, "start"),
+                first_encoding_field(encoding, "end"),
+            ) {
+                if let (Some(start), Some(end)) = (
+                    row.get(&start_field).and_then(json_time_millis),
+                    row.get(&end_field).and_then(json_time_millis),
+                ) {
+                    if end < start {
+                        return Err(format!(
+                            "{}.data.rows[{}].{} must be greater than or equal to {} for universal_graph graph `{}` type `{}`.",
+                            context, row_index, end_field, start_field, graph_id, graph_type
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn graph_column_types(data: &serde_json::Map<String, Value>) -> std::collections::HashMap<String, String> {
+    data.get("columns")
+        .and_then(|value| value.as_array())
+        .map(|columns| {
+            columns
+                .iter()
+                .filter_map(|column| {
+                    let object = column.as_object()?;
+                    let id = object.get("id")?.as_str()?.to_string();
+                    let column_type = object
+                        .get("type")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_ascii_lowercase();
+                    Some((id, column_type))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extend_encoding_fields(fields: &mut Vec<String>, encoding: &serde_json::Map<String, Value>, key: &str) {
+    if let Some(value) = encoding.get(key) {
+        match value {
+            Value::String(field) => fields.push(field.trim().to_string()),
+            Value::Array(values) => {
+                for value in values {
+                    if let Some(field) = value.as_str() {
+                        fields.push(field.trim().to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extend_optional_numeric_field(fields: &mut Vec<String>, encoding: &serde_json::Map<String, Value>, key: &str) {
+    if encoding.contains_key(key) {
+        extend_encoding_fields(fields, encoding, key);
+    }
+}
+
+fn first_encoding_field(encoding: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    let mut fields = Vec::new();
+    extend_encoding_fields(&mut fields, encoding, key);
+    fields.into_iter().next()
+}
+
+fn maybe_require_axis_field(
+    numeric_fields: &mut Vec<String>,
+    time_fields: &mut Vec<String>,
+    encoding: &serde_json::Map<String, Value>,
+    options: Option<&Value>,
+    column_types: &std::collections::HashMap<String, String>,
+    key: &str,
+    prefer_continuous: bool,
+) {
+    let mut axis_fields = Vec::new();
+    extend_encoding_fields(&mut axis_fields, encoding, key);
+    let Some(field) = axis_fields.first() else {
+        return;
+    };
+    let scale_key = format!("{}Scale", key);
+    let scale = options
+        .and_then(|value| value.get(scale_key.as_str()))
+        .and_then(|value| value.as_str())
+        .unwrap_or("auto");
+    let column_type = column_types.get(field).map(String::as_str).unwrap_or("");
+    if scale == "time" || column_type == "date" {
+        time_fields.push(field.clone());
+    } else if scale == "linear" || (prefer_continuous && column_type == "number") {
+        numeric_fields.push(field.clone());
+    }
+}
+
+fn is_numeric_json_value(value: &Value) -> bool {
+    match value {
+        Value::Number(number) => number.as_f64().map_or(false, f64::is_finite),
+        Value::String(text) => text.trim().parse::<f64>().map_or(false, f64::is_finite),
+        _ => false,
+    }
+}
+
+fn is_time_json_value(value: &Value) -> bool {
+    json_time_millis(value).is_some()
+}
+
+fn is_non_empty_json_value(value: &Value) -> bool {
+    match value {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Number(number) => number.as_f64().map_or(false, f64::is_finite),
+        Value::Bool(_) => true,
+        _ => false,
+    }
+}
+
+fn json_time_millis(value: &Value) -> Option<f64> {
+    match value {
+        Value::String(text) => parse_graph_time_millis(text),
+        Value::Number(number) => number.as_f64().filter(|value| value.is_finite()),
+        _ => None,
+    }
+}
+
+fn parse_graph_time_millis(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if let Ok(value) = chrono::DateTime::parse_from_rfc3339(text) {
+        return Some(value.timestamp_millis() as f64);
+    }
+    if let Ok(value) = chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d") {
+        return value
+            .and_hms_opt(0, 0, 0)
+            .map(|datetime| datetime.and_utc().timestamp_millis() as f64);
+    }
+    chrono::NaiveDate::parse_from_str(&format!("{}-01", text), "%Y-%m-%d")
+        .ok()
+        .and_then(|value| value.and_hms_opt(0, 0, 0))
+        .map(|datetime| datetime.and_utc().timestamp_millis() as f64)
 }
 
 fn validate_graph_columns(
@@ -1367,7 +1994,7 @@ fn build_core_hosted_connector(available_tools: &[Value]) -> Option<Value> {
         "label": "MCPViews Core",
         "description": "Local renderers, review surfaces, and hosted discovery helpers available in MCPViews.",
         "namespaces": ["mcpviews", "renderers", "reviews"],
-        "capabilities": ["rich-content", "structured-data", "review", "discovery"],
+        "capabilities": ["rich-content", "rich-content-embeds", "structured-data", "universal-graph", "graph-analytics", "review", "discovery"],
         "authState": "available",
         "discoveryState": "breadcrumb",
         "toolCount": ordered_tools.len(),
@@ -1737,7 +2364,7 @@ pub(crate) fn setup_instructions(agent_type: &str) -> String {
 
 // ─── Renderer definitions ───
 
-const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions or embedded table changes for user review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical charts/graphs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views. Do not use for approval/review decisions in V1.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main artifact is a visual analysis rather than prose.";
+const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded read-only universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions, embedded table changes, or read-only graph context for a review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical chart/graph packs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views when the main artifact is visual analysis rather than prose. Call the direct universal_graph tool when available, or push_content with tool_name universal_graph for compatibility.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main artifact is a visual analysis. Use rich_content with empty ```universal_graph:<graph-id> fences when graphs need prose, suggestions, citations, or review context.";
 
 const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call rich_content, structured_data, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
 
@@ -1810,9 +2437,9 @@ Include table data in `data.tables`:
 
 Table data shape matches structured_data (columns with id/name/change, rows with id/cells/children). Tables are fully interactive in review mode (accept/reject rows, edit cells).
 
-## Embedded universal_graph charts (rich_content only)
+## Embedded universal_graph charts (rich_content display or review)
 
-Embed read-only analytical charts within markdown using empty fenced code blocks:
+Embed read-only analytical charts within markdown using empty fenced code blocks. This works in plain rich_content pushes and in rich_content push_review payloads; graphs remain read-only review context and never carry approve/reject state.
 
 ````
 Context paragraph explaining the graph.
@@ -1832,12 +2459,13 @@ Include graph specs in `data.graphs`:
     "title": "Revenue by Month",
     "type": "line",
     "data": { "columns": [...], "rows": [...] },
-    "encoding": { "x": "month", "y": "revenue" }
+    "encoding": { "x": "month", "y": "revenue" },
+    "axes": { "x": "Month", "y": "Revenue in dollars" }
   }]
 }
 ```
 
-Embedded graph fences must be empty and must reference a matching entry in `data.graphs`. Graph embeds are read-only in V1; use standalone `universal_graph` when the main artifact is a graph pack rather than a prose document.
+Embedded graph fences must be empty and must reference a matching entry in `data.graphs`. If multiple graphs participate in drilldowns, include the full graph registry in `data.graphs` and reference only the primary graph from the body. Graph embeds are read-only in V1; use standalone `universal_graph` or the direct `universal_graph` tool when the main artifact is a graph pack rather than a prose or review document.
 
 ## Combined review payload
 
@@ -1893,7 +2521,7 @@ Mark each row's `change` field to visually distinguish operations:
 
 1. **Gather**: Collect all planned mutations before executing any
 2. **Present**: Send them via `push_review` as a structured_data table — this returns immediately with a `session_id`
-3. **Wait**: Call `await_review(session_id)` to block until the user's decisions (accept/reject per row, possible cell edits). If your transport times out, call `await_review` again with the same `session_id` — the session persists on the server
+3. **Wait**: Call `await_review(session_id)` to wait for the user's decisions (accept/reject per row, possible cell edits). If it returns `pending` before the user decides, call `await_review` again with the same `session_id` — the session persists on the server
 4. **Execute**: Only execute rows the user accepted, respecting any user edits to cell values
 5. **Report**: Summarize what was executed and what was skipped
 
@@ -1998,7 +2626,7 @@ Example:
 
 ## push_review + structured_data (change review mode — two-step flow)
 
-`push_review` returns immediately with a `session_id`. Call `await_review(session_id)` to block until the user submits. If your transport times out, call `await_review` again — the session persists on the server.
+`push_review` returns immediately with a `session_id`. Call `await_review(session_id)` to wait until the user submits. If it returns `pending` before the user decides, call `await_review` again — the session persists on the server.
 
 Shows proposed changes with color-coded diffs. Users can accept/reject individual rows and columns, edit cell values, then submit. Use `change` fields to mark what was added, deleted, or updated.
 
@@ -2083,7 +2711,7 @@ push_review response contains user decisions:
 }
 ```
 
-**Bulk MCP actions**: When an agent plans 2+ MCP tool calls that mutate external resources, it MUST present them via push_review before executing. push_review returns a session_id; call await_review(session_id) to block until the user decides. See the bulk_action_review rule for the full workflow and table structure.
+**Bulk MCP actions**: When an agent plans 2+ MCP tool calls that mutate external resources, it MUST present them via push_review before executing. push_review returns a session_id; call await_review(session_id) to wait until the user decides. See the bulk_action_review rule for the full workflow and table structure.
 
 ## Data shape reference
 
@@ -2095,19 +2723,20 @@ push_review response contains user decisions:
 - **Always use `children` for parent-child relationships** — do not flatten hierarchies into extra columns
 - Nested rows auto-expand to depth 2; deeper rows start collapsed"#;
 
-const UNIVERSAL_GRAPH_RULE: &str = r#"Use universal_graph for read-only analytical charts and graphs that should be rendered by MCPViews instead of authored as custom code.
+const UNIVERSAL_GRAPH_RULE: &str = r#"Use universal_graph for read-only analytical charts and graphs that should be rendered by MCPViews instead of authored as custom code. If the hosted catalog is available, inspect `describe_tool("universal_graph")` for the current schema summary before constructing a complex graph pack.
 
 ## Choose the right call pattern
 
-- Use `push_content` + `universal_graph` for standalone graph packs and dashboards.
-- Embed graphs inside `rich_content` when prose needs inline visual support, using empty fenced blocks like:
+- Prefer the direct `universal_graph` tool for standalone graph packs and dashboards when it is available in the tool list.
+- Use `push_content` + `universal_graph` as the compatibility form when direct renderer tools are unavailable.
+- Embed graphs inside `rich_content` when prose, citations, suggestions, or review context needs inline visual support, using empty fenced blocks like:
 
 ````markdown
 ```universal_graph:revenue_by_month
 ```
 ````
 
-and define the matching graph in `data.graphs`.
+and define the matching graph in `data.graphs`. Embedded graphs also work inside rich_content review payloads, but they are read-only context; review decisions still come from suggestions and structured_data tables.
 
 ## Payload shape
 
@@ -2131,16 +2760,30 @@ and define the matching graph in `data.graphs`.
         { "month": "2026-02", "revenue": 142000 }
       ]
     },
-    "encoding": { "x": "month", "y": "revenue" }
+    "encoding": { "x": "month", "y": "revenue" },
+    "axes": {
+      "x": { "label": "Month", "description": "Calendar month at period end" },
+      "y": "Revenue in dollars"
+    }
   }]
 }
 ```
 
 Supported V1 graph types: line, area, bar, stacked_bar, grouped_bar, scatter, bubble, combo, histogram, boxplot, heatmap, matrix, pie, donut, waterfall, funnel, gauge, radar, candlestick, timeline, gantt, tree, network, treemap, sunburst, sankey.
 
-Validation is strict: graph IDs must be unique, graph types must be supported, required encodings must be present for the selected type, and encoding fields must reference existing `data.columns` IDs. If a requested graph type is unsupported, choose a supported type and retry. If no supported graph honestly fits the data, provide an explanation plus structured_data table as a last resort.
+Optional per-graph `options` can include `xScale`/`yScale` (`auto`, `category`, `linear`, `time`), `maxVisibleItems` for dense summaries, `showAll: true` when a caller prefers complete but crowded marks, `otherBucket` (`separate`, `inline`, `hidden`) for dense categorical summaries, and `binCount` for histograms. Scatter and bubble charts use numeric/time x-scales automatically when the x column supports them; categorical x is only for string dimensions. Even with `showAll`, labels may be sampled or culled to avoid overlap.
 
-V1 is read-only: use tooltips, legends, focus/highlight, source-data inspection, and zoom/pan where useful. Do not encode approve/reject review state in graphs."#;
+Optional per-graph `axes` can provide visible x/y axis context. Each axis can be a string label or an object with `label` and optional `description`. When omitted, supported charts derive axis titles from encoded column names.
+
+Optional per-graph `role` can be `primary` (default) or `drilldown`. Drilldown graphs are hidden from the initial graph list but remain addressable from primary graph interactions, including rich-content embeds that carry multiple graph specs.
+
+Optional per-graph `interactions` can include `details` (`titleField` plus `fields[]` to select tooltip/detail rows), `hover` (`auto` by default, or `none` to disable hover highlighting), `drilldowns[]` (`id`, `label`, `targetGraphId`, `trigger`, and `match` mapping from a current field or token like `node.label`/`link.source`/`link.target` to a target graph field), and `metricControls` for read-only swapping of `encoding.y` or `encoding.value` among validated numeric fields.
+
+Dense graphs auto-summarize by default with visible disclosure, such as sampled axis ticks, top-N categories with a separated Other callout, dense pie/donut summaries, capped timeline/funnel rows, duplicate candlestick/time-key aggregation, aggregated network/sankey links, and source-table row-count notices. Very dense scatter/bubble, heatmap/matrix, network, and sankey views use compact native layers with sampled focus marks so all visual marks remain represented without thousands of DOM nodes. Full values remain inspectable through graph marks, visible custom tooltips, pinned detail panels, and the Data table. Histogram `binCount` is clamped to a safe range. Gauges can read `encoding.min`/`encoding.max` fields, with `graph.min`/`graph.max` as fallback, and display under-limit or over-limit values with clamped arcs. Funnels preserve a uniform side slope while using each stage's vertical thickness to encode relative value; exact stage values remain in labels, tooltips, pinned details, and source rows. Tree and sunburst hierarchy traversal is cycle-safe and stack-safe; extremely deep sunbursts disclose compressed thin rings. Sunburst uses `encoding.parent` when supplied and falls back to donut only when no hierarchy exists. Sankey data with cycles or self-links falls back to a network view because Sankey flow is acyclic.
+
+Validation is strict: graph IDs must be unique, graph types must be supported, roles, axes, and options must use supported values, required encodings must be present for the selected type, encoding fields must reference existing `data.columns` IDs, required numeric/time row values must be valid, drilldowns must target existing graph IDs and fields, and metric controls must reference numeric fields. If a requested graph type is unsupported or required values are invalid, choose a supported type or repair the data and retry. If no supported graph honestly fits the data, provide an explanation plus structured_data table as a last resort.
+
+V1 is read-only: use visible custom tooltips, legends, focus/highlight, click-to-pin detail panels, source-data inspection, declarative drilldowns, metric controls, and zoom/pan where useful. Always include axis labels/descriptions when numeric values need business context. Do not encode approve/reject review state in graphs."#;
 
 fn builtin_renderer_definitions() -> Vec<RendererDef> {
     vec![
@@ -2172,10 +2815,10 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
         },
         RendererDef {
             name: "universal_graph".into(),
-            description: "Native read-only analytical graph renderer for common chart, hierarchy, network, flow, timeline, matrix, and distribution views.".into(),
+            description: "Native read-only analytical graph renderer for standalone graph packs and rich_content embeds across chart, hierarchy, network, flow, timeline, matrix, and distribution views.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "encoding": { "x": "field", "y": "field", "label": "field", "value": "field", "source": "field", "target": "field" } }] }"#.into()),
+            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "role": "primary|drilldown", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "encoding": { "x": "field", "y": "field", "label": "field", "parent": "field", "value": "field", "source": "field", "target": "field", "min": "field", "max": "field" }, "axes": { "x": { "label": "X axis label", "description": "Optional hover context" }, "y": "Y axis label" }, "options": { "xScale": "auto|category|linear|time", "yScale": "auto|category|linear|time", "maxVisibleItems": 24, "showAll": false, "otherBucket": "separate|inline|hidden", "binCount": 12 }, "interactions": { "details": { "titleField": "field", "fields": ["field"] }, "hover": "auto", "drilldowns": [{ "id": "detail", "label": "Open detail", "targetGraphId": "detail_graph", "trigger": "mark", "match": { "source": "field", "targetField": "field" } }], "metricControls": { "target": "y|value", "fields": ["numeric_field"] } } }] }"#.into()),
             display_mode: None,
             invoke_schema: None,
             url_patterns: vec![],
@@ -2857,6 +3500,55 @@ mod tests {
     }
 
     #[test]
+    fn test_builtin_rules_include_universal_graph_agent_discovery_guidance() {
+        let renderers = builtin_renderer_definitions();
+        let rules = collect_builtin_rules(&renderers);
+        let graph_rule = rules
+            .iter()
+            .find(|rule| rule["name"] == "universal_graph_usage")
+            .expect("universal_graph_usage rule should be present");
+        let text = graph_rule["rule"].as_str().unwrap();
+
+        assert!(text.contains("direct `universal_graph` tool"));
+        assert!(text.contains("rich_content review payloads"));
+        assert!(text.contains("axis labels/descriptions"));
+        assert!(text.contains("uniform side slope"));
+        assert!(text.contains("vertical thickness"));
+        assert!(text.contains("visible custom tooltips"));
+        assert!(text.contains("Data table"));
+    }
+
+    #[test]
+    fn test_rules_version_and_persistence_marker_are_updated() {
+        assert_eq!(RULES_VERSION, "9");
+        let instructions = persistence_instructions("codex");
+        assert!(instructions.contains("mcpviews-rules-version: 9"));
+        assert!(instructions.contains("Append all rules below to `AGENTS.md`"));
+    }
+
+    #[test]
+    fn test_universal_graph_tool_definition_describes_agent_facing_features() {
+        let renderers = builtin_renderer_definitions();
+        let tools = builtin_registry::builtin_tool_definitions(&renderers);
+        let graph_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "universal_graph")
+            .expect("universal_graph tool should exist");
+
+        let description = graph_tool["description"].as_str().unwrap();
+        let graphs_description = graph_tool["inputSchema"]["properties"]["graphs"]["description"]
+            .as_str()
+            .unwrap();
+
+        assert!(description.contains("standalone graph packs"));
+        assert!(description.contains("rich_content embeds"));
+        assert!(graphs_description.contains("axes provide x/y labels"));
+        assert!(graphs_description.contains("interactions may include details"));
+        assert!(graphs_description.contains("Dense graphs auto-summarize"));
+        assert!(graphs_description.contains("funnels use uniform side slope"));
+    }
+
+    #[test]
     fn test_build_core_hosted_connector_uses_registry_group_metadata() {
         let renderers = builtin_renderer_definitions();
         let available_tools = extract_tool_summaries(&builtin_registry::builtin_tool_definitions(&renderers));
@@ -2886,6 +3578,45 @@ mod tests {
         }
 
         assert_eq!(actual_groups, expected_groups);
+    }
+
+    #[test]
+    fn test_core_hosted_connector_exposes_graph_breadcrumb_capabilities() {
+        let renderers = builtin_renderer_definitions();
+        let available_tools = extract_tool_summaries_with_schema(&builtin_registry::builtin_tool_definitions(&renderers));
+        let connector =
+            build_core_hosted_connector(&available_tools).expect("core connector should exist");
+
+        let capabilities = connector["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert!(capabilities.contains(&"universal-graph"));
+        assert!(capabilities.contains(&"graph-analytics"));
+        assert!(capabilities.contains(&"rich-content-embeds"));
+
+        let presentation = connector["toolGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|group| group["name"] == "Presentation")
+            .expect("Presentation group should exist");
+        assert!(presentation["hint"].as_str().unwrap().contains("graph packs"));
+
+        let tool_names = presentation["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
+            .collect::<Vec<_>>();
+        assert!(tool_names.contains(&"rich_content"));
+        assert!(tool_names.contains(&"structured_data"));
+        assert!(tool_names.contains(&"universal_graph"));
+        assert!(tool_names.contains(&"push_review"));
+        assert!(tool_names.contains(&"await_review"));
+        assert!(tool_names.contains(&"push_check"));
     }
 
     #[test]
@@ -3806,12 +4537,340 @@ mod tests {
                             { "month": "2026-02", "revenue": 142000 }
                         ]
                     },
-                    "encoding": { "x": "month", "y": "revenue" }
+                    "encoding": { "x": "month", "y": "revenue" },
+                    "options": {
+                        "xScale": "time",
+                        "yScale": "linear",
+                        "maxVisibleItems": 24,
+                        "showAll": false
+                    }
                 }]
             }
         });
         let params = extract_push_params(&args, false).unwrap();
         assert_eq!(params.tool_name, "universal_graph");
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_options() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "revenue_by_month",
+                    "type": "line",
+                    "data": {
+                        "columns": [
+                            { "id": "month", "name": "Month", "type": "date" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [{ "month": "2026-01", "revenue": 120000 }]
+                    },
+                    "encoding": { "x": "month", "y": "revenue" },
+                    "options": {
+                        "xScale": "log",
+                        "maxVisibleItems": 0
+                    }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("xScale `log` is not supported"));
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_universal_graph_dense_options() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "histogram_dense",
+                    "type": "histogram",
+                    "data": {
+                        "columns": [{ "id": "value", "name": "Value", "type": "number" }],
+                        "rows": [{ "value": 1 }, { "value": 2 }, { "value": 3 }]
+                    },
+                    "encoding": { "value": "value" },
+                    "options": {
+                        "binCount": 120,
+                        "otherBucket": "hidden",
+                        "showAll": true
+                    }
+                }]
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "universal_graph");
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_universal_graph_axis_labels() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "revenue_by_segment",
+                    "type": "bar",
+                    "data": {
+                        "columns": [
+                            { "id": "segment", "name": "Segment" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [{ "segment": "Enterprise", "revenue": 120 }]
+                    },
+                    "encoding": { "x": "segment", "y": "revenue" },
+                    "axes": {
+                        "x": { "label": "Customer segment", "description": "CRM commercial segment" },
+                        "y": "ARR in thousands of dollars"
+                    }
+                }]
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "universal_graph");
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_axis_label() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "revenue_by_segment",
+                    "type": "bar",
+                    "data": {
+                        "columns": [
+                            { "id": "segment", "name": "Segment" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [{ "segment": "Enterprise", "revenue": 120 }]
+                    },
+                    "encoding": { "x": "segment", "y": "revenue" },
+                    "axes": { "z": "Not supported" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("axes.z is not supported"));
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_universal_graph_interactions() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [
+                    {
+                        "id": "overview",
+                        "type": "bar",
+                        "data": {
+                            "columns": [
+                                { "id": "segment", "name": "Segment" },
+                                { "id": "revenue", "name": "Revenue", "type": "number" },
+                                { "id": "risk", "name": "Risk", "type": "number" }
+                            ],
+                            "rows": [
+                                { "segment": "Enterprise", "revenue": 120, "risk": 18 },
+                                { "segment": "SMB", "revenue": 80, "risk": 29 }
+                            ]
+                        },
+                        "encoding": { "x": "segment", "y": "revenue" },
+                        "interactions": {
+                            "details": { "titleField": "segment", "fields": ["segment", { "field": "revenue", "label": "ARR" }] },
+                            "hover": "auto",
+                            "metricControls": { "target": "y", "fields": ["revenue", "risk"] },
+                            "drilldowns": [{
+                                "id": "accounts",
+                                "label": "View accounts",
+                                "targetGraphId": "detail",
+                                "trigger": "mark",
+                                "match": { "source": "segment", "targetField": "segment" }
+                            }]
+                        }
+                    },
+                    {
+                        "id": "detail",
+                        "role": "drilldown",
+                        "type": "bar",
+                        "data": {
+                            "columns": [
+                                { "id": "account", "name": "Account" },
+                                { "id": "segment", "name": "Segment" },
+                                { "id": "arr", "name": "ARR", "type": "number" }
+                            ],
+                            "rows": [{ "account": "Northstar", "segment": "Enterprise", "arr": 75 }]
+                        },
+                        "encoding": { "x": "account", "y": "arr" }
+                    }
+                ]
+            }
+        });
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.tool_name, "universal_graph");
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_drilldown_target() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "overview",
+                    "type": "bar",
+                    "data": {
+                        "columns": [
+                            { "id": "segment", "name": "Segment" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [{ "segment": "Enterprise", "revenue": 120 }]
+                    },
+                    "encoding": { "x": "segment", "y": "revenue" },
+                    "interactions": {
+                        "drilldowns": [{
+                            "id": "missing",
+                            "targetGraphId": "missing_detail",
+                            "match": { "source": "segment", "targetField": "segment" }
+                        }]
+                    }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("targetGraphId references missing graph `missing_detail`"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_metric_field() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "overview",
+                    "type": "bar",
+                    "data": {
+                        "columns": [
+                            { "id": "segment", "name": "Segment" },
+                            { "id": "revenue", "name": "Revenue", "type": "number" }
+                        ],
+                        "rows": [{ "segment": "Enterprise", "revenue": 120 }]
+                    },
+                    "encoding": { "x": "segment", "y": "revenue" },
+                    "interactions": {
+                        "metricControls": { "target": "y", "fields": ["segment", "revenue"] }
+                    }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("segment"));
+        assert!(err.contains("numeric field"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_numeric_rows() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "bad_scatter",
+                    "type": "scatter",
+                    "data": {
+                        "columns": [
+                            { "id": "x", "name": "X", "type": "number" },
+                            { "id": "y", "name": "Y", "type": "number" }
+                        ],
+                        "rows": [{ "x": 1, "y": "not a number" }]
+                    },
+                    "encoding": { "x": "x", "y": "y" },
+                    "options": { "xScale": "linear" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("bad_scatter"));
+        assert!(err.contains("type `scatter`"));
+        assert!(err.contains("data.rows[0].y"));
+        assert!(err.contains("finite number"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_time_rows() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "bad_timeline",
+                    "type": "timeline",
+                    "data": {
+                        "columns": [
+                            { "id": "task", "name": "Task" },
+                            { "id": "start", "name": "Start", "type": "date" },
+                            { "id": "end", "name": "End", "type": "date" }
+                        ],
+                        "rows": [{ "task": "Build", "start": "not a date", "end": "2026-01-31" }]
+                    },
+                    "encoding": { "label": "task", "start": "start", "end": "end" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("bad_timeline"));
+        assert!(err.contains("type `timeline`"));
+        assert!(err.contains("data.rows[0].start"));
+        assert!(err.contains("parseable date/time"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_reversed_universal_graph_timeline_rows() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "backwards_timeline",
+                    "type": "timeline",
+                    "data": {
+                        "columns": [
+                            { "id": "task", "name": "Task" },
+                            { "id": "start", "name": "Start", "type": "date" },
+                            { "id": "end", "name": "End", "type": "date" }
+                        ],
+                        "rows": [{ "task": "Build", "start": "2026-02-10", "end": "2026-01-01" }]
+                    },
+                    "encoding": { "label": "task", "start": "start", "end": "end" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("backwards_timeline"));
+        assert!(err.contains("type `timeline`"));
+        assert!(err.contains("data.rows[0].end"));
+        assert!(err.contains("greater than or equal to start"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_universal_graph_missing_network_endpoint() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "bad_network",
+                    "type": "network",
+                    "data": {
+                        "columns": [
+                            { "id": "source", "name": "Source" },
+                            { "id": "target", "name": "Target" }
+                        ],
+                        "rows": [{ "source": "A", "target": null }]
+                    },
+                    "encoding": { "source": "source", "target": "target" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("bad_network"));
+        assert!(err.contains("type `network`"));
+        assert!(err.contains("data.rows[0].target"));
+        assert!(err.contains("must be non-empty"));
     }
 
     #[test]

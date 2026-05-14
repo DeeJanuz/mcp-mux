@@ -685,7 +685,7 @@
     // Check if we already have a cached container for this session
     var cached = contentCache.get(sessionId);
     if (cached) {
-      updateRenderedSession(cached, sessionId);
+      syncSessionBusyIndicator(cached, session);
       cached.classList.add('active');
       return;
     }
@@ -1012,8 +1012,9 @@
         dropdown.querySelectorAll('.apps-renderer-item').forEach(function(item) {
           item.addEventListener('click', function() {
             var rendererName = item.getAttribute('data-renderer');
+            var rendererLabel = item.textContent.trim();
             dropdown.classList.add('hidden');
-            launchStandalone(rendererName);
+            launchStandalone(rendererName, rendererLabel);
           });
         });
 
@@ -1030,12 +1031,13 @@
       });
   }
 
-  function launchStandalone(rendererName) {
+  function launchStandalone(rendererName, rendererLabel) {
     var renderer = getRenderer(rendererName);
     if (!renderer) {
       console.error('[apps] No renderer found for:', rendererName);
       return;
     }
+    var displayLabel = (rendererLabel && String(rendererLabel).trim()) || rendererName;
 
     // Generate a unique session ID
     var sessionId = 'standalone-' + rendererName + '-' + Date.now();
@@ -1045,8 +1047,12 @@
       toolName: 'standalone_launch',
       contentType: rendererName,
       data: {},  // standalone renderers fetch their own data
-      meta: { standalone: true },
-      toolArgs: {},
+      meta: {
+        standalone: true,
+        headerTitle: displayLabel,
+        standaloneRenderer: rendererName,
+      },
+      toolArgs: { title: displayLabel },
       reviewRequired: false,
       timeoutSecs: null,
       timestamp: Date.now(),

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `rich_content` now suppresses a duplicate leading document heading when it matches the renderer title, while preserving the original raw Markdown view.
+
 ## [0.2.5-rc.6] - 2026-05-12
 
 ### Added

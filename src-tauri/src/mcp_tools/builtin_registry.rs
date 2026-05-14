@@ -111,7 +111,7 @@ fn universal_graph_definition(renderers: &[RendererDef]) -> Value {
                 "description": { "type": "string", "description": "Optional context shown above the graphs." },
                 "graphs": {
                     "type": "array",
-                    "description": "Graph definitions. Each graph must include id, type, data.columns, data.rows, and encoding. Per-graph axes provide x/y labels and descriptions for business context. Per-graph role may be primary or drilldown. Per-graph options may include xScale/yScale, maxVisibleItems, showAll, otherBucket, and binCount. Per-graph interactions may include details, hover, drilldowns, and metricControls. Dense graphs auto-summarize with source-data inspection; funnels use uniform side slope with vertical stage thickness encoding value.",
+                    "description": "Graph definitions. Each graph must include id, type, data.columns, data.rows, and encoding. Per-graph axes provide x/y labels and descriptions for business context. Per-graph role may be primary or drilldown. Per-graph options may include xScale/yScale, maxVisibleItems, showAll, otherBucket, binCount, plus waterfall showTotal/totalLabel. Per-graph interactions may include details, hover, drilldowns, and metricControls. Dense graphs auto-summarize with source-data inspection; funnels use uniform side slope with vertical stage thickness encoding value.",
                     "items": { "type": "object" }
                 }
             },

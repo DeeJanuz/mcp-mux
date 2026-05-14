@@ -587,6 +587,21 @@ fn validate_graph_options(options: Option<&Value>, context: &str) -> Result<(), 
         }
     }
 
+    if let Some(value) = options.get("showTotal") {
+        if !value.is_boolean() {
+            return Err(format!("{}.showTotal must be a boolean.", context));
+        }
+    }
+
+    if let Some(value) = options.get("totalLabel") {
+        let Some(label) = value.as_str().map(str::trim) else {
+            return Err(format!("{}.totalLabel must be a string.", context));
+        };
+        if label.is_empty() {
+            return Err(format!("{}.totalLabel must not be empty.", context));
+        }
+    }
+
     if let Some(value) = options.get("otherBucket") {
         let mode = value
             .as_str()
@@ -2771,7 +2786,7 @@ and define the matching graph in `data.graphs`. Embedded graphs also work inside
 
 Supported V1 graph types: line, area, bar, stacked_bar, grouped_bar, scatter, bubble, combo, histogram, boxplot, heatmap, matrix, pie, donut, waterfall, funnel, gauge, radar, candlestick, timeline, gantt, tree, network, treemap, sunburst, sankey.
 
-Optional per-graph `options` can include `xScale`/`yScale` (`auto`, `category`, `linear`, `time`), `maxVisibleItems` for dense summaries, `showAll: true` when a caller prefers complete but crowded marks, `otherBucket` (`separate`, `inline`, `hidden`) for dense categorical summaries, and `binCount` for histograms. Scatter and bubble charts use numeric/time x-scales automatically when the x column supports them; categorical x is only for string dimensions. Even with `showAll`, labels may be sampled or culled to avoid overlap.
+Optional per-graph `options` can include `xScale`/`yScale` (`auto`, `category`, `linear`, `time`), `maxVisibleItems` for dense summaries, `showAll: true` when a caller prefers complete but crowded marks, `otherBucket` (`separate`, `inline`, `hidden`) for dense categorical summaries, and `binCount` for histograms. Waterfall charts also support `showTotal: false` to omit the ending balance bar and `totalLabel` to name the ending balance. Scatter and bubble charts use numeric/time x-scales automatically when the x column supports them; categorical x is only for string dimensions. Even with `showAll`, labels may be sampled or culled to avoid overlap.
 
 Optional per-graph `axes` can provide visible x/y axis context. Each axis can be a string label or an object with `label` and optional `description`. When omitted, supported charts derive axis titles from encoded column names.
 
@@ -2779,7 +2794,7 @@ Optional per-graph `role` can be `primary` (default) or `drilldown`. Drilldown g
 
 Optional per-graph `interactions` can include `details` (`titleField` plus `fields[]` to select tooltip/detail rows), `hover` (`auto` by default, or `none` to disable hover highlighting), `drilldowns[]` (`id`, `label`, `targetGraphId`, `trigger`, and `match` mapping from a current field or token like `node.label`/`link.source`/`link.target` to a target graph field), and `metricControls` for read-only swapping of `encoding.y` or `encoding.value` among validated numeric fields.
 
-Dense graphs auto-summarize by default with visible disclosure, such as sampled axis ticks, top-N categories with a separated Other callout, dense pie/donut summaries, capped timeline/funnel rows, duplicate candlestick/time-key aggregation, aggregated network/sankey links, and source-table row-count notices. Very dense scatter/bubble, heatmap/matrix, network, and sankey views use compact native layers with sampled focus marks so all visual marks remain represented without thousands of DOM nodes. Full values remain inspectable through graph marks, visible custom tooltips, pinned detail panels, and the Data table. Histogram `binCount` is clamped to a safe range. Gauges can read `encoding.min`/`encoding.max` fields, with `graph.min`/`graph.max` as fallback, and display under-limit or over-limit values with clamped arcs. Funnels preserve a uniform side slope while using each stage's vertical thickness to encode relative value; exact stage values remain in labels, tooltips, pinned details, and source rows. Tree and sunburst hierarchy traversal is cycle-safe and stack-safe; extremely deep sunbursts disclose compressed thin rings. Sunburst uses `encoding.parent` when supplied and falls back to donut only when no hierarchy exists. Sankey data with cycles or self-links falls back to a network view because Sankey flow is acyclic.
+Dense graphs auto-summarize by default with visible disclosure, such as sampled axis ticks, top-N categories with a separated Other callout, dense pie/donut summaries, capped timeline/funnel rows, duplicate candlestick/time-key aggregation, aggregated network/sankey links, and source-table row-count notices. Very dense scatter/bubble, heatmap/matrix, network, and sankey views use compact native layers with sampled focus marks so all visual marks remain represented without thousands of DOM nodes. Full values remain inspectable through graph marks, visible custom tooltips, pinned detail panels, and the Data table. Bar, heatmap, and waterfall charts render compact numeric labels when there is enough room. Histogram `binCount` is clamped to a safe range. Gauges can read `encoding.min`/`encoding.max` fields, with `graph.min`/`graph.max` as fallback, and display under-limit or over-limit values with clamped arcs. Waterfalls treat the first row and optional ending row as balance bars, color intermediate decreases/increases separately, and connect cumulative movements. Funnels preserve a uniform side slope while using each stage's vertical thickness to encode relative value; exact stage values remain in labels, tooltips, pinned details, and source rows. Tree and sunburst hierarchy traversal is cycle-safe and stack-safe; extremely deep sunbursts disclose compressed thin rings. Sunburst uses `encoding.parent` when supplied and falls back to donut only when no hierarchy exists. Sankey data with cycles or self-links falls back to a network view because Sankey flow is acyclic.
 
 Validation is strict: graph IDs must be unique, graph types must be supported, roles, axes, and options must use supported values, required encodings must be present for the selected type, encoding fields must reference existing `data.columns` IDs, required numeric/time row values must be valid, drilldowns must target existing graph IDs and fields, and metric controls must reference numeric fields. If a requested graph type is unsupported or required values are invalid, choose a supported type or repair the data and retry. If no supported graph honestly fits the data, provide an explanation plus structured_data table as a last resort.
 
@@ -2818,7 +2833,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Native read-only analytical graph renderer for standalone graph packs and rich_content embeds across chart, hierarchy, network, flow, timeline, matrix, and distribution views.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "role": "primary|drilldown", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "encoding": { "x": "field", "y": "field", "label": "field", "parent": "field", "value": "field", "source": "field", "target": "field", "min": "field", "max": "field" }, "axes": { "x": { "label": "X axis label", "description": "Optional hover context" }, "y": "Y axis label" }, "options": { "xScale": "auto|category|linear|time", "yScale": "auto|category|linear|time", "maxVisibleItems": 24, "showAll": false, "otherBucket": "separate|inline|hidden", "binCount": 12 }, "interactions": { "details": { "titleField": "field", "fields": ["field"] }, "hover": "auto", "drilldowns": [{ "id": "detail", "label": "Open detail", "targetGraphId": "detail_graph", "trigger": "mark", "match": { "source": "field", "targetField": "field" } }], "metricControls": { "target": "y|value", "fields": ["numeric_field"] } } }] }"#.into()),
+            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "role": "primary|drilldown", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "encoding": { "x": "field", "y": "field", "label": "field", "parent": "field", "value": "field", "source": "field", "target": "field", "min": "field", "max": "field" }, "axes": { "x": { "label": "X axis label", "description": "Optional hover context" }, "y": "Y axis label" }, "options": { "xScale": "auto|category|linear|time", "yScale": "auto|category|linear|time", "maxVisibleItems": 24, "showAll": false, "otherBucket": "separate|inline|hidden", "binCount": 12, "showTotal": true, "totalLabel": "Ending total" }, "interactions": { "details": { "titleField": "field", "fields": ["field"] }, "hover": "auto", "drilldowns": [{ "id": "detail", "label": "Open detail", "targetGraphId": "detail_graph", "trigger": "mark", "match": { "source": "field", "targetField": "field" } }], "metricControls": { "target": "y|value", "fields": ["numeric_field"] } } }] }"#.into()),
             display_mode: None,
             invoke_schema: None,
             url_patterns: vec![],
@@ -4594,13 +4609,66 @@ mod tests {
                     "options": {
                         "binCount": 120,
                         "otherBucket": "hidden",
-                        "showAll": true
+                        "showAll": true,
+                        "showTotal": false,
+                        "totalLabel": "Residual"
                     }
                 }]
             }
         });
         let params = extract_push_params(&args, false).unwrap();
         assert_eq!(params.tool_name, "universal_graph");
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_waterfall_options() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "risk_waterfall",
+                    "type": "waterfall",
+                    "data": {
+                        "columns": [
+                            { "id": "driver", "name": "Driver" },
+                            { "id": "risk", "name": "Risk", "type": "number" }
+                        ],
+                        "rows": [{ "driver": "Opening", "risk": 96 }]
+                    },
+                    "encoding": { "label": "driver", "value": "risk" },
+                    "options": {
+                        "showTotal": false,
+                        "totalLabel": ""
+                    }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("totalLabel must not be empty"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_invalid_universal_graph_show_total_option() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "risk_waterfall",
+                    "type": "waterfall",
+                    "data": {
+                        "columns": [
+                            { "id": "driver", "name": "Driver" },
+                            { "id": "risk", "name": "Risk", "type": "number" }
+                        ],
+                        "rows": [{ "driver": "Opening", "risk": 96 }]
+                    },
+                    "encoding": { "label": "driver", "value": "risk" },
+                    "options": { "showTotal": "yes" }
+                }]
+            }
+        });
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("showTotal must be a boolean"));
     }
 
     #[test]

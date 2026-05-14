@@ -772,12 +772,14 @@ Optional per-graph `options`:
     "maxVisibleItems": 24,
     "showAll": false,
     "otherBucket": "separate",
-    "binCount": 12
+    "binCount": 12,
+    "showTotal": true,
+    "totalLabel": "Ending total"
   }
 }
 ```
 
-`xScale`/`yScale` support `auto`, `category`, `linear`, or `time`. `showAll` renders all marks, but labels may still be sampled or culled to avoid overlap. `otherBucket` supports `separate` (default), `inline`, or `hidden` for dense categorical summaries. `binCount` controls histogram bins and is clamped by the renderer to a safe range.
+`xScale`/`yScale` support `auto`, `category`, `linear`, or `time`. `showAll` renders all marks, but labels may still be sampled or culled to avoid overlap. `otherBucket` supports `separate` (default), `inline`, or `hidden` for dense categorical summaries. `binCount` controls histogram bins and is clamped by the renderer to a safe range. Waterfall charts also support `showTotal: false` to omit the ending balance bar and `totalLabel` to name that ending balance.
 
 Optional per-graph `axes` can provide visible axis context:
 
@@ -812,7 +814,7 @@ Optional per-graph `role` can be `primary` (default) or `drilldown`. Drilldown g
 }
 ```
 
-Dense graphs auto-summarize by default with visible disclosure: sampled ticks, top-N categories with a separated Other callout, capped timeline/funnel rows, duplicate candlestick/time-key aggregation, duplicate network/sankey link aggregation, and source-table truncation notices. Very dense scatter/bubble, heatmap/matrix, network, and sankey views render compact native layers with sampled focus marks so all visual marks remain represented without creating thousands of DOM nodes. Scatter and bubble charts use numeric/time x-positioning when the x column supports it. Histograms label numeric ranges and render a single meaningful bin for zero-variance data. Gauges can read `encoding.min`/`encoding.max` fields, falling back to `graph.min`/`graph.max`, and display under-limit or over-limit values with clamped arcs. Funnels preserve a uniform side slope while using vertical stage thickness to encode relative value; exact values remain available in labels, tooltips, pinned details, and source rows. Tree and sunburst hierarchy traversal is cycle-safe and stack-safe; extremely deep sunbursts disclose compressed thin rings. Sunburst uses `encoding.parent` when supplied and falls back to donut only when no hierarchy exists. Sankey data with cycles or self-links falls back to network rendering with a warning.
+Dense graphs auto-summarize by default with visible disclosure: sampled ticks, top-N categories with a separated Other callout, capped timeline/funnel rows, duplicate candlestick/time-key aggregation, duplicate network/sankey link aggregation, and source-table truncation notices. Very dense scatter/bubble, heatmap/matrix, network, and sankey views render compact native layers with sampled focus marks so all visual marks remain represented without creating thousands of DOM nodes. Scatter and bubble charts use numeric/time x-positioning when the x column supports it. Bar, heatmap, and waterfall charts render numeric labels when there is enough room, while compact axis labels preserve full values in tooltips/source data. Histograms label numeric ranges and render a single meaningful bin for zero-variance data. Gauges can read `encoding.min`/`encoding.max` fields, falling back to `graph.min`/`graph.max`, and display under-limit or over-limit values with clamped arcs. Waterfalls treat the first row and optional ending row as balance bars, color intermediate decreases/increases separately, and connect cumulative movements. Funnels preserve a uniform side slope while using vertical stage thickness to encode relative value; exact values remain available in labels, tooltips, pinned details, and source rows. Tree and sunburst hierarchy traversal is cycle-safe and stack-safe; extremely deep sunbursts disclose compressed thin rings. Sunburst uses `encoding.parent` when supplied and falls back to donut only when no hierarchy exists. Sankey data with cycles or self-links falls back to network rendering with a warning.
 
 **Embedded in rich_content or rich_content review payloads:**
 

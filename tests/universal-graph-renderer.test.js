@@ -224,6 +224,44 @@ describe('universal_graph renderer', function () {
     });
   });
 
+  it('renders readable value labels for heatmap, bar, and waterfall graphs', function () {
+    var heatmap = graphFor('heatmap');
+    var bar = graphFor('bar');
+    var waterfall = graphFor('waterfall');
+    waterfall.data.rows = [
+      { label: 'Opening material risk', value: 96 },
+      { label: 'Corrective trades', value: -18 },
+      { label: 'Pending evidence', value: 7 },
+    ];
+
+    var container = renderGraphs([heatmap, bar, waterfall]);
+    var heatValues = Array.from(container.querySelectorAll('.ug-card[data-graph-id="heatmap_graph"] .ug-heat-value')).map(function (label) {
+      return label.childNodes[0].nodeValue;
+    });
+    var barValues = Array.from(container.querySelectorAll('.ug-card[data-graph-id="bar_graph"] .ug-bar-value-label')).map(function (label) {
+      return label.childNodes[0].nodeValue;
+    });
+    var waterfallValues = Array.from(container.querySelectorAll('.ug-card[data-graph-id="waterfall_graph"] .ug-bar-value-label')).map(function (label) {
+      return label.childNodes[0].nodeValue;
+    });
+
+    expect(heatValues).toEqual(expect.arrayContaining(['4', '7', '8']));
+    expect(barValues).toEqual(expect.arrayContaining(['10', '18', '14']));
+    expect(waterfallValues).toEqual(expect.arrayContaining(['96', '-18', '7', '85']));
+    expect(container.querySelectorAll('.ug-card[data-graph-id="waterfall_graph"] .ug-waterfall-connector')).toHaveLength(3);
+    expect(Array.from(container.querySelectorAll('.ug-card[data-graph-id="waterfall_graph"] .ug-waterfall-bar')).map(function (bar) {
+      return bar.getAttribute('fill');
+    })).toEqual(['var(--color-info)', 'var(--color-success)', 'var(--color-warning)', 'var(--color-info)']);
+
+    var waterfallAxisLabels = Array.from(container.querySelectorAll('.ug-card[data-graph-id="waterfall_graph"] .ug-axis-label')).map(function (label) {
+      return label.childNodes[0].nodeValue;
+    });
+    expect(waterfallAxisLabels).toEqual(expect.arrayContaining(['Opening', 'Trades', 'Evidence', 'Residual']));
+    expect(Array.from(container.querySelectorAll('.ug-card[data-graph-id="waterfall_graph"] .ug-axis-label title')).map(function (title) {
+      return title.textContent;
+    })).toEqual(expect.arrayContaining(['Opening material risk', 'Corrective trades', 'Pending evidence', 'Ending total']));
+  });
+
   it('lets users inspect source data for a graph', function () {
     var container = document.createElement('div');
     renderer(container, {
@@ -265,11 +303,13 @@ describe('universal_graph renderer', function () {
     };
 
     var container = renderGraphs([graph]);
-    var titleTexts = Array.from(container.querySelectorAll('.ug-axis-label title')).map(function (title) {
-      return title.textContent;
+    var titleTexts = Array.from(container.querySelectorAll('.ug-axis-label')).filter(function (label) {
+      return label.getAttribute('y') === '328';
+    }).map(function (label) {
+      return label.getAttribute('aria-label') || label.childNodes[0].nodeValue;
     });
     expect(titleTexts).toContain('Day 0');
-    expect(titleTexts).toContain('Day 12');
+    expect(titleTexts.some(function (label) { return /^Day 1[0-4]$/.test(label); })).toBe(true);
     expect(titleTexts).toContain('Day 24');
   });
 

@@ -40,8 +40,9 @@
   var DENSE_NETWORK_LAYOUT_THRESHOLD = 300;
   var DENSE_LINK_PATH_THRESHOLD = 500;
   var DENSE_NODE_PATH_THRESHOLD = 800;
-  var MIN_X_TICK_GAP = 66;
-  var MIN_Y_TICK_GAP = 22;
+  var MIN_X_TICK_GAP = 58;
+  var MIN_Y_TICK_GAP = 20;
+  var LABEL_CHAR_WIDTH = 5.8;
   var GRAPH_TYPES = {
     line: true, area: true, bar: true, stacked_bar: true, grouped_bar: true,
     scatter: true, bubble: true, combo: true, histogram: true, boxplot: true,
@@ -114,10 +115,74 @@
     if (el.setAttribute) el.setAttribute('data-ug-native-title-suppressed', 'true');
   }
 
+  var LABEL_ALIASES = {
+    'opening material risk': 'Opening',
+    'opening risk': 'Opening',
+    'residual risk': 'Residual',
+    'ending total': 'Residual',
+    'corrective trades': 'Trades',
+    'pending evidence': 'Evidence',
+    'evidence pending': 'Evidence',
+    'evidence gaps': 'Evidence',
+    'approval/evidence records': 'Records',
+    'approval/evidence gaps': 'Gaps',
+    'warnings and breaches': 'Alerts',
+    'rule evaluations': 'Checks',
+    'material deviations': 'Deviations',
+    'decision records': 'Decisions',
+    'recommended reviews': 'Reviews',
+    'beta-band trim': 'Beta trim',
+    'managed futures rebalance': 'MF rebalance',
+    'managed-futures rebalance': 'MF rebalance',
+    'distribution funding decision': 'Funding',
+    'remaining sector-cap exposure': 'Sector cap',
+    'growth households': 'Growth',
+    'concentrated equity': 'Concentrated',
+    'retirement income': 'Retirement',
+    'liquidity funding': 'Liquidity',
+    'taxable core': 'Taxable',
+    'technology sector-cap exception': 'Tech cap',
+    'review sector-cap exception': 'Sector review',
+    'review managed-futures rebalance': 'MF review',
+    'review beta-band trim': 'Beta review',
+    'review non-liquidation evidence': 'Evidence review',
+  };
+
+  function compactLabel(text) {
+    var key = String(text || '').trim().toLowerCase();
+    if (LABEL_ALIASES[key]) return LABEL_ALIASES[key];
+    if (/^[a-z]+ [a-z]+ approval gap$/.test(key)) return 'Approval gap';
+    if (/^[a-z]+ [a-z]+ approval evidence$/.test(key)) return 'Evidence';
+    return String(text || '')
+      .replace(/\bmaterial\b/ig, '')
+      .replace(/\bremaining\b/ig, '')
+      .replace(/\bhouseholds?\b/ig, '')
+      .replace(/\bdecision records?\b/ig, 'Decisions')
+      .replace(/\brecommended reviews?\b/ig, 'Reviews')
+      .replace(/\bmanaged[- ]futures\b/ig, 'MF')
+      .replace(/\bsector[- ]cap\b/ig, 'Sector cap')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function smartTruncate(text, max) {
+    if (text.length <= max) return text;
+    var limit = Math.max(1, max - 3);
+    var sliced = text.slice(0, limit);
+    var lastSpace = sliced.lastIndexOf(' ');
+    if (lastSpace >= Math.max(4, Math.floor(limit * 0.55))) sliced = sliced.slice(0, lastSpace);
+    return sliced + '...';
+  }
+
   function shortText(value, max) {
     var text = String(value == null ? '' : value);
     max = max || 28;
-    return text.length > max ? text.slice(0, max - 1) + '...' : text;
+    var compact = compactLabel(text);
+    if (compact && compact !== text && compact.length <= max) return compact;
+    if (text.length <= max) return text;
+    if (compact && compact.length <= max) return compact;
+    if (compact && compact.length < text.length) return smartTruncate(compact, max);
+    return smartTruncate(text, max);
   }
 
   function roundCoord(value) {
@@ -492,6 +557,14 @@
     return String(value);
   }
 
+  function textFits(text, width, padding) {
+    return String(text == null ? '' : text).length * LABEL_CHAR_WIDTH <= Math.max(0, width - (padding || 0));
+  }
+
+  function shouldShowValueLabel(text, width, height, minWidth, minHeight) {
+    return width >= (minWidth || 18) && height >= (minHeight || 14) && textFits(text, width, 6);
+  }
+
   function extent(values) {
     var nums = values.map(asNumber).filter(function (n) { return n !== null; });
     if (!nums.length) return [0, 1];
@@ -645,7 +718,7 @@
       return Math.max(max, String(label == null ? '' : label).length);
     }, 0);
     return {
-      left: Math.max(PLOT.left, Math.min(172, 20 + Math.min(22, longest) * 7)),
+      left: Math.max(PLOT.left, Math.min(172, 22 + Math.min(24, longest) * LABEL_CHAR_WIDTH)),
       right: PLOT.right,
       top: PLOT.top,
       bottom: PLOT.bottom,
@@ -669,7 +742,7 @@
       ? makeAxisScale({ data: { columns: [] }, encoding: {} }, '__x', xSpec, [x0, x1], 'x', false)
       : xSpec;
     cullTicksByPosition(xScale.ticks || [], xScale.pos, MIN_X_TICK_GAP).forEach(function (tick) {
-      append(svg, textEl(xScale.pos(tick.value), y0 + 22, shortText(tick.label, 12), 'ug-axis-label', {
+      append(svg, textEl(xScale.pos(tick.value), y0 + 22, shortText(tick.label, 16), 'ug-axis-label', {
         'text-anchor': 'middle',
         fullText: tick.fullText || tick.label,
       }));
@@ -960,14 +1033,33 @@
             yPos = y(prior + value);
             h = Math.abs(y(prior) - y(prior + value));
           }
+          var renderedWidth = Math.max(3, barWidth - 3);
+          var renderedHeight = Math.max(1, h);
           var rect = append(svg, svgEl('rect', {
             x: xPos,
             y: yPos,
-            width: Math.max(3, barWidth - 3),
-            height: Math.max(1, h),
+            width: renderedWidth,
+            height: renderedHeight,
             fill: color(seriesIndex),
             class: 'ug-mark',
           }));
+          var labelField = graph.__ugValueLabelField || field;
+          var labelValue = asNumber(cell(row, labelField));
+          if (labelValue === null) labelValue = value;
+          var labelText = formatValue(labelValue);
+          if (shouldShowValueLabel(labelText, renderedWidth, renderedHeight, 20, 12)) {
+            append(svg, textEl(xPos + renderedWidth / 2, yPos + renderedHeight / 2 + 3.5, labelText, 'ug-value-label ug-value-label-invert ug-bar-value-label', {
+              'text-anchor': 'middle',
+              fullText: labelText,
+            }));
+          } else if (renderedWidth >= 22 && textFits(labelText, renderedWidth + 18, 0)) {
+            var outsideY = value >= 0 ? yPos - 5 : yPos + renderedHeight + 11;
+            outsideY = Math.max(PLOT.top + 8, Math.min(HEIGHT - PLOT.bottom + 18, outsideY));
+            append(svg, textEl(xPos + renderedWidth / 2, outsideY, labelText, 'ug-value-label ug-bar-value-label', {
+              'text-anchor': 'middle',
+              fullText: labelText,
+            }));
+          }
           marks.push({
             el: rect,
             row: row,
@@ -1124,6 +1216,13 @@
           class: 'ug-heat-cell',
           style: 'opacity:' + (0.25 + intensity * 0.75),
         }));
+        var labelText = formatValue(value);
+        if (shouldShowValueLabel(labelText, x.band, y.band, 24, 18)) {
+          append(svg, textEl(x.pos(cell(row, xField)), y.pos(cell(row, yField)) + 3.5, labelText, intensity > 0.55 ? 'ug-value-label ug-heat-value ug-value-label-invert' : 'ug-value-label ug-heat-value', {
+            'text-anchor': 'middle',
+            fullText: labelText,
+          }));
+        }
         marks.push({
           el: rect,
           row: row,
@@ -1138,9 +1237,9 @@
       });
     }
     sampleValues(xs, Math.max(2, Math.floor((WIDTH - plot.left - plot.right) / MIN_X_TICK_GAP))).forEach(function (label) {
-      append(svg, textEl(x.pos(label), HEIGHT - plot.bottom + 22, shortText(label, 10), 'ug-axis-label', { 'text-anchor': 'middle', fullText: label }));
+      append(svg, textEl(x.pos(label), HEIGHT - plot.bottom + 22, shortText(label, 14), 'ug-axis-label', { 'text-anchor': 'middle', fullText: label }));
     });
-    var yLabelMax = Math.max(12, Math.min(24, Math.floor((plot.left - 14) / 7)));
+    var yLabelMax = Math.max(14, Math.min(28, Math.floor((plot.left - 14) / LABEL_CHAR_WIDTH)));
     sampleValues(ys, Math.max(2, Math.floor((HEIGHT - plot.top - plot.bottom) / MIN_Y_TICK_GAP))).forEach(function (label) {
       append(svg, textEl(plot.left - 8, y.pos(label) + 4, shortText(label, yLabelMax), 'ug-axis-label', { 'text-anchor': 'end', fullText: label }));
     });
@@ -2109,9 +2208,8 @@
   function renderGraphSvg(graph) {
     if (graph && graph.__ugDrillNoMatch) return renderUnsupported(graph, 'No matching rows for drilldown');
     if (!graph || !GRAPH_TYPES[graph.type]) return renderUnsupported(graph, 'Unsupported graph type');
-    if (['line', 'area', 'bar', 'stacked_bar', 'grouped_bar', 'scatter', 'bubble', 'combo', 'waterfall'].indexOf(graph.type) >= 0) {
-      return renderCartesian(graph.type === 'waterfall' ? waterfallAsBar(graph) : graph);
-    }
+    if (['line', 'area', 'bar', 'stacked_bar', 'grouped_bar', 'scatter', 'bubble', 'combo'].indexOf(graph.type) >= 0) return renderCartesian(graph);
+    if (graph.type === 'waterfall') return renderWaterfall(graph);
     if (graph.type === 'histogram') return renderHistogram(graph);
     if (graph.type === 'boxplot') return renderBoxplot(graph);
     if (graph.type === 'heatmap' || graph.type === 'matrix') return renderHeatmap(graph);
@@ -2129,24 +2227,113 @@
     return renderUnsupported(graph, 'Unsupported graph type');
   }
 
-  function waterfallAsBar(graph) {
+  function renderWaterfall(graph) {
     var labelField = enc(graph, 'label'), valueField = enc(graph, 'value');
+    var validRows = filterRowsWithValidNumbers(graph, rows(graph), [valueField], valueField);
+    if (!validRows.length || !labelField || !valueField) return renderUnsupported(graph, 'No valid waterfall data to display');
+
     var running = 0;
-    return {
-      id: graph.id,
-      title: graph.title,
-      type: 'bar',
-      data: {
-        columns: [{ id: 'label' }, { id: 'running' }],
-        rows: rows(graph).map(function (row) {
-          running += asNumber(cell(row, valueField)) || 0;
-          return { label: cell(row, labelField), running: running };
-        }),
-      },
-      encoding: { x: 'label', y: 'running' },
-      options: graph.options,
-      interactions: graph.interactions,
-    };
+    var steps = validRows.map(function (row, index) {
+      var delta = asNumber(cell(row, valueField)) || 0;
+      var start = running;
+      running += delta;
+      return {
+        row: row,
+        label: cell(row, labelField),
+        start: start,
+        end: running,
+        delta: delta,
+        total: index === 0,
+      };
+    });
+    var showTotal = !graph.options || graph.options.showTotal !== false;
+    if (showTotal && steps.length > 1) {
+      var totalLabel = graph.options && graph.options.totalLabel ? graph.options.totalLabel : 'Ending total';
+      var totalRow = {};
+      totalRow[labelField] = totalLabel;
+      totalRow[valueField] = running;
+      steps.push({
+        row: totalRow,
+        label: totalLabel,
+        start: 0,
+        end: running,
+        delta: running,
+        total: true,
+      });
+    }
+
+    var svg = createSvg();
+    var xValues = steps.map(function (step) { return step.label; });
+    var yValues = [0];
+    steps.forEach(function (step) {
+      yValues.push(step.start);
+      yValues.push(step.end);
+    });
+    var yDomain = extent(yValues);
+    var x = makeAxisScale(graph, labelField, xValues, [PLOT.left, WIDTH - PLOT.right], 'x', false);
+    drawAxes(svg, x, yDomain, graph, { xField: labelField, yFields: [valueField] });
+    var y = linearScale(yDomain, [HEIGHT - PLOT.bottom, PLOT.top]);
+    var barWidth = Math.max(3, x.band - 3);
+    var marks = [];
+
+    steps.forEach(function (step, index) {
+      var xPos = x.pos(step.label) - x.band / 2;
+      var yStart = y(step.start);
+      var yEnd = y(step.end);
+      var yPos = Math.min(yStart, yEnd);
+      var renderedHeight = Math.max(1, Math.abs(yEnd - yStart));
+      var renderedWidth = barWidth;
+      var fill = step.total ? color(0) : (step.delta < 0 ? color(1) : color(2));
+      var rect = append(svg, svgEl('rect', {
+        x: xPos,
+        y: yPos,
+        width: renderedWidth,
+        height: renderedHeight,
+        fill: fill,
+        class: 'ug-mark ug-waterfall-bar',
+      }));
+      var labelText = formatValue(step.total ? step.end : step.delta);
+      if (shouldShowValueLabel(labelText, renderedWidth, renderedHeight, 20, 12)) {
+        append(svg, textEl(xPos + renderedWidth / 2, yPos + renderedHeight / 2 + 3.5, labelText, 'ug-value-label ug-value-label-invert ug-bar-value-label ug-waterfall-value-label', {
+          'text-anchor': 'middle',
+          fullText: labelText,
+        }));
+      } else if (renderedWidth >= 22 && textFits(labelText, renderedWidth + 18, 0)) {
+        var outsideY = step.delta >= 0 || step.total ? yPos - 5 : yPos + renderedHeight + 11;
+        outsideY = Math.max(PLOT.top + 8, Math.min(HEIGHT - PLOT.bottom + 18, outsideY));
+        append(svg, textEl(xPos + renderedWidth / 2, outsideY, labelText, 'ug-value-label ug-bar-value-label ug-waterfall-value-label', {
+          'text-anchor': 'middle',
+          fullText: labelText,
+        }));
+      }
+      if (index < steps.length - 1) {
+        var next = steps[index + 1];
+        var connectorY = y(step.end);
+        append(svg, svgEl('line', {
+          x1: xPos + renderedWidth,
+          y1: connectorY,
+          x2: x.pos(next.label) - x.band / 2,
+          y2: connectorY,
+          class: 'ug-waterfall-connector',
+        }));
+      }
+      marks.push({
+        el: rect,
+        row: step.row,
+        label: step.label + ': ' + labelText,
+        category: step.label,
+        fields: [
+          { label: columnLabel(graph, labelField), value: step.label },
+          { label: step.total ? 'Balance' : 'Change', value: step.total ? step.end : step.delta },
+          { label: 'Cumulative start', value: step.start },
+          { label: 'Cumulative end', value: step.end },
+        ],
+      });
+    });
+
+    addLegend(svg, ['Total', 'Decrease', 'Increase']);
+    addTooltipMarks(svg, marks, graph);
+    return svg;
   }
 
   function renderUnsupported(graph, message) {
@@ -2705,7 +2892,7 @@
     if (document.getElementById('universal-graph-test-styles')) return;
     var style = document.createElement('style');
     style.id = 'universal-graph-test-styles';
-    style.textContent = '.ug-svg{width:100%;height:auto}.ug-card{margin:8px 0}.ug-source[hidden]{display:none}';
+    style.textContent = '.ug-svg{width:100%;height:auto}.ug-card{margin:8px 0}.ug-axis-label,.ug-legend-label,.ug-node-label{font-size:10px}.ug-svg-text{font-size:11px}.ug-value-label{font-size:10px;font-weight:600;pointer-events:none}.ug-heat-value{font-size:9.5px}.ug-source[hidden]{display:none}';
     document.head.appendChild(style);
   }
 

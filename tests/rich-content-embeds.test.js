@@ -235,6 +235,109 @@ describe('buildCombinedSubmitBar (via renderer)', function () {
     expect(graph.getAttribute('data-registry-count')).toBe('2');
   });
 
+  it('hydrates a Northstar risk-control report payload with graph embeds and review table', function () {
+    var data = {
+      body: [
+        '# Northstar Risk Control Report',
+        '```universal_graph:risk_compression_funnel\n```',
+        '```universal_graph:risk_reduction_waterfall\n```',
+        '```universal_graph:rule_pressure_heatmap\n```',
+        '```universal_graph:exception_risk_trend\n```',
+        '```universal_graph:decision_audit_lineage\n```',
+        '```universal_graph:approval_status_funnel\n```',
+        '```structured_data:audit_task_proposals\n```',
+      ].join('\n\n'),
+      graphs: [
+        {
+          id: 'risk_compression_funnel',
+          title: 'Source Fact Compression',
+          type: 'funnel',
+          data: {
+            columns: [{ id: 'stage', name: 'Stage' }, { id: 'count', name: 'Count', type: 'number' }],
+            rows: [{ stage: 'Rule evaluations', count: 386 }, { stage: 'Recommended reviews', count: 6 }],
+          },
+          encoding: { label: 'stage', value: 'count' },
+        },
+        {
+          id: 'risk_reduction_waterfall',
+          title: 'Residual Risk Movement',
+          type: 'waterfall',
+          data: {
+            columns: [{ id: 'label', name: 'Driver' }, { id: 'value', name: 'Risk Points', type: 'number' }],
+            rows: [{ label: 'Opening material risk', value: 96 }, { label: 'Beta-band trim', value: -18 }],
+          },
+          encoding: { label: 'label', value: 'value' },
+        },
+        {
+          id: 'rule_pressure_heatmap',
+          title: 'Rule Pressure By Segment',
+          type: 'heatmap',
+          data: {
+            columns: [{ id: 'rule', name: 'Rule' }, { id: 'segment', name: 'Segment' }, { id: 'pressure', name: 'Pressure', type: 'number' }],
+            rows: [{ rule: 'NS-RO-02', segment: 'Growth Households', pressure: 9 }],
+          },
+          encoding: { x: 'segment', y: 'rule', value: 'pressure' },
+        },
+        {
+          id: 'exception_risk_trend',
+          title: 'Daily Exception Count And Risk Score',
+          type: 'combo',
+          data: {
+            columns: [{ id: 'date', name: 'Date', type: 'date' }, { id: 'exceptions', name: 'Exceptions', type: 'number' }, { id: 'riskScore', name: 'Risk Score', type: 'number' }],
+            rows: [{ date: '2026-04-14', exceptions: 3, riskScore: 41 }, { date: '2026-05-14', exceptions: 7, riskScore: 48 }],
+          },
+          encoding: { x: 'date', y: ['exceptions', 'riskScore'] },
+        },
+        {
+          id: 'decision_audit_lineage',
+          title: 'Decision To Evidence Review Lineage',
+          type: 'sankey',
+          data: {
+            columns: [{ id: 'source', name: 'Source' }, { id: 'target', name: 'Target' }, { id: 'value', name: 'Value', type: 'number' }],
+            rows: [{ source: 'NS-RO-02', target: 'Technology sector-cap exception', value: 18 }],
+          },
+          encoding: { source: 'source', target: 'target', value: 'value' },
+        },
+        {
+          id: 'approval_status_funnel',
+          title: 'Approval And Evidence Funnel',
+          type: 'funnel',
+          data: {
+            columns: [{ id: 'stage', name: 'Stage' }, { id: 'count', name: 'Count', type: 'number' }],
+            rows: [{ stage: 'Approval/evidence records', count: 28 }, { stage: 'Escalated', count: 2 }],
+          },
+          encoding: { label: 'stage', value: 'count' },
+        },
+      ],
+      tables: [{
+        id: 'audit_task_proposals',
+        name: 'Recommended Evidence Reviews',
+        columns: [
+          { id: 'priority', name: 'Priority', change: null },
+          { id: 'control_question', name: 'Control Question', change: null },
+        ],
+        rows: [{
+          id: 'review_sector_cap_exception',
+          cells: {
+            priority: { value: 'P0', change: 'add' },
+            control_question: { value: 'Did the Technology sector-cap exception receive required partner approval?', change: 'add' },
+          },
+          children: [],
+        }],
+      }],
+    };
+
+    renderer(container, data, null, null, true, function () {});
+
+    expect(container.querySelectorAll('.ug-card')).toHaveLength(6);
+    expect(container.querySelector('.ug-card[data-graph-id="risk_reduction_waterfall"]')).not.toBeNull();
+    expect(container.querySelector('.ug-card[data-graph-id="rule_pressure_heatmap"]')).not.toBeNull();
+    expect(container.querySelector('.ug-card[data-graph-id="decision_audit_lineage"]')).not.toBeNull();
+    expect(container.querySelector('[data-graph-embed]')).toBeNull();
+    expect(container.querySelector('[data-table-embed]')).toBeNull();
+    expect(container.querySelector('.sd-submit-bar')).not.toBeNull();
+  });
+
   it('does not render submit bar when not in review mode', function () {
     var data = {
       body: 'Simple content',

@@ -698,7 +698,7 @@ After calling `push_review` to display the structured data review and `await_rev
 
 `universal_graph` is a built-in read-only renderer for analytical charts, hierarchies, networks, flows, timelines, matrices, and distributions. Use it when the main output is visual analysis rather than prose or a review table.
 
-**Standalone display (push_content or direct tool):**
+**Standalone display via `push_content`:**
 
 ```json
 {
@@ -723,6 +723,33 @@ After calling `push_review` to display the structured data review and `await_rev
       "encoding": { "x": "month", "y": "revenue" }
     }]
   }
+}
+```
+
+**Direct `universal_graph` tool call:**
+
+Use the same graph payload at the top level, without the `tool_name`/`data` wrapper:
+
+```json
+{
+  "title": "Revenue Trend",
+  "description": "Monthly revenue for the current plan.",
+  "graphs": [{
+    "id": "revenue_by_month",
+    "title": "Revenue by Month",
+    "type": "line",
+    "data": {
+      "columns": [
+        { "id": "month", "name": "Month", "type": "date" },
+        { "id": "revenue", "name": "Revenue", "type": "number" }
+      ],
+      "rows": [
+        { "month": "2026-01", "revenue": 120000 },
+        { "month": "2026-02", "revenue": 142000 }
+      ]
+    },
+    "encoding": { "x": "month", "y": "revenue" }
+  }]
 }
 ```
 

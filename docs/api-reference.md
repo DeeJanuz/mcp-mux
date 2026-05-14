@@ -43,6 +43,7 @@ Content type (renderer name) is resolved by searching all loaded plugin manifest
 |------------|-------------|----------|
 | `rich_content`, `push_to_companion` | `rich_content` | Markdown + mermaid fallback |
 | `structured_data` | `structured_data` | Tabular data with hierarchical rows, change tracking, and review mode |
+| `universal_graph` | `universal_graph` | Read-only analytical charts and graph packs |
 | _(plugin-mapped tool)_ | Renderer name from plugin manifest `renderers` map | Plugin-provided renderer |
 | _(anything else)_ | Same as `toolName` | Falls back to `rich_content` if no matching renderer JS found |
 
@@ -693,6 +694,69 @@ After calling `push_review` to display the structured data review and `await_rev
 - `modifications`: Cell edits as `"<rowId>.<colId>"` keys with JSON-encoded value objects.
 - `additions.user_edits`: Convenience map of user-edited cell values.
 
+#### universal_graph renderer
+
+`universal_graph` is a built-in read-only renderer for analytical charts, hierarchies, networks, flows, timelines, matrices, and distributions. Use it when the main output is visual analysis rather than prose or a review table.
+
+**Standalone display (push_content or direct tool):**
+
+```json
+{
+  "tool_name": "universal_graph",
+  "data": {
+    "title": "Revenue Trend",
+    "description": "Monthly revenue for the current plan.",
+    "graphs": [{
+      "id": "revenue_by_month",
+      "title": "Revenue by Month",
+      "type": "line",
+      "data": {
+        "columns": [
+          { "id": "month", "name": "Month", "type": "date" },
+          { "id": "revenue", "name": "Revenue", "type": "number" }
+        ],
+        "rows": [
+          { "month": "2026-01", "revenue": 120000 },
+          { "month": "2026-02", "revenue": 142000 }
+        ]
+      },
+      "encoding": { "x": "month", "y": "revenue" }
+    }]
+  }
+}
+```
+
+Supported V1 graph types: `line`, `area`, `bar`, `stacked_bar`, `grouped_bar`, `scatter`, `bubble`, `combo`, `histogram`, `boxplot`, `heatmap`, `matrix`, `pie`, `donut`, `waterfall`, `funnel`, `gauge`, `radar`, `candlestick`, `timeline`, `gantt`, `tree`, `network`, `treemap`, `sunburst`, and `sankey`.
+
+Graph specs are strictly validated: graph IDs must be unique, graph types must be supported, required encodings must be present, and every encoding field must reference an existing `data.columns[].id`.
+
+**Embedded in rich_content:**
+
+````json
+{
+  "tool_name": "rich_content",
+  "data": {
+    "title": "Revenue Plan",
+    "body": "Here is the trend.\n\n```universal_graph:revenue_by_month\n```",
+    "graphs": [{
+      "id": "revenue_by_month",
+      "title": "Revenue by Month",
+      "type": "line",
+      "data": {
+        "columns": [
+          { "id": "month", "name": "Month" },
+          { "id": "revenue", "name": "Revenue" }
+        ],
+        "rows": [{ "month": "Jan", "revenue": 10 }]
+      },
+      "encoding": { "x": "month", "y": "revenue" }
+    }]
+  }
+}
+````
+
+The fenced `universal_graph:<graph-id>` block must be empty and must reference a matching graph in `data.graphs`.
+
 ### `push_check`
 
 Non-blocking status check for a review session. Returns the current status without waiting. Use `await_review` to block until a decision is submitted. Once a review is decided, the response also includes the stored decision details (`operation_decisions`, `comments`, `modifications`, `additions`, `suggestion_decisions`, and `table_decisions`) when present.
@@ -753,7 +817,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "3",
+  "rules_version": "5",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -797,15 +861,15 @@ sequenceDiagram
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
   "rules_update": {
-    "current_version": "3",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 3..."
+    "current_version": "5",
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 5..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 3 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for checking and refreshing stale rules files.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 5 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for checking and refreshing stale rules files.
 
 The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters.
 

@@ -632,7 +632,7 @@ After adding `renderer_definitions`:
 
 As of commit `ce2de40`, `init_session` no longer returns plugin-specific rules, tool summaries, or renderer definitions. Instead it returns:
 
-- Built-in (universal) renderer rules (`rich_content`, `structured_data`)
+- Built-in (universal) renderer rules (`rich_content`, `structured_data`, `universal_graph`)
 - A compact `plugin_registry` index listing each installed plugin with its name, summary, tags, tool groups, and renderer names
 
 Plugin-specific rules are now fetched on-demand via the new `get_plugin_docs` tool. This keeps session-start token usage minimal and avoids loading documentation for plugins the agent never uses in a given conversation.
@@ -655,7 +655,7 @@ renderer rules, data hints, and tool rules for all installed plugins.
 **After (new -- lazy-load):**
 ```
 Call init_session at the start of every conversation. The response contains:
-- Built-in renderer rules (rich_content, structured_data)
+- Built-in renderer rules (rich_content, structured_data, universal_graph)
 - A plugin_registry index listing installed plugins with their tool groups and renderer names
 
 When you need to use a plugin's tools or renderers, call get_plugin_docs with the
@@ -671,7 +671,7 @@ plugin name to fetch detailed rules. You can filter by:
 
 ### Backward compatibility
 
-Agents that do not call `get_plugin_docs` will still work for built-in renderers (`rich_content`, `structured_data`) but will not have access to plugin-specific renderer rules or data hints. Plugin-specific tools will still appear in the MCP tools list (via `tools/list`), but agents will lack the behavioral guidance from plugin rules. To get full plugin documentation, agents must call `get_plugin_docs`.
+Agents that do not call `get_plugin_docs` will still work for built-in renderers (`rich_content`, `structured_data`, `universal_graph`) but will not have access to plugin-specific renderer rules or data hints. Plugin-specific tools will still appear in the MCP tools list (via `tools/list`), but agents will lack the behavioral guidance from plugin rules. To get full plugin documentation, agents must call `get_plugin_docs`.
 
 ### tool_rules
 

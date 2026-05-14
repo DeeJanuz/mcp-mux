@@ -496,7 +496,10 @@ fn enrich_thread_scoped_renderer_arguments(request: &HostedToolRequest) -> Value
     let Some(tool_name) = request.tool_name.as_ref() else {
         return arguments;
     };
-    if !matches!(tool_name.as_str(), "rich_content" | "structured_data") {
+    if !matches!(
+        tool_name.as_str(),
+        "rich_content" | "structured_data" | "universal_graph"
+    ) {
         return arguments;
     }
 
@@ -2315,24 +2318,33 @@ mod tests {
 
     #[test]
     fn enriches_thread_scoped_renderer_requests_with_thread_artifact_metadata() {
-        let request = HostedToolRequest {
-            method: HostedToolMethod::Call,
-            request_id: Some(json!("req-3")),
-            tool_name: Some("structured_data".to_string()),
-            arguments: json!({
-                "tables": []
-            }),
-            relay_session_id: Some("relay-session-3".to_string()),
-            device_id: None,
-            workspace_id: None,
-            thread_id: Some("thread-3".to_string()),
-        };
+        for (tool_name, arguments) in [
+            ("structured_data", json!({ "tables": [] })),
+            ("universal_graph", json!({ "graphs": [] })),
+        ] {
+            let request = HostedToolRequest {
+                method: HostedToolMethod::Call,
+                request_id: Some(json!("req-3")),
+                tool_name: Some(tool_name.to_string()),
+                arguments,
+                relay_session_id: Some("relay-session-3".to_string()),
+                device_id: None,
+                workspace_id: None,
+                thread_id: Some("thread-3".to_string()),
+            };
 
-        let enriched = enrich_thread_scoped_renderer_arguments(&request);
-        assert_eq!(enriched["meta"]["threadId"], "thread-3");
-        assert_eq!(enriched["meta"]["artifactSource"], "tribex-ai-thread-result");
-        assert_eq!(enriched["toolArgs"]["threadId"], "thread-3");
-        assert_eq!(enriched["toolArgs"]["artifactSource"], "tribex-ai-thread-result");
+            let enriched = enrich_thread_scoped_renderer_arguments(&request);
+            assert_eq!(enriched["meta"]["threadId"], "thread-3");
+            assert_eq!(
+                enriched["meta"]["artifactSource"],
+                "tribex-ai-thread-result"
+            );
+            assert_eq!(enriched["toolArgs"]["threadId"], "thread-3");
+            assert_eq!(
+                enriched["toolArgs"]["artifactSource"],
+                "tribex-ai-thread-result"
+            );
+        }
     }
 
     #[test]

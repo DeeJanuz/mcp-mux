@@ -1,5 +1,5 @@
 import './universal-graph-renderer-setup.js';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 var renderer = window.__renderers.universal_graph;
 var supportedTypes = [
@@ -222,6 +222,100 @@ describe('universal_graph renderer', function () {
       expect(svg.getAttribute('viewBox')).toBe('0 0 820 360');
       expect(svg.querySelector('path, rect, circle, polygon, line, text')).not.toBeNull();
     });
+  });
+
+  it('hydrates graph rows from dataRef before rendering', async function () {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: function () {
+        return Promise.resolve({
+          columns: [
+            { id: 'label', name: 'Label' },
+            { id: 'value', name: 'Value', type: 'number' },
+          ],
+          rows: [{ label: 'A', value: 4 }],
+          warnings: [],
+        });
+      },
+    });
+
+    var container = document.createElement('div');
+    renderer(container, {
+      graphs: [{
+        id: 'ref_graph',
+        title: 'Referenced Graph',
+        type: 'bar',
+        dataRef: {
+          dataset_id: 'dataset-1',
+          recipe: 'group_sum',
+          params: { groupBy: 'label', value: 'value' },
+        },
+        encoding: { x: 'label', y: 'value' },
+      }],
+    });
+
+    expect(container.textContent).toContain('Loading referenced graph data');
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise(function (resolve) { setTimeout(resolve, 0); });
+
+    expect(global.fetch).toHaveBeenCalled();
+    expect(container.querySelector('.ug-card[data-graph-id="ref_graph"]')).not.toBeNull();
+    expect(container.querySelector('.ug-bar-value-label').childNodes[0].nodeValue).toBe('4');
+  });
+
+  it('infers dataRef recipe params from graph encoding during hydration', async function () {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: function () {
+        return Promise.resolve({
+          columns: [
+            { id: 'segment', name: 'Segment' },
+            { id: 'rule', name: 'Rule' },
+            { id: 'pressure', name: 'Pressure', type: 'number' },
+          ],
+          rows: [{ segment: 'Growth', rule: 'NS-RO-02', pressure: 18 }],
+          warnings: [],
+        });
+      },
+    });
+
+    var container = document.createElement('div');
+    renderer(container, {
+      graphs: [{
+        id: 'heatmap_ref_graph',
+        title: 'Rule Pressure',
+        type: 'heatmap',
+        dataRef: {
+          dataset_id: 'dataset-encoding-inference',
+          source_id: 'rule_pressure_heatmap',
+          recipe: 'heatmap_by_pair',
+        },
+        encoding: { x: 'segment', y: 'rule', value: 'pressure', label: 'pressure' },
+      }],
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise(function (resolve) { setTimeout(resolve, 0); });
+
+    var payload = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(payload.params).toEqual({ x: 'segment', y: 'rule', value: 'pressure' });
+    expect(container.querySelector('.ug-card[data-graph-id="heatmap_ref_graph"]')).not.toBeNull();
+  });
+
+  it('infers waterfall and funnel dataRef params from graph encoding', function () {
+    expect(window.__mcpviewsDatasetClient.inferredGraphParams({
+      encoding: { x: 'driver', value: 'risk_points' },
+    }, {
+      recipe: 'waterfall_from_deltas',
+    })).toEqual({ label: 'driver', value: 'risk_points' });
+
+    expect(window.__mcpviewsDatasetClient.inferredGraphParams({
+      encoding: { label: 'stage', value: 'count' },
+    }, {
+      recipe: 'funnel_from_counts',
+    })).toEqual({ label: 'stage', count: 'count' });
   });
 
   it('renders readable value labels for heatmap, bar, and waterfall graphs', function () {

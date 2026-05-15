@@ -278,6 +278,46 @@ describe('structured_data review decisions', function () {
     expect(container.querySelector('.sd-table').style.width).toBe('586px');
   });
 
+  it('hydrates table rows from dataRef before rendering', async function () {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: function () {
+        return Promise.resolve({
+          columns: [{ id: 'action', name: 'Action', change: null }],
+          rows: [{
+            id: 'r1',
+            cells: { action: { value: 'create', change: null } },
+            children: [],
+          }],
+          warnings: [],
+        });
+      },
+    });
+
+    var container = document.createElement('div');
+    renderer(container, {
+      title: 'Reference Table',
+      tables: [{
+        id: 't1',
+        name: 'Actions',
+        dataRef: {
+          dataset_id: 'dataset-1',
+          recipe: 'review_rows',
+        },
+      }],
+    }, null, null, false, null);
+
+    expect(container.textContent).toContain('Loading referenced table data');
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise(function (resolve) { setTimeout(resolve, 0); });
+
+    expect(global.fetch).toHaveBeenCalledWith('http://localhost:4200/api/datasets/query', expect.objectContaining({
+      method: 'POST',
+    }));
+    expect(container.querySelector('td[data-column-id="action"]').textContent).toBe('create');
+  });
+
   it('can return a selected decision back to undecided', function () {
     var container = renderReview();
     var rowToggle = container.querySelector('tbody .sd-decision-toggle');

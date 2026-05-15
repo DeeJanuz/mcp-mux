@@ -202,6 +202,26 @@ describe('buildCombinedSubmitBar (via renderer)', function () {
     expect(container.querySelector('[data-graph-embed]')).toBeNull();
   });
 
+  it('expands instruction templates into the rendered rich body', function () {
+    var data = {
+      title: 'Evidence Review',
+      body: 'Review scope.',
+      instructionTemplate: {
+        id: 'audit_only_evidence_review_v1',
+        variables: {
+          ruleIds: ['P0-sector-cap'],
+          reviewer: 'Risk committee',
+          sla: '2 business days',
+        },
+      },
+    };
+    renderer(container, data, null, null, false, null);
+
+    expect(container.textContent).toContain('Audit-Only Evidence Review');
+    expect(container.textContent).toContain('P0-sector-cap');
+    expect(container.textContent).toContain('Risk committee');
+  });
+
   it('passes the full graph registry to embedded universal_graph cards for drilldowns', function () {
     var data = {
       body: 'Text\n```universal_graph:g1\n```',

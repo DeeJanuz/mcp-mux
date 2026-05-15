@@ -34,6 +34,7 @@ pub(super) async fn call_direct_renderer_content(
     }
     super::strip_change_fields(&mut data);
     super::validate_push_payload(renderer_name, &data)?;
+    let warnings = super::collect_efficiency_warnings(renderer_name, &data);
 
     let result = execute_push(
         state,
@@ -51,10 +52,10 @@ pub(super) async fn call_direct_renderer_content(
         ExecutePushResult::Stored { session_id } => Ok(serde_json::json!({
             "content": [{
                 "type": "text",
-                "text": serde_json::to_string(&serde_json::json!({
+                "text": serde_json::to_string(&with_warnings(serde_json::json!({
                     "session_id": session_id,
                     "status": "stored"
-                })).unwrap()
+                }), warnings)).unwrap()
             }]
         })),
         ExecutePushResult::Decision(resp) => Ok(serde_json::json!({
@@ -74,6 +75,7 @@ pub(super) async fn call_push_review(
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<Value, String> {
     let params = super::extract_push_params(&arguments, true)?;
+    let warnings = params.warnings.clone();
     let result = store_push(
         state,
         params.tool_name,
@@ -90,11 +92,11 @@ pub(super) async fn call_push_review(
         ExecutePushResult::Pending { session_id } => Ok(serde_json::json!({
             "content": [{
                 "type": "text",
-                "text": serde_json::to_string(&serde_json::json!({
+                "text": serde_json::to_string(&with_warnings(serde_json::json!({
                     "session_id": session_id,
                     "status": "pending",
                     "message": "Review is displayed in the companion window. Call await_review with this session_id to wait for the user's decision. If your transport times out, call await_review again — the session persists."
-                })).unwrap()
+                }), warnings)).unwrap()
             }]
         })),
         _ => unreachable!("store_push with review_required=true always returns Pending"),
@@ -140,6 +142,7 @@ async fn call_push_impl(
     review_required: bool,
 ) -> Result<Value, String> {
     let params = super::extract_push_params(&arguments, review_required)?;
+    let warnings = params.warnings.clone();
 
     let result = execute_push(
         state,
@@ -157,10 +160,10 @@ async fn call_push_impl(
         ExecutePushResult::Stored { session_id } => Ok(serde_json::json!({
             "content": [{
                 "type": "text",
-                "text": serde_json::to_string(&serde_json::json!({
+                "text": serde_json::to_string(&with_warnings(serde_json::json!({
                     "session_id": session_id,
                     "status": "stored"
-                })).unwrap()
+                }), warnings)).unwrap()
             }]
         })),
         ExecutePushResult::Decision(resp) => Ok(serde_json::json!({
@@ -173,6 +176,15 @@ async fn call_push_impl(
             unreachable!("execute_push never returns Pending directly")
         }
     }
+}
+
+fn with_warnings(mut payload: Value, warnings: Vec<String>) -> Value {
+    if !warnings.is_empty() {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("warnings".to_string(), serde_json::json!(warnings));
+        }
+    }
+    payload
 }
 
 pub(super) async fn call_push_check(

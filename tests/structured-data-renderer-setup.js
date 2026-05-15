@@ -16,6 +16,9 @@ globalThis.window.__companionUtils.escapeHtml = function (str) {
     .replace(/"/g, '&quot;');
 };
 
+var datasetClientCode = readFileSync(join(__dirname_resolved, '../public/renderers/dataset-client.js'), 'utf8');
+new Function(datasetClientCode).call(globalThis);
+
 var code = readFileSync(join(__dirname_resolved, '../public/renderers/structured-data.js'), 'utf8');
 var fn = new Function(code);
 fn.call(globalThis);

@@ -59,13 +59,17 @@ fn rich_content_definition(renderers: &[RendererDef]) -> Value {
                 "suggestions": { "type": "object", "description": "Optional inline text suggestions keyed by suggestion id." },
                 "tables": {
                     "type": "array",
-                    "description": "Optional embedded structured_data tables referenced from the body.",
+                    "description": "Optional embedded structured_data tables referenced from the body. For large/repeated tables, use dataRef with a dataset_id returned by register_dataset.",
                     "items": { "type": "object" }
                 },
                 "graphs": {
                     "type": "array",
-                    "description": "Optional embedded universal_graph graph specs referenced from the body.",
+                    "description": "Optional embedded universal_graph graph specs referenced from the body. For large/repeated graph rows, use dataRef with a dataset_id returned by register_dataset.",
                     "items": { "type": "object" }
+                },
+                "instructionTemplate": {
+                    "type": "object",
+                    "description": "Optional reusable instruction template, such as audit_only_evidence_review_v1, plus variables."
                 },
                 "citations": { "type": "object", "description": "Optional citation metadata keyed by source." }
             }
@@ -87,8 +91,12 @@ fn structured_data_definition(renderers: &[RendererDef]) -> Value {
                 "title": { "type": "string", "description": "Optional heading shown above the table." },
                 "tables": {
                     "type": "array",
-                    "description": "Structured table definitions. Each table must include id, name, columns, and rows. Each row must include id, cells, and children.",
+                    "description": "Structured table definitions. Each table must include id plus either columns/rows or dataRef. Use register_dataset + dataRef to avoid repeating large row sets.",
                     "items": { "type": "object" }
+                },
+                "instructionTemplate": {
+                    "type": "object",
+                    "description": "Optional reusable instruction template, such as audit_only_evidence_review_v1, plus variables."
                 }
             },
             "required": ["tables"]
@@ -111,11 +119,38 @@ fn universal_graph_definition(renderers: &[RendererDef]) -> Value {
                 "description": { "type": "string", "description": "Optional context shown above the graphs." },
                 "graphs": {
                     "type": "array",
-                    "description": "Graph definitions. Each graph must include id, type, data.columns, data.rows, and encoding. Per-graph axes provide x/y labels and descriptions for business context. Per-graph role may be primary or drilldown. Per-graph options may include xScale/yScale, maxVisibleItems, showAll, otherBucket, binCount, plus waterfall showTotal/totalLabel. Per-graph interactions may include details, hover, drilldowns, and metricControls. Dense graphs auto-summarize with source-data inspection; funnels use uniform side slope with vertical stage thickness encoding value.",
+                    "description": "Graph definitions. Each graph must include id, type, encoding, and either data.columns/data.rows or dataRef. Use register_dataset + dataRef recipes to avoid repeating large row sets. Per-graph axes provide x/y labels and descriptions for business context. Per-graph role may be primary or drilldown. Per-graph options may include xScale/yScale, maxVisibleItems, showAll, otherBucket, binCount, plus waterfall showTotal/totalLabel. Per-graph interactions may include details, hover, drilldowns, and metricControls. Dense graphs auto-summarize with source-data inspection; funnels use uniform side slope with vertical stage thickness encoding value.",
                     "items": { "type": "object" }
+                },
+                "instructionTemplate": {
+                    "type": "object",
+                    "description": "Optional reusable instruction template, such as audit_only_evidence_review_v1, plus variables."
                 }
             },
             "required": ["graphs"]
+        }
+    })
+}
+
+fn register_dataset_definition(_: &[RendererDef]) -> Value {
+    serde_json::json!({
+        "name": "register_dataset",
+        "description": "Register small inline seed data or lightweight local Markdown references in MCPViews' session-scoped cache, then use the returned dataset_id in renderer dataRef payloads. IMPORTANT: pass sources as object literals, not JSON strings. If a source is accidentally stringified, MCPViews parses it and returns a warning instead of forcing a duplicate call. For local prepared findings, use sources with kind markdown_json_blocks or markdown_table plus path/heading so the agent emits references instead of rows. Returns dataset_id, source/schema summaries, hashes, row/column counts, TTL, and warnings. Use tables[].dataRef with review_rows/select_rows, or graphs[].dataRef with count_by, group_sum, trend, heatmap_by_pair, funnel_from_counts, waterfall_from_deltas, or select_rows. V1 is for output-token savings only: it does not ingest SQL, API, Excel, CSV, or MCP outputs.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "dataset_id": { "type": "string", "description": "Optional stable dataset id. If omitted, MCPViews generates one." },
+                "title": { "type": "string", "description": "Optional human-readable dataset title." },
+                "columns": { "type": "array", "description": "Optional column definitions for top-level inline rows." },
+                "rows": { "type": "array", "description": "Optional top-level inline seed rows." },
+                "tables": { "type": "array", "description": "Optional structured_data-style tables to register as sources." },
+                "graphs": { "type": "array", "description": "Optional universal_graph graph specs whose data.columns and data.rows should be registered as sources." },
+                "sources": {
+                    "type": "array",
+                    "description": "Optional source objects with id, columns, rows, table, graph, or lightweight local references. Correct: [{\"id\":\"reviews\",\"rows\":[...]}]. Do not stringify source objects. Local Markdown references support {\"kind\":\"markdown_json_blocks\",\"path\":\"/.../prepared-findings.md\"} and {\"id\":\"reviews\",\"kind\":\"markdown_table\",\"path\":\"/.../prepared-findings.md\",\"heading\":\"Recommended Evidence Reviews\"}. Pass a source_id in dataRef when a dataset contains multiple sources."
+                },
+                "ttl_seconds": { "type": "integer", "description": "Optional session-cache TTL in seconds. Defaults to 30 minutes." }
+            }
         }
     })
 }
@@ -487,6 +522,13 @@ fn universal_graph_handler<'a>(
     direct_renderer_handler("universal_graph", arguments, state)
 }
 
+fn register_dataset_handler<'a>(
+    arguments: Value,
+    state: &'a Arc<TokioMutex<AsyncAppState>>,
+) -> BuiltinToolFuture<'a> {
+    Box::pin(crate::datasets::call_register_dataset(arguments, state))
+}
+
 fn push_content_handler<'a>(
     arguments: Value,
     state: &'a Arc<TokioMutex<AsyncAppState>>,
@@ -628,6 +670,13 @@ pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
             name: "universal_graph",
             definition: universal_graph_definition,
             handler: universal_graph_handler,
+            hosted_visibility: HostedVisibility::HostedModelFacing,
+            core_connector_group: Some(presentation_group),
+        },
+        BuiltinToolSpec {
+            name: "register_dataset",
+            definition: register_dataset_definition,
+            handler: register_dataset_handler,
             hosted_visibility: HostedVisibility::HostedModelFacing,
             core_connector_group: Some(presentation_group),
         },

@@ -116,6 +116,9 @@ globalThis.window.__universalGraphEmbed = {
   },
 };
 
+var datasetClientCode = readFileSync(join(__dirname_resolved, '../public/renderers/dataset-client.js'), 'utf8');
+new Function(datasetClientCode).call(globalThis);
+
 // Load rich-content.js IIFE
 var code = readFileSync(join(__dirname_resolved, '../public/renderers/rich-content.js'), 'utf8');
 var fn = new Function(code);

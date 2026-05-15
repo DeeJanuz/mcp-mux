@@ -14,7 +14,7 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "9"; // Bump when built-in rules change
+const RULES_VERSION: &str = "11"; // Bump when built-in rules change
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -302,6 +302,25 @@ const UNIVERSAL_GRAPH_TYPES: &[&str] = &[
     "sankey",
 ];
 
+const DATA_REF_RECIPES: &[&str] = &[
+    "select_rows",
+    "selectRows",
+    "review_rows",
+    "reviewRows",
+    "count_by",
+    "countBy",
+    "group_sum",
+    "groupSum",
+    "trend",
+    "heatmap_by_pair",
+    "heatmapByPair",
+    "funnel_from_counts",
+    "funnelFromCounts",
+    "waterfall_from_deltas",
+    "waterfallFromDeltas",
+];
+const INLINE_RENDERER_ROW_WARNING_THRESHOLD: usize = 200;
+
 #[derive(Debug, Clone)]
 enum RichContentFenceKind {
     Mermaid,
@@ -325,6 +344,89 @@ pub(crate) fn validate_push_payload(tool_name: &str, data: &Value) -> Result<(),
     }
 }
 
+pub(crate) fn collect_efficiency_warnings(tool_name: &str, data: &Value) -> Vec<String> {
+    match tool_name {
+        "rich_content" => {
+            let table_rows = inline_table_row_count(data);
+            let graph_rows = inline_graph_row_count(data);
+            inline_row_warnings(table_rows, graph_rows)
+        }
+        "structured_data" => inline_row_warnings(inline_table_row_count(data), 0),
+        "universal_graph" => inline_row_warnings(0, inline_graph_row_count(data)),
+        _ => Vec::new(),
+    }
+}
+
+fn inline_row_warnings(table_rows: usize, graph_rows: usize) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if table_rows > INLINE_RENDERER_ROW_WARNING_THRESHOLD {
+        warnings.push(format!(
+            "This renderer payload includes {} inline table rows. Call register_dataset once and use tables[].dataRef to reduce repeated model output tokens.",
+            table_rows
+        ));
+    }
+    if graph_rows > INLINE_RENDERER_ROW_WARNING_THRESHOLD {
+        warnings.push(format!(
+            "This renderer payload includes {} inline graph rows. Call register_dataset once and use graphs[].dataRef recipes to reduce repeated model output tokens.",
+            graph_rows
+        ));
+    }
+    warnings
+}
+
+fn inline_table_row_count(data: &Value) -> usize {
+    data.as_object()
+        .and_then(|object| object.get("tables"))
+        .and_then(Value::as_array)
+        .map(|tables| {
+            tables
+                .iter()
+                .filter(|table| !table.as_object().is_some_and(has_data_ref))
+                .map(|table| {
+                    table
+                        .get("rows")
+                        .and_then(Value::as_array)
+                        .map(|rows| count_table_rows(rows))
+                        .unwrap_or(0)
+                })
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+fn count_table_rows(rows: &[Value]) -> usize {
+    rows.iter()
+        .map(|row| {
+            1 + row
+                .get("children")
+                .and_then(Value::as_array)
+                .map(|children| count_table_rows(children))
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+fn inline_graph_row_count(data: &Value) -> usize {
+    data.as_object()
+        .and_then(|object| object.get("graphs"))
+        .and_then(Value::as_array)
+        .map(|graphs| {
+            graphs
+                .iter()
+                .filter(|graph| !graph.as_object().is_some_and(has_data_ref))
+                .map(|graph| {
+                    graph
+                        .get("data")
+                        .and_then(|value| value.get("rows"))
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0)
+                })
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
 fn validate_rich_content_payload(data: &Value) -> Result<(), String> {
     let object = data
         .as_object()
@@ -345,6 +447,10 @@ fn validate_rich_content_payload(data: &Value) -> Result<(), String> {
         validate_rich_content_body(body, &table_ids, &graph_ids)?;
     }
 
+    if let Some(template) = object.get("instructionTemplate").or_else(|| object.get("instruction_template")) {
+        validate_instruction_template(template, "rich_content.data.instructionTemplate")?;
+    }
+
     Ok(())
 }
 
@@ -356,6 +462,9 @@ fn validate_structured_data_payload(data: &Value) -> Result<(), String> {
         .get("tables")
         .ok_or("structured_data.data.tables is required.".to_string())?;
     validate_tables_value(tables, "structured_data.data.tables")?;
+    if let Some(template) = object.get("instructionTemplate").or_else(|| object.get("instruction_template")) {
+        validate_instruction_template(template, "structured_data.data.instructionTemplate")?;
+    }
     Ok(())
 }
 
@@ -367,6 +476,79 @@ fn validate_universal_graph_payload(data: &Value) -> Result<(), String> {
         .get("graphs")
         .ok_or("universal_graph.data.graphs is required.".to_string())?;
     validate_graphs_value(graphs, "universal_graph.data.graphs")?;
+    if let Some(template) = object.get("instructionTemplate").or_else(|| object.get("instruction_template")) {
+        validate_instruction_template(template, "universal_graph.data.instructionTemplate")?;
+    }
+    Ok(())
+}
+
+fn has_data_ref(object: &serde_json::Map<String, Value>) -> bool {
+    object
+        .get("dataRef")
+        .or_else(|| object.get("data_ref"))
+        .is_some()
+}
+
+fn validate_data_ref(value: &Value, context: &str) -> Result<(), String> {
+    let data_ref = value
+        .as_object()
+        .ok_or(format!("{} must be an object.", context))?;
+    data_ref
+        .get("dataset_id")
+        .or_else(|| data_ref.get("datasetId"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(format!("{} requires dataset_id.", context))?;
+
+    if let Some(source_id) = data_ref.get("source_id").or_else(|| data_ref.get("sourceId")) {
+        source_id
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.source_id must be a non-empty string.", context))?;
+    }
+
+    if let Some(recipe) = data_ref.get("recipe") {
+        let recipe = recipe
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.recipe must be a non-empty string.", context))?;
+        if !DATA_REF_RECIPES.iter().any(|candidate| candidate == &recipe) {
+            return Err(format!(
+                "{}.recipe `{}` is not supported. Supported recipes: {}.",
+                context,
+                recipe,
+                DATA_REF_RECIPES.join(", ")
+            ));
+        }
+    }
+
+    if let Some(params) = data_ref.get("params") {
+        params
+            .as_object()
+            .ok_or(format!("{}.params must be an object when provided.", context))?;
+    }
+
+    Ok(())
+}
+
+fn validate_instruction_template(value: &Value, context: &str) -> Result<(), String> {
+    let template = value
+        .as_object()
+        .ok_or(format!("{} must be an object.", context))?;
+    template
+        .get("id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(format!("{}.id must be a non-empty string.", context))?;
+    if let Some(variables) = template.get("variables") {
+        variables
+            .as_object()
+            .ok_or(format!("{}.variables must be an object when provided.", context))?;
+    }
     Ok(())
 }
 
@@ -393,38 +575,54 @@ fn validate_tables_value(tables: &Value, context: &str) -> Result<Vec<String>, S
             return Err(format!("{} contains duplicate table id `{}`.", context, table_id));
         }
 
-        let columns = table
-            .get("columns")
-            .and_then(|value| value.as_array())
-            .ok_or(format!("{}.columns must be an array.", table_context))?;
-        for (column_index, column) in columns.iter().enumerate() {
-            let column_context = format!("{}.columns[{}]", table_context, column_index);
-            let column = column
-                .as_object()
-                .ok_or(format!("{} must be an object.", column_context))?;
-            column
-                .get("id")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or(format!("{}.id must be a non-empty string.", column_context))?;
-            column
-                .get("name")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or(format!("{}.name must be a non-empty string.", column_context))?;
+        if let Some(data_ref) = table.get("dataRef").or_else(|| table.get("data_ref")) {
+            validate_data_ref(data_ref, &format!("{}.dataRef", table_context))?;
         }
 
-        let rows = table
-            .get("rows")
-            .and_then(|value| value.as_array())
-            .ok_or(format!("{}.rows must be an array.", table_context))?;
-        validate_table_rows(rows, &format!("{}.rows", table_context))?;
+        let uses_data_ref = has_data_ref(table);
+        if let Some(columns_value) = table.get("columns") {
+            let columns = columns_value
+                .as_array()
+                .ok_or(format!("{}.columns must be an array.", table_context))?;
+            validate_table_columns(columns, &format!("{}.columns", table_context))?;
+        } else if !uses_data_ref {
+            return Err(format!("{}.columns must be an array.", table_context));
+        }
+
+        if let Some(rows_value) = table.get("rows") {
+            let rows = rows_value
+                .as_array()
+                .ok_or(format!("{}.rows must be an array.", table_context))?;
+            validate_table_rows(rows, &format!("{}.rows", table_context))?;
+        } else if !uses_data_ref {
+            return Err(format!("{}.rows must be an array.", table_context));
+        }
         table_ids.push(table_id);
     }
 
     Ok(table_ids)
+}
+
+fn validate_table_columns(columns: &[Value], context: &str) -> Result<(), String> {
+    for (column_index, column) in columns.iter().enumerate() {
+        let column_context = format!("{}[{}]", context, column_index);
+        let column = column
+            .as_object()
+            .ok_or(format!("{} must be an object.", column_context))?;
+        column
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.id must be a non-empty string.", column_context))?;
+        column
+            .get("name")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or(format!("{}.name must be a non-empty string.", column_context))?;
+    }
+    Ok(())
 }
 
 fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, String> {
@@ -453,11 +651,17 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
         if graph_ids.iter().any(|existing| existing == &graph_id) {
             return Err(format!("{} contains duplicate graph id `{}`.", context, graph_id));
         }
-        let data = graph
-            .get("data")
-            .and_then(|value| value.as_object())
-            .ok_or(format!("{}.data must be an object.", graph_context))?;
-        let column_ids = validate_graph_columns(data, &format!("{}.data", graph_context))?;
+        if let Some(data_ref) = graph.get("dataRef").or_else(|| graph.get("data_ref")) {
+            validate_data_ref(data_ref, &format!("{}.dataRef", graph_context))?;
+        }
+        let uses_data_ref = has_data_ref(graph);
+        let column_ids = if let Some(data) = graph.get("data").and_then(|value| value.as_object()) {
+            validate_graph_columns(data, &format!("{}.data", graph_context))?
+        } else if uses_data_ref {
+            Vec::new()
+        } else {
+            return Err(format!("{}.data must be an object.", graph_context));
+        };
         graph_columns_by_id.insert(graph_id.clone(), column_ids);
         graph_ids.push(graph_id);
     }
@@ -491,12 +695,20 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
             ));
         }
 
-        let data = graph
-            .get("data")
-            .and_then(|value| value.as_object())
-            .ok_or(format!("{}.data must be an object.", graph_context))?;
-        let column_ids = validate_graph_columns(data, &format!("{}.data", graph_context))?;
-        validate_graph_rows(data, &format!("{}.data", graph_context))?;
+        if let Some(data_ref) = graph.get("dataRef").or_else(|| graph.get("data_ref")) {
+            validate_data_ref(data_ref, &format!("{}.dataRef", graph_context))?;
+        }
+        let uses_data_ref = has_data_ref(graph);
+        let data = graph.get("data").and_then(|value| value.as_object());
+        let column_ids = if let Some(data) = data {
+            let column_ids = validate_graph_columns(data, &format!("{}.data", graph_context))?;
+            validate_graph_rows(data, &format!("{}.data", graph_context))?;
+            column_ids
+        } else if uses_data_ref {
+            Vec::new()
+        } else {
+            return Err(format!("{}.data must be an object.", graph_context));
+        };
 
         let encoding = graph
             .get("encoding")
@@ -507,29 +719,39 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
             encoding,
             &format!("{}.encoding", graph_context),
         )?;
-        validate_graph_encoding_references(
-            encoding,
-            &column_ids,
-            &format!("{}.encoding", graph_context),
-        )?;
+        if !column_ids.is_empty() {
+            validate_graph_encoding_references(
+                encoding,
+                &column_ids,
+                &format!("{}.encoding", graph_context),
+            )?;
+        }
         validate_graph_options(graph.get("options"), &format!("{}.options", graph_context))?;
         validate_graph_axes(graph.get("axes"), &format!("{}.axes", graph_context))?;
-        validate_graph_required_row_values(
-            &graph_id,
-            graph_type,
-            data,
-            encoding,
-            graph.get("options"),
-            &graph_context,
-        )?;
-        validate_graph_interactions(
-            graph.get("interactions"),
-            data,
-            &column_ids,
-            &graph_ids,
-            &graph_columns_by_id,
-            &format!("{}.interactions", graph_context),
-        )?;
+        if let Some(data) = data {
+            validate_graph_required_row_values(
+                &graph_id,
+                graph_type,
+                data,
+                encoding,
+                graph.get("options"),
+                &graph_context,
+            )?;
+            validate_graph_interactions(
+                graph.get("interactions"),
+                data,
+                &column_ids,
+                &graph_ids,
+                &graph_columns_by_id,
+                &format!("{}.interactions", graph_context),
+            )?;
+        } else {
+            validate_data_ref_graph_interactions(
+                graph.get("interactions"),
+                &graph_ids,
+                &format!("{}.interactions", graph_context),
+            )?;
+        }
     }
 
     Ok(graph_ids)
@@ -711,6 +933,64 @@ fn validate_graph_interactions(
 
     if let Some(metric_controls) = interactions.get("metricControls") {
         validate_graph_metric_controls(metric_controls, data, column_ids, &format!("{}.metricControls", context))?;
+    }
+
+    Ok(())
+}
+
+fn validate_data_ref_graph_interactions(
+    interactions: Option<&Value>,
+    graph_ids: &[String],
+    context: &str,
+) -> Result<(), String> {
+    let Some(interactions) = interactions else {
+        return Ok(());
+    };
+    let interactions = interactions
+        .as_object()
+        .ok_or(format!("{} must be an object when provided.", context))?;
+
+    if let Some(hover) = interactions.get("hover") {
+        if let Some(value) = hover.as_str().map(str::trim) {
+            if !matches!(value, "auto" | "none") {
+                return Err(format!("{}.hover `{}` is not supported. Use auto or none.", context, value));
+            }
+        } else if !hover.is_object() && !hover.is_boolean() {
+            return Err(format!("{}.hover must be auto, none, a boolean, or an object.", context));
+        }
+    }
+
+    if let Some(drilldowns) = interactions.get("drilldowns") {
+        let drilldowns = drilldowns
+            .as_array()
+            .ok_or(format!("{}.drilldowns must be an array.", context))?;
+        for (index, drilldown) in drilldowns.iter().enumerate() {
+            let drilldown = drilldown
+                .as_object()
+                .ok_or(format!("{}.drilldowns[{}] must be an object.", context, index))?;
+            drilldown
+                .get("id")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or(format!("{}.drilldowns[{}].id must be a non-empty string.", context, index))?;
+            let target_graph_id = drilldown
+                .get("targetGraphId")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or(format!("{}.drilldowns[{}].targetGraphId must be a non-empty string.", context, index))?;
+            if !graph_ids.iter().any(|candidate| candidate == target_graph_id) {
+                return Err(format!(
+                    "{}.drilldowns[{}].targetGraphId references missing graph `{}`.",
+                    context, index, target_graph_id
+                ));
+            }
+            drilldown
+                .get("match")
+                .and_then(|value| value.as_object())
+                .ok_or(format!("{}.drilldowns[{}].match must be an object.", context, index))?;
+        }
     }
 
     Ok(())
@@ -1510,6 +1790,7 @@ struct PushParams {
     data: Value,
     meta: Option<Value>,
     timeout: u64,
+    warnings: Vec<String>,
 }
 
 fn attach_backend_callback_meta(
@@ -1564,12 +1845,14 @@ fn extract_push_params(arguments: &Value, review: bool) -> Result<PushParams, St
         120
     };
     validate_push_payload(&tool_name, &data)?;
+    let warnings = collect_efficiency_warnings(&tool_name, &data);
     Ok(PushParams {
         session_id,
         tool_name,
         data,
         meta,
         timeout,
+        warnings,
     })
 }
 
@@ -2452,6 +2735,19 @@ Include table data in `data.tables`:
 
 Table data shape matches structured_data (columns with id/name/change, rows with id/cells/children). Tables are fully interactive in review mode (accept/reject rows, edit cells).
 
+For larger embedded tables, first call `describe_tool("register_dataset")` if available, then call `register_dataset` with source objects or lightweight local Markdown references. Never pass `sources` entries as JSON strings. For prepared findings already on disk, prefer a local reference such as `{ "kind": "markdown_table", "path": "/.../prepared-findings.md", "heading": "Recommended Evidence Reviews" }` over copying every table row. Then embed a table with `dataRef` instead of repeating all rows:
+```json
+{
+  "id": "evidence_reviews",
+  "name": "Evidence Reviews",
+  "dataRef": {
+    "dataset_id": "northstar-risk-control-2026-05",
+    "source_id": "reviews",
+    "recipe": "review_rows"
+  }
+}
+```
+
 ## Embedded universal_graph charts (rich_content display or review)
 
 Embed read-only analytical charts within markdown using empty fenced code blocks. This works in plain rich_content pushes and in rich_content push_review payloads; graphs remain read-only review context and never carry approve/reject state.
@@ -2481,6 +2777,8 @@ Include graph specs in `data.graphs`:
 ```
 
 Embedded graph fences must be empty and must reference a matching entry in `data.graphs`. If multiple graphs participate in drilldowns, include the full graph registry in `data.graphs` and reference only the primary graph from the body. Graph embeds are read-only in V1; use standalone `universal_graph` or the direct `universal_graph` tool when the main artifact is a graph pack rather than a prose or review document.
+
+For larger graph datasets, first call `describe_tool("register_dataset")` if available, then call `register_dataset` and pass `dataRef` plus a named recipe (`count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, `waterfall_from_deltas`, `select_rows`) instead of emitting all graph rows inline. For graph `dataRef` recipes, MCPViews infers common recipe params from the graph `encoding` (`x`, `y`, `value`, and `label`) when `dataRef.params` is omitted; pass explicit params only when the transform should differ from the visible encoding. For prepared findings Markdown, use `kind: "markdown_json_blocks"` plus `path` to register all fenced JSON chart blocks by heading-derived `source_id`.
 
 ## Combined review payload
 
@@ -2561,6 +2859,7 @@ Use rich_content with markdown tables for simple, small, static tables.
 - Use `push_content` + `structured_data` for a read-only interactive table.
 - Use `push_review` + `structured_data` when the user needs to approve adds, deletes, updates, or edited cell values.
 - If you want review behavior, do NOT send the table through plain `push_content` and expect approval controls to appear.
+- For large or repeated tables, call `describe_tool("register_dataset")` if available, then call `register_dataset` once with source objects or lightweight local Markdown references. Do not stringify source objects. Use `tables[].dataRef` with recipe `review_rows` or `select_rows` instead of repeating every cell in the renderer payload.
 
 ## Required payload shape — do not omit these
 
@@ -2784,6 +3083,23 @@ and define the matching graph in `data.graphs`. Embedded graphs also work inside
 }
 ```
 
+For large or reused datasets, call `describe_tool("register_dataset")` if available, then call `register_dataset` once and use `graphs[].dataRef` instead of inline `data.rows`. Do not stringify `sources` entries. When a local prepared findings Markdown file already contains fenced JSON chart data, register it with `kind: "markdown_json_blocks"` and a `path` instead of copying the rows:
+```json
+{
+  "id": "risk_by_rule",
+  "type": "bar",
+  "dataRef": {
+    "dataset_id": "northstar-risk-control-2026-05",
+    "source_id": "rule_evaluations",
+    "recipe": "group_sum",
+    "params": { "groupBy": "rule", "value": "riskScore" }
+  },
+  "encoding": { "x": "rule", "y": "value" }
+}
+```
+
+Supported `dataRef.recipe` values are `select_rows`, `review_rows`, `count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, and `waterfall_from_deltas`. The renderer fetches referenced rows from the MCPViews session cache and loads source rows on demand from the graph Data button. For graph recipes, omit `dataRef.params` when the recipe should use the visible encoding fields; the renderer derives heatmap `x`/`y`/`value`, trend `x`/`y`, waterfall `label`/`value`, funnel `label`/`count`, and common group/count fields from `encoding`.
+
 Supported V1 graph types: line, area, bar, stacked_bar, grouped_bar, scatter, bubble, combo, histogram, boxplot, heatmap, matrix, pie, donut, waterfall, funnel, gauge, radar, candlestick, timeline, gantt, tree, network, treemap, sunburst, sankey.
 
 Optional per-graph `options` can include `xScale`/`yScale` (`auto`, `category`, `linear`, `time`), `maxVisibleItems` for dense summaries, `showAll: true` when a caller prefers complete but crowded marks, `otherBucket` (`separate`, `inline`, `hidden`) for dense categorical summaries, and `binCount` for histograms. Waterfall charts also support `showTotal: false` to omit the ending balance bar and `totalLabel` to name the ending balance. Scatter and bubble charts use numeric/time x-scales automatically when the x column supports them; categorical x is only for string dimensions. Even with `showAll`, labels may be sampled or culled to avoid overlap.
@@ -2807,7 +3123,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Universal markdown display with mermaid diagrams, tables, code blocks, and citations. Use for any rich text content.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional heading", "body": "Markdown with ```mermaid blocks, ```structured_data:t1 embeds, ```universal_graph:g1 embeds, and {{suggest:id=X}} markers", "suggestions": { "s1": { "old": "text", "new": "replacement" } }, "tables": [{ "id": "t1", "name": "Name", "columns": [...], "rows": [...] }], "graphs": [{ "id": "g1", "type": "line", "data": { "columns": [...], "rows": [...] }, "encoding": { "x": "field", "y": "field" } }], "citations": { "plugin": [{ "index": 1, "source": "ludflow", "type": "code_unit", "id": "abc123", "label": "name" }] } } — data must be a JSON object, not a string. suggestions/tables are optional for push_review; graphs are read-only embeds."#.into()),
+            data_hint: Some(r#"{ "title": "Optional heading", "body": "Markdown with ```mermaid blocks, ```structured_data:t1 embeds, ```universal_graph:g1 embeds, and {{suggest:id=X}} markers", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "suggestions": { "s1": { "old": "text", "new": "replacement" } }, "tables": [{ "id": "t1", "name": "Name", "columns": [...], "rows": [...] } or { "id": "t1", "name": "Name", "dataRef": { "dataset_id": "id", "recipe": "review_rows" } }], "graphs": [{ "id": "g1", "type": "line", "data": { "columns": [...], "rows": [...] }, "encoding": { "x": "field", "y": "field" } } or { "id": "g1", "type": "bar", "dataRef": { "dataset_id": "id", "recipe": "group_sum", "params": {} }, "encoding": { "x": "field", "y": "value" } }], "citations": { "plugin": [{ "index": 1, "source": "ludflow", "type": "code_unit", "id": "abc123", "label": "name" }] } } — data must be a JSON object, not a string. Use register_dataset + dataRef for large/repeated rows."#.into()),
             rule: Some(RICH_CONTENT_RULE.into()),
             display_mode: None,
             invoke_schema: None,
@@ -2820,7 +3136,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Tabular data with hierarchical rows, change tracking, sort/filter, and review mode with per-row/column accept/reject and cell editing.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional", "tables": [{ "id": "t1", "name": "Name", "columns": [{ "id": "c1", "name": "Col", "change": null|"add"|"delete" }], "rows": [{ "id": "r1", "cells": { "c1": { "value": "v", "change": null|"add"|"delete"|"update" } }, "children": [] }] }] }"#.into()),
+            data_hint: Some(r#"{ "title": "Optional", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "tables": [{ "id": "t1", "name": "Name", "columns": [{ "id": "c1", "name": "Col", "change": null|"add"|"delete" }], "rows": [{ "id": "r1", "cells": { "c1": { "value": "v", "change": null|"add"|"delete"|"update" } }, "children": [] }] } or { "id": "t1", "name": "Name", "dataRef": { "dataset_id": "id", "recipe": "review_rows" } }] }"#.into()),
             display_mode: None,
             invoke_schema: None,
             url_patterns: vec![],
@@ -2833,7 +3149,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Native read-only analytical graph renderer for standalone graph packs and rich_content embeds across chart, hierarchy, network, flow, timeline, matrix, and distribution views.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "role": "primary|drilldown", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "encoding": { "x": "field", "y": "field", "label": "field", "parent": "field", "value": "field", "source": "field", "target": "field", "min": "field", "max": "field" }, "axes": { "x": { "label": "X axis label", "description": "Optional hover context" }, "y": "Y axis label" }, "options": { "xScale": "auto|category|linear|time", "yScale": "auto|category|linear|time", "maxVisibleItems": 24, "showAll": false, "otherBucket": "separate|inline|hidden", "binCount": 12, "showTotal": true, "totalLabel": "Ending total" }, "interactions": { "details": { "titleField": "field", "fields": ["field"] }, "hover": "auto", "drilldowns": [{ "id": "detail", "label": "Open detail", "targetGraphId": "detail_graph", "trigger": "mark", "match": { "source": "field", "targetField": "field" } }], "metricControls": { "target": "y|value", "fields": ["numeric_field"] } } }] }"#.into()),
+            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "role": "primary|drilldown", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "dataRef": { "dataset_id": "id", "source_id": "source", "recipe": "group_sum|count_by|trend|heatmap_by_pair|funnel_from_counts|waterfall_from_deltas|select_rows", "params": {} }, "encoding": { "x": "field", "y": "field", "label": "field", "parent": "field", "value": "field", "source": "field", "target": "field", "min": "field", "max": "field" }, "axes": { "x": { "label": "X axis label", "description": "Optional hover context" }, "y": "Y axis label" }, "options": { "xScale": "auto|category|linear|time", "yScale": "auto|category|linear|time", "maxVisibleItems": 24, "showAll": false, "otherBucket": "separate|inline|hidden", "binCount": 12, "showTotal": true, "totalLabel": "Ending total" }, "interactions": { "details": { "titleField": "field", "fields": ["field"] }, "hover": "auto", "drilldowns": [{ "id": "detail", "label": "Open detail", "targetGraphId": "detail_graph", "trigger": "mark", "match": { "source": "field", "targetField": "field" } }], "metricControls": { "target": "y|value", "fields": ["numeric_field"] } } }] }"#.into()),
             display_mode: None,
             invoke_schema: None,
             url_patterns: vec![],
@@ -3535,9 +3851,9 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "9");
+        assert_eq!(RULES_VERSION, "11");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 9"));
+        assert!(instructions.contains("mcpviews-rules-version: 11"));
         assert!(instructions.contains("Append all rules below to `AGENTS.md`"));
     }
 
@@ -4418,6 +4734,37 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_push_params_warns_for_large_inline_renderer_rows() {
+        let rows = (0..201)
+            .map(|index| {
+                serde_json::json!({
+                    "id": format!("row_{}", index),
+                    "cells": {
+                        "name": { "value": format!("Row {}", index), "change": null }
+                    },
+                    "children": []
+                })
+            })
+            .collect::<Vec<_>>();
+        let args = serde_json::json!({
+            "tool_name": "structured_data",
+            "data": {
+                "tables": [{
+                    "id": "large",
+                    "name": "Large",
+                    "columns": [{ "id": "name", "name": "Name", "change": null }],
+                    "rows": rows
+                }]
+            }
+        });
+
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.warnings.len(), 1);
+        assert!(params.warnings[0].contains("201 inline table rows"));
+        assert!(params.warnings[0].contains("tables[].dataRef"));
+    }
+
+    #[test]
     fn test_extract_push_params_missing_tool_name() {
         let args = serde_json::json!({
             "data": {"plain": true}
@@ -5223,5 +5570,88 @@ mod tests {
         });
         let err = extract_push_params(&args, false).unwrap_err();
         assert!(err.contains("columns[0].name"));
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_structured_data_data_ref_table() {
+        let args = serde_json::json!({
+            "tool_name": "structured_data",
+            "data": {
+                "tables": [{
+                    "id": "actions",
+                    "name": "Actions",
+                    "dataRef": {
+                        "dataset_id": "dataset-1",
+                        "recipe": "review_rows"
+                    }
+                }]
+            }
+        });
+
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.data["tables"][0]["dataRef"]["dataset_id"], "dataset-1");
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_universal_graph_data_ref() {
+        let args = serde_json::json!({
+            "tool_name": "universal_graph",
+            "data": {
+                "graphs": [{
+                    "id": "risk_by_rule",
+                    "title": "Risk By Rule",
+                    "type": "bar",
+                    "dataRef": {
+                        "dataset_id": "dataset-1",
+                        "recipe": "group_sum",
+                        "params": { "groupBy": "rule", "value": "score" }
+                    },
+                    "encoding": { "x": "rule", "y": "value" }
+                }]
+            }
+        });
+
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(params.data["graphs"][0]["dataRef"]["recipe"], "group_sum");
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_unknown_data_ref_recipe() {
+        let args = serde_json::json!({
+            "tool_name": "structured_data",
+            "data": {
+                "tables": [{
+                    "id": "actions",
+                    "dataRef": {
+                        "dataset_id": "dataset-1",
+                        "recipe": "invented_recipe"
+                    }
+                }]
+            }
+        });
+
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("invented_recipe"));
+    }
+
+    #[test]
+    fn test_extract_push_params_accepts_instruction_template() {
+        let args = serde_json::json!({
+            "tool_name": "rich_content",
+            "data": {
+                "title": "Review",
+                "body": "Review body.",
+                "instructionTemplate": {
+                    "id": "audit_only_evidence_review_v1",
+                    "variables": { "reviewer": "Risk committee" }
+                }
+            }
+        });
+
+        let params = extract_push_params(&args, false).unwrap();
+        assert_eq!(
+            params.data["instructionTemplate"]["id"],
+            "audit_only_evidence_review_v1"
+        );
     }
 }

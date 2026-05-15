@@ -302,10 +302,32 @@
   window.__renderers.rich_content = function renderRichContent(container, data, meta, toolArgs, reviewRequired, onDecision) {
     container.innerHTML = '';
     var utils = window.__companionUtils;
+    var datasetClient = window.__mcpviewsDatasetClient;
 
     // Normalize input: plain string → { body: data }
     if (typeof data === 'string') {
       data = { body: data };
+    }
+
+    if (datasetClient && typeof datasetClient.applyInstructionTemplate === 'function') {
+      data = datasetClient.applyInstructionTemplate(data);
+    }
+
+    if (datasetClient && datasetClient.hasPendingRefs && datasetClient.hasPendingRefs(data)) {
+      var loading = document.createElement('div');
+      loading.className = 'md-callout';
+      loading.textContent = 'Loading referenced renderer data...';
+      container.appendChild(loading);
+      datasetClient.resolveData(data).then(function (resolvedData) {
+        renderRichContent(container, resolvedData, meta, toolArgs, reviewRequired, onDecision);
+      }).catch(function (error) {
+        container.innerHTML = '';
+        var message = document.createElement('pre');
+        message.className = 'md-codeblock';
+        message.textContent = error && error.message ? error.message : 'Referenced renderer data could not be loaded.';
+        container.appendChild(message);
+      });
+      return;
     }
 
     // Fallback: if data has neither body nor title, render as JSON

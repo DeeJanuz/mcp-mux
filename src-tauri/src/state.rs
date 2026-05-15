@@ -13,6 +13,7 @@ use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use mcpviews_shared::plugin_store::PluginStore;
 use mcpviews_shared::{PluginManifest, RegistryEntry};
 
+use crate::datasets::DatasetStore;
 use crate::mcp_session::McpSessionManager;
 use crate::plugin::PluginRegistry;
 use crate::review::ReviewState;
@@ -20,6 +21,7 @@ use crate::session::SessionStore;
 
 pub struct AppState {
     pub sessions: Mutex<SessionStore>,
+    pub datasets: Mutex<DatasetStore>,
     pub reviews: Mutex<ReviewState>,
     /// Maps session_id -> (deadline, original_timeout_secs)
     pub review_deadlines: Mutex<HashMap<String, (Arc<TokioMutex<Instant>>, u64)>>,
@@ -56,6 +58,7 @@ impl AppState {
             .expect("failed to build shared HTTP client");
         Self {
             sessions: Mutex::new(SessionStore::new()),
+            datasets: Mutex::new(DatasetStore::new()),
             reviews: Mutex::new(ReviewState::new()),
             review_deadlines: Mutex::new(HashMap::new()),
             plugin_registry: Mutex::new(registry),

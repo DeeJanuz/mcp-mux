@@ -537,6 +537,62 @@ Display content in the MCPViews window. Supports multiple content types.
 | `tool_name` | string | Yes | Content type identifier for renderer selection. Available renderers are listed dynamically based on installed plugins. Use `rich_content` for generic markdown display. |
 | `data` | object | Yes | Content data to display. |
 
+### `register_dataset`
+
+Register compact inline seed data or lightweight local Markdown references in MCPViews' session-scoped cache. Use the returned `dataset_id` in renderer `dataRef` payloads to reduce repeated output tokens for large tables and graph rows. V1 is an output-token optimization only; it does not ingest SQL, APIs, Excel, CSV files, or MCP tool results by itself.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dataset_id` | string | No | Stable dataset id. MCPViews generates one if omitted. |
+| `title` | string | No | Human-readable dataset title. |
+| `columns` / `rows` | array | No | Top-level inline seed data. |
+| `tables` | array | No | Structured-data tables to register as sources. |
+| `graphs` | array | No | Universal-graph specs whose `data.columns` and `data.rows` should be registered as sources. |
+| `sources` | array | No | Source objects with `id`, `columns`, `rows`, `table`, `graph`, or lightweight local Markdown references. Pass objects directly, not stringified JSON. |
+| `ttl_seconds` | integer | No | Session-cache TTL. Defaults to 30 minutes. |
+
+**Inline example:**
+```json
+{
+  "dataset_id": "northstar-risk-control-2026-05",
+  "sources": [{
+    "id": "rule_evaluations",
+    "columns": [
+      { "id": "rule", "name": "Rule" },
+      { "id": "riskScore", "name": "Risk Score", "type": "number" }
+    ],
+    "rows": [
+      { "rule": "Sector cap", "riskScore": 4 },
+      { "rule": "Sector cap", "riskScore": 7 }
+    ]
+  }]
+}
+```
+
+**Local Markdown reference example:**
+```json
+{
+  "dataset_id": "northstar-risk-control-2026-05",
+  "sources": [
+    {
+      "kind": "markdown_json_blocks",
+      "path": "/Users/example/projects/northstar/data/prepared-findings.md"
+    },
+    {
+      "id": "recommended_evidence_reviews",
+      "kind": "markdown_table",
+      "path": "/Users/example/projects/northstar/data/prepared-findings.md",
+      "heading": "Recommended Evidence Reviews"
+    }
+  ]
+}
+```
+
+`markdown_json_blocks` registers each fenced `json` block under its nearest Markdown heading, using heading-derived source ids such as `source_fact_compression`. `markdown_table` registers the Markdown table under the requested `heading`.
+
+The response includes `dataset_id`, source ids, inferred schema summaries, row counts, content hashes, and warnings. If a caller accidentally passes a `sources[]` entry as a stringified JSON object, MCPViews parses it and returns a warning so the agent does not need to emit the same dataset a second time.
+
 ### `push_review`
 
 Display content for user review. Returns immediately with a `session_id` and `"pending"` status. The agent then calls `await_review(session_id)` to wait until the user submits their decision.
@@ -638,6 +694,26 @@ Wait for a user decision for a pending review session. If no decision arrives be
 ```
 
 All `change` fields must be `null` for push_content. The server strips non-null change values automatically.
+
+**Reference-backed table:**
+
+```json
+{
+  "tool_name": "structured_data",
+  "data": {
+    "title": "Evidence Reviews",
+    "tables": [{
+      "id": "evidence_reviews",
+      "name": "Evidence Reviews",
+      "dataRef": {
+        "dataset_id": "northstar-risk-control-2026-05",
+        "source_id": "reviews",
+        "recipe": "review_rows"
+      }
+    }]
+  }
+}
+```
 
 **Change review (push_review):**
 
@@ -761,6 +837,27 @@ Prefer the direct tool when it is available in the agent's tool list. Use the sa
 Supported V1 graph types: `line`, `area`, `bar`, `stacked_bar`, `grouped_bar`, `scatter`, `bubble`, `combo`, `histogram`, `boxplot`, `heatmap`, `matrix`, `pie`, `donut`, `waterfall`, `funnel`, `gauge`, `radar`, `candlestick`, `timeline`, `gantt`, `tree`, `network`, `treemap`, `sunburst`, and `sankey`.
 
 Graph specs are strictly validated before new pushes are stored: graph IDs must be unique, graph types must be supported, required encodings must be present, supported options must be well-formed, every encoding field must reference an existing `data.columns[].id`, and required numeric/time row values must be valid. Stored or legacy payloads that reach the renderer are handled best-effort with visible graph warnings.
+
+Graphs can use `dataRef` instead of inline `data.columns` and `data.rows` when the source has been registered with `register_dataset`:
+
+```json
+{
+  "id": "risk_by_rule",
+  "title": "Risk By Rule",
+  "type": "bar",
+  "dataRef": {
+    "dataset_id": "northstar-risk-control-2026-05",
+    "source_id": "rule_evaluations",
+    "recipe": "group_sum",
+    "params": { "groupBy": "rule", "value": "riskScore" }
+  },
+  "encoding": { "x": "rule", "y": "value" }
+}
+```
+
+Supported `dataRef.recipe` values are `select_rows`, `review_rows`, `count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, and `waterfall_from_deltas`. The renderer fetches graph/table rows from the session cache and loads graph source rows on demand from the Data button.
+
+For graph `dataRef` recipes, MCPViews derives common recipe params from the graph `encoding` when `dataRef.params` is omitted. For example, `heatmap_by_pair` uses `encoding.x`, `encoding.y`, and `encoding.value`; `waterfall_from_deltas` uses `encoding.x` or `encoding.label` plus `encoding.value`; and `funnel_from_counts` uses `encoding.label` plus `encoding.value`. Pass explicit `params` only when the transform should differ from the visible encoding.
 
 Optional per-graph `options`:
 
@@ -907,7 +1004,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "9",
+  "rules_version": "11",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -951,15 +1048,15 @@ sequenceDiagram
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
   "rules_update": {
-    "current_version": "9",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 9..."
+    "current_version": "11",
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 11..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 9 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 11 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`.
 
 The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
@@ -1171,7 +1268,7 @@ One-time setup for MCPViews. Returns instructions for persisting a rule that ens
 ```json
 {
   "rules": [ ... ],
-  "rules_version": "9",
+  "rules_version": "11",
   "plugin_status": [ ... ],
   "persistence_instructions": "Persist each rule as a memory file...",
   "setup_instructions": "Add a rule in `.claude/rules/mcpviews-init.md` containing: ..."

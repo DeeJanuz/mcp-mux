@@ -4,6 +4,7 @@
 mod auth;
 mod commands;
 mod desktop_relay;
+mod datasets;
 mod first_party_ai;
 mod http_server;
 mod installer;

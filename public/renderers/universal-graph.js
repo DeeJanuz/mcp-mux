@@ -475,6 +475,10 @@
     return (graph.data && Array.isArray(graph.data.rows)) ? graph.data.rows : [];
   }
 
+  function graphDataRef(graph) {
+    return graph && (graph.dataRef || graph.data_ref) || null;
+  }
+
   function enc(graph, key) {
     var value = graph.encoding && graph.encoding[key];
     if (Array.isArray(value)) return value[0];
@@ -2308,6 +2312,53 @@
   function buildSourceTable(graph) {
     var wrap = document.createElement('div');
     wrap.className = 'ug-source';
+    var ref = graphDataRef(graph);
+    if (ref && window.__mcpviewsDatasetClient) {
+      wrap.__ugLoad = function () {
+        if (wrap.__ugLoaded || wrap.__ugLoading) return;
+        wrap.__ugLoading = true;
+        wrap.textContent = '';
+        var loading = document.createElement('div');
+        loading.className = 'ug-source-summary';
+        loading.textContent = 'Loading source rows...';
+        wrap.appendChild(loading);
+        window.__mcpviewsDatasetClient.query(ref, {
+          recipe: ref.sourceRecipe || ref.source_recipe || 'select_rows',
+          params: ref.sourceParams || ref.source_params || {},
+          limit: SOURCE_ROW_LIMIT,
+        }).then(function (result) {
+          wrap.__ugLoaded = true;
+          var sourceGraph = cloneGraph(graph);
+          delete sourceGraph.dataRef;
+          delete sourceGraph.data_ref;
+          sourceGraph.data = {
+            columns: result.columns || [],
+            rows: result.rows || [],
+          };
+          var rendered = buildSourceTable(sourceGraph);
+          wrap.textContent = '';
+          Array.prototype.slice.call(rendered.childNodes).forEach(function (child) {
+            wrap.appendChild(child);
+          });
+          if (result.total_row_count && result.total_row_count > result.row_count && wrap.firstChild) {
+            wrap.firstChild.textContent = 'Showing first ' + result.row_count + ' of ' + result.total_row_count + ' source rows.';
+          }
+        }).catch(function (error) {
+          wrap.textContent = '';
+          var message = document.createElement('div');
+          message.className = 'ug-source-summary';
+          message.textContent = error && error.message ? error.message : 'Source rows could not be loaded.';
+          wrap.appendChild(message);
+        }).finally(function () {
+          wrap.__ugLoading = false;
+        });
+      };
+      var summaryRef = document.createElement('div');
+      summaryRef.className = 'ug-source-summary';
+      summaryRef.textContent = 'Source rows load on demand from dataRef.';
+      wrap.appendChild(summaryRef);
+      return wrap;
+    }
     var sourceRows = rows(graph);
     var visibleRows = sourceRows.slice(0, SOURCE_ROW_LIMIT);
     var summary = document.createElement('div');
@@ -2750,6 +2801,9 @@
     stage.className = 'ug-stage';
     var svg = renderGraphSvg(graph);
     var warnings = (graph.__ugWarnings || []).slice();
+    if (!graphDataRef(graph) && rows(graph).length > 500) {
+      warnings.push('This graph includes ' + rows(graph).length + ' inline data rows. register_dataset plus dataRef can reduce repeated output tokens.');
+    }
     if (warnings.length) {
       var warningWrap = document.createElement('div');
       warningWrap.className = 'ug-warnings';
@@ -2778,6 +2832,7 @@
     card.appendChild(source);
     dataBtn.addEventListener('click', function () {
       source.hidden = !source.hidden;
+      if (!source.hidden && source.__ugLoad) source.__ugLoad();
       dataBtn.classList.toggle('ug-action-active', !source.hidden);
     });
 
@@ -2799,11 +2854,45 @@
     };
   }
 
+  function hasPendingGraphRefs(data) {
+    var client = window.__mcpviewsDatasetClient;
+    return !!(client && data && Array.isArray(data.graphs) && data.graphs.some(client.hasPendingGraphRef));
+  }
+
+  function renderDataRefLoading(container) {
+    var loading = document.createElement('div');
+    loading.className = 'ug-empty';
+    loading.textContent = 'Loading referenced graph data...';
+    container.appendChild(loading);
+  }
+
+  function renderDataRefError(container, error) {
+    var message = document.createElement('div');
+    message.className = 'ug-empty';
+    message.textContent = error && error.message ? error.message : 'Referenced graph data could not be loaded.';
+    container.appendChild(message);
+  }
+
   function renderUniversalGraph(container, data) {
     var normalized = normalizeData(data);
     container.classList.add('ug-root');
 
-    if (normalized.title || normalized.description) {
+    if (hasPendingGraphRefs(normalized)) {
+      renderDataRefLoading(container);
+      window.__mcpviewsDatasetClient.resolveGraphs(normalized.graphs).then(function () {
+        container.innerHTML = '';
+        renderUniversalGraph(container, normalized);
+      }).catch(function (error) {
+        container.innerHTML = '';
+        renderDataRefError(container, error);
+      });
+      return;
+    }
+
+    var headerTemplateText = window.__mcpviewsDatasetClient && typeof window.__mcpviewsDatasetClient.renderTemplate === 'function'
+      ? window.__mcpviewsDatasetClient.renderTemplate(data && (data.instructionTemplate || data.instruction_template))
+      : '';
+    if (normalized.title || normalized.description || headerTemplateText) {
       var header = document.createElement('header');
       header.className = 'ug-header';
       if (normalized.title) {
@@ -2817,6 +2906,12 @@
         p.className = 'ug-description';
         p.textContent = normalized.description;
         header.appendChild(p);
+      }
+      if (headerTemplateText) {
+        var templateEl = document.createElement('p');
+        templateEl.className = 'ug-description';
+        templateEl.textContent = headerTemplateText;
+        header.appendChild(templateEl);
       }
       container.appendChild(header);
     }

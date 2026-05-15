@@ -104,6 +104,10 @@
       '.sd-submit-bar button:disabled, .sd-container[data-review-submitted="true"] button:disabled { opacity: 0.65; cursor: default; }',
       '.sd-cell-editor { font-family: var(--font-sans); font-size: var(--text-body); color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--color-info); border-radius: var(--border-radius-sm); padding: var(--space-1) var(--space-2); width: 100%; box-sizing: border-box; outline: none; }',
       '.sd-empty { font-family: var(--font-sans); font-size: var(--text-body); color: var(--text-tertiary); padding: var(--space-6); text-align: center; }',
+      '.sd-loading, .sd-efficiency-warning, .sd-dataref-warning { font-family: var(--font-sans); font-size: var(--text-small); padding: var(--space-3); border-radius: var(--border-radius-sm); margin-bottom: var(--space-3); }',
+      '.sd-instruction-template { font-family: var(--font-sans); font-size: var(--text-small); color: var(--text-secondary); background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--border-radius-sm); padding: var(--space-3); margin-bottom: var(--space-3); white-space: pre-wrap; }',
+      '.sd-loading { color: var(--text-secondary); background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); }',
+      '.sd-efficiency-warning, .sd-dataref-warning { color: var(--color-warning-text); background: var(--color-warning-bg); border: 1px solid var(--color-warning); }',
       '.sd-row-rejected { opacity: 0.4; }',
       '.sd-row-rejected .sd-td { background: var(--bg-surface-subtle); color: var(--text-tertiary); }',
       '.sd-table-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }',
@@ -903,9 +907,80 @@
 
   // ── 5. Orchestrator ──
 
+  function hasPendingTableRefs(data) {
+    var client = window.__mcpviewsDatasetClient;
+    return !!(client && data && Array.isArray(data.tables) && data.tables.some(client.hasPendingTableRef));
+  }
+
+  function renderDataRefLoading(container) {
+    var loading = document.createElement('div');
+    loading.className = 'sd-loading';
+    loading.textContent = 'Loading referenced table data...';
+    container.appendChild(loading);
+  }
+
+  function renderDataRefError(container, error) {
+    var message = document.createElement('div');
+    message.className = 'sd-empty';
+    message.textContent = error && error.message ? error.message : 'Referenced table data could not be loaded.';
+    container.appendChild(message);
+  }
+
+  function inlineRowCount(rows) {
+    return (rows || []).reduce(function (count, row) {
+      return count + 1 + inlineRowCount(row && row.children);
+    }, 0);
+  }
+
+  function renderEfficiencyWarnings(container, data) {
+    var totalRows = (data.tables || []).reduce(function (sum, table) {
+      if (table && (table.dataRef || table.data_ref)) return sum;
+      return sum + inlineRowCount(table && table.rows);
+    }, 0);
+    if (totalRows <= 200) return;
+    var warning = document.createElement('div');
+    warning.className = 'sd-efficiency-warning';
+    warning.textContent = 'This payload includes ' + totalRows + ' inline table rows. register_dataset plus dataRef can reduce repeated output tokens for large tables.';
+    container.appendChild(warning);
+  }
+
+  function renderResolvedRefWarnings(container, data) {
+    (data.tables || []).forEach(function (table) {
+      (table.__dataRefWarnings || []).forEach(function (text) {
+        var warning = document.createElement('div');
+        warning.className = 'sd-dataref-warning';
+        warning.textContent = text;
+        container.appendChild(warning);
+      });
+    });
+  }
+
+  function renderInstructionTemplate(container, data) {
+    var client = window.__mcpviewsDatasetClient;
+    if (!client || typeof client.renderTemplate !== 'function') return;
+    var text = client.renderTemplate(data && (data.instructionTemplate || data.instruction_template));
+    if (!text) return;
+    var el = document.createElement('div');
+    el.className = 'sd-instruction-template';
+    el.textContent = text;
+    container.appendChild(el);
+  }
+
   function renderStructuredData(container, data, meta, toolArgs, reviewRequired, onDecision) {
     container.innerHTML = '';
     injectStyles();
+
+    if (hasPendingTableRefs(data)) {
+      renderDataRefLoading(container);
+      window.__mcpviewsDatasetClient.resolveTables(data.tables).then(function () {
+        renderStructuredData(container, data, meta, toolArgs, reviewRequired, onDecision);
+      }).catch(function (error) {
+        container.innerHTML = '';
+        renderDataRefError(container, error);
+      });
+      return;
+    }
+
     data = normalizeStructuredData(data);
 
     if (!data || !data.tables || !data.tables.length) {
@@ -922,6 +997,10 @@
       titleEl.textContent = data.title;
       container.appendChild(titleEl);
     }
+
+    renderInstructionTemplate(container, data);
+    renderEfficiencyWarnings(container, data);
+    renderResolvedRefWarnings(container, data);
 
     var legend = buildLegend(data, reviewRequired);
     if (legend) container.appendChild(legend);

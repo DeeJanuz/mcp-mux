@@ -778,6 +778,21 @@ async fn first_party_ai_debug_handler(
     }
 }
 
+async fn dataset_query_handler(
+    Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
+    Json(req): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    match crate::datasets::query_dataset(&state, req).await {
+        Ok(value) => (StatusCode::OK, Json(value)),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": error
+            })),
+        ),
+    }
+}
+
 async fn push_handler(
     Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
     Json(push_req): Json<serde_json::Value>,
@@ -1187,6 +1202,7 @@ pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle, 
     let app = Router::new()
         .route("/health", get(health_handler))
         .route("/api/push", post(push_handler))
+        .route("/api/datasets/query", post(dataset_query_handler))
         .route("/api/debug/first-party-ai", post(first_party_ai_debug_handler))
         .route("/api/desktop-relay/tool-request", post(desktop_relay_tool_request_handler))
         .route("/api/heartbeat", post(heartbeat_handler))
@@ -1217,6 +1233,9 @@ pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle, 
             let mut sessions = gc_state.sessions.lock().unwrap();
             sessions.gc();
             drop(sessions);
+            let mut datasets = gc_state.datasets.lock().unwrap();
+            datasets.gc();
+            drop(datasets);
             // Clean up stale deadlines
             let mut deadlines = gc_state.review_deadlines.lock().unwrap();
             let reviews = gc_state.reviews.lock().unwrap();

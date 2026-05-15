@@ -539,7 +539,7 @@ Display content in the MCPViews window. Supports multiple content types.
 
 ### `register_dataset`
 
-Register compact inline seed data or lightweight local Markdown references in MCPViews' session-scoped cache. Use the returned `dataset_id` in renderer `dataRef` payloads to reduce repeated output tokens for large tables and graph rows. V1 is an output-token optimization only; it does not ingest SQL, APIs, Excel, CSV files, or MCP tool results by itself.
+Register compact inline seed data or allowlisted local Markdown references in MCPViews' session-scoped cache. Use the returned `dataset_id` and `query_token` in renderer `dataRef` payloads to reduce repeated output tokens for large tables and graph rows. V1 is an output-token optimization only; it does not ingest SQL, APIs, Excel, CSV files, or MCP tool results by itself.
 
 **Parameters:**
 | Field | Type | Required | Description |
@@ -549,7 +549,7 @@ Register compact inline seed data or lightweight local Markdown references in MC
 | `columns` / `rows` | array | No | Top-level inline seed data. |
 | `tables` | array | No | Structured-data tables to register as sources. |
 | `graphs` | array | No | Universal-graph specs whose `data.columns` and `data.rows` should be registered as sources. |
-| `sources` | array | No | Source objects with `id`, `columns`, `rows`, `table`, `graph`, or lightweight local Markdown references. Pass objects directly, not stringified JSON. |
+| `sources` | array | No | Source objects with `id`, `columns`, `rows`, `table`, `graph`, or allowlisted local Markdown references. Pass objects directly, not stringified JSON. |
 | `ttl_seconds` | integer | No | Session-cache TTL. Defaults to 30 minutes. |
 
 **Inline example:**
@@ -571,18 +571,21 @@ Register compact inline seed data or lightweight local Markdown references in MC
 ```
 
 **Local Markdown reference example:**
+
+Local Markdown reference paths must resolve under `~/.mcpviews/cache/dataset-references` or one of the trusted directories in `MCPVIEWS_DATASET_REFERENCE_ROOTS`.
+
 ```json
 {
   "dataset_id": "northstar-risk-control-2026-05",
   "sources": [
     {
       "kind": "markdown_json_blocks",
-      "path": "/Users/example/projects/northstar/data/prepared-findings.md"
+      "path": "/Users/example/.mcpviews/cache/dataset-references/prepared-findings.md"
     },
     {
       "id": "recommended_evidence_reviews",
       "kind": "markdown_table",
-      "path": "/Users/example/projects/northstar/data/prepared-findings.md",
+      "path": "/Users/example/.mcpviews/cache/dataset-references/prepared-findings.md",
       "heading": "Recommended Evidence Reviews"
     }
   ]
@@ -591,7 +594,7 @@ Register compact inline seed data or lightweight local Markdown references in MC
 
 `markdown_json_blocks` registers each fenced `json` block under its nearest Markdown heading, using heading-derived source ids such as `source_fact_compression`. `markdown_table` registers the Markdown table under the requested `heading`.
 
-The response includes `dataset_id`, source ids, inferred schema summaries, row counts, content hashes, and warnings. If a caller accidentally passes a `sources[]` entry as a stringified JSON object, MCPViews parses it and returns a warning so the agent does not need to emit the same dataset a second time.
+The response includes `dataset_id`, `query_token`, source ids, inferred schema summaries, row counts, content hashes, and warnings. If a caller accidentally passes a `sources[]` entry as a stringified JSON object, MCPViews parses it and returns a warning so the agent does not need to emit the same dataset a second time. Every renderer `dataRef` must include the returned `query_token`; `/api/datasets/query` rejects missing or invalid tokens.
 
 ### `push_review`
 
@@ -707,6 +710,7 @@ All `change` fields must be `null` for push_content. The server strips non-null 
       "name": "Evidence Reviews",
       "dataRef": {
         "dataset_id": "northstar-risk-control-2026-05",
+        "query_token": "returned-query-token",
         "source_id": "reviews",
         "recipe": "review_rows"
       }
@@ -847,6 +851,7 @@ Graphs can use `dataRef` instead of inline `data.columns` and `data.rows` when t
   "type": "bar",
   "dataRef": {
     "dataset_id": "northstar-risk-control-2026-05",
+    "query_token": "returned-query-token",
     "source_id": "rule_evaluations",
     "recipe": "group_sum",
     "params": { "groupBy": "rule", "value": "riskScore" }
@@ -855,9 +860,9 @@ Graphs can use `dataRef` instead of inline `data.columns` and `data.rows` when t
 }
 ```
 
-Supported `dataRef.recipe` values are `select_rows`, `review_rows`, `count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, and `waterfall_from_deltas`. The renderer fetches graph/table rows from the session cache and loads graph source rows on demand from the Data button.
+Supported `dataRef.recipe` values are `select_rows`, `review_rows`, `count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, and `waterfall_from_deltas`. The renderer fetches graph/table rows from the session cache and loads graph source rows on demand from the Data button. Every `dataRef` must include the `query_token` returned by `register_dataset`.
 
-For graph `dataRef` recipes, MCPViews derives common recipe params from the graph `encoding` when `dataRef.params` is omitted. For example, `heatmap_by_pair` uses `encoding.x`, `encoding.y`, and `encoding.value`; `waterfall_from_deltas` uses `encoding.x` or `encoding.label` plus `encoding.value`; and `funnel_from_counts` uses `encoding.label` plus `encoding.value`. Pass explicit `params` only when the transform should differ from the visible encoding.
+For graph `dataRef` recipes, MCPViews derives common recipe params from the graph `encoding` when `dataRef.params` is omitted. For example, `heatmap_by_pair` uses `encoding.x`, `encoding.y`, and `encoding.value`; `waterfall_from_deltas` uses `encoding.x` or `encoding.label` plus `encoding.value`; `funnel_from_counts` uses `encoding.label` plus `encoding.value`; and `group_sum` derives `outputField` from the visible y/value encoding so hydrated rows match the graph. Pass explicit `params` only when the transform should differ from the visible encoding.
 
 Optional per-graph `options`:
 
@@ -1004,7 +1009,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "11",
+  "rules_version": "12",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -1048,15 +1053,15 @@ sequenceDiagram
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
   "rules_update": {
-    "current_version": "11",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 11..."
+    "current_version": "12",
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 12..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 11 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 12 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`.
 
 The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
@@ -1268,7 +1273,7 @@ One-time setup for MCPViews. Returns instructions for persisting a rule that ens
 ```json
 {
   "rules": [ ... ],
-  "rules_version": "11",
+  "rules_version": "12",
   "plugin_status": [ ... ],
   "persistence_instructions": "Persist each rule as a memory file...",
   "setup_instructions": "Add a rule in `.claude/rules/mcpviews-init.md` containing: ..."

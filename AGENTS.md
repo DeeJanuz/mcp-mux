@@ -1,4 +1,4 @@
-<!-- mcpviews-rules-version: 11 -->
+<!-- mcpviews-rules-version: 12 -->
 
 # AGENTS.md
 
@@ -19,6 +19,8 @@ The Ludflow document should be linked to the relevant DecidR project or decision
 Plan documents should capture the intent, scope, affected systems, important decisions, implementation steps, validation approach, and current status. If the work changes direction, update the same document rather than letting the decision graph drift.
 
 When the planned work is complete, update the Ludflow document with a new version that records what was implemented, final decisions, validation results, and any follow-up work. Mark or publish the document as implemented and published so the Tribe-X DecidR project or decision reflects the completed state.
+
+When updating an existing Ludflow document that is linked to a DecidR decision whose work is already implemented, or when the Ludflow document is already published, treat the current content as the historical implementation record. Fetch the existing document content first, preserve it, and append new findings, validation notes, follow-up decisions, or corrections as a dated addendum. Do not replace, compress, or restructure the implemented content unless the user explicitly asks for a rewrite. If the document was published before the update, publish the appended version after the required review flow.
 
 ## Native Build AI Visual Debug Workflow
 

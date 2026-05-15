@@ -247,6 +247,7 @@ describe('universal_graph renderer', function () {
         type: 'bar',
         dataRef: {
           dataset_id: 'dataset-1',
+          query_token: 'token-1',
           recipe: 'group_sum',
           params: { groupBy: 'label', value: 'value' },
         },
@@ -260,6 +261,7 @@ describe('universal_graph renderer', function () {
     await new Promise(function (resolve) { setTimeout(resolve, 0); });
 
     expect(global.fetch).toHaveBeenCalled();
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).query_token).toBe('token-1');
     expect(container.querySelector('.ug-card[data-graph-id="ref_graph"]')).not.toBeNull();
     expect(container.querySelector('.ug-bar-value-label').childNodes[0].nodeValue).toBe('4');
   });
@@ -288,6 +290,7 @@ describe('universal_graph renderer', function () {
         type: 'heatmap',
         dataRef: {
           dataset_id: 'dataset-encoding-inference',
+          query_token: 'token-encoding-inference',
           source_id: 'rule_pressure_heatmap',
           recipe: 'heatmap_by_pair',
         },
@@ -316,6 +319,14 @@ describe('universal_graph renderer', function () {
     }, {
       recipe: 'funnel_from_counts',
     })).toEqual({ label: 'stage', count: 'count' });
+  });
+
+  it('infers group_sum outputField from the graph y encoding', function () {
+    expect(window.__mcpviewsDatasetClient.inferredGraphParams({
+      encoding: { x: 'rule', y: 'pressure' },
+    }, {
+      recipe: 'group_sum',
+    })).toEqual({ groupBy: 'rule', value: 'pressure', outputField: 'pressure' });
   });
 
   it('renders readable value labels for heatmap, bar, and waterfall graphs', function () {

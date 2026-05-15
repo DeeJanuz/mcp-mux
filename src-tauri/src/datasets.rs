@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as TokioMutex;
@@ -13,6 +13,7 @@ const DATASET_TTL: Duration = Duration::from_secs(30 * 60);
 const DEFAULT_SOURCE_ID: &str = "default";
 const LARGE_INLINE_ROW_WARNING_THRESHOLD: usize = 200;
 const MAX_REFERENCE_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const REFERENCE_ROOTS_ENV: &str = "MCPVIEWS_DATASET_REFERENCE_ROOTS";
 
 #[derive(Debug, Clone)]
 struct DatasetSource {
@@ -29,6 +30,7 @@ struct DatasetSource {
 #[derive(Debug, Clone)]
 struct DatasetEntry {
     dataset_id: String,
+    query_token: String,
     title: Option<String>,
     sources: HashMap<String, DatasetSource>,
     source_order: Vec<String>,
@@ -57,6 +59,7 @@ impl DatasetStore {
             .ok_or("register_dataset arguments must be a JSON object.".to_string())?;
         let dataset_id = string_field(object, &["dataset_id", "datasetId"])
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let query_token = uuid::Uuid::new_v4().to_string();
         let title = string_field(object, &["title", "name"]);
         let ttl = object
             .get("ttl_seconds")
@@ -91,6 +94,7 @@ impl DatasetStore {
 
         let entry = DatasetEntry {
             dataset_id: dataset_id.clone(),
+            query_token,
             title,
             sources: source_map,
             source_order,
@@ -115,6 +119,11 @@ impl DatasetStore {
             .entries
             .get(&dataset_id)
             .ok_or(format!("Dataset `{}` was not found or has expired.", dataset_id))?;
+        let query_token = string_field(object, &["query_token", "queryToken", "token"])
+            .ok_or("Dataset query requires query_token.".to_string())?;
+        if query_token != entry.query_token {
+            return Err("Dataset query requires a valid query_token.".to_string());
+        }
         let source_id = string_field(object, &["source_id", "sourceId"])
             .or_else(|| entry.source_order.first().cloned())
             .unwrap_or_else(|| DEFAULT_SOURCE_ID.to_string());
@@ -425,6 +434,7 @@ fn sources_from_markdown_reference(
         "register_dataset source `{}` with kind `{}` requires a local path or file:// uri.",
         fallback_id, kind
     ))?;
+    let path = validate_reference_path(&path)?;
     let content = read_reference_text(&path)?;
     let source_ref = source_reference(object);
     let mut sources = Vec::new();
@@ -684,6 +694,52 @@ fn reference_path(object: &Map<String, Value>) -> Option<PathBuf> {
         PathBuf::from(raw_path)
     };
     Some(expanded)
+}
+
+fn allowed_reference_roots() -> Vec<PathBuf> {
+    let mut roots = std::env::var_os(REFERENCE_ROOTS_ENV)
+        .map(|value| {
+            std::env::split_paths(&value)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    roots.push(mcpviews_shared::cache_dir().join("dataset-references"));
+    roots
+}
+
+fn validate_reference_path(path: &Path) -> Result<PathBuf, String> {
+    let canonical_path = fs::canonicalize(path).map_err(|err| {
+        format!(
+            "Could not resolve dataset reference `{}`: {}.",
+            path.display(),
+            err
+        )
+    })?;
+    if !canonical_path.is_file() {
+        return Err(format!(
+            "Dataset reference `{}` must be a regular file.",
+            canonical_path.display()
+        ));
+    }
+
+    let allowed_roots = allowed_reference_roots()
+        .into_iter()
+        .filter_map(|root| fs::canonicalize(root).ok())
+        .collect::<Vec<_>>();
+    if allowed_roots
+        .iter()
+        .any(|root| canonical_path.starts_with(root))
+    {
+        return Ok(canonical_path);
+    }
+
+    Err(format!(
+        "Dataset reference `{}` is outside the allowed roots. Move the file under `{}` or set {} to one or more trusted directories.",
+        canonical_path.display(),
+        mcpviews_shared::cache_dir().join("dataset-references").display(),
+        REFERENCE_ROOTS_ENV
+    ))
 }
 
 fn read_reference_text(path: &PathBuf) -> Result<String, String> {
@@ -1231,6 +1287,7 @@ fn summary_for_entry(entry: &DatasetEntry) -> Value {
     let row_count: usize = entry.sources.values().map(|source| source.rows.len()).sum();
     serde_json::json!({
         "dataset_id": entry.dataset_id,
+        "query_token": entry.query_token,
         "title": entry.title,
         "status": "registered",
         "source_count": entry.sources.len(),
@@ -1389,6 +1446,45 @@ fn titleize(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static REFERENCE_ROOTS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn query_token(summary: &Value) -> String {
+        summary["query_token"].as_str().unwrap().to_string()
+    }
+
+    fn with_reference_root<T>(root: &std::path::Path, f: impl FnOnce() -> T) -> T {
+        let lock = REFERENCE_ROOTS_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = lock.lock().unwrap();
+        let old_value = std::env::var_os(REFERENCE_ROOTS_ENV);
+        std::env::set_var(REFERENCE_ROOTS_ENV, root);
+        let result = f();
+        if let Some(value) = old_value {
+            std::env::set_var(REFERENCE_ROOTS_ENV, value);
+        } else {
+            std::env::remove_var(REFERENCE_ROOTS_ENV);
+        }
+        result
+    }
+
+    #[test]
+    fn allowed_reference_roots_ignores_empty_env_entries() {
+        let lock = REFERENCE_ROOTS_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = lock.lock().unwrap();
+        let old_value = std::env::var_os(REFERENCE_ROOTS_ENV);
+        std::env::set_var(REFERENCE_ROOTS_ENV, "");
+
+        let roots = allowed_reference_roots();
+
+        if let Some(value) = old_value {
+            std::env::set_var(REFERENCE_ROOTS_ENV, value);
+        } else {
+            std::env::remove_var(REFERENCE_ROOTS_ENV);
+        }
+
+        assert!(roots.iter().all(|root| !root.as_os_str().is_empty()));
+    }
 
     #[test]
     fn registers_inline_rows_and_returns_schema_summary() {
@@ -1404,6 +1500,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(result["dataset_id"], "risk");
+        assert!(result["query_token"].as_str().unwrap().len() > 20);
         assert_eq!(result["row_count"], 2);
         assert_eq!(result["sources"][0]["columns"][0]["id"], "rule");
     }
@@ -1411,7 +1508,7 @@ mod tests {
     #[test]
     fn group_sum_recipe_aggregates_rows() {
         let mut store = DatasetStore::new();
-        store
+        let summary = store
             .register(serde_json::json!({
                 "dataset_id": "risk",
                 "rows": [
@@ -1421,10 +1518,12 @@ mod tests {
                 ]
             }))
             .unwrap();
+        let token = query_token(&summary);
 
         let result = store
             .query(serde_json::json!({
                 "dataset_id": "risk",
+                "query_token": token,
                 "recipe": "group_sum",
                 "params": { "groupBy": "rule", "value": "score" }
             }))
@@ -1438,16 +1537,18 @@ mod tests {
     #[test]
     fn review_rows_converts_raw_rows_to_structured_rows() {
         let mut store = DatasetStore::new();
-        store
+        let summary = store
             .register(serde_json::json!({
                 "dataset_id": "tasks",
                 "rows": [{ "action": "create", "target": "Decision" }]
             }))
             .unwrap();
+        let token = query_token(&summary);
 
         let result = store
             .query(serde_json::json!({
                 "dataset_id": "tasks",
+                "query_token": token,
                 "recipe": "review_rows"
             }))
             .unwrap();
@@ -1467,6 +1568,34 @@ mod tests {
             }))
             .unwrap_err();
         assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn query_requires_valid_query_token() {
+        let mut store = DatasetStore::new();
+        store
+            .register(serde_json::json!({
+                "dataset_id": "risk",
+                "rows": [{ "rule": "Cap" }]
+            }))
+            .unwrap();
+
+        let missing = store
+            .query(serde_json::json!({
+                "dataset_id": "risk",
+                "recipe": "select_rows"
+            }))
+            .unwrap_err();
+        assert!(missing.contains("query_token"));
+
+        let wrong = store
+            .query(serde_json::json!({
+                "dataset_id": "risk",
+                "query_token": "not-the-token",
+                "recipe": "select_rows"
+            }))
+            .unwrap_err();
+        assert!(wrong.contains("valid query_token"));
     }
 
     #[test]
@@ -1527,15 +1656,18 @@ mod tests {
         .unwrap();
 
         let mut store = DatasetStore::new();
-        let result = store
-            .register(serde_json::json!({
-                "dataset_id": "northstar",
-                "sources": [{
-                    "kind": "markdown_json_blocks",
-                    "path": path.to_string_lossy()
-                }]
-            }))
-            .unwrap();
+        let result = with_reference_root(dir.path(), || {
+            store
+                .register(serde_json::json!({
+                    "dataset_id": "northstar",
+                    "sources": [{
+                        "kind": "markdown_json_blocks",
+                        "path": path.to_string_lossy()
+                    }]
+                }))
+                .unwrap()
+        });
+        let token = query_token(&result);
 
         assert_eq!(result["source_count"], 2);
         assert_eq!(result["sources"][0]["source_id"], "source_fact_compression");
@@ -1545,6 +1677,7 @@ mod tests {
         let query = store
             .query(serde_json::json!({
                 "dataset_id": "northstar",
+                "query_token": token,
                 "source_id": "source_fact_compression",
                 "recipe": "funnel_from_counts"
             }))
@@ -1572,21 +1705,25 @@ mod tests {
         .unwrap();
 
         let mut store = DatasetStore::new();
-        store
-            .register(serde_json::json!({
-                "dataset_id": "northstar",
-                "sources": [{
-                    "id": "recommended_evidence_reviews",
-                    "kind": "markdown_table",
-                    "path": path.to_string_lossy(),
-                    "heading": "Recommended Evidence Reviews"
-                }]
-            }))
-            .unwrap();
+        let summary = with_reference_root(dir.path(), || {
+            store
+                .register(serde_json::json!({
+                    "dataset_id": "northstar",
+                    "sources": [{
+                        "id": "recommended_evidence_reviews",
+                        "kind": "markdown_table",
+                        "path": path.to_string_lossy(),
+                        "heading": "Recommended Evidence Reviews"
+                    }]
+                }))
+                .unwrap()
+        });
+        let token = query_token(&summary);
 
         let query = store
             .query(serde_json::json!({
                 "dataset_id": "northstar",
+                "query_token": token,
                 "source_id": "recommended_evidence_reviews",
                 "recipe": "review_rows"
             }))
@@ -1597,6 +1734,37 @@ mod tests {
             query["rows"][0]["cells"]["assigned_reviewer"]["value"],
             "Grace Holloway"
         );
+    }
+
+    #[test]
+    fn register_dataset_rejects_markdown_reference_outside_allowed_roots() {
+        let allowed_dir = tempfile::tempdir().unwrap();
+        let blocked_dir = tempfile::tempdir().unwrap();
+        let path = blocked_dir.path().join("findings.md");
+        fs::write(
+            &path,
+            r#"# Findings
+
+```json
+[{ "stage": "Rule evaluations", "count": 1 }]
+```
+"#,
+        )
+        .unwrap();
+
+        let mut store = DatasetStore::new();
+        let err = with_reference_root(allowed_dir.path(), || {
+            store
+                .register(serde_json::json!({
+                    "dataset_id": "blocked",
+                    "sources": [{
+                        "kind": "markdown_json_blocks",
+                        "path": path.to_string_lossy()
+                    }]
+                }))
+                .unwrap_err()
+        });
+        assert!(err.contains("outside the allowed roots"));
     }
 
     #[test]
@@ -1628,17 +1796,20 @@ mod tests {
         });
 
         let mut store = DatasetStore::new();
-        store.register(register_payload.clone()).unwrap();
+        let summary = store.register(register_payload.clone()).unwrap();
+        let token = query_token(&summary);
 
         let hydrated_review_rows = store
             .query(serde_json::json!({
                 "dataset_id": "northstar-risk-control-2026-05",
+                "query_token": token.clone(),
                 "recipe": "review_rows"
             }))
             .unwrap();
         let hydrated_rule_pressure = store
             .query(serde_json::json!({
                 "dataset_id": "northstar-risk-control-2026-05",
+                "query_token": token.clone(),
                 "recipe": "group_sum",
                 "params": { "groupBy": "rule", "value": "pressure" }
             }))
@@ -1678,6 +1849,7 @@ mod tests {
                     "name": "Evidence Reviews",
                     "dataRef": {
                         "dataset_id": "northstar-risk-control-2026-05",
+                        "query_token": token.clone(),
                         "recipe": "review_rows"
                     }
                 }],
@@ -1687,6 +1859,7 @@ mod tests {
                     "type": "bar",
                     "dataRef": {
                         "dataset_id": "northstar-risk-control-2026-05",
+                        "query_token": token.clone(),
                         "recipe": "group_sum",
                         "params": { "groupBy": "rule", "value": "pressure" },
                         "sourceRecipe": "select_rows"

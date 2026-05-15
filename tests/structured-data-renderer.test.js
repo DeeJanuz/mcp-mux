@@ -302,6 +302,7 @@ describe('structured_data review decisions', function () {
         name: 'Actions',
         dataRef: {
           dataset_id: 'dataset-1',
+          query_token: 'token-1',
           recipe: 'review_rows',
         },
       }],
@@ -315,6 +316,7 @@ describe('structured_data review decisions', function () {
     expect(global.fetch).toHaveBeenCalledWith('http://localhost:4200/api/datasets/query', expect.objectContaining({
       method: 'POST',
     }));
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).query_token).toBe('token-1');
     expect(container.querySelector('td[data-column-id="action"]').textContent).toBe('create');
   });
 

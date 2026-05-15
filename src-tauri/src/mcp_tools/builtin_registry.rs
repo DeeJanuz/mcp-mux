@@ -59,12 +59,12 @@ fn rich_content_definition(renderers: &[RendererDef]) -> Value {
                 "suggestions": { "type": "object", "description": "Optional inline text suggestions keyed by suggestion id." },
                 "tables": {
                     "type": "array",
-                    "description": "Optional embedded structured_data tables referenced from the body. For large/repeated tables, use dataRef with a dataset_id returned by register_dataset.",
+                    "description": "Optional embedded structured_data tables referenced from the body. For large/repeated tables, use dataRef with the dataset_id and query_token returned by register_dataset.",
                     "items": { "type": "object" }
                 },
                 "graphs": {
                     "type": "array",
-                    "description": "Optional embedded universal_graph graph specs referenced from the body. For large/repeated graph rows, use dataRef with a dataset_id returned by register_dataset.",
+                    "description": "Optional embedded universal_graph graph specs referenced from the body. For large/repeated graph rows, use dataRef with the dataset_id and query_token returned by register_dataset.",
                     "items": { "type": "object" }
                 },
                 "instructionTemplate": {
@@ -135,7 +135,7 @@ fn universal_graph_definition(renderers: &[RendererDef]) -> Value {
 fn register_dataset_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "register_dataset",
-        "description": "Register small inline seed data or lightweight local Markdown references in MCPViews' session-scoped cache, then use the returned dataset_id in renderer dataRef payloads. IMPORTANT: pass sources as object literals, not JSON strings. If a source is accidentally stringified, MCPViews parses it and returns a warning instead of forcing a duplicate call. For local prepared findings, use sources with kind markdown_json_blocks or markdown_table plus path/heading so the agent emits references instead of rows. Returns dataset_id, source/schema summaries, hashes, row/column counts, TTL, and warnings. Use tables[].dataRef with review_rows/select_rows, or graphs[].dataRef with count_by, group_sum, trend, heatmap_by_pair, funnel_from_counts, waterfall_from_deltas, or select_rows. V1 is for output-token savings only: it does not ingest SQL, API, Excel, CSV, or MCP outputs.",
+        "description": "Register small inline seed data or allowlisted local Markdown references in MCPViews' session-scoped cache, then use the returned dataset_id and query_token in renderer dataRef payloads. IMPORTANT: pass sources as object literals, not JSON strings. If a source is accidentally stringified, MCPViews parses it and returns a warning instead of forcing a duplicate call. Local Markdown references are restricted to ~/.mcpviews/cache/dataset-references or directories listed in MCPVIEWS_DATASET_REFERENCE_ROOTS. Returns dataset_id, query_token, source/schema summaries, hashes, row/column counts, TTL, and warnings. Use tables[].dataRef with review_rows/select_rows, or graphs[].dataRef with count_by, group_sum, trend, heatmap_by_pair, funnel_from_counts, waterfall_from_deltas, or select_rows. V1 is for output-token savings only: it does not ingest SQL, API, Excel, CSV, or MCP outputs.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -147,7 +147,7 @@ fn register_dataset_definition(_: &[RendererDef]) -> Value {
                 "graphs": { "type": "array", "description": "Optional universal_graph graph specs whose data.columns and data.rows should be registered as sources." },
                 "sources": {
                     "type": "array",
-                    "description": "Optional source objects with id, columns, rows, table, graph, or lightweight local references. Correct: [{\"id\":\"reviews\",\"rows\":[...]}]. Do not stringify source objects. Local Markdown references support {\"kind\":\"markdown_json_blocks\",\"path\":\"/.../prepared-findings.md\"} and {\"id\":\"reviews\",\"kind\":\"markdown_table\",\"path\":\"/.../prepared-findings.md\",\"heading\":\"Recommended Evidence Reviews\"}. Pass a source_id in dataRef when a dataset contains multiple sources."
+                    "description": "Optional source objects with id, columns, rows, table, graph, or allowlisted local references. Correct: [{\"id\":\"reviews\",\"rows\":[...]}]. Do not stringify source objects. Local Markdown references support {\"kind\":\"markdown_json_blocks\",\"path\":\"/.../prepared-findings.md\"} and {\"id\":\"reviews\",\"kind\":\"markdown_table\",\"path\":\"/.../prepared-findings.md\",\"heading\":\"Recommended Evidence Reviews\"}, but the resolved file must be under ~/.mcpviews/cache/dataset-references or MCPVIEWS_DATASET_REFERENCE_ROOTS. Pass dataset_id, query_token, and source_id in dataRef when a dataset contains multiple sources."
                 },
                 "ttl_seconds": { "type": "integer", "description": "Optional session-cache TTL in seconds. Defaults to 30 minutes." }
             }

@@ -14,7 +14,7 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "11"; // Bump when built-in rules change
+const RULES_VERSION: &str = "12"; // Bump when built-in rules change
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -500,6 +500,14 @@ fn validate_data_ref(value: &Value, context: &str) -> Result<(), String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or(format!("{} requires dataset_id.", context))?;
+    data_ref
+        .get("query_token")
+        .or_else(|| data_ref.get("queryToken"))
+        .or_else(|| data_ref.get("token"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or(format!("{} requires query_token from register_dataset.", context))?;
 
     if let Some(source_id) = data_ref.get("source_id").or_else(|| data_ref.get("sourceId")) {
         source_id
@@ -2735,13 +2743,14 @@ Include table data in `data.tables`:
 
 Table data shape matches structured_data (columns with id/name/change, rows with id/cells/children). Tables are fully interactive in review mode (accept/reject rows, edit cells).
 
-For larger embedded tables, first call `describe_tool("register_dataset")` if available, then call `register_dataset` with source objects or lightweight local Markdown references. Never pass `sources` entries as JSON strings. For prepared findings already on disk, prefer a local reference such as `{ "kind": "markdown_table", "path": "/.../prepared-findings.md", "heading": "Recommended Evidence Reviews" }` over copying every table row. Then embed a table with `dataRef` instead of repeating all rows:
+For larger embedded tables, first call `describe_tool("register_dataset")` if available, then call `register_dataset` with source objects or allowlisted local Markdown references. Never pass `sources` entries as JSON strings. Local Markdown paths must resolve under `~/.mcpviews/cache/dataset-references` or `MCPVIEWS_DATASET_REFERENCE_ROOTS`. Then embed a table with `dataRef` using the returned `dataset_id` and `query_token` instead of repeating all rows:
 ```json
 {
   "id": "evidence_reviews",
   "name": "Evidence Reviews",
   "dataRef": {
     "dataset_id": "northstar-risk-control-2026-05",
+    "query_token": "returned-query-token",
     "source_id": "reviews",
     "recipe": "review_rows"
   }
@@ -2778,7 +2787,7 @@ Include graph specs in `data.graphs`:
 
 Embedded graph fences must be empty and must reference a matching entry in `data.graphs`. If multiple graphs participate in drilldowns, include the full graph registry in `data.graphs` and reference only the primary graph from the body. Graph embeds are read-only in V1; use standalone `universal_graph` or the direct `universal_graph` tool when the main artifact is a graph pack rather than a prose or review document.
 
-For larger graph datasets, first call `describe_tool("register_dataset")` if available, then call `register_dataset` and pass `dataRef` plus a named recipe (`count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, `waterfall_from_deltas`, `select_rows`) instead of emitting all graph rows inline. For graph `dataRef` recipes, MCPViews infers common recipe params from the graph `encoding` (`x`, `y`, `value`, and `label`) when `dataRef.params` is omitted; pass explicit params only when the transform should differ from the visible encoding. For prepared findings Markdown, use `kind: "markdown_json_blocks"` plus `path` to register all fenced JSON chart blocks by heading-derived `source_id`.
+For larger graph datasets, first call `describe_tool("register_dataset")` if available, then call `register_dataset` and pass `dataRef` with the returned `dataset_id` and `query_token` plus a named recipe (`count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, `waterfall_from_deltas`, `select_rows`) instead of emitting all graph rows inline. For graph `dataRef` recipes, MCPViews infers common recipe params from the graph `encoding` (`x`, `y`, `value`, and `label`) when `dataRef.params` is omitted; for `group_sum` it also infers `outputField` from the visible y/value encoding so hydrated rows match the graph. Pass explicit params only when the transform should differ from the visible encoding. For prepared findings Markdown, use `kind: "markdown_json_blocks"` plus `path` only when the file is under `~/.mcpviews/cache/dataset-references` or `MCPVIEWS_DATASET_REFERENCE_ROOTS`.
 
 ## Combined review payload
 
@@ -2859,7 +2868,7 @@ Use rich_content with markdown tables for simple, small, static tables.
 - Use `push_content` + `structured_data` for a read-only interactive table.
 - Use `push_review` + `structured_data` when the user needs to approve adds, deletes, updates, or edited cell values.
 - If you want review behavior, do NOT send the table through plain `push_content` and expect approval controls to appear.
-- For large or repeated tables, call `describe_tool("register_dataset")` if available, then call `register_dataset` once with source objects or lightweight local Markdown references. Do not stringify source objects. Use `tables[].dataRef` with recipe `review_rows` or `select_rows` instead of repeating every cell in the renderer payload.
+- For large or repeated tables, call `describe_tool("register_dataset")` if available, then call `register_dataset` once with source objects or allowlisted local Markdown references. Do not stringify source objects. Use `tables[].dataRef` with the returned `dataset_id` and `query_token` plus recipe `review_rows` or `select_rows` instead of repeating every cell in the renderer payload.
 
 ## Required payload shape — do not omit these
 
@@ -3083,13 +3092,14 @@ and define the matching graph in `data.graphs`. Embedded graphs also work inside
 }
 ```
 
-For large or reused datasets, call `describe_tool("register_dataset")` if available, then call `register_dataset` once and use `graphs[].dataRef` instead of inline `data.rows`. Do not stringify `sources` entries. When a local prepared findings Markdown file already contains fenced JSON chart data, register it with `kind: "markdown_json_blocks"` and a `path` instead of copying the rows:
+For large or reused datasets, call `describe_tool("register_dataset")` if available, then call `register_dataset` once and use `graphs[].dataRef` instead of inline `data.rows`. Do not stringify `sources` entries. When a local prepared findings Markdown file already contains fenced JSON chart data and lives under `~/.mcpviews/cache/dataset-references` or `MCPVIEWS_DATASET_REFERENCE_ROOTS`, register it with `kind: "markdown_json_blocks"` and a `path` instead of copying the rows:
 ```json
 {
   "id": "risk_by_rule",
   "type": "bar",
   "dataRef": {
     "dataset_id": "northstar-risk-control-2026-05",
+    "query_token": "returned-query-token",
     "source_id": "rule_evaluations",
     "recipe": "group_sum",
     "params": { "groupBy": "rule", "value": "riskScore" }
@@ -3098,7 +3108,7 @@ For large or reused datasets, call `describe_tool("register_dataset")` if availa
 }
 ```
 
-Supported `dataRef.recipe` values are `select_rows`, `review_rows`, `count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, and `waterfall_from_deltas`. The renderer fetches referenced rows from the MCPViews session cache and loads source rows on demand from the graph Data button. For graph recipes, omit `dataRef.params` when the recipe should use the visible encoding fields; the renderer derives heatmap `x`/`y`/`value`, trend `x`/`y`, waterfall `label`/`value`, funnel `label`/`count`, and common group/count fields from `encoding`.
+Supported `dataRef.recipe` values are `select_rows`, `review_rows`, `count_by`, `group_sum`, `trend`, `heatmap_by_pair`, `funnel_from_counts`, and `waterfall_from_deltas`. The renderer fetches referenced rows from the MCPViews session cache and loads source rows on demand from the graph Data button. Every dataRef must include the `query_token` returned by `register_dataset`. For graph recipes, omit `dataRef.params` when the recipe should use the visible encoding fields; the renderer derives heatmap `x`/`y`/`value`, trend `x`/`y`, waterfall `label`/`value`, funnel `label`/`count`, and common group/count fields from `encoding`; `group_sum` also derives `outputField` from the graph's y/value encoding.
 
 Supported V1 graph types: line, area, bar, stacked_bar, grouped_bar, scatter, bubble, combo, histogram, boxplot, heatmap, matrix, pie, donut, waterfall, funnel, gauge, radar, candlestick, timeline, gantt, tree, network, treemap, sunburst, sankey.
 
@@ -3123,7 +3133,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Universal markdown display with mermaid diagrams, tables, code blocks, and citations. Use for any rich text content.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional heading", "body": "Markdown with ```mermaid blocks, ```structured_data:t1 embeds, ```universal_graph:g1 embeds, and {{suggest:id=X}} markers", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "suggestions": { "s1": { "old": "text", "new": "replacement" } }, "tables": [{ "id": "t1", "name": "Name", "columns": [...], "rows": [...] } or { "id": "t1", "name": "Name", "dataRef": { "dataset_id": "id", "recipe": "review_rows" } }], "graphs": [{ "id": "g1", "type": "line", "data": { "columns": [...], "rows": [...] }, "encoding": { "x": "field", "y": "field" } } or { "id": "g1", "type": "bar", "dataRef": { "dataset_id": "id", "recipe": "group_sum", "params": {} }, "encoding": { "x": "field", "y": "value" } }], "citations": { "plugin": [{ "index": 1, "source": "ludflow", "type": "code_unit", "id": "abc123", "label": "name" }] } } — data must be a JSON object, not a string. Use register_dataset + dataRef for large/repeated rows."#.into()),
+            data_hint: Some(r#"{ "title": "Optional heading", "body": "Markdown with ```mermaid blocks, ```structured_data:t1 embeds, ```universal_graph:g1 embeds, and {{suggest:id=X}} markers", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "suggestions": { "s1": { "old": "text", "new": "replacement" } }, "tables": [{ "id": "t1", "name": "Name", "columns": [...], "rows": [...] } or { "id": "t1", "name": "Name", "dataRef": { "dataset_id": "id", "query_token": "token", "recipe": "review_rows" } }], "graphs": [{ "id": "g1", "type": "line", "data": { "columns": [...], "rows": [...] }, "encoding": { "x": "field", "y": "field" } } or { "id": "g1", "type": "bar", "dataRef": { "dataset_id": "id", "query_token": "token", "recipe": "group_sum", "params": {} }, "encoding": { "x": "field", "y": "value" } }], "citations": { "plugin": [{ "index": 1, "source": "ludflow", "type": "code_unit", "id": "abc123", "label": "name" }] } } — data must be a JSON object, not a string. Use register_dataset + dataRef for large/repeated rows."#.into()),
             rule: Some(RICH_CONTENT_RULE.into()),
             display_mode: None,
             invoke_schema: None,
@@ -3136,7 +3146,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Tabular data with hierarchical rows, change tracking, sort/filter, and review mode with per-row/column accept/reject and cell editing.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "tables": [{ "id": "t1", "name": "Name", "columns": [{ "id": "c1", "name": "Col", "change": null|"add"|"delete" }], "rows": [{ "id": "r1", "cells": { "c1": { "value": "v", "change": null|"add"|"delete"|"update" } }, "children": [] }] } or { "id": "t1", "name": "Name", "dataRef": { "dataset_id": "id", "recipe": "review_rows" } }] }"#.into()),
+            data_hint: Some(r#"{ "title": "Optional", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "tables": [{ "id": "t1", "name": "Name", "columns": [{ "id": "c1", "name": "Col", "change": null|"add"|"delete" }], "rows": [{ "id": "r1", "cells": { "c1": { "value": "v", "change": null|"add"|"delete"|"update" } }, "children": [] }] } or { "id": "t1", "name": "Name", "dataRef": { "dataset_id": "id", "query_token": "token", "recipe": "review_rows" } }] }"#.into()),
             display_mode: None,
             invoke_schema: None,
             url_patterns: vec![],
@@ -3149,7 +3159,7 @@ fn builtin_renderer_definitions() -> Vec<RendererDef> {
             description: "Native read-only analytical graph renderer for standalone graph packs and rich_content embeds across chart, hierarchy, network, flow, timeline, matrix, and distribution views.".into(),
             scope: "universal".into(),
             tools: vec![],
-            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "role": "primary|drilldown", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "dataRef": { "dataset_id": "id", "source_id": "source", "recipe": "group_sum|count_by|trend|heatmap_by_pair|funnel_from_counts|waterfall_from_deltas|select_rows", "params": {} }, "encoding": { "x": "field", "y": "field", "label": "field", "parent": "field", "value": "field", "source": "field", "target": "field", "min": "field", "max": "field" }, "axes": { "x": { "label": "X axis label", "description": "Optional hover context" }, "y": "Y axis label" }, "options": { "xScale": "auto|category|linear|time", "yScale": "auto|category|linear|time", "maxVisibleItems": 24, "showAll": false, "otherBucket": "separate|inline|hidden", "binCount": 12, "showTotal": true, "totalLabel": "Ending total" }, "interactions": { "details": { "titleField": "field", "fields": ["field"] }, "hover": "auto", "drilldowns": [{ "id": "detail", "label": "Open detail", "targetGraphId": "detail_graph", "trigger": "mark", "match": { "source": "field", "targetField": "field" } }], "metricControls": { "target": "y|value", "fields": ["numeric_field"] } } }] }"#.into()),
+            data_hint: Some(r#"{ "title": "Optional", "description": "Optional context", "instructionTemplate": { "id": "audit_only_evidence_review_v1", "variables": {} }, "graphs": [{ "id": "unique_graph_id", "title": "Optional graph title", "type": "line|bar|scatter|pie|donut|heatmap|matrix|histogram|boxplot|waterfall|funnel|gauge|radar|candlestick|timeline|gantt|tree|network|treemap|sunburst|sankey|combo", "role": "primary|drilldown", "data": { "columns": [{ "id": "field", "name": "Field", "type": "number|string|date" }], "rows": [{ "field": "value" }] }, "dataRef": { "dataset_id": "id", "query_token": "token", "source_id": "source", "recipe": "group_sum|count_by|trend|heatmap_by_pair|funnel_from_counts|waterfall_from_deltas|select_rows", "params": {} }, "encoding": { "x": "field", "y": "field", "label": "field", "parent": "field", "value": "field", "source": "field", "target": "field", "min": "field", "max": "field" }, "axes": { "x": { "label": "X axis label", "description": "Optional hover context" }, "y": "Y axis label" }, "options": { "xScale": "auto|category|linear|time", "yScale": "auto|category|linear|time", "maxVisibleItems": 24, "showAll": false, "otherBucket": "separate|inline|hidden", "binCount": 12, "showTotal": true, "totalLabel": "Ending total" }, "interactions": { "details": { "titleField": "field", "fields": ["field"] }, "hover": "auto", "drilldowns": [{ "id": "detail", "label": "Open detail", "targetGraphId": "detail_graph", "trigger": "mark", "match": { "source": "field", "targetField": "field" } }], "metricControls": { "target": "y|value", "fields": ["numeric_field"] } } }] }"#.into()),
             display_mode: None,
             invoke_schema: None,
             url_patterns: vec![],
@@ -3851,9 +3861,9 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "11");
+        assert_eq!(RULES_VERSION, "12");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 11"));
+        assert!(instructions.contains("mcpviews-rules-version: 12"));
         assert!(instructions.contains("Append all rules below to `AGENTS.md`"));
     }
 
@@ -5582,6 +5592,7 @@ mod tests {
                     "name": "Actions",
                     "dataRef": {
                         "dataset_id": "dataset-1",
+                        "query_token": "token-1",
                         "recipe": "review_rows"
                     }
                 }]
@@ -5603,6 +5614,7 @@ mod tests {
                     "type": "bar",
                     "dataRef": {
                         "dataset_id": "dataset-1",
+                        "query_token": "token-1",
                         "recipe": "group_sum",
                         "params": { "groupBy": "rule", "value": "score" }
                     },
@@ -5624,6 +5636,7 @@ mod tests {
                     "id": "actions",
                     "dataRef": {
                         "dataset_id": "dataset-1",
+                        "query_token": "token-1",
                         "recipe": "invented_recipe"
                     }
                 }]
@@ -5632,6 +5645,25 @@ mod tests {
 
         let err = extract_push_params(&args, false).unwrap_err();
         assert!(err.contains("invented_recipe"));
+    }
+
+    #[test]
+    fn test_extract_push_params_rejects_data_ref_without_query_token() {
+        let args = serde_json::json!({
+            "tool_name": "structured_data",
+            "data": {
+                "tables": [{
+                    "id": "actions",
+                    "dataRef": {
+                        "dataset_id": "dataset-1",
+                        "recipe": "review_rows"
+                    }
+                }]
+            }
+        });
+
+        let err = extract_push_params(&args, false).unwrap_err();
+        assert!(err.contains("query_token"));
     }
 
     #[test]

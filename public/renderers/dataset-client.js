@@ -22,11 +22,16 @@
     return ref && (ref.source_id || ref.sourceId);
   }
 
+  function refQueryToken(ref) {
+    return ref && (ref.query_token || ref.queryToken || ref.token);
+  }
+
   function cacheKey(ref, overrides) {
     overrides = overrides || {};
     return JSON.stringify({
       dataset_id: refDatasetId(ref),
       source_id: refSourceId(ref),
+      query_token: refQueryToken(ref),
       recipe: overrides.recipe || ref.recipe || 'select_rows',
       params: Object.assign({}, ref.params || {}, overrides.params || {}),
       limit: overrides.limit || ref.limit || ref.pageSize || ref.page_size || null,
@@ -41,6 +46,7 @@
     var payload = {
       dataset_id: refDatasetId(ref),
       source_id: refSourceId(ref),
+      query_token: refQueryToken(ref),
       recipe: overrides.recipe || ref.recipe || 'select_rows',
       params: Object.assign({}, ref.params || {}, overrides.params || {}),
     };
@@ -97,6 +103,7 @@
     } else if (recipe === 'group_sum' || recipe === 'groupSum') {
       setMissing('groupBy', firstString(encoding.x, encoding.label));
       setMissing('value', firstString(encoding.y, encoding.value));
+      setMissing('outputField', firstString(encoding.y, encoding.value));
     } else if (recipe === 'count_by' || recipe === 'countBy') {
       setMissing('field', firstString(encoding.x, encoding.label, encoding.y));
     } else if (recipe === 'waterfall_from_deltas' || recipe === 'waterfallFromDeltas') {
@@ -204,6 +211,7 @@
   window.__mcpviewsDatasetClient = {
     query: query,
     dataRef: dataRef,
+    refQueryToken: refQueryToken,
     hasPendingRefs: hasPendingRefs,
     resolveData: resolveData,
     resolveTable: resolveTable,

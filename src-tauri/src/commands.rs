@@ -592,18 +592,7 @@ pub async fn fetch_signed_file_bytes(
 
     let parsed = reqwest::Url::parse(url.trim())
         .map_err(|err| format!("Invalid signed file URL: {}", err))?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err("Signed file URLs must use http or https.".to_string());
-    }
-    if parsed.path().trim_end_matches('/') != "/__sandbox/workspace-file" {
-        return Err("Signed file URL path is not a workspace file endpoint.".to_string());
-    }
-    if !parsed
-        .query_pairs()
-        .any(|(key, value)| key == "token" && !value.is_empty())
-    {
-        return Err("Signed file URL is missing its token.".to_string());
-    }
+    crate::first_party_ai::validate_signed_file_download_url(&parsed)?;
 
     let response = state
         .http_client

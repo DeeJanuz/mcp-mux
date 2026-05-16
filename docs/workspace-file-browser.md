@@ -12,6 +12,8 @@ MCPVIEWS_AI_PROVIDER_BASE_URL="https://ai.example.com"
 
 You can also set `first_party_ai.base_url` in `~/.mcpviews/config.json`; the key name remains for compatibility with existing installs. Legacy `MCPVIEWS_FIRST_PARTY_AI_BASE_URL` and `PROPAASAI_BASE_URL` variables still work, but new providers should document the generic `MCPVIEWS_AI_PROVIDER_*` variables from [Hosted AI Thread Provider Contract](./hosted-ai-provider-contract.md). Use the AI workspace footer's sign-out action to clear the local session, relay token, and bundled hosted AI workspace plugin tokens before switching accounts. Do not put storage access keys, provider API tokens, or Cloudflare API tokens in MCPViews.
 
+Native signed file download fallback only fetches trusted origins: the configured provider, relay, or device base URL origins, loopback HTTP origins for local development, and first-party `tribexai.com` subdomains when the configured provider is also under `tribexai.com`. If signed worker URLs are served from a separate origin, set `MCPVIEWS_AI_PROVIDER_DEVICE_BASE_URL` or `MCPVIEWS_AI_PROVIDER_RELAY_BASE_URL` to that origin.
+
 ## Provider / Worker Configuration
 
 The hosted provider deployment owns the durable storage configuration. A bring-your-own Cloudflare setup can use variables like these on the control plane:
@@ -42,7 +44,7 @@ If the worker uses a local R2 binding for development, configure `USER_WORKSPACE
 - Upload single or multiple files through `POST /workspaces/:workspaceId/user-sandbox/files`.
 - Upload folders through `POST /workspaces/:workspaceId/user-sandbox/file-batches`.
 - Inspect metadata and preview text, JSON, CSV, Markdown, and image files.
-- Download individual files through signed worker URLs.
+- Download individual files through signed worker URLs. Native Tauri builds first try the direct WebView fetch and then fall back to a trusted-origin native fetch for signed `/__sandbox/workspace-file` downloads when the WebView blocks the request.
 - Download folders as client-built zip files.
 - Move individual files through `PATCH /workspaces/:workspaceId/user-sandbox/files/:fileId`.
 - Move folders through `PATCH /workspaces/:workspaceId/user-sandbox/folders`.

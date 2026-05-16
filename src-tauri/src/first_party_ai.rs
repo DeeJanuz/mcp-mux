@@ -126,6 +126,21 @@ fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
 }
 
+fn is_tribexai_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host == "tribexai.com" || host.ends_with(".tribexai.com")
+}
+
+fn same_url_origin(left: &reqwest::Url, right: &reqwest::Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.port_or_known_default() == right.port_or_known_default()
+        && left
+            .host_str()
+            .zip(right.host_str())
+            .map(|(left_host, right_host)| left_host.eq_ignore_ascii_case(right_host))
+            .unwrap_or(false)
+}
+
 fn same_loopback_endpoint(left: &str, right: &str) -> bool {
     let Ok(left_url) = reqwest::Url::parse(left) else {
         return false;
@@ -164,6 +179,80 @@ fn should_align_endpoint(
         return true;
     }
     same_loopback_endpoint(candidate, verified_origin)
+}
+
+fn signed_file_url_uses_allowed_transport(parsed: &reqwest::Url) -> bool {
+    match parsed.scheme() {
+        "https" => true,
+        "http" => parsed.host_str().map(is_loopback_host).unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn signed_file_origin_matches_trusted_origin(parsed: &reqwest::Url, trusted_origin: &str) -> bool {
+    let Ok(trusted) = reqwest::Url::parse(trusted_origin) else {
+        return false;
+    };
+    if same_url_origin(parsed, &trusted) {
+        return true;
+    }
+    if same_loopback_endpoint(parsed.as_str(), trusted.as_str()) {
+        return true;
+    }
+
+    parsed.scheme() == "https"
+        && trusted.scheme() == "https"
+        && parsed.host_str().map(is_tribexai_host).unwrap_or(false)
+        && trusted.host_str().map(is_tribexai_host).unwrap_or(false)
+}
+
+fn signed_file_origin_is_trusted_for_settings(
+    parsed: &reqwest::Url,
+    settings: &mcpviews_shared::settings::FirstPartyAiSettings,
+) -> bool {
+    [
+        settings.base_url.as_deref(),
+        settings.relay_base_url.as_deref(),
+        settings.device_base_url.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|trusted_origin| signed_file_origin_matches_trusted_origin(parsed, trusted_origin))
+}
+
+fn validate_signed_file_download_url_for_settings(
+    parsed: &reqwest::Url,
+    settings: &mcpviews_shared::settings::FirstPartyAiSettings,
+) -> Result<(), String> {
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("Signed file URLs must use http or https.".to_string());
+    }
+    if !signed_file_url_uses_allowed_transport(parsed) {
+        return Err(
+            "Signed file URLs must use https unless they target a loopback development host."
+                .to_string(),
+        );
+    }
+    if parsed.path().trim_end_matches('/') != "/__sandbox/workspace-file" {
+        return Err("Signed file URL path is not a workspace file endpoint.".to_string());
+    }
+    if !parsed
+        .query_pairs()
+        .any(|(key, value)| key == "token" && !value.is_empty())
+    {
+        return Err("Signed file URL is missing its token.".to_string());
+    }
+    if !signed_file_origin_is_trusted_for_settings(parsed, settings) {
+        return Err(
+            "Signed file URL origin is not trusted. Configure the hosted AI provider, relay, or device base URL for that origin."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_signed_file_download_url(parsed: &reqwest::Url) -> Result<(), String> {
+    validate_signed_file_download_url_for_settings(parsed, &load_settings())
 }
 
 fn align_first_party_base_url_with_paths(
@@ -1109,6 +1198,120 @@ mod tests {
             url_origin("https://ai.example.com/sign-in").as_deref(),
             Some("https://ai.example.com")
         );
+    }
+
+    fn test_settings(
+        base_url: Option<&str>,
+        relay_base_url: Option<&str>,
+        device_base_url: Option<&str>,
+    ) -> mcpviews_shared::settings::FirstPartyAiSettings {
+        mcpviews_shared::settings::FirstPartyAiSettings {
+            base_url: base_url.map(str::to_string),
+            auth_url: None,
+            token_url: None,
+            client_id: None,
+            relay_base_url: relay_base_url.map(str::to_string),
+            device_base_url: device_base_url.map(str::to_string),
+            relay_token: None,
+            relay_token_expires_at: None,
+            relay_device_id: None,
+        }
+    }
+
+    #[test]
+    fn signed_file_download_url_allows_configured_https_origin() {
+        let settings = test_settings(Some("https://ai.example.com"), None, None);
+        let parsed = reqwest::Url::parse(
+            "https://ai.example.com/__sandbox/workspace-file?token=download",
+        )
+        .unwrap();
+
+        assert!(validate_signed_file_download_url_for_settings(&parsed, &settings).is_ok());
+    }
+
+    #[test]
+    fn signed_file_download_url_allows_configured_device_origin() {
+        let settings = test_settings(
+            Some("https://ai.example.com"),
+            None,
+            Some("https://worker.example.com"),
+        );
+        let parsed = reqwest::Url::parse(
+            "https://worker.example.com/__sandbox/workspace-file?token=download",
+        )
+        .unwrap();
+
+        assert!(validate_signed_file_download_url_for_settings(&parsed, &settings).is_ok());
+    }
+
+    #[test]
+    fn signed_file_download_url_allows_tribexai_sibling_origin() {
+        let settings = test_settings(Some("https://dev.app.tribexai.com"), None, None);
+        let parsed = reqwest::Url::parse(
+            "https://files.dev.tribexai.com/__sandbox/workspace-file?token=download",
+        )
+        .unwrap();
+
+        assert!(validate_signed_file_download_url_for_settings(&parsed, &settings).is_ok());
+    }
+
+    #[test]
+    fn signed_file_download_url_allows_loopback_http_for_configured_origin() {
+        let settings = test_settings(Some("http://127.0.0.1:8787"), None, None);
+        let parsed = reqwest::Url::parse(
+            "http://localhost:8787/__sandbox/workspace-file?token=download",
+        )
+        .unwrap();
+
+        assert!(validate_signed_file_download_url_for_settings(&parsed, &settings).is_ok());
+    }
+
+    #[test]
+    fn signed_file_download_url_rejects_untrusted_origin() {
+        let settings = test_settings(Some("https://ai.example.com"), None, None);
+        let parsed = reqwest::Url::parse(
+            "https://attacker.example/__sandbox/workspace-file?token=download",
+        )
+        .unwrap();
+
+        let error = validate_signed_file_download_url_for_settings(&parsed, &settings)
+            .expect_err("untrusted origin should be rejected");
+        assert!(error.contains("origin is not trusted"));
+    }
+
+    #[test]
+    fn signed_file_download_url_rejects_non_loopback_http() {
+        let settings = test_settings(Some("http://ai.example.com"), None, None);
+        let parsed = reqwest::Url::parse(
+            "http://ai.example.com/__sandbox/workspace-file?token=download",
+        )
+        .unwrap();
+
+        let error = validate_signed_file_download_url_for_settings(&parsed, &settings)
+            .expect_err("non-loopback http should be rejected");
+        assert!(error.contains("must use https"));
+    }
+
+    #[test]
+    fn signed_file_download_url_rejects_missing_token() {
+        let settings = test_settings(Some("https://ai.example.com"), None, None);
+        let parsed =
+            reqwest::Url::parse("https://ai.example.com/__sandbox/workspace-file").unwrap();
+
+        let error = validate_signed_file_download_url_for_settings(&parsed, &settings)
+            .expect_err("token should be required");
+        assert!(error.contains("missing its token"));
+    }
+
+    #[test]
+    fn signed_file_download_url_rejects_wrong_path() {
+        let settings = test_settings(Some("https://ai.example.com"), None, None);
+        let parsed =
+            reqwest::Url::parse("https://ai.example.com/other?token=download").unwrap();
+
+        let error = validate_signed_file_download_url_for_settings(&parsed, &settings)
+            .expect_err("workspace-file path should be required");
+        assert!(error.contains("workspace file endpoint"));
     }
 
     #[test]

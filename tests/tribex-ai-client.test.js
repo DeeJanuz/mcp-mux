@@ -2821,4 +2821,35 @@ describe('tribex-ai-client', function () {
       bytes: new Uint8Array([104, 105]),
     });
   });
+
+  it('falls back to Tauri for signed workspace file downloads when WebView fetch fails', async function () {
+    globalThis.fetch = vi.fn(function () {
+      return Promise.reject(new TypeError('Load failed'));
+    });
+    var invoke = vi.fn(function (command, args) {
+      expect(command).toBe('fetch_signed_file_bytes');
+      expect(args.url).toBe('https://worker.example/__sandbox/workspace-file?token=download');
+      return Promise.resolve({
+        contentBase64: 'eyJvayI6dHJ1ZX0=',
+        contentType: 'application/json',
+        contentDisposition: 'inline; filename="vc-candidates.json"',
+      });
+    });
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = { core: { invoke: invoke } };
+
+    await expect(window.__tribexAiClient.fetchSignedFileBytes({
+      url: 'https://worker.example/__sandbox/workspace-file?token=download',
+    })).resolves.toMatchObject({
+      contentType: 'application/json',
+      contentDisposition: 'inline; filename="vc-candidates.json"',
+      bytes: new Uint8Array([123, 34, 111, 107, 34, 58, 116, 114, 117, 101, 125]),
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://worker.example/__sandbox/workspace-file?token=download',
+      { method: 'GET' },
+    );
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
 });

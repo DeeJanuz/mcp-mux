@@ -12,6 +12,14 @@ use crate::review::ReviewDecision;
 use crate::session::{sanitize_renderer_meta, PreviewSession};
 use crate::state::AppState;
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignedFileBytes {
+    content_base64: String,
+    content_type: Option<String>,
+    content_disposition: Option<String>,
+}
+
 #[tauri::command]
 pub fn get_sessions(state: State<Arc<AppState>>) -> Vec<PreviewSession> {
     let sessions = state.sessions.lock().unwrap();
@@ -573,6 +581,72 @@ pub async fn first_party_ai_relay_request(
     state: State<'_, Arc<AppState>>,
 ) -> Result<serde_json::Value, String> {
     crate::desktop_relay::relay_request(state.inner(), &method, &path, body, query, relay_token).await
+}
+
+#[tauri::command]
+pub async fn fetch_signed_file_bytes(
+    url: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<SignedFileBytes, String> {
+    use base64::Engine;
+
+    let parsed = reqwest::Url::parse(url.trim())
+        .map_err(|err| format!("Invalid signed file URL: {}", err))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("Signed file URLs must use http or https.".to_string());
+    }
+    if parsed.path().trim_end_matches('/') != "/__sandbox/workspace-file" {
+        return Err("Signed file URL path is not a workspace file endpoint.".to_string());
+    }
+    if !parsed
+        .query_pairs()
+        .any(|(key, value)| key == "token" && !value.is_empty())
+    {
+        return Err("Signed file URL is missing its token.".to_string());
+    }
+
+    let response = state
+        .http_client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|err| format!("Signed file download failed: {}", err.without_url()))?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+    let content_disposition = response
+        .headers()
+        .get(reqwest::header::CONTENT_DISPOSITION)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|err| format!("Failed to read signed file download: {}", err.without_url()))?;
+    if !status.is_success() {
+        let detail = String::from_utf8_lossy(&bytes);
+        let trimmed = detail.trim();
+        let summary = if trimmed.chars().count() > 500 {
+            format!("{}...", trimmed.chars().take(500).collect::<String>())
+        } else {
+            trimmed.to_string()
+        };
+        return Err(format!(
+            "Signed file download returned HTTP {}: {}",
+            status.as_u16(),
+            summary
+        ));
+    }
+
+    Ok(SignedFileBytes {
+        content_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        content_type,
+        content_disposition,
+    })
 }
 
 #[tauri::command]

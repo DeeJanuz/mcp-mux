@@ -229,6 +229,7 @@ fn main() {
             commands::clear_first_party_ai_auth,
             commands::first_party_ai_request,
             commands::first_party_ai_relay_request,
+            commands::fetch_signed_file_bytes,
             commands::probe_local_runtime_host,
             commands::list_local_mcp_tools,
             commands::get_local_mcp_catalog,

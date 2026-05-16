@@ -11,6 +11,10 @@
     return window.__TAURI__.core.invoke(command, args || {});
   }
 
+  function hasTauriInvoke() {
+    return !!(window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function');
+  }
+
   function pickFirst(values, fallback) {
     for (var i = 0; i < values.length; i++) {
       var value = values[i];
@@ -2099,7 +2103,30 @@
           contentDisposition: response.headers.get('content-disposition') || null,
         };
       });
+    }).catch(function (error) {
+      if (!hasTauriInvoke()) throw error;
+      return invoke('fetch_signed_file_bytes', { url: url }).then(function (result) {
+        result = result || {};
+        return {
+          bytes: base64ToBytes(result.contentBase64 || result.content_base64 || ''),
+          contentType: result.contentType || result.content_type || null,
+          contentDisposition: result.contentDisposition || result.content_disposition || null,
+        };
+      }).catch(function (nativeError) {
+        var message = nativeError && nativeError.message ? nativeError.message : String(nativeError || '');
+        if (!message) throw error;
+        throw new Error(message);
+      });
     });
+  }
+
+  function base64ToBytes(value) {
+    var binary = atob(String(value || ''));
+    var bytes = new Uint8Array(binary.length);
+    for (var index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
   }
 
   function bytesToBase64(bytes) {

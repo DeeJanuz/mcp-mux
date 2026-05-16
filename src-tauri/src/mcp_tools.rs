@@ -14,7 +14,7 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "12"; // Bump when built-in rules change
+const RULES_VERSION: &str = "13"; // Bump when built-in rules change
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -2670,7 +2670,7 @@ pub(crate) fn setup_instructions(agent_type: &str) -> String {
 
 // ─── Renderer definitions ───
 
-const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded read-only universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions, embedded table changes, or read-only graph context for a review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical chart/graph packs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views when the main artifact is visual analysis rather than prose. Call the direct universal_graph tool when available, or push_content with tool_name universal_graph for compatibility.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main artifact is a visual analysis. Use rich_content with empty ```universal_graph:<graph-id> fences when graphs need prose, suggestions, citations, or review context.";
+const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded read-only universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions, embedded table changes, or read-only graph context for a review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical chart/graph packs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views when the main artifact is visual analysis rather than prose. Call the direct universal_graph tool when available, or push_content with tool_name universal_graph for compatibility.\n\nFor any review payload sent through push_review, visible titles, labels, table cells, and details must identify the document or entity being changed by human-readable name, title, path, or display label. Do not use an opaque backend ID as the only visible target; keep IDs only in stable row ids, citation metadata, or execution bookkeeping.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main artifact is a visual analysis. Use rich_content with empty ```universal_graph:<graph-id> fences when graphs need prose, suggestions, citations, or review context.";
 
 const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call rich_content, structured_data, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
 
@@ -2801,6 +2801,10 @@ When `push_review` includes suggestions and/or tables, the user submits a combin
 
 These arrive as `suggestionDecisions` and `tableDecisions` in the `await_review` response.
 
+## Review target labels
+
+Every visible review target must be understandable to the user before they approve it. In `push_review` payloads, use the document or entity's human-readable name, title, path, or display label in titles, body text, suggestion context, table names, row cells, and Details columns. Do NOT use an opaque backend ID (document id, entity id, database id, UUID, etc.) as the only visible target. Keep those IDs only in stable row `id` values, citation metadata, hidden execution context, or tool arguments needed after approval. If only an ID is available, fetch or derive a display name before presenting the review.
+
 ## Plugin citations
 
 Reference plugin entities with `[label](cite:plugin:SOURCE:TYPE:ID)` links. Clicking opens a slideout panel that lazy-fetches full data. Include citation metadata in `data.citations.plugin`:
@@ -2829,8 +2833,10 @@ Present all planned actions as `structured_data` via `push_review` before execut
 Use a single table with these columns:
 - **Action** — the operation type: create, update, or delete
 - **Entity Type** — what kind of resource (e.g., file, record, API endpoint)
-- **Target** — the specific resource identifier (name, path, ID)
+- **Target** — the human-readable name, title, path, or display label of the resource being changed
 - **Details** — brief description of what will be created/changed/removed
+
+Do NOT put an opaque backend ID in the visible Target cell when the action affects a named document, entity, database record, issue, project, or similar object. Use the human-readable object name instead, and keep the backend ID only in stable row `id` values, hidden execution context, citation metadata, or the actual MCP tool arguments used after approval.
 
 Mark each row's `change` field to visually distinguish operations:
 - `"add"` for create actions (green)
@@ -2952,6 +2958,8 @@ Example:
 `push_review` returns immediately with a `session_id`. Call `await_review(session_id)` to wait until the user submits. If it returns `pending` before the user decides, call `await_review` again — the session persists on the server.
 
 Shows proposed changes with color-coded diffs. Users can accept/reject individual rows and columns, edit cell values, then submit. Use `change` fields to mark what was added, deleted, or updated.
+
+Visible review cells must identify changed documents or entities by human-readable name, title, path, or display label. Do NOT make the user approve a row whose only visible target is an opaque backend ID. Row `id` values may remain stable internal keys for decision mapping; visible cells should carry the friendly target label.
 
 Change values: "add" (green), "delete" (red strikethrough), "update" (yellow), null (unchanged).
 
@@ -3861,10 +3869,56 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "12");
+        assert_eq!(RULES_VERSION, "13");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 12"));
+        assert!(instructions.contains("mcpviews-rules-version: 13"));
         assert!(instructions.contains("Append all rules below to `AGENTS.md`"));
+    }
+
+    #[test]
+    fn test_review_rules_require_human_readable_targets() {
+        let renderers = builtin_renderer_definitions();
+        let rules = collect_builtin_rules(&renderers);
+
+        let renderer_selection = rules
+            .iter()
+            .find(|rule| rule["name"] == "renderer_selection")
+            .expect("renderer_selection rule should exist");
+        let bulk_action_review = rules
+            .iter()
+            .find(|rule| rule["name"] == "bulk_action_review")
+            .expect("bulk_action_review rule should exist");
+        let structured_data = rules
+            .iter()
+            .find(|rule| rule["name"] == "structured_data_usage")
+            .expect("structured_data_usage rule should exist");
+
+        assert!(renderer_selection["rule"]
+            .as_str()
+            .unwrap()
+            .contains("human-readable name"));
+        assert!(bulk_action_review["rule"]
+            .as_str()
+            .unwrap()
+            .contains("Do NOT put an opaque backend ID"));
+        assert!(structured_data["rule"]
+            .as_str()
+            .unwrap()
+            .contains("Visible review cells"));
+    }
+
+    #[test]
+    fn test_push_review_tool_definition_requires_human_readable_targets() {
+        let renderers = builtin_renderer_definitions();
+        let tools = builtin_registry::builtin_tool_definitions(&renderers);
+        let push_review = tools
+            .iter()
+            .find(|tool| tool["name"] == "push_review")
+            .expect("push_review tool should exist");
+
+        let description = push_review["description"].as_str().unwrap();
+        assert!(description.contains("human-readable names"));
+        assert!(description.contains("opaque backend IDs"));
     }
 
     #[test]

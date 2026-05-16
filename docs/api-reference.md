@@ -600,6 +600,8 @@ The response includes `dataset_id`, `query_token`, source ids, inferred schema s
 
 Display content for user review. Returns immediately with a `session_id` and `"pending"` status. The agent then calls `await_review(session_id)` to wait until the user submits their decision.
 
+Visible review targets must use the document or entity's human-readable name, title, path, or display label. Do not make users approve rows or suggestions whose only visible target is an opaque backend ID; keep IDs in stable row identifiers, metadata, or execution context used after approval.
+
 **Parameters:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -720,6 +722,8 @@ All `change` fields must be `null` for push_content. The server strips non-null 
 ```
 
 **Change review (push_review):**
+
+Use human-readable names, titles, paths, or display labels in visible cells for the objects being changed. Row `id` values can remain stable internal keys for decision mapping, but the visible review table should not rely on opaque document/entity IDs as the user's only target context.
 
 ```json
 {
@@ -1009,7 +1013,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "12",
+  "rules_version": "13",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -1053,15 +1057,15 @@ sequenceDiagram
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
   "rules_update": {
-    "current_version": "12",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 12..."
+    "current_version": "13",
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 13..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 12 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 13 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`.
 
 The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
@@ -1273,7 +1277,7 @@ One-time setup for MCPViews. Returns instructions for persisting a rule that ens
 ```json
 {
   "rules": [ ... ],
-  "rules_version": "12",
+  "rules_version": "13",
   "plugin_status": [ ... ],
   "persistence_instructions": "Persist each rule as a memory file...",
   "setup_instructions": "Add a rule in `.claude/rules/mcpviews-init.md` containing: ..."

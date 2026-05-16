@@ -183,7 +183,7 @@ fn push_content_definition(renderers: &[RendererDef]) -> Value {
 fn push_review_definition(renderers: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "push_review",
-        "description": "Display content in the MCPViews companion window for user review. Use this with structured_data when the user must approve row, column, or cell changes. Returns immediately with a session_id. Call await_review(session_id) to wait for the user's decision. If await_review returns pending before the user decides, call it again with the same session_id — the review session persists on the server.",
+        "description": "Display content in the MCPViews companion window for user review. Use this with structured_data when the user must approve row, column, or cell changes. All visible review targets must use human-readable names, titles, paths, or display labels instead of opaque backend IDs; keep IDs only in stable row ids, metadata, or execution context. Returns immediately with a session_id. Call await_review(session_id) to wait for the user's decision. If await_review returns pending before the user decides, call it again with the same session_id — the review session persists on the server.",
         "inputSchema": {
             "type": "object",
             "properties": {

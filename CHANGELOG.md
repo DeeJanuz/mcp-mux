@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `push_review` guidance now requires visible review targets to use human-readable names, titles, paths, or labels instead of opaque backend IDs, and bumps built-in rules to version 13.
+
 ## [0.2.5-rc.7] - 2026-05-14
 
 ### Fixed

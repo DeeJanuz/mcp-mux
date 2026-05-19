@@ -6,11 +6,11 @@ MCPViews gives AI agents a visual companion window. Install the desktop app, con
 
 ## Download
 
-All installers are available on the [GitHub Releases](https://github.com/DeeJanuz/mcpviews/releases/latest) page.
+All installers are available on the [GitHub Releases](https://github.com/DeeJanuz/mcpviews/releases) page.
 
 ### macOS (Apple Silicon)
 
-1. Download **[MCPViews.dmg](https://github.com/DeeJanuz/mcpviews/releases/latest/download/MCPViews_0.2.5-rc.8_aarch64.dmg)** from the latest release
+1. Download **[MCPViews.dmg](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.8/MCPViews_0.2.5-rc.8_aarch64.dmg)** from the release
 2. Open the `.dmg` and drag MCPViews to your Applications folder
 3. Launch MCPViews — it starts a local server on `http://localhost:4200`
 
@@ -22,8 +22,8 @@ Choose one:
 
 | Installer | Format | Download |
 |-----------|--------|----------|
-| Setup wizard | `.exe` | [MCPViews_setup.exe](https://github.com/DeeJanuz/mcpviews/releases/latest/download/MCPViews_0.2.5-8_x64-setup.exe) |
-| MSI package | `.msi` | [MCPViews.msi](https://github.com/DeeJanuz/mcpviews/releases/latest/download/MCPViews_0.2.5-8_x64_en-US.msi) |
+| Setup wizard | `.exe` | [MCPViews_setup.exe](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.8/MCPViews_0.2.5-8_x64-setup.exe) |
+| MSI package | `.msi` | [MCPViews.msi](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.8/MCPViews_0.2.5-8_x64_en-US.msi) |
 
 Run the installer and launch MCPViews from your Start menu.
 

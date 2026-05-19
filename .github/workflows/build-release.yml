@@ -103,12 +103,13 @@ jobs:
             fi
             WINDOWS_SUFFIX="-$PRERELEASE_NUMBER"
           fi
+          DOWNLOAD_BASE="https://github.com/DeeJanuz/mcpviews/releases/download/v${VERSION}"
           MAC_ASSET="MCPViews_${VERSION}_aarch64.dmg"
           WINDOWS_SETUP_ASSET="MCPViews_${BASE_VERSION}${WINDOWS_SUFFIX}_x64-setup.exe"
           WINDOWS_MSI_ASSET="MCPViews_${BASE_VERSION}${WINDOWS_SUFFIX}_x64_en-US.msi"
-          sed -i -E "s/MCPViews_[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)*_aarch64\\.dmg/${MAC_ASSET}/g" docs/install.md
-          sed -i -E "s/MCPViews_[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)*_x64-setup\\.exe/${WINDOWS_SETUP_ASSET}/g" docs/install.md
-          sed -i -E "s/MCPViews_[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)*_x64_en-US\\.msi/${WINDOWS_MSI_ASSET}/g" docs/install.md
+          sed -i -E "s#https://github.com/DeeJanuz/mcpviews/releases/(latest/download|download/v[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)?)/MCPViews_[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)*_aarch64\\.dmg#${DOWNLOAD_BASE}/${MAC_ASSET}#g" docs/install.md
+          sed -i -E "s#https://github.com/DeeJanuz/mcpviews/releases/(latest/download|download/v[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)?)/MCPViews_[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)*_x64-setup\\.exe#${DOWNLOAD_BASE}/${WINDOWS_SETUP_ASSET}#g" docs/install.md
+          sed -i -E "s#https://github.com/DeeJanuz/mcpviews/releases/(latest/download|download/v[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)?)/MCPViews_[0-9]+\\.[0-9]+\\.[0-9]+([-][A-Za-z0-9.]+)*_x64_en-US\\.msi#${DOWNLOAD_BASE}/${WINDOWS_MSI_ASSET}#g" docs/install.md
 
       - name: Update changelog
         run: |

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Human-centered renderer UX principles now document the default interaction standards for operational plugin and built-in renderer flows.
+
+### Changed
+- The TribeX AI runtime surface now maximizes transcript space with a compact single-row header, tighter transcript spacing, and a resizing composer that only grows with entered text.
+- New TribeX AI threads now ask only for the persona in the navigator composer, leaving titles to the provider-generated naming flow after the first response.
+
+### Fixed
+- TribeX AI thread loading and rehydration states now clamp width and overflow more defensively so long content does not crop the view before live layout settles.
+- Large skill lists now render in a compact overlay with truncated labels and tooltips, preserving the text-entry area when many skills are available.
+
 ## [0.2.5-rc.8] - 2026-05-16
 
 ### Changed

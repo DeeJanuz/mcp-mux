@@ -234,7 +234,7 @@ describe('main session routing', function () {
         plugin_name: 'tribex-crm',
         file_name: 'tribex-crm.js',
         url: 'plugin://localhost/tribex-crm/renderers/tribex-crm.js?v=2',
-        mcp_url: 'http://127.0.0.1:4886/mcp',
+        mcp_url: 'http://127.0.0.1:4999/mcp',
       }],
     ];
     window.__TAURI__ = {
@@ -287,7 +287,7 @@ describe('main session routing', function () {
     var scripts = scriptHost.querySelectorAll('script[data-plugin-renderer="tribex-crm/tribex-crm.js"]');
     expect(scripts).toHaveLength(1);
     expect(scripts[0].getAttribute('src')).toContain('v=2');
-    expect(window.__mcpviews_plugins['tribex-crm'].mcp_url).toBe('http://127.0.0.1:4886/mcp');
+    expect(window.__mcpviews_plugins['tribex-crm'].mcp_url).toBe('http://127.0.0.1:4999/mcp');
   });
 
   it('shows expired review timers as pending instead of 0:00', function () {

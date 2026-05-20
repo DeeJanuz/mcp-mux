@@ -314,11 +314,11 @@
       // Renderers read window.__mcpviews_plugins[pluginName] for their MCP URL.
       window.__mcpviews_plugins = window.__mcpviews_plugins || {};
       renderers.forEach(function (renderer) {
-        if (!window.__mcpviews_plugins[renderer.plugin_name]) {
-          window.__mcpviews_plugins[renderer.plugin_name] = {
-            mcp_url: renderer.mcp_url || null,
-          };
-        }
+        window.__mcpviews_plugins[renderer.plugin_name] = Object.assign(
+          {},
+          window.__mcpviews_plugins[renderer.plugin_name] || {},
+          { mcp_url: renderer.mcp_url || null },
+        );
       });
 
       var loadPromises = [];

@@ -324,6 +324,130 @@
           "The campaign history renderer is read-only and must load campaign analytics from platform-owned database history APIs, including send counts, opens, opt-outs, link clicks, bounces, and send timing metadata."
         ]
       }
+    },
+    {
+      "name": "tribex-crm",
+      "version": "0.1.0",
+      "description": "Plugin-first interface and local MCP bridge for the lightweight TribeX CRM service.",
+      "author": "TribeX AI",
+      "homepage": "https://github.com/DeeJanuz/mcpviews-tribex-crm-plugin",
+      "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/mcpviews-tribex-crm-plugin/master/manifest.json",
+      "tags": [
+        "crm",
+        "contacts",
+        "accounts",
+        "opportunities",
+        "email-audience",
+        "tribex"
+      ],
+      "manifest": {
+        "name": "tribex-crm",
+        "version": "0.1.0",
+        "download_url": "https://github.com/DeeJanuz/mcpviews-tribex-crm-plugin/releases/download/0.1.0/tribex-crm.zip",
+        "renderers": {
+          "tribex-crm-open": "tribex_crm",
+          "tribex-crm-audience-normalize": "rich_content",
+          "list_accounts": "rich_content",
+          "create_account": "rich_content",
+          "update_account": "rich_content",
+          "archive_account": "rich_content",
+          "list_contacts": "rich_content",
+          "create_contact": "rich_content",
+          "update_contact": "rich_content",
+          "archive_contact": "rich_content",
+          "list_opportunities": "rich_content",
+          "create_opportunity": "rich_content",
+          "update_opportunity": "rich_content",
+          "archive_opportunity": "rich_content",
+          "list_pipeline_stages": "rich_content",
+          "create_pipeline_stage": "rich_content",
+          "reorder_pipeline_stages": "rich_content",
+          "export_audience": "rich_content"
+        },
+        "mcp": {
+          "url": "http://127.0.0.1:4886/mcp",
+          "auth": null,
+          "tool_prefix": "tribex_crm__"
+        },
+        "renderer_definitions": [
+          {
+            "name": "tribex_crm",
+            "description": "Standalone lightweight CRM workspace for accounts, contacts, opportunities, custom stages, and email audience handoff.",
+            "scope": "universal",
+            "tools": [
+              "tribex-crm-open"
+            ],
+            "data_hint": "{ \"initial_tab\"?: \"accounts|contacts|opportunities|stages|audience\", \"audience\"?: \"array\" }",
+            "rule": "Use `tribex_crm` when the user wants to browse or manage TribeX CRM records, inspect opportunities by stage, or prepare inline CRM audience rows for TribeX email workflows.",
+            "display_mode": "replace",
+            "standalone": true,
+            "standalone_label": "TribeX CRM"
+          }
+        ],
+        "registry_index": {
+          "summary": "Plugin-first interface and local MCP bridge for the lightweight TribeX CRM service.",
+          "tags": [
+            "crm",
+            "contacts",
+            "accounts",
+            "opportunities",
+            "email-audience",
+            "tribex"
+          ],
+          "tool_groups": [
+            {
+              "name": "CRM Workspace",
+              "hint": "Open the standalone CRM workspace.",
+              "tools": [
+                "tribex-crm-open"
+              ]
+            },
+            {
+              "name": "Records",
+              "hint": "List, create, update, and archive CRM accounts, contacts, and opportunities.",
+              "tools": [
+                "list_accounts",
+                "create_account",
+                "update_account",
+                "archive_account",
+                "list_contacts",
+                "create_contact",
+                "update_contact",
+                "archive_contact",
+                "list_opportunities",
+                "create_opportunity",
+                "update_opportunity",
+                "archive_opportunity"
+              ]
+            },
+            {
+              "name": "Pipeline and Audience",
+              "hint": "Manage pipeline stages and export normalized email audience rows.",
+              "tools": [
+                "list_pipeline_stages",
+                "create_pipeline_stage",
+                "reorder_pipeline_stages",
+                "export_audience",
+                "tribex-crm-audience-normalize"
+              ]
+            }
+          ],
+          "renderer_names": [
+            "tribex_crm"
+          ]
+        },
+        "tool_rules": {
+          "tribex-crm-open": "Returns a payload for the standalone `tribex_crm` renderer. Push the returned data to MCPViews with tool_name `tribex_crm`.",
+          "tribex-crm-audience-normalize": "Normalizes CRM contact or audience-like rows into the email campaign audience shape with email/emailAddress/email_address.",
+          "export_audience": "Returns normalized inline rows for email tools. Excludes archived and opted-out contacts by default."
+        },
+        "plugin_rules": [
+          "The TribeX CRM plugin is a lightweight operational workspace, not a marketing site.",
+          "CRM connection details are resolved by MCPViews and the local bridge; the renderer must not expose API, organization, user, or secret fields in the end-user UI.",
+          "Audience handoff returns inline rows only in v1; durable audience artifacts are deferred until needed.",
+          "Production CRM persistence remains owned by the `tribex-crm` service; the plugin bridge must not invent a second storage layer."
+        ]
+      }
     }
   ]
 }

@@ -323,14 +323,16 @@
 
       var loadPromises = [];
       renderers.forEach(function (renderer) {
-        // Check if already loaded
-        var existing = document.querySelector('script[data-plugin-renderer="' + renderer.plugin_name + '/' + renderer.file_name + '"]');
-        if (existing) return;
+        var rendererKey = renderer.plugin_name + '/' + renderer.file_name;
+        var existing = document.querySelector('script[data-plugin-renderer="' + rendererKey + '"]');
+        var existingSrc = existing ? existing.getAttribute('src') : null;
+        if (existing && existingSrc === renderer.url) return;
+        if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
 
         var promise = new Promise(function (resolve) {
           var script = document.createElement('script');
           script.src = renderer.url;
-          script.setAttribute('data-plugin-renderer', renderer.plugin_name + '/' + renderer.file_name);
+          script.setAttribute('data-plugin-renderer', rendererKey);
           script.onload = resolve;
           script.onerror = function () {
             console.error('[mcpviews] Failed to load plugin renderer:', renderer.url);

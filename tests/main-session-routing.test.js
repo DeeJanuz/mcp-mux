@@ -15,6 +15,7 @@ function loadMain() {
       '    getSession: function (sessionId) { return sessions.get(sessionId) || null; },',
       '    getSessionIds: function () { return Array.from(sessions.keys()); },',
       '    updateSessionMetadata: updateSessionMetadata,',
+      '    loadPluginRenderers: loadPluginRenderers,',
       '  };',
       '  renderEmpty();',
       '  initAiButton();',
@@ -219,6 +220,74 @@ describe('main session routing', function () {
     });
     expect(document.querySelector('.tab-name').textContent).toBe('Persona Studio');
     expect(document.getElementById('main-title').textContent).toBe('Persona Studio');
+  });
+
+  it('reloads an installed plugin renderer when its cache-busted URL changes', async function () {
+    var rendererResponses = [
+      [{
+        plugin_name: 'tribex-crm',
+        file_name: 'tribex-crm.js',
+        url: 'plugin://localhost/tribex-crm/renderers/tribex-crm.js?v=1',
+        mcp_url: 'http://127.0.0.1:4886/mcp',
+      }],
+      [{
+        plugin_name: 'tribex-crm',
+        file_name: 'tribex-crm.js',
+        url: 'plugin://localhost/tribex-crm/renderers/tribex-crm.js?v=2',
+        mcp_url: 'http://127.0.0.1:4886/mcp',
+      }],
+    ];
+    window.__TAURI__ = {
+      event: {
+        listen: vi.fn(function () {
+          return Promise.resolve(function () {});
+        }),
+      },
+      core: {
+        invoke: vi.fn(function (command) {
+          if (command === 'get_plugin_renderers') {
+            return Promise.resolve(rendererResponses.shift() || rendererResponses[0] || []);
+          }
+          if (command === 'get_sessions') return Promise.resolve([]);
+          return Promise.resolve(null);
+        }),
+      },
+    };
+    var scriptHost = document.createElement('div');
+    var querySelector = document.querySelector.bind(document);
+    vi.spyOn(document, 'querySelector').mockImplementation(function (selector) {
+      if (String(selector).startsWith('script[data-plugin-renderer=')) {
+        return scriptHost.querySelector(selector);
+      }
+      return querySelector(selector);
+    });
+    var appendChild = document.head.appendChild.bind(document.head);
+    vi.spyOn(document.head, 'appendChild').mockImplementation(function (node) {
+      if (node && node.tagName === 'SCRIPT') {
+        var result = scriptHost.appendChild(node);
+        if (typeof node.onload === 'function') {
+          queueMicrotask(function () { node.onload(); });
+        }
+        return result;
+      }
+      var result = appendChild(node);
+      return result;
+    });
+
+    loadMain();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    var firstScript = scriptHost.querySelector('script[data-plugin-renderer="tribex-crm/tribex-crm.js"]');
+    expect(firstScript).not.toBeNull();
+    expect(firstScript.getAttribute('src')).toContain('v=1');
+
+    await window.__mainTest.loadPluginRenderers();
+
+    var scripts = scriptHost.querySelectorAll('script[data-plugin-renderer="tribex-crm/tribex-crm.js"]');
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0].getAttribute('src')).toContain('v=2');
+    expect(window.__mcpviews_plugins['tribex-crm'].mcp_url).toBe('http://127.0.0.1:4886/mcp');
   });
 
   it('shows expired review timers as pending instead of 0:00', function () {

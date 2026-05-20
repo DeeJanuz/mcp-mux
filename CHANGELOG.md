@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.9] - 2026-05-20
+
 ### Added
 - Human-centered renderer UX principles now document the default interaction standards for operational plugin and built-in renderer flows.
 

@@ -470,7 +470,7 @@
         },
       });
     }
-    if (command === 'send_first_party_ai_magic_link' || command === 'verify_first_party_ai_magic_link' || command === 'clear_first_party_ai_auth' || command === 'start_first_party_ai_auth') {
+    if (command === 'send_first_party_ai_magic_link' || command === 'send_first_party_ai_email_code' || command === 'verify_first_party_ai_magic_link' || command === 'verify_first_party_ai_email_code' || command === 'clear_first_party_ai_auth' || command === 'start_first_party_ai_auth') {
       return Promise.resolve({ ok: true });
     }
     if (command === 'first_party_ai_request') return routeFirstPartyRequest(args || {});

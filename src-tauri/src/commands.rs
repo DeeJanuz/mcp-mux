@@ -546,6 +546,23 @@ pub async fn send_first_party_ai_magic_link(
 }
 
 #[tauri::command]
+pub async fn send_first_party_ai_email_code(
+    email: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::first_party_ai::send_email_code(state.inner(), &email).await
+}
+
+#[tauri::command]
+pub async fn verify_first_party_ai_email_code(
+    email: String,
+    code: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::first_party_ai::verify_email_code(state.inner(), &email, &code).await
+}
+
+#[tauri::command]
 pub async fn verify_first_party_ai_magic_link(
     verification_url_or_token: String,
     state: State<'_, Arc<AppState>>,

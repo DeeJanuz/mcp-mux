@@ -1007,7 +1007,7 @@
     }
 
     function setVerificationInput(value) {
-      state.integration.verificationInput = value || '';
+      state.integration.verificationInput = String(value || '').replace(/\D/g, '').slice(0, 6);
       notify();
     }
 

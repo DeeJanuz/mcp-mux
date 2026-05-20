@@ -1609,14 +1609,15 @@
   }
 
   function sendMagicLink(email) {
-    return invoke('send_first_party_ai_magic_link', {
+    return invoke('send_first_party_ai_email_code', {
       email: email,
     });
   }
 
-  function verifyMagicLink(verificationUrlOrToken) {
-    return invoke('verify_first_party_ai_magic_link', {
-      verificationUrlOrToken: verificationUrlOrToken,
+  function verifyMagicLink(email, code) {
+    return invoke('verify_first_party_ai_email_code', {
+      email: email,
+      code: code,
     });
   }
 

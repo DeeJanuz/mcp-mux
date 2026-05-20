@@ -95,6 +95,7 @@
         threadPersonaError: null,
         selectedPersonaKey: '',
         creatingThread: false,
+        pendingAutoTitleByThreadId: {},
         threadRenameId: null,
         threadRenameTitle: '',
         renamingThread: false,

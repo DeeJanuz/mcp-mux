@@ -1272,8 +1272,11 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(stylesCode).toContain('.ai-codex-thread {');
     expect(stylesCode).toContain('overflow: hidden');
     expect(stylesCode).toContain('overflow-x: hidden');
+    expect(stylesCode).toContain('.session-scroll');
+    expect(stylesCode).toContain('max-width: 100%');
     expect(stylesCode).toContain('.ai-codex-composer.is-context-mode');
-    expect(stylesCode).toContain('grid-template-columns: auto auto minmax(0, 1fr) auto');
+    expect(stylesCode).toContain('grid-template-columns: auto minmax(72px, max-content) minmax(0, 1fr) auto');
+    expect(stylesCode).toContain('.ai-codex-composer.is-context-mode .ai-codex-input');
     expect(stylesCode).toContain('min-height: 44px');
     expect(stylesCode).toContain('bottom: calc(100% + 8px)');
     expect(stylesCode).toContain('max-height: min(360px, 45vh)');

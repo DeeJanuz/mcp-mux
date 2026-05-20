@@ -1098,6 +1098,123 @@
       return /runtime connection timed out/i.test(String(message || ''));
     }
 
+    var autoTitlePlaceholders = {
+      'new chat': true,
+      'untitled thread': true,
+    };
+    var genericTitleSources = {
+      hi: true,
+      hello: true,
+      hey: true,
+      ok: true,
+      okay: true,
+      thanks: true,
+      'thank you': true,
+    };
+
+    function shouldAutoTitleThread(title) {
+      var normalized = String(title || '').trim().toLowerCase();
+      return !normalized || !!autoTitlePlaceholders[normalized];
+    }
+
+    function cleanAutoTitleSource(value) {
+      var withoutCodeBlocks = String(value || '')
+        .replace(/```[\s\S]*?```/g, ' ')
+        .replace(/`([^`]+)`/g, '$1');
+      var lines = withoutCodeBlocks.split(/\n+/);
+      var firstLine = '';
+      for (var index = 0; index < lines.length; index += 1) {
+        var candidate = lines[index].replace(/^[-*#>\s]+/, '').trim();
+        if (candidate) {
+          firstLine = candidate;
+          break;
+        }
+      }
+
+      return firstLine
+        .replace(/\s+/g, ' ')
+        .replace(/^(please\s+|can you\s+|could you\s+|would you\s+|will you\s+|help me\s+|i need you to\s+|let's\s+)/i, '')
+        .replace(/[.!?:;,]+$/g, '')
+        .trim();
+    }
+
+    function generateAutoTitleFromPrompt(prompt) {
+      var cleaned = cleanAutoTitleSource(prompt);
+      if (!cleaned || genericTitleSources[cleaned.toLowerCase()]) return null;
+      var words = cleaned.split(/\s+/).filter(Boolean);
+      var title = words.slice(0, 8).join(' ');
+      if (title.length > 64) {
+        title = title.slice(0, 64).replace(/\s+\S*$/g, '').trim();
+      }
+      title = title.replace(/[.!?:;,]+$/g, '').trim();
+      return title ? title.charAt(0).toUpperCase() + title.slice(1) : null;
+    }
+
+    function recordHasConversationContent(record) {
+      if (!record) return false;
+      var lists = [
+        record.base && record.base.messages,
+        record.runtimeSnapshot && record.runtimeSnapshot.messages,
+        record.messages,
+      ];
+      return lists.some(function (messages) {
+        return Array.isArray(messages) && messages.some(function (message) {
+          return !!(
+            message &&
+            (message.role === 'user' || message.role === 'assistant') &&
+            String(message.content || '').trim()
+          );
+        });
+      });
+    }
+
+    function maybeAutoRenameThreadFromPrompt(threadId, prompt) {
+      if (!threadId) return;
+      var record = api.ensureThreadDetailRecord(threadId);
+      if (!record || !shouldAutoTitleThread(record.title) || recordHasConversationContent(record)) {
+        return;
+      }
+      var title = generateAutoTitleFromPrompt(prompt);
+      if (!title || !shouldAutoTitleThread(record.title) || title === record.title) {
+        return;
+      }
+
+      record.title = title;
+      if (typeof api.syncThreadSummaryFromRecord === 'function') {
+        api.syncThreadSummaryFromRecord(record);
+      } else if (typeof api.mergeThreadSummary === 'function') {
+        api.mergeThreadSummary({ id: threadId, title: title });
+      }
+
+      state.composer.pendingAutoTitleByThreadId = state.composer.pendingAutoTitleByThreadId || {};
+      state.composer.pendingAutoTitleByThreadId[threadId] = title;
+
+      if (!window.__tribexAiClient || typeof window.__tribexAiClient.renameThread !== 'function') {
+        return;
+      }
+
+      window.__tribexAiClient.renameThread(threadId, title).then(function (updatedThread) {
+        if (updatedThread && updatedThread.id && typeof api.mergeThreadDetail === 'function') {
+          api.mergeThreadDetail(updatedThread);
+        } else if (typeof api.mergeThreadSummary === 'function') {
+          api.mergeThreadSummary({
+            id: threadId,
+            title: updatedThread && updatedThread.title ? updatedThread.title : title,
+          });
+        }
+      }).catch(function () {
+        // A later thread refresh will reconcile the persisted title if the optimistic rename failed.
+      }).finally(function () {
+        if (
+          state.composer.pendingAutoTitleByThreadId &&
+          state.composer.pendingAutoTitleByThreadId[threadId] === title
+        ) {
+          delete state.composer.pendingAutoTitleByThreadId[threadId];
+        }
+        api.notify();
+      });
+    }
+
     function submitPrompt(threadId, prompt, options) {
       options = options || {};
       var trimmed = String(prompt || '').trim();
@@ -1131,6 +1248,7 @@
       }
       state.threadErrors[threadId] = null;
       api.bindRuntimeBridge(threadId);
+      maybeAutoRenameThreadFromPrompt(threadId, displayPrompt || runtimePrompt || trimmed);
       if (busy && typeof api.queueContextMessage === 'function') {
         api.queueContextMessage(threadId, displayPrompt, messageId, operation, {
           skillInvocation: options.skillInvocation || null,
@@ -1537,7 +1655,7 @@
 
     function sendMagicLink() {
       var email = String(state.integration.authEmail || '').trim();
-      if (!email) return Promise.reject(new Error('Enter your work email to send a magic link.'));
+      if (!email) return Promise.reject(new Error('Enter your work email to send a sign-in code.'));
 
       state.integration.error = null;
       state.integration.sendingMagicLink = true;
@@ -1559,13 +1677,15 @@
 
     function verifyMagicLink() {
       var verificationInput = String(state.integration.verificationInput || '').trim();
-      if (!verificationInput) return Promise.reject(new Error('Paste the magic link URL or token to finish sign-in.'));
+      var email = String(state.integration.magicLinkSentTo || state.integration.authEmail || '').trim();
+      if (!email) return Promise.reject(new Error('Enter your work email before verifying the sign-in code.'));
+      if (!verificationInput) return Promise.reject(new Error('Enter the 6-digit code from your email to finish sign-in.'));
 
       state.integration.error = null;
       state.integration.verifyingMagicLink = true;
       api.notify();
 
-      return window.__tribexAiClient.verifyMagicLink(verificationInput).then(function (session) {
+      return window.__tribexAiClient.verifyMagicLink(email, verificationInput).then(function (session) {
         state.integration.session = session;
         state.integration.status = session ? 'authenticated' : 'unauthenticated';
         state.integration.verificationInput = '';
@@ -1652,6 +1772,7 @@
         state.composer.selectedPersonaKey = '';
         state.composer.creatingThread = false;
         state.composer.lastPersonaByProjectId = {};
+        state.composer.pendingAutoTitleByThreadId = {};
         api.notify();
       }).catch(function (error) {
         state.integration.error = error && error.message ? error.message : String(error);

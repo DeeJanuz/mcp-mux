@@ -448,6 +448,9 @@ body {
 
 .session-content {
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* Content type badges */
@@ -474,12 +477,14 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow: hidden;
 }
 
 #main-body {
   flex: 1;
   display: flex;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
   position: relative;
@@ -543,12 +548,15 @@ body {
   padding: 0;
   background: transparent;
   min-width: 0;
+  max-width: 100%;
 }
 
 .session-content {
   position: absolute;
   inset: 0;
   display: none;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
 }
 .session-content.active {
@@ -588,9 +596,13 @@ body {
 }
 .session-scroll {
   flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 20px;
   min-height: 0;
+  box-sizing: border-box;
 }
 
 /* Empty state — see Phase 6 enhanced version below */
@@ -6394,6 +6406,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   --ai-codex-surface-inset: #f1f5f9;
   width: 100%;
   max-width: 100%;
+  min-width: 0;
   height: 100%;
   min-height: 0;
   display: grid;
@@ -6417,6 +6430,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
   min-height: 52px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--border-default);
@@ -6427,7 +6441,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
 }
 
@@ -6498,6 +6512,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
 .ai-codex-header-actions {
   flex: 0 0 auto;
   flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .ai-codex-status,
@@ -6642,6 +6657,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   border-bottom: 1px solid var(--border-default);
   background: var(--ai-codex-surface-subtle);
   border-radius: 8px 8px 0 0;
+  min-width: 0;
 }
 
 .ai-codex-session-index,
@@ -6670,6 +6686,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
 .ai-codex-message-header {
   justify-content: space-between;
   margin-bottom: 6px;
+  min-width: 0;
 }
 
 .ai-codex-time,
@@ -6677,6 +6694,14 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
 .ai-codex-composer-hint {
   color: var(--text-tertiary);
   font-size: 12px;
+}
+
+.ai-codex-session-index,
+.ai-codex-role,
+.ai-codex-time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ai-codex-user-copy,
@@ -6829,6 +6854,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   display: grid;
   gap: 4px;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .ai-codex-pending-copy small {
@@ -6836,6 +6862,7 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   font-size: 12px;
   line-height: 1.4;
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .ai-codex-pulse {
@@ -7213,6 +7240,7 @@ body.ai-mode-session-active .ai-codex-review-bundle .ai-codex-reject-all:hover {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: end;
   gap: 6px 10px;
+  min-width: 0;
   border-top: 1px solid var(--border-default);
   background: var(--ai-codex-surface);
   padding: 8px 14px 10px;
@@ -7227,7 +7255,7 @@ body.ai-mode-session-active .ai-codex-review-bundle .ai-codex-reject-all:hover {
 }
 
 .ai-codex-composer.is-context-mode {
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(72px, max-content) minmax(0, 1fr) auto;
 }
 
 .ai-codex-composer.is-context-mode .ai-codex-skill-controls {
@@ -7247,6 +7275,7 @@ body.ai-mode-session-active .ai-codex-review-bundle .ai-codex-reject-all:hover {
   grid-column: 2;
   grid-row: 1;
   width: 100%;
+  min-width: 0;
   min-height: 44px;
   max-height: min(156px, 30vh);
   resize: vertical;
@@ -7491,6 +7520,7 @@ body.ai-mode-session-active .ai-codex-review-bundle .ai-codex-reject-all:hover {
   align-self: end;
   justify-content: space-between;
   margin-top: 0;
+  min-width: 0;
 }
 
 .ai-codex-composer-footer .ai-codex-composer-hint {
@@ -7569,10 +7599,21 @@ body.ai-mode-session-active .ai-codex-review-bundle .ai-codex-reject-all:hover {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .ai-codex-composer.is-context-mode {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .ai-codex-input,
   .ai-codex-interrupt,
   .ai-codex-skill-controls,
   .ai-codex-composer-footer {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .ai-codex-composer.is-context-mode .ai-codex-input,
+  .ai-codex-composer.is-context-mode .ai-codex-skill-controls,
+  .ai-codex-composer.is-context-mode .ai-codex-composer-footer {
     grid-column: 1;
     grid-row: auto;
   }

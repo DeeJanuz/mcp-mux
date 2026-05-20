@@ -190,6 +190,64 @@ describe('tribex-ai-shell', function () {
     expect(document.body.classList.contains('ai-mode-active')).toBe(true);
   });
 
+  it('renders hosted AI sign-in as an email code flow', function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      searchTerm: '',
+      selectedWorkspace: null,
+      selectedProject: null,
+      organizations: [],
+      selectedOrganization: null,
+      projectGroups: [],
+      projectExpansion: {},
+      packages: [],
+      composer: {
+        creatingWorkspace: false,
+        projectName: '',
+        creatingProject: false,
+        threadProjectId: null,
+        threadTitle: '',
+        threadPersonasByProjectId: {},
+        loadingThreadPersonas: false,
+        threadPersonaError: null,
+        selectedPersonaKey: '',
+        creatingThread: false,
+      },
+      hasProjects: false,
+      activeProjectId: null,
+      integration: {
+        config: { configured: true },
+        status: 'awaiting_verification',
+        authEmail: 'user@example.com',
+        verificationInput: '',
+        magicLinkSentTo: 'user@example.com',
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    expect(document.querySelector('.ai-nav-auth-panel').textContent).toContain('6-digit code');
+    expect(document.querySelector('.ai-nav-auth-panel').textContent).toContain('Sign-in code sent to user@example.com.');
+    expect(document.querySelector('.ai-nav-auth-panel').textContent).not.toContain('Magic link');
+
+    var input = document.querySelector('[data-focus-key="verification-input"]');
+    expect(input.placeholder).toBe('Enter 6-digit code');
+    input.value = '12 34-ab56';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(state.setVerificationInput).toHaveBeenCalledWith('123456');
+  });
+
   it('only asks for a persona when creating a chat', function () {
     var snapshot = {
       navigatorVisible: true,

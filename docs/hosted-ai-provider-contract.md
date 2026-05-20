@@ -46,16 +46,16 @@ MCPViews stores provider cookies and relay tokens locally under `~/.mcpviews/aut
 
 ## Authentication
 
-The current workspace uses brokered magic-link auth. Providers must support:
+The current workspace uses brokered email-code auth. Providers must support:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/auth/get-session` | Return the signed-in user/session or `null`. |
-| `POST` | `/api/auth/sign-in/magic-link` | Send a magic link to the submitted email. |
-| `GET` | `/api/auth/magic-link/verify?token=:token` | Establish the browser/session cookie. |
+| `POST` | `/api/auth/sign-in/email-code` | Send a 6-digit sign-in code to the submitted email. |
+| `POST` | `/api/auth/email-code/verify` | Verify the submitted email/code pair and establish the session cookie. |
 | `POST` | `/api/auth/sign-out` | Clear the provider session. |
 
-`POST /api/auth/sign-in/magic-link` receives:
+`POST /api/auth/sign-in/email-code` receives:
 
 ```json
 {
@@ -64,7 +64,16 @@ The current workspace uses brokered magic-link auth. Providers must support:
 }
 ```
 
-MCPViews persists cookies returned by these endpoints. If the user verifies a full magic-link URL on a different origin, MCPViews aligns the saved provider base URL to that verified origin.
+`POST /api/auth/email-code/verify` receives:
+
+```json
+{
+  "email": "user@example.com",
+  "code": "123456"
+}
+```
+
+MCPViews persists cookies returned by these endpoints and fetches `/api/auth/get-session` after successful verification so the local auth state uses the provider's canonical session shape. Legacy magic-link verification can remain available for older providers during migration, but the current UI flow sends and verifies email codes.
 
 ## Navigator And Thread API
 

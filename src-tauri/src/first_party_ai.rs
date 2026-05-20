@@ -400,7 +400,7 @@ pub fn config_summary() -> Value {
         "relayTokenConfigured": relay_token_configured,
         "relayTokenExpiresAt": cfg.relay_token_expires_at,
         "relayDeviceId": cfg.relay_device_id,
-        "authMode": "brokered_magic_link",
+        "authMode": "brokered_email_code",
         "authConfigured": has_persisted_session(&mcpviews_shared::auth_dir())
             || mcpviews_shared::token_store::has_stored_token(&mcpviews_shared::auth_dir(), AUTH_NAMESPACE),
     })
@@ -440,7 +440,7 @@ pub async fn get_auth_header(state: &Arc<AppState>) -> Result<String, String> {
         return Ok(format!("Bearer {}", stored.access_token));
     }
 
-    Err("Hosted AI provider auth uses the session cookie established by magic-link sign-in.".to_string())
+    Err("Hosted AI provider auth uses the session cookie established by email code sign-in.".to_string())
 }
 
 pub(crate) async fn get_relay_auth_header(state: &Arc<AppState>) -> Result<String, String> {
@@ -814,7 +814,7 @@ pub async fn probe_local_runtime_host(
 
 pub async fn start_auth(state: &Arc<AppState>) -> Result<String, String> {
     let _ = state;
-    Err("Hosted AI provider auth uses magic-link sign-in. Send a magic link, then verify it, instead of starting an OAuth flow.".to_string())
+    Err("Hosted AI provider auth uses email code sign-in. Send a code, then verify it, instead of starting an OAuth flow.".to_string())
 }
 
 pub async fn get_session(state: &Arc<AppState>) -> Result<Value, String> {
@@ -851,8 +851,8 @@ pub async fn get_session(state: &Arc<AppState>) -> Result<Value, String> {
         .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))
 }
 
-pub async fn send_magic_link(state: &Arc<AppState>, email: &str) -> Result<Value, String> {
-    let url = build_request_url("/api/auth/sign-in/magic-link")?;
+pub async fn send_email_code(state: &Arc<AppState>, email: &str) -> Result<Value, String> {
+    let url = build_request_url("/api/auth/sign-in/email-code")?;
     let response = state
         .http_client
         .post(&url)
@@ -887,6 +887,57 @@ pub async fn send_magic_link(state: &Arc<AppState>, email: &str) -> Result<Value
 
     serde_json::from_str(&text)
         .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))
+}
+
+pub async fn send_magic_link(state: &Arc<AppState>, email: &str) -> Result<Value, String> {
+    send_email_code(state, email).await
+}
+
+pub async fn verify_email_code(
+    state: &Arc<AppState>,
+    email: &str,
+    code: &str,
+) -> Result<Value, String> {
+    let normalized_code: String = code.chars().filter(|ch| ch.is_ascii_digit()).take(6).collect();
+    if email.trim().is_empty() || normalized_code.len() != 6 {
+        return Err("Email and 6-digit code are required.".to_string());
+    }
+
+    let url = build_request_url("/api/auth/email-code/verify")?;
+    let response = state
+        .http_client
+        .post(&url)
+        .header("Accept", "application/json")
+        .json(&json!({
+            "email": email,
+            "code": normalized_code,
+        }))
+        .send()
+        .await
+        .map_err(|err| format!("Request to '{}' failed: {}", url, err))?;
+
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|err| format!("Failed to read response from '{}': {}", url, err))?;
+    state.persist_first_party_ai_cookies()?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "HTTP {} from '{}': {}",
+            status.as_u16(),
+            url,
+            shorten_error_body(&text)
+        ));
+    }
+
+    if !text.trim().is_empty() {
+        serde_json::from_str::<Value>(&text)
+            .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))?;
+    }
+
+    get_session(state).await
 }
 
 pub async fn verify_magic_link(

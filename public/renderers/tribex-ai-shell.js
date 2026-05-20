@@ -315,8 +315,8 @@
 
     title.textContent = 'Sign in to AI workspace';
     copy.textContent = snapshot.integration.magicLinkSentTo
-      ? 'Paste the localhost verification URL or token to finish linking this desktop client.'
-      : 'Send yourself a magic link so this desktop client can attach to your AI workspace.';
+      ? 'Enter the 6-digit code from your email to finish linking this desktop client.'
+      : 'Send yourself a sign-in code so this desktop client can attach to your AI workspace.';
 
     var form = document.createElement('div');
     form.className = 'ai-nav-auth-form';
@@ -334,7 +334,7 @@
 
     var actions = document.createElement('div');
     actions.className = 'ai-nav-auth-actions';
-    actions.appendChild(createButton('ai-nav-action ai-nav-action-primary', snapshot.integration.sendingMagicLink ? 'Sending...' : 'Send magic link', {
+    actions.appendChild(createButton('ai-nav-action ai-nav-action-primary', snapshot.integration.sendingMagicLink ? 'Sending...' : 'Send code', {
       disabled: !!snapshot.integration.sendingMagicLink,
       onClick: function () {
         aiState.sendMagicLink().catch(function () {});
@@ -345,7 +345,7 @@
     if (snapshot.integration.magicLinkSentTo) {
       var sent = document.createElement('p');
       sent.className = 'ai-nav-helper';
-      sent.textContent = 'Magic link sent to ' + snapshot.integration.magicLinkSentTo + '.';
+      sent.textContent = 'Sign-in code sent to ' + snapshot.integration.magicLinkSentTo + '.';
       form.appendChild(sent);
     }
 
@@ -353,16 +353,18 @@
     verifyInput.className = 'ai-nav-auth-input';
     verifyInput.setAttribute('data-focus-key', 'verification-input');
     verifyInput.type = 'text';
-    verifyInput.placeholder = 'Paste magic link URL or token';
+    verifyInput.placeholder = 'Enter 6-digit code';
+    verifyInput.inputMode = 'numeric';
+    verifyInput.maxLength = 6;
     verifyInput.value = snapshot.integration.verificationInput || '';
     verifyInput.addEventListener('input', function (event) {
-      aiState.setVerificationInput(event.target.value);
+      aiState.setVerificationInput(String(event.target.value || '').replace(/\D/g, '').slice(0, 6));
     });
     form.appendChild(verifyInput);
 
     actions = document.createElement('div');
     actions.className = 'ai-nav-auth-actions';
-    actions.appendChild(createButton('ai-nav-action ai-nav-action-secondary', snapshot.integration.verifyingMagicLink ? 'Verifying...' : 'Verify link', {
+    actions.appendChild(createButton('ai-nav-action ai-nav-action-secondary', snapshot.integration.verifyingMagicLink ? 'Verifying...' : 'Verify code', {
       disabled: !!snapshot.integration.verifyingMagicLink,
       onClick: function () {
         aiState.verifyMagicLink().catch(function () {});

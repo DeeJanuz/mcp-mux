@@ -225,6 +225,8 @@ fn main() {
             commands::get_first_party_ai_auth_header,
             commands::get_first_party_ai_session,
             commands::send_first_party_ai_magic_link,
+            commands::send_first_party_ai_email_code,
+            commands::verify_first_party_ai_email_code,
             commands::verify_first_party_ai_magic_link,
             commands::clear_first_party_ai_auth,
             commands::first_party_ai_request,

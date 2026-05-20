@@ -32,7 +32,7 @@ Use this command when the native build also needs local plugin changes from sibl
 npm run build:mac-dev-bundle
 ```
 
-It stages local copies of `../tribe-x-ai-plugin`, `../ludflow-mcpviews`, and `../decidr-plugin` under `src-tauri/bundled-plugins/mac-dev/`, writes content hashes for startup comparison, and then runs a macOS Tauri build for `app,dmg`. The staged directory is ignored by Git; regenerate it from the sibling plugin worktrees instead of editing it directly.
+It stages local copies of `../tribe-x-ai-plugin`, `../ludflow-mcpviews`, `../decidr-plugin`, and `../mcpviews-email-deliverability-plugin` under `src-tauri/bundled-plugins/mac-dev/`, writes content hashes for startup comparison, and then runs a macOS Tauri build for `app,dmg`. The staged directory is ignored by Git; regenerate it from the sibling plugin worktrees instead of editing it directly.
 
 The mac dev bundle bakes in hosted AI provider defaults for `https://dev.app.tribexai.com` unless the corresponding `MCPVIEWS_BUNDLE_AI_PROVIDER_*` environment variables are set for the build.
 

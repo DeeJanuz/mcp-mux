@@ -327,7 +327,7 @@
     },
     {
       "name": "tribex-crm",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Plugin-first interface and local MCP bridge for the lightweight TribeX CRM service.",
       "author": "TribeX AI",
       "homepage": "https://github.com/DeeJanuz/mcpviews-tribex-crm-plugin",
@@ -342,8 +342,8 @@
       ],
       "manifest": {
         "name": "tribex-crm",
-        "version": "0.1.0",
-        "download_url": "https://github.com/DeeJanuz/mcpviews-tribex-crm-plugin/releases/download/0.1.0/tribex-crm.zip",
+        "version": "0.1.1",
+        "download_url": "https://github.com/DeeJanuz/mcpviews-tribex-crm-plugin/releases/download/0.1.1/tribex-crm.zip",
         "renderers": {
           "tribex-crm-open": "tribex_crm",
           "tribex-crm-audience-normalize": "rich_content",
@@ -444,6 +444,7 @@
         "plugin_rules": [
           "The TribeX CRM plugin is a lightweight operational workspace, not a marketing site.",
           "CRM connection details are resolved by MCPViews and the local bridge; the renderer must not expose API, organization, user, or secret fields in the end-user UI.",
+          "The local bridge defaults to the deployed CRM service at https://crm.tribexai.com. Override TRIBEX_CRM_API_BASE only for local CRM service development.",
           "Audience handoff returns inline rows only in v1; durable audience artifacts are deferred until needed.",
           "Production CRM persistence remains owned by the `tribex-crm` service; the plugin bridge must not invent a second storage layer."
         ]

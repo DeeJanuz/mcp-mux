@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.11] - 2026-05-20
+
+### Removed
+- Windows builds no longer bundle or launch the deprecated `setup-integrations.ps1` PowerShell script.
+
+### Fixed
+- App startup now removes a leftover Windows `scripts/setup-integrations.ps1` resource from older installs when possible.
+
 ## [0.2.5-rc.10] - 2026-05-20
 
 ### Changed

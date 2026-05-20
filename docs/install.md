@@ -10,7 +10,7 @@ All installers are available on the [GitHub Releases](https://github.com/DeeJanu
 
 ### macOS (Apple Silicon)
 
-1. Download **[MCPViews.dmg](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.10/MCPViews_0.2.5-rc.10_aarch64.dmg)** from the release
+1. Download **[MCPViews.dmg](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.11/MCPViews_0.2.5-rc.11_aarch64.dmg)** from the release
 2. Open the `.dmg` and drag MCPViews to your Applications folder
 3. Launch MCPViews — it starts a local server on `http://localhost:4200`
 
@@ -22,10 +22,13 @@ Choose one:
 
 | Installer | Format | Download |
 |-----------|--------|----------|
-| Setup wizard | `.exe` | [MCPViews_setup.exe](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.10/MCPViews_0.2.5-10_x64-setup.exe) |
-| MSI package | `.msi` | [MCPViews.msi](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.10/MCPViews_0.2.5-10_x64_en-US.msi) |
+| Setup wizard | `.exe` | [MCPViews_setup.exe](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.11/MCPViews_0.2.5-11_x64-setup.exe) |
+| MSI package | `.msi` | [MCPViews.msi](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.11/MCPViews_0.2.5-11_x64_en-US.msi) |
 
 Run the installer and launch MCPViews from your Start menu.
+
+Windows builds no longer ship or launch the legacy PowerShell integration setup
+script. Use the agent install prompt below to connect MCPViews to your tools.
 
 ### Linux
 
@@ -310,10 +313,6 @@ Call mcpviews_install_plugin with trigger_auth: true to install [plugin name].
 Or use the **GUI**: click the MCPViews system tray icon and select **Manage Plugins**.
 
 ---
-
-> **Legacy:** The bundled `setup-integrations.sh` / `.ps1` script in `src-tauri/scripts/` is deprecated and will be removed in the next release. New installs should use the agent install prompt above.
-
-
 ## After Updating MCPViews
 
 When you update to a new version of MCPViews:

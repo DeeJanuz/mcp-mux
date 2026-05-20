@@ -275,6 +275,8 @@ fn main() {
             let handle = app.handle().clone();
             let state = app_state.clone();
 
+            installer::cleanup_legacy_windows_setup_script(app.handle());
+
             match app.path().resource_dir() {
                 Ok(resource_dir) => match app_state.ensure_resource_bundled_plugins(&resource_dir) {
                     Ok(installed) if !installed.is_empty() => {
@@ -333,13 +335,21 @@ fn main() {
 
             // Build system tray menu
             let show_item = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
-            let manage_plugins_item = MenuItemBuilder::with_id("manage_plugins", "Manage Plugins").build(app)?;
-            let setup_item = MenuItemBuilder::with_id("setup_integrations", "Setup Agent Integrations").build(app)?;
+            let manage_plugins_item =
+                MenuItemBuilder::with_id("manage_plugins", "Manage Plugins").build(app)?;
+            #[cfg(not(target_os = "windows"))]
+            let setup_item =
+                MenuItemBuilder::with_id("setup_integrations", "Setup Agent Integrations")
+                    .build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            let tray_menu = MenuBuilder::new(app)
+            let mut tray_menu_builder = MenuBuilder::new(app)
                 .item(&show_item)
-                .item(&manage_plugins_item)
-                .item(&setup_item)
+                .item(&manage_plugins_item);
+            #[cfg(not(target_os = "windows"))]
+            {
+                tray_menu_builder = tray_menu_builder.item(&setup_item);
+            }
+            let tray_menu = tray_menu_builder
                 .separator()
                 .item(&quit_item)
                 .build()?;
@@ -378,6 +388,7 @@ fn main() {
                             .build();
                         }
                     }
+                    #[cfg(not(target_os = "windows"))]
                     "setup_integrations" => {
                         if let Some(script) = installer::get_script_path(app) {
                             let _ = installer::open_installer_terminal(&script);
@@ -391,9 +402,12 @@ fn main() {
                 .build(app)?;
 
             // First-run agent integration setup
-            if !installer::check_first_run() {
-                if let Some(script) = installer::get_script_path(&app.handle().clone()) {
-                    let _ = installer::open_installer_terminal(&script);
+            #[cfg(not(target_os = "windows"))]
+            {
+                if !installer::check_first_run() {
+                    if let Some(script) = installer::get_script_path(&app.handle().clone()) {
+                        let _ = installer::open_installer_terminal(&script);
+                    }
                 }
             }
 

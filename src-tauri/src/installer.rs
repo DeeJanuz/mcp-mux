@@ -1,6 +1,13 @@
 use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use tauri::Manager;
+
+#[cfg(not(target_os = "windows"))]
+const SETUP_SCRIPT: &str = "scripts/setup-integrations.sh";
+
+#[cfg(target_os = "windows")]
+const LEGACY_WINDOWS_SETUP_SCRIPT: &str = "scripts/setup-integrations.ps1";
 
 /// Check if first-run setup has been completed.
 /// Returns true if ~/.mcpviews/.setup-complete exists.
@@ -10,19 +17,58 @@ pub fn check_first_run() -> bool {
         .unwrap_or(false)
 }
 
-/// Resolve the bundled script path from Tauri resources.
-/// Returns the path to setup-integrations.sh (Linux/macOS) or setup-integrations.ps1 (Windows).
-pub fn get_script_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let script_name = if cfg!(target_os = "windows") {
-        "scripts/setup-integrations.ps1"
-    } else {
-        "scripts/setup-integrations.sh"
-    };
+/// Remove the deprecated Windows setup script if it was left behind by an older install.
+///
+/// New Windows builds no longer bundle or execute the PowerShell setup flow, but upgrades may
+/// leave old resource files in place depending on installer behavior.
+pub fn cleanup_legacy_windows_setup_script(app: &tauri::AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        match app
+            .path()
+            .resolve(LEGACY_WINDOWS_SETUP_SCRIPT, tauri::path::BaseDirectory::Resource)
+        {
+            Ok(path) if path.exists() => {
+                if let Err(error) = std::fs::remove_file(&path) {
+                    eprintln!(
+                        "[mcpviews] Failed to remove legacy Windows setup script {}: {}",
+                        path.display(),
+                        error
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!(
+                    "[mcpviews] Failed to resolve legacy Windows setup script path: {}",
+                    error
+                );
+            }
+        }
+    }
 
-    app.path()
-        .resolve(script_name, tauri::path::BaseDirectory::Resource)
-        .ok()
-        .filter(|p: &PathBuf| p.exists())
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+    }
+}
+
+/// Resolve the bundled legacy shell setup path from Tauri resources.
+/// Windows builds intentionally have no bundled setup script.
+pub fn get_script_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = app;
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        app.path()
+            .resolve(SETUP_SCRIPT, tauri::path::BaseDirectory::Resource)
+            .ok()
+            .filter(|p: &PathBuf| p.exists())
+    }
 }
 
 /// Open a terminal window running the installer script.
@@ -69,11 +115,12 @@ pub fn open_installer_terminal(script_path: &Path) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd")
-            .args(["/c", "start", "powershell.exe", "-ExecutionPolicy", "Bypass", "-File", script])
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| format!("Failed to start PowerShell: {}", e))
+        let _ = script;
+        Err(concat!(
+            "The legacy Windows PowerShell integration setup has been removed. ",
+            "Use docs/install-prompt.md to configure agent integrations."
+        )
+        .to_string())
     }
 }
 

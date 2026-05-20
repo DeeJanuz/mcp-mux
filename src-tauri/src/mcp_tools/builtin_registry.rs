@@ -325,7 +325,7 @@ fn init_session_definition(_: &[RendererDef]) -> Value {
 fn mcpviews_setup_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "mcpviews_setup",
-        "description": "One-time setup for MCPViews. Returns instructions for persisting a session-start rule that ensures init_session is called automatically in every new session. Also returns current rules and plugin status.",
+        "description": "Setup or refresh MCPViews agent rules. Returns instructions for persisting a session-start rule that ensures init_session is called automatically in every new session, and for updating an existing MCPViews rules section when installed or updated plugins add missing rule details. Also returns current rules and plugin status.",
         "inputSchema": {
             "type": "object",
             "properties": {

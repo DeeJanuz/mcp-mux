@@ -1013,7 +1013,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "13",
+  "rules_version": "14",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -1057,15 +1057,15 @@ sequenceDiagram
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
   "rules_update": {
-    "current_version": "13",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 13..."
+    "current_version": "14",
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 14..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 13 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 14 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`; agents should also refresh an existing MCPViews rules section when installed or updated plugins add rule details missing from the persisted rules.
 
 The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
@@ -1266,7 +1266,7 @@ Fetch a prompt from a plugin. Returns the prompt content with optional template 
 
 ### `mcpviews_setup`
 
-One-time setup for MCPViews. Returns instructions for persisting a rule that ensures `init_session` is called automatically at the start of every conversation, chat session, or interaction. Also returns current rules and plugin status.
+Setup or refresh MCPViews agent rules. Returns instructions for persisting a rule that ensures `init_session` is called automatically at the start of every conversation, chat session, or interaction, and for updating an existing MCPViews rules section when installed or updated plugins add missing rule details. Also returns current rules and plugin status.
 
 **Parameters:**
 | Field | Type | Required | Description |
@@ -1277,10 +1277,11 @@ One-time setup for MCPViews. Returns instructions for persisting a rule that ens
 ```json
 {
   "rules": [ ... ],
-  "rules_version": "13",
+  "rules_version": "14",
   "plugin_status": [ ... ],
   "persistence_instructions": "Persist each rule as a memory file...",
-  "setup_instructions": "Add a rule in `.claude/rules/mcpviews-init.md` containing: ..."
+  "setup_instructions": "Add or update a rule in `.claude/rules/mcpviews-init.md` containing: ...",
+  "rules_update": { ... }
 }
 ```
 

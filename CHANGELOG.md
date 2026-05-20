@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `mcpviews_setup` and persisted-rule guidance now tell agents to update an existing MCPViews rules section or memory when plugin updates add missing rule details, and built-in rules are bumped to version 14.
+
 ## [0.2.5-rc.9] - 2026-05-20
 
 ### Added

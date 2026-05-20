@@ -14,7 +14,8 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "13"; // Bump when built-in rules change
+const RULES_VERSION: &str = "14"; // Bump when built-in rules change
+const RULES_REFRESH_INSTRUCTION: &str = "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules.";
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -2158,21 +2159,21 @@ pub(crate) fn collect_plugin_auth_status(
 /// Return agent-type-specific persistence instructions.
 pub(crate) fn persistence_instructions(agent_type: &str) -> String {
     match agent_type {
-        "claude_code" => format!("Create a file at `.claude/rules/mcpviews.md` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line. This file will be automatically loaded by Claude Code as project-level rules.", RULES_VERSION),
+        "claude_code" => format!("Create or update `.claude/rules/mcpviews.md` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line. This file will be automatically loaded by Claude Code as project-level rules. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
 
-        "claude_desktop" => format!("For each rule below, create an individual memory using your memory creation capability. Use the title `mcpviews: <rule name>` and the rule text as the content. Include `mcpviews-rules-version: {}` in a separate memory titled `mcpviews: version`. Creating individual memories (rather than one combined memory) ensures each rule is retrievable independently and survives context window limits.", RULES_VERSION),
+        "claude_desktop" => format!("For each rule below, create or update an individual memory using your memory capability. Use the title `mcpviews: <rule name>` and the rule text as the content. Include `mcpviews-rules-version: {}` in a separate memory titled `mcpviews: version`. Creating individual memories (rather than one combined memory) ensures each rule is retrievable independently and survives context window limits. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
 
-        "codex" | "opencode" | "antigravity" => format!("Append all rules below to `AGENTS.md` in the project root. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line of the MCPViews section.", RULES_VERSION),
+        "codex" | "opencode" | "antigravity" => format!("Add or update the MCPViews section in `AGENTS.md` in the project root with all rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line of the MCPViews section. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
 
-        "cursor" => format!("Create a file at `.cursor/rules/mcpviews.mdc` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line. This file is read by Cursor as project-level rules.", RULES_VERSION),
+        "cursor" => format!("Create or update `.cursor/rules/mcpviews.mdc` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line. This file is read by Cursor as project-level rules. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
 
-        "windsurf" => format!("Append all rules below to `.windsurfrules` in the project root. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line of the MCPViews section.", RULES_VERSION),
+        "windsurf" => format!("Add or update the MCPViews section in `.windsurfrules` in the project root with all rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line of the MCPViews section. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
 
         _ => format!("These rules should be persisted so they guide your behavior in future conversations. \
               Ask the user: \"I have received behavioral rules from MCPViews for its renderers and tools. \
               How would you like me to persist them? I can write them to a rules file in this project, \
               create memories, or use another method your platform supports.\" \
-              Then follow the user's direction to commit the rules. Include version marker `mcpviews-rules-version: {}` so updates can be detected.", RULES_VERSION),
+              Then follow the user's direction to commit the rules. Include version marker `mcpviews-rules-version: {}` so updates can be detected. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
     }
 }
 
@@ -3723,6 +3724,7 @@ mod tests {
         let instr = setup_instructions("codex");
         assert!(instr.contains("init_session"));
         assert!(instr.contains("AGENTS.md"));
+        assert!(instr.contains("update it rather than adding a duplicate"));
     }
 
     #[test]
@@ -3869,10 +3871,11 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "13");
+        assert_eq!(RULES_VERSION, "14");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 13"));
-        assert!(instructions.contains("Append all rules below to `AGENTS.md`"));
+        assert!(instructions.contains("mcpviews-rules-version: 14"));
+        assert!(instructions.contains("Add or update the MCPViews section in `AGENTS.md`"));
+        assert!(instructions.contains("missing from the persisted rules"));
     }
 
     #[test]

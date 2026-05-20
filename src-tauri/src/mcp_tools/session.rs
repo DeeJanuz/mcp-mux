@@ -75,8 +75,11 @@ pub(super) async fn call_init_session(
             "current_version": super::RULES_VERSION,
             "instruction": format!(
                 "Check if your persisted MCPViews rules file contains `mcpviews-rules-version: {}`. \
-                 If the version is missing or different, overwrite the file with the rules from this \
-                 response using the persistence_instructions format. This ensures you have the latest rules.",
+                 If the version is missing or different, overwrite the existing MCPViews rules section with \
+                 the rules from this response using the persistence_instructions format. Also refresh the \
+                 existing MCPViews rules when installed or updated plugins add rule details that are missing \
+                 from the persisted rules, even if an older MCPViews rule already exists. Do not append a \
+                 duplicate MCPViews section.",
                 super::RULES_VERSION
             )
         }),
@@ -92,12 +95,12 @@ pub(super) async fn call_init_session(
 
 pub(crate) fn setup_instructions(agent_type: &str) -> String {
     match agent_type {
-        "claude_code" => "Add a rule in `.claude/rules/mcpviews-init.md` containing: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, behavioral rules, plugin auth status, and the list of available tools. This must happen every time — not just once.'".to_string(),
-        "claude_desktop" => "Create a memory: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.'".to_string(),
-        "cursor" => "Add to `.cursor/rules/mcpviews-init.mdc`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.'".to_string(),
-        "codex" | "opencode" | "antigravity" => "Add to `AGENTS.md`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.'".to_string(),
-        "windsurf" => "Add to `.windsurfrules`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.'".to_string(),
-        _ => "Ask the user how to persist a rule that calls `init_session` at the start of every conversation, chat session, or interaction — not just once, but every time.".to_string(),
+        "claude_code" => "Add or update a rule in `.claude/rules/mcpviews-init.md` containing: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, behavioral rules, plugin auth status, and the list of available tools. This must happen every time — not just once.' If this rule already exists, update the existing MCPViews rule rather than adding a duplicate, especially when setup is rerun after installed plugins add or change rule details.".to_string(),
+        "claude_desktop" => "Create or update a memory: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.' If this memory already exists, update the existing MCPViews memory rather than adding a duplicate, especially when setup is rerun after installed plugins add or change rule details.".to_string(),
+        "cursor" => "Add or update `.cursor/rules/mcpviews-init.mdc`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.' If this rule already exists, update the existing MCPViews rule rather than adding a duplicate, especially when setup is rerun after installed plugins add or change rule details.".to_string(),
+        "codex" | "opencode" | "antigravity" => "Add or update the MCPViews section in `AGENTS.md`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.' If this section already exists, update it rather than adding a duplicate, especially when setup is rerun after installed plugins add or change rule details.".to_string(),
+        "windsurf" => "Add or update the MCPViews section in `.windsurfrules`: 'IMPORTANT: At the start of every conversation, chat session, or interaction, call the `init_session` MCP tool to initialize MCPViews and get current renderer definitions, rules, and the list of available tools. This must happen every time — not just once.' If this section already exists, update it rather than adding a duplicate, especially when setup is rerun after installed plugins add or change rule details.".to_string(),
+        _ => "Ask the user how to persist or update a rule that calls `init_session` at the start of every conversation, chat session, or interaction — not just once, but every time. If an MCPViews rule already exists, update that existing rule instead of adding a duplicate, especially when setup is rerun after installed plugins add or change rule details.".to_string(),
     }
 }
 
@@ -118,6 +121,10 @@ pub(super) async fn call_mcpviews_setup(
         "plugin_status": plugin_status,
         "persistence_instructions": super::persistence_instructions(agent_type),
         "setup_instructions": setup_instructions(agent_type),
+        "rules_update": {
+            "current_version": super::RULES_VERSION,
+            "instruction": "If persisted MCPViews rules already exist, update the existing MCPViews section or memories with this setup response when the version marker is missing/different or when installed/updated plugins add rule details that are absent. Do not append duplicate MCPViews rules."
+        },
         "available_tools": available_tools,
     });
 

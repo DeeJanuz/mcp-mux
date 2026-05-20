@@ -2035,6 +2035,47 @@ describe('tribex-ai-client', function () {
     });
   });
 
+  it('passes a scoped creation context when creating plugin-owned threads', async function () {
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/projects/project-123/threads') {
+        return Promise.resolve({
+          id: 'thread-email-edit',
+          title: 'Email template visual edits',
+        });
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(
+      window.__tribexAiClient.createThread(
+        'project-123',
+        'Email template visual edits',
+        'email-template-visual-editor',
+        { creationContext: 'email-template-builder-ai-edit' },
+      ),
+    ).resolves.toMatchObject({
+      id: 'thread-email-edit',
+      title: 'Email template visual edits',
+    });
+
+    expect(invoke).toHaveBeenCalledWith('first_party_ai_request', expect.objectContaining({
+      method: 'POST',
+      path: '/projects/project-123/threads',
+      body: {
+        title: 'Email template visual edits',
+        personaKey: 'email-template-visual-editor',
+        creationContext: 'email-template-builder-ai-edit',
+      },
+    }));
+  });
+
   it('renames a thread through the hosted control plane and preserves the requested title when the response is sparse', async function () {
     var invoke = vi.fn(function (command, args) {
       if (command === 'first_party_ai_request' && args.path === '/threads/thread-123') {

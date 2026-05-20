@@ -190,6 +190,63 @@ describe('tribex-ai-shell', function () {
     expect(document.body.classList.contains('ai-mode-active')).toBe(true);
   });
 
+  it('only asks for a persona when creating a chat', function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: true,
+      searchTerm: '',
+      selectedWorkspace: { id: 'workspace-1', packageKey: 'general' },
+      selectedProject: { id: 'project-1', name: 'General' },
+      organizations: [{ id: 'org-1', name: 'Acme AI Harness' }],
+      selectedOrganization: { id: 'org-1', name: 'Acme AI Harness' },
+      projectGroups: [],
+      projectExpansion: {},
+      packages: [],
+      composer: {
+        creatingWorkspace: false,
+        projectName: '',
+        creatingProject: false,
+        threadProjectId: 'project-1',
+        threadTitle: '',
+        threadPersonasByProjectId: {
+          'project-1': [
+            { id: 'persona-1', key: 'general', displayName: 'General' },
+          ],
+        },
+        loadingThreadPersonas: false,
+        threadPersonaError: null,
+        selectedPersonaKey: 'general',
+        creatingThread: false,
+      },
+      hasProjects: true,
+      activeProjectId: 'project-1',
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        session: { user: { email: 'user@example.com' } },
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        clearingAuth: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    expect(document.querySelector('[data-focus-key="thread-name"]')).toBeNull();
+    expect(document.querySelector('[data-focus-key="thread-persona"]').value).toBe('general');
+  });
+
   it('renders a sign-out action for authenticated AI workspaces', async function () {
     var snapshot = {
       navigatorVisible: true,

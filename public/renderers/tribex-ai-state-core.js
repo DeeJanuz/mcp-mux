@@ -878,7 +878,7 @@
         state.ui.projectRenameOpen = false;
         state.ui.threadRenameOpen = false;
         state.composer.threadProjectId = null;
-        state.composer.threadTitle = state.composer.threadTitle || 'New chat';
+        state.composer.threadTitle = '';
         state.composer.threadPersonaError = null;
         state.composer.loadingThreadPersonas = true;
         state.integration.error = null;
@@ -914,7 +914,7 @@
       state.ui.projectRenameOpen = false;
       state.ui.threadRenameOpen = false;
       state.composer.threadProjectId = targetProjectId;
-      state.composer.threadTitle = state.composer.threadTitle || 'New chat';
+      state.composer.threadTitle = '';
       state.composer.threadPersonaError = null;
       state.composer.loadingThreadPersonas = true;
       notify();

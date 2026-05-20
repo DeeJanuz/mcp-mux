@@ -1267,6 +1267,16 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(stylesCode).toContain('grid-template-rows: auto minmax(0, 1fr) auto auto');
     expect(stylesCode).toContain('.ai-codex-session {');
     expect(stylesCode).toContain('max-width: none');
+    expect(stylesCode).toContain('.ai-codex-header-actions');
+    expect(stylesCode).toContain('flex-wrap: nowrap');
+    expect(stylesCode).toContain('.ai-codex-thread {');
+    expect(stylesCode).toContain('overflow: hidden');
+    expect(stylesCode).toContain('overflow-x: hidden');
+    expect(stylesCode).toContain('.ai-codex-composer.is-context-mode');
+    expect(stylesCode).toContain('grid-template-columns: auto auto minmax(0, 1fr) auto');
+    expect(stylesCode).toContain('min-height: 44px');
+    expect(stylesCode).toContain('bottom: calc(100% + 8px)');
+    expect(stylesCode).toContain('max-height: min(360px, 45vh)');
     expect(stylesCode).toContain('.ai-codex-review-bundle {');
     expect(stylesCode).toContain('padding: 8px 10px');
     expect(stylesCode).toContain('min-height: 28px');

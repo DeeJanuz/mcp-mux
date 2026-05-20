@@ -1689,10 +1689,18 @@
     skills.forEach(function (skill) {
       var option = createButton('ai-codex-skill-option', '', function () {
         selectSkill(state, skill, state.slashQuery);
-      });
-      option.appendChild(createEl('span', 'ai-codex-skill-option-key', '/' + skill.key));
-      option.appendChild(createEl('span', 'ai-codex-skill-option-name', skill.name));
-      if (skill.description) option.appendChild(createEl('span', 'ai-codex-skill-option-description', skill.description));
+      }, { ariaLabel: 'Select skill ' + displayText(skill.name, skill.key) });
+      var key = createEl('span', 'ai-codex-skill-option-key', '/' + skill.key);
+      key.title = '/' + skill.key;
+      var name = createEl('span', 'ai-codex-skill-option-name', skill.name);
+      name.title = displayText(skill.name, skill.key);
+      option.appendChild(key);
+      option.appendChild(name);
+      if (skill.description) {
+        var description = createEl('span', 'ai-codex-skill-option-description', skill.description);
+        description.title = skill.description;
+        option.appendChild(description);
+      }
       menu.appendChild(option);
     });
     return menu;

@@ -1835,15 +1835,19 @@
     ]);
   }
 
-  function createThread(projectId, title, personaKey) {
+  function createThread(projectId, title, personaKey, options) {
     var threadTitle = String(title || 'New chat').trim() || 'New chat';
+    var body = {
+      title: threadTitle,
+      personaKey: String(personaKey || '').trim(),
+    };
+    if (options && options.creationContext) {
+      body.creationContext = String(options.creationContext || '').trim();
+    }
     return requestVariants('POST', [
       {
         path: '/projects/' + encodeURIComponent(projectId) + '/threads',
-        body: {
-          title: threadTitle,
-          personaKey: String(personaKey || '').trim(),
-        },
+        body: body,
       },
     ]).then(function (raw) {
       var summary = normalizeThreadSummary(raw.thread || raw, { id: projectId }, 0);

@@ -971,17 +971,6 @@
       form.appendChild(helper);
     }
 
-    var nameInput = document.createElement('input');
-    nameInput.className = 'ai-nav-auth-input';
-    nameInput.type = 'text';
-    nameInput.setAttribute('data-focus-key', 'thread-name');
-    nameInput.placeholder = 'Chat title';
-    nameInput.value = snapshot.composer.threadTitle || '';
-    nameInput.addEventListener('input', function (event) {
-      aiState.setThreadDraftName(event.target.value);
-    });
-    form.appendChild(nameInput);
-
     var personaLabel = document.createElement('label');
     personaLabel.className = 'ai-nav-helper';
     personaLabel.textContent = 'Persona';

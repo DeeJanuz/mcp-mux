@@ -75,11 +75,11 @@ pub(super) async fn call_init_session(
             "current_version": super::RULES_VERSION,
             "instruction": format!(
                 "Check if your persisted MCPViews rules file contains `mcpviews-rules-version: {}`. \
-                 If the version is missing or different, overwrite the existing MCPViews rules section with \
-                 the rules from this response using the persistence_instructions format. Also refresh the \
-                 existing MCPViews rules when installed or updated plugins add rule details that are missing \
-                 from the persisted rules, even if an older MCPViews rule already exists. Do not append a \
-                 duplicate MCPViews section.",
+                 If the version is missing or different, refresh persisted rules by running `mcpviews_setup` \
+                 for the current agent type, because this slim init_session response only includes built-in \
+                 rules. Use `get_plugin_docs` for plugin-specific details during a task, or `mcpviews_setup` \
+                 when installed or updated plugins add rule details that are missing from persisted rules. \
+                 Update the existing MCPViews rules section rather than appending a duplicate.",
                 super::RULES_VERSION
             )
         }),

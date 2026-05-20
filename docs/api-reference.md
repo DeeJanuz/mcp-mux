@@ -1058,14 +1058,14 @@ sequenceDiagram
   },
   "rules_update": {
     "current_version": "14",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 14..."
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 14; run mcpviews_setup to refresh stale persisted rules because init_session is slim..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 14 -->`) so agents can detect when persisted rules are stale. The `rules_update` object provides instructions for replacing stale persisted rule files with the latest rules from `init_session`; agents should also refresh an existing MCPViews rules section when installed or updated plugins add rule details missing from the persisted rules.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 14 -->`) so agents can detect when persisted rules are stale. Because `init_session` is intentionally slim and returns only built-in rules, the `rules_update` object tells agents to run `mcpviews_setup` before refreshing persisted rules, and to use `get_plugin_docs` for plugin-specific details during a task. Agents should refresh an existing MCPViews rules section when installed or updated plugins add rule details missing from the persisted rules, without appending duplicate MCPViews sections.
 
 The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.10] - 2026-05-20
+
 ### Changed
 - `mcpviews_setup` and persisted-rule guidance now tell agents to update an existing MCPViews rules section or memory when plugin updates add missing rule details, and built-in rules are bumped to version 14.
 - TribeX AI hosted-provider auth now uses 6-digit email-code sign-in copy, commands, and provider-contract docs instead of the old magic-link flow.

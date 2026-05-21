@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [0.2.5-rc.15] - 2026-05-21
 
 ### Fixed
-- Release builds and update installs now encode raw Tauri updater public keys before passing them to Tauri's updater plugin.
+- Release builds now pass the full Tauri updater `.pub` value into updater artifact generation instead of the inner minisign key line.
+- Update installs now normalize Tauri updater public key text before passing it to Tauri's updater plugin.
 
 ## [0.2.5-rc.14] - 2026-05-21
 

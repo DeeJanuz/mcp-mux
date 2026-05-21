@@ -274,28 +274,39 @@ fn update_public_key() -> Result<String, String> {
 
 fn normalize_update_public_key(value: &str) -> Result<String, String> {
     let value = value.trim();
-    if is_raw_tauri_public_key(value) {
+    if is_raw_tauri_public_key_text(value) {
         return Ok(base64::engine::general_purpose::STANDARD.encode(value.as_bytes()));
     }
 
     let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(value) else {
-        return Err("MCPViews updater public key must be a raw Tauri public key line or its base64-encoded form.".to_string());
+        return Err(
+            "MCPViews updater public key must be the encoded Tauri .pub file contents.".to_string(),
+        );
     };
     let Ok(decoded) = std::str::from_utf8(&decoded) else {
         return Err(
-            "MCPViews updater public key must decode to the raw Tauri public key line.".to_string(),
+            "MCPViews updater public key must decode to the Tauri public key text.".to_string(),
         );
     };
-    if !is_raw_tauri_public_key(decoded.trim()) {
-        return Err("MCPViews updater public key must decode to a Tauri public key line that starts with RW.".to_string());
+    if !is_raw_tauri_public_key_text(decoded.trim()) {
+        return Err("MCPViews updater public key must decode to a Tauri public key text with the minisign comment and RW key line.".to_string());
     }
 
     Ok(value.to_string())
 }
 
-fn is_raw_tauri_public_key(value: &str) -> bool {
-    value.starts_with("RW")
-        && value
+fn is_raw_tauri_public_key_text(value: &str) -> bool {
+    let mut lines = value.trim().lines();
+    let comment = lines.next().unwrap_or_default();
+    let key = lines.next().unwrap_or_default();
+    lines.next().is_none()
+        && comment.starts_with("untrusted comment: minisign public key: ")
+        && comment
+            .strip_prefix("untrusted comment: minisign public key: ")
+            .map(|key_id| !key_id.is_empty() && key_id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .unwrap_or(false)
+        && key.starts_with("RW")
+        && key
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
 }
@@ -420,19 +431,19 @@ mod tests {
     }
 
     #[test]
-    fn encodes_raw_updater_public_key_for_tauri() {
-        let raw_key = "RWS+qKhU8X74T7zeyW06trBF2HhrY0R/xG7qyyfQfQ/a/3sDH2bzs/oy";
+    fn encodes_updater_public_key_text_for_tauri() {
+        let raw_key = "untrusted comment: minisign public key: 4FF87EF154A8A8BE\nRWS+qKhU8X74T7zeyW06trBF2HhrY0R/xG7qyyfQfQ/a/3sDH2bzs/oy";
 
         assert_eq!(
             normalize_update_public_key(raw_key).expect("expected key to normalize"),
-            "UldTK3FLaFU4WDc0VDd6ZXlXMDZ0ckJGMkhoclkwUi94RzdxeXlmUWZRL2EvM3NESDJienMvb3k="
+            "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRGRjg3RUYxNTRBOEE4QkUKUldTK3FLaFU4WDc0VDd6ZXlXMDZ0ckJGMkhoclkwUi94RzdxeXlmUWZRL2EvM3NESDJienMvb3k="
         );
     }
 
     #[test]
     fn accepts_encoded_updater_public_key() {
         let encoded_key =
-            "UldTK3FLaFU4WDc0VDd6ZXlXMDZ0ckJGMkhoclkwUi94RzdxeXlmUWZRL2EvM3NESDJienMvb3k=";
+            "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRGRjg3RUYxNTRBOEE4QkUKUldTK3FLaFU4WDc0VDd6ZXlXMDZ0ckJGMkhoclkwUi94RzdxeXlmUWZRL2EvM3NESDJienMvb3k=";
 
         assert_eq!(
             normalize_update_public_key(encoded_key).expect("expected key to normalize"),
@@ -443,6 +454,10 @@ mod tests {
     #[test]
     fn rejects_invalid_updater_public_key() {
         assert!(normalize_update_public_key("not-a-tauri-key").is_err());
+        assert!(normalize_update_public_key(
+            "RWS+qKhU8X74T7zeyW06trBF2HhrY0R/xG7qyyfQfQ/a/3sDH2bzs/oy"
+        )
+        .is_err());
     }
 
     #[test]

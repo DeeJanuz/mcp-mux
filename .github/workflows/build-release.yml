@@ -156,8 +156,8 @@ jobs:
             echo "::error::Missing required updater signing secrets: ${missing[*]}"
             exit 1
           fi
-          if [[ ! "$MCPVIEWS_UPDATER_PUBLIC_KEY" =~ ^RW[A-Za-z0-9+/=]+$ ]]; then
-            echo "::error::MCPVIEWS_UPDATER_PUBLIC_KEY must be the raw Tauri public key line, not the encoded .pub file contents"
+          if ! PUBLIC_KEY="$MCPVIEWS_UPDATER_PUBLIC_KEY" node -e "const key = process.env.PUBLIC_KEY || ''; const text = Buffer.from(key.trim(), 'base64').toString('utf8'); if (!/^untrusted comment: minisign public key: [0-9A-Fa-f]+\\nRW[A-Za-z0-9+/=]+\\n?$/.test(text)) process.exit(1);"; then
+            echo "::error::MCPVIEWS_UPDATER_PUBLIC_KEY must be the encoded Tauri .pub file contents"
             exit 1
           fi
           echo "Updater signing secrets present"
@@ -256,14 +256,15 @@ jobs:
 
           const configPath = 'src-tauri/tauri.conf.json';
           const publicKey = process.env.MCPVIEWS_UPDATER_PUBLIC_KEY;
-          if (!/^RW[A-Za-z0-9+/=]+$/.test(publicKey || '')) {
-            throw new Error('MCPVIEWS_UPDATER_PUBLIC_KEY must be the raw Tauri public key line');
+          const publicKeyText = Buffer.from((publicKey || '').trim(), 'base64').toString('utf8');
+          if (!/^untrusted comment: minisign public key: [0-9A-Fa-f]+\nRW[A-Za-z0-9+/=]+\n?$/.test(publicKeyText)) {
+            throw new Error('MCPVIEWS_UPDATER_PUBLIC_KEY must be the encoded Tauri .pub file contents');
           }
 
           const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
           config.plugins ??= {};
           config.plugins.updater ??= {};
-          config.plugins.updater.pubkey = Buffer.from(publicKey, 'utf8').toString('base64');
+          config.plugins.updater.pubkey = publicKey.trim();
           fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
           console.log('Injected updater public key into tauri.conf.json');
           NODE
@@ -342,8 +343,8 @@ jobs:
             echo "::error::Missing required updater signing secrets: ${missing[*]}"
             exit 1
           fi
-          if [[ ! "$MCPVIEWS_UPDATER_PUBLIC_KEY" =~ ^RW[A-Za-z0-9+/=]+$ ]]; then
-            echo "::error::MCPVIEWS_UPDATER_PUBLIC_KEY must be the raw Tauri public key line, not the encoded .pub file contents"
+          if ! PUBLIC_KEY="$MCPVIEWS_UPDATER_PUBLIC_KEY" node -e "const key = process.env.PUBLIC_KEY || ''; const text = Buffer.from(key.trim(), 'base64').toString('utf8'); if (!/^untrusted comment: minisign public key: [0-9A-Fa-f]+\\nRW[A-Za-z0-9+/=]+\\n?$/.test(text)) process.exit(1);"; then
+            echo "::error::MCPVIEWS_UPDATER_PUBLIC_KEY must be the encoded Tauri .pub file contents"
             exit 1
           fi
           echo "Updater signing secrets present"
@@ -428,14 +429,15 @@ jobs:
 
           const configPath = 'src-tauri/tauri.conf.json';
           const publicKey = process.env.MCPVIEWS_UPDATER_PUBLIC_KEY;
-          if (!/^RW[A-Za-z0-9+/=]+$/.test(publicKey || '')) {
-            throw new Error('MCPVIEWS_UPDATER_PUBLIC_KEY must be the raw Tauri public key line');
+          const publicKeyText = Buffer.from((publicKey || '').trim(), 'base64').toString('utf8');
+          if (!/^untrusted comment: minisign public key: [0-9A-Fa-f]+\nRW[A-Za-z0-9+/=]+\n?$/.test(publicKeyText)) {
+            throw new Error('MCPVIEWS_UPDATER_PUBLIC_KEY must be the encoded Tauri .pub file contents');
           }
 
           const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
           config.plugins ??= {};
           config.plugins.updater ??= {};
-          config.plugins.updater.pubkey = Buffer.from(publicKey, 'utf8').toString('base64');
+          config.plugins.updater.pubkey = publicKey.trim();
           fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
           console.log('Injected updater public key into tauri.conf.json');
           NODE

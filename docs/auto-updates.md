@@ -10,13 +10,13 @@ MCPViews checks GitHub releases on startup and every four hours while the deskto
 The `Install and re-launch` action uses Tauri's signed updater flow. Release builds must embed the updater public key:
 
 ```bash
-export MCPVIEWS_UPDATER_PUBLIC_KEY="contents of the Tauri updater public key"
+export MCPVIEWS_UPDATER_PUBLIC_KEY="contents of the Tauri updater .pub file"
 export TAURI_SIGNING_PRIVATE_KEY="path to or contents of the private signing key"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="optional password"
 npm run build
 ```
 
-The private signing key must never be committed. Store it in the release runner's secret store as `TAURI_SIGNING_PRIVATE_KEY`; the optional password belongs in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The public key is safe to embed in the app and is picked up by `src-tauri/build.rs` from `MCPVIEWS_UPDATER_PUBLIC_KEY`, which the GitHub release workflow reads from an environment variable or secret. Use the raw Tauri public key line that starts with `RW`, not the encoded `.pub` file contents. Release builds encode that raw key into the base64 string Tauri expects in `tauri.conf.json`, and the runtime install path performs the same normalization before verifying update signatures.
+The private signing key must never be committed. Store it in the release runner's secret store as `TAURI_SIGNING_PRIVATE_KEY`; the optional password belongs in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The public key is safe to embed in the app and is picked up by `src-tauri/build.rs` from `MCPVIEWS_UPDATER_PUBLIC_KEY`, which the GitHub release workflow reads from an environment variable or secret. Use the encoded Tauri `.pub` file contents, not only the inner `RW` key line. The runtime install path also accepts the decoded two-line public key text and encodes it before verifying update signatures.
 
 `src-tauri/tauri.conf.json` has `bundle.createUpdaterArtifacts` enabled. Each RC release should upload the app installers plus the generated updater artifacts and `latest.json` to the matching GitHub release. The release workflow publishes RCs as normal GitHub releases, not GitHub pre-releases, so the update checker can distinguish supported release candidates from other pre-release channels. The changelog button opens that release page.
 

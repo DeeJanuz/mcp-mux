@@ -156,6 +156,10 @@ jobs:
             echo "::error::Missing required updater signing secrets: ${missing[*]}"
             exit 1
           fi
+          if [[ ! "$MCPVIEWS_UPDATER_PUBLIC_KEY" =~ ^RW[A-Za-z0-9+/=]+$ ]]; then
+            echo "::error::MCPVIEWS_UPDATER_PUBLIC_KEY must be the raw Tauri public key line, not the encoded .pub file contents"
+            exit 1
+          fi
           echo "Updater signing secrets present"
 
       - name: Validate Apple signing secrets
@@ -243,6 +247,27 @@ jobs:
           # Verify certificate is available
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
+      - name: Inject updater public key
+        env:
+          MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+
+          const configPath = 'src-tauri/tauri.conf.json';
+          const publicKey = process.env.MCPVIEWS_UPDATER_PUBLIC_KEY;
+          if (!/^RW[A-Za-z0-9+/=]+$/.test(publicKey || '')) {
+            throw new Error('MCPVIEWS_UPDATER_PUBLIC_KEY must be the raw Tauri public key line');
+          }
+
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          config.plugins ??= {};
+          config.plugins.updater ??= {};
+          config.plugins.updater.pubkey = publicKey;
+          fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+          console.log('Injected updater public key into tauri.conf.json');
+          NODE
+
       - name: Build Tauri app
         env:
           APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
@@ -317,6 +342,10 @@ jobs:
             echo "::error::Missing required updater signing secrets: ${missing[*]}"
             exit 1
           fi
+          if [[ ! "$MCPVIEWS_UPDATER_PUBLIC_KEY" =~ ^RW[A-Za-z0-9+/=]+$ ]]; then
+            echo "::error::MCPVIEWS_UPDATER_PUBLIC_KEY must be the raw Tauri public key line, not the encoded .pub file contents"
+            exit 1
+          fi
           echo "Updater signing secrets present"
 
       - uses: actions/checkout@v4
@@ -387,6 +416,28 @@ jobs:
 
           fs.writeFileSync('tauri.windows.release.conf.json', JSON.stringify({ version: bundleVersion }, null, 2));
           console.log(`Windows bundle version: ${bundleVersion}`);
+          NODE
+
+      - name: Inject updater public key
+        shell: bash
+        env:
+          MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+
+          const configPath = 'src-tauri/tauri.conf.json';
+          const publicKey = process.env.MCPVIEWS_UPDATER_PUBLIC_KEY;
+          if (!/^RW[A-Za-z0-9+/=]+$/.test(publicKey || '')) {
+            throw new Error('MCPVIEWS_UPDATER_PUBLIC_KEY must be the raw Tauri public key line');
+          }
+
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          config.plugins ??= {};
+          config.plugins.updater ??= {};
+          config.plugins.updater.pubkey = publicKey;
+          fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+          console.log('Injected updater public key into tauri.conf.json');
           NODE
 
       - name: Build Tauri app

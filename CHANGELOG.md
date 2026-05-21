@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-21
+
 ### Changed
 - macOS release builds now notarize, staple, validate, and Gatekeeper-check the DMG itself after Tauri builds the signed app bundle.
 - In-app update discovery now accepts newer clean SemVer releases, not only `-rc` SemVer tags, while still ignoring GitHub pre-releases and drafts.

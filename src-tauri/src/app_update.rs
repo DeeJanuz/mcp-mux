@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use base64::Engine;
 use reqwest::header::{ACCEPT, USER_AGENT};
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -257,18 +258,46 @@ fn update_public_key() -> Result<String, String> {
     if let Some(value) = option_env!("MCPVIEWS_UPDATER_PUBLIC_KEY") {
         let value = value.trim();
         if !value.is_empty() {
-            return Ok(value.to_string());
+            return normalize_update_public_key(value);
         }
     }
 
     if let Ok(value) = std::env::var("MCPVIEWS_UPDATER_PUBLIC_KEY") {
-        let value = value.trim().to_string();
+        let value = value.trim();
         if !value.is_empty() {
-            return Ok(value);
+            return normalize_update_public_key(value);
         }
     }
 
     Err("MCPViews updater public key is not configured. Set MCPVIEWS_UPDATER_PUBLIC_KEY at build time for signed update installs.".to_string())
+}
+
+fn normalize_update_public_key(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if is_raw_tauri_public_key(value) {
+        return Ok(base64::engine::general_purpose::STANDARD.encode(value.as_bytes()));
+    }
+
+    let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(value) else {
+        return Err("MCPViews updater public key must be a raw Tauri public key line or its base64-encoded form.".to_string());
+    };
+    let Ok(decoded) = std::str::from_utf8(&decoded) else {
+        return Err(
+            "MCPViews updater public key must decode to the raw Tauri public key line.".to_string(),
+        );
+    };
+    if !is_raw_tauri_public_key(decoded.trim()) {
+        return Err("MCPViews updater public key must decode to a Tauri public key line that starts with RW.".to_string());
+    }
+
+    Ok(value.to_string())
+}
+
+fn is_raw_tauri_public_key(value: &str) -> bool {
+    value.starts_with("RW")
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
 }
 
 fn validate_update_manifest_url(value: &str) -> Result<url::Url, String> {
@@ -388,6 +417,32 @@ mod tests {
             Some(DEV_UPDATE_MANIFEST_URL)
         );
         assert!(info.can_install);
+    }
+
+    #[test]
+    fn encodes_raw_updater_public_key_for_tauri() {
+        let raw_key = "RWS+qKhU8X74T7zeyW06trBF2HhrY0R/xG7qyyfQfQ/a/3sDH2bzs/oy";
+
+        assert_eq!(
+            normalize_update_public_key(raw_key).expect("expected key to normalize"),
+            "UldTK3FLaFU4WDc0VDd6ZXlXMDZ0ckJGMkhoclkwUi94RzdxeXlmUWZRL2EvM3NESDJienMvb3k="
+        );
+    }
+
+    #[test]
+    fn accepts_encoded_updater_public_key() {
+        let encoded_key =
+            "UldTK3FLaFU4WDc0VDd6ZXlXMDZ0ckJGMkhoclkwUi94RzdxeXlmUWZRL2EvM3NESDJienMvb3k=";
+
+        assert_eq!(
+            normalize_update_public_key(encoded_key).expect("expected key to normalize"),
+            encoded_key
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_updater_public_key() {
+        assert!(normalize_update_public_key("not-a-tauri-key").is_err());
     }
 
     #[test]

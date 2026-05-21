@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Release builds and update installs now encode raw Tauri updater public keys before passing them to Tauri's updater plugin.
+
 ## [0.2.5-rc.14] - 2026-05-21
 
 ### Fixed

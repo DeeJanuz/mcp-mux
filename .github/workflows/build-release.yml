@@ -144,7 +144,21 @@ jobs:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       NOTARIZE_MACOS: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.notarize_macos == 'true' }}
     steps:
-      - name: Validate signing secrets
+      - name: Validate updater signing secrets
+        env:
+          MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [ -z "$MCPVIEWS_UPDATER_PUBLIC_KEY" ] && missing+=("MCPVIEWS_UPDATER_PUBLIC_KEY")
+          [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required updater signing secrets: ${missing[*]}"
+            exit 1
+          fi
+          echo "Updater signing secrets present"
+
+      - name: Validate Apple signing secrets
         if: ${{ env.APPLE_CERTIFICATE != '' }}
         env:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -235,6 +249,9 @@ jobs:
           APPLE_ID: ${{ vars.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           if [ "$NOTARIZE_MACOS" != "true" ]; then
             echo "macOS notarization disabled; clearing notarization credentials for Tauri"
@@ -285,7 +302,23 @@ jobs:
         (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows'))
       )
     runs-on: windows-latest
+    environment: production
     steps:
+      - name: Validate updater signing secrets
+        shell: bash
+        env:
+          MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          missing=()
+          [ -z "$MCPVIEWS_UPDATER_PUBLIC_KEY" ] && missing+=("MCPVIEWS_UPDATER_PUBLIC_KEY")
+          [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && missing+=("TAURI_SIGNING_PRIVATE_KEY")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required updater signing secrets: ${missing[*]}"
+            exit 1
+          fi
+          echo "Updater signing secrets present"
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare-release.outputs.tag || github.ref }}
@@ -357,6 +390,10 @@ jobs:
           NODE
 
       - name: Build Tauri app
+        env:
+          MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run build -- --config tauri.windows.release.conf.json
 
       - name: Upload artifacts

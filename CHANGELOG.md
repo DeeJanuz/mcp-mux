@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.14] - 2026-05-21
+
 ### Fixed
 - Release builds now inject the updater public key into `tauri.conf.json` before Tauri creates updater artifacts.
 

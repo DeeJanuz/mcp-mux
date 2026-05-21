@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.13] - 2026-05-21
+
 ### Fixed
 - Release builds now pass the updater signing key material into the macOS and Windows Tauri bundlers before publishing updater artifacts.
 

@@ -4,7 +4,7 @@ MCPViews checks GitHub releases on startup and every four hours while the deskto
 
 - The GitHub release is not a draft.
 - The GitHub release is not marked as a GitHub pre-release.
-- The tag is a newer SemVer release candidate, such as `v0.2.5-rc.12`.
+- The tag is a newer SemVer version, such as `v0.2.5`.
 - The release includes a `latest.json` asset for the Tauri updater.
 
 The `Install and re-launch` action uses Tauri's signed updater flow. Release builds must embed the updater public key:
@@ -16,13 +16,13 @@ export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="optional password"
 npm run build
 ```
 
-The private signing key must never be committed. Store it in the release runner's secret store as `TAURI_SIGNING_PRIVATE_KEY`; the optional password belongs in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The public key is safe to embed in the app and is picked up by `src-tauri/build.rs` from `MCPVIEWS_UPDATER_PUBLIC_KEY`, which the GitHub release workflow reads from an environment variable or secret. Use the encoded Tauri `.pub` file contents, not only the inner `RW` key line. The runtime install path also accepts the decoded two-line public key text and encodes it before verifying update signatures.
+The private signing key must never be committed. Store it in the release runner's secret store as `TAURI_SIGNING_PRIVATE_KEY`; the optional password belongs in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The public key is safe to embed in the app and is picked up by `src-tauri/build.rs` from `MCPVIEWS_UPDATER_PUBLIC_KEY`, which the GitHub release workflow reads from an environment variable or secret and injects into `tauri.conf.json` before building updater artifacts. Use the encoded Tauri `.pub` file contents, not only the inner `RW` key line. The runtime install path also accepts the decoded two-line public key text and encodes it before verifying update signatures.
 
-`src-tauri/tauri.conf.json` has `bundle.createUpdaterArtifacts` enabled. Each RC release should upload the app installers plus the generated updater artifacts and `latest.json` to the matching GitHub release. The release workflow publishes RCs as normal GitHub releases, not GitHub pre-releases, so the update checker can distinguish supported release candidates from other pre-release channels. The changelog button opens that release page.
+`src-tauri/tauri.conf.json` has `bundle.createUpdaterArtifacts` enabled. Each release should upload the app installers plus the generated updater artifacts and `latest.json` to the matching GitHub release. The release workflow publishes update-eligible builds as normal GitHub releases, not GitHub pre-releases, so the update checker can ignore unsupported pre-release channels. The changelog button opens that release page.
 
 ## Local Banner Testing
 
-In debug builds, set `MCPVIEWS_DEV_UPDATE=1` to force a mock RC update without calling GitHub:
+In debug builds, set `MCPVIEWS_DEV_UPDATE=1` to force a mock update without calling GitHub:
 
 ```bash
 MCPVIEWS_DEV_UPDATE=1 npm run dev

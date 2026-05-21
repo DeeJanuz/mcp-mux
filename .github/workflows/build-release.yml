@@ -285,6 +285,44 @@ jobs:
           fi
           npm run build -- --target aarch64-apple-darwin
 
+      - name: Notarize and staple DMG
+        if: ${{ env.APPLE_CERTIFICATE != '' && env.NOTARIZE_MACOS == 'true' }}
+        env:
+          APPLE_ID: ${{ vars.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          found_dmg=false
+          for DMG_PATH in target/aarch64-apple-darwin/release/bundle/dmg/*.dmg; do
+            if [ ! -e "$DMG_PATH" ]; then
+              continue
+            fi
+
+            found_dmg=true
+            echo "=== Notarizing DMG: $DMG_PATH ==="
+            xcrun notarytool submit "$DMG_PATH" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+
+            echo "=== Stapling DMG ticket ==="
+            xcrun stapler staple "$DMG_PATH"
+
+            echo "=== Validating stapled DMG ticket ==="
+            xcrun stapler validate "$DMG_PATH"
+
+            echo "=== Verifying Gatekeeper acceptance for DMG ==="
+            spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG_PATH"
+          done
+
+          if [ "$found_dmg" = false ]; then
+            echo "::error::No macOS DMG artifacts found to notarize"
+            exit 1
+          fi
+
       - name: Verify code signature
         if: ${{ env.APPLE_CERTIFICATE != '' }}
         run: |

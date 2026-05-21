@@ -161,7 +161,7 @@ fn update_info_from_release(
     current_version: &str,
 ) -> Option<AppUpdateInfo> {
     let version = parse_version(&release.tag_name)?;
-    if version <= *current || !is_release_candidate(&version) {
+    if version <= *current {
         return None;
     }
 
@@ -189,18 +189,6 @@ fn update_info_from_release(
 fn parse_version(value: &str) -> Option<Version> {
     let normalized = value.trim().trim_start_matches('v');
     Version::parse(normalized).ok()
-}
-
-fn is_release_candidate(version: &Version) -> bool {
-    let prerelease = version.pre.as_str();
-    prerelease
-        .split('.')
-        .next()
-        .map(|part| {
-            let part = part.to_ascii_lowercase();
-            part == "rc" || part.starts_with("rc")
-        })
-        .unwrap_or(false)
 }
 
 fn has_update_public_key() -> bool {
@@ -369,30 +357,30 @@ mod tests {
     }
 
     #[test]
-    fn selects_newer_release_candidate_that_is_not_a_github_prerelease() {
+    fn selects_newer_release_that_is_not_a_github_prerelease() {
         let selected = select_update(
             vec![
                 release("v0.2.5-rc.12", false, vec!["latest.json"]),
-                release("v0.2.6", false, vec!["latest.json"]),
+                release("v0.2.5", false, vec!["latest.json"]),
                 release("v0.2.7-rc.1", true, vec!["latest.json"]),
                 release("v0.2.5-rc.10", false, vec!["latest.json"]),
             ],
-            "0.2.5-rc.11",
+            "0.2.5-rc.17",
         )
         .expect("expected an update");
 
-        assert_eq!(selected.version, "0.2.5-rc.12");
+        assert_eq!(selected.version, "0.2.5");
         assert_eq!(
             selected.update_json_url.as_deref(),
-            Some("https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.12/latest.json")
+            Some("https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5/latest.json")
         );
     }
 
     #[test]
-    fn ignores_releases_without_an_rc_semver_prerelease() {
+    fn ignores_invalid_semver_and_github_prereleases() {
         let selected = select_update(
             vec![
-                release("v0.2.6", false, vec!["latest.json"]),
+                release("v0.2.6", true, vec!["latest.json"]),
                 release("not-a-version", false, vec!["latest.json"]),
             ],
             "0.2.5-rc.11",

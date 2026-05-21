@@ -21,7 +21,6 @@
     "createUpdaterArtifacts": true,
     "targets": "all",
     "resources": [
-      "scripts/setup-integrations.sh",
       "bundled-plugins/**/*"
     ],
     "icon": [

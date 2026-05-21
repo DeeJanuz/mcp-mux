@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Full release-candidate rollup notes for the 0.2.5 train so the release page captures the signed-updater launch, renderer/rules upgrades, hosted AI workspace improvements, and CI hardening in one compressed entry.
+
+### Changed
+- Desktop agent setup now relies entirely on the canonical copy-paste install prompt in `docs/install-prompt.md`; the app no longer exposes or auto-launches bundled setup scripts on clean installs.
+- The release flow now generates updater manifests from the same local script used in validation, selecting Tauri v2 artifacts consistently across macOS and Windows.
+- Release-candidate builds continue to publish as normal GitHub releases so the in-app updater can discover signed RCs while ignoring GitHub pre-releases.
+
+### Fixed
+- Clean macOS and Linux installs no longer open the deprecated `setup-integrations.sh` terminal flow on first launch.
+- RC updater signing now uses the full encoded Tauri `.pub` file value, passes signing secrets into both platform builds, and writes a `latest.json` manifest with signed macOS and Windows artifacts.
+- Windows updater metadata now points at the signed Tauri v2 setup installer instead of expecting an obsolete `.zip` updater archive.
+- The 0.2.5 RC train also includes the renderer review targeting rules, hosted AI workspace polish, Windows OAuth launch fix, release lockfile/version bumps, Node 24 CI setup, Windows MSI prerelease normalization, and stale artifact cache removal from earlier RCs.
+
+### Removed
+- Removed the remaining macOS/Linux legacy agent integration setup script from app resources.
+- Removed the tray "Setup Agent Integrations" action and the first-run setup sentinel path.
+
 ## [0.2.5-rc.16] - 2026-05-21
 
 ## [0.2.5-rc.15] - 2026-05-21

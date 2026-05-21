@@ -27,8 +27,8 @@ Choose one:
 
 Run the installer and launch MCPViews from your Start menu.
 
-Windows builds no longer ship or launch the legacy PowerShell integration setup
-script. Use the agent install prompt below to connect MCPViews to your tools.
+Desktop builds no longer ship or launch legacy integration setup scripts. Use
+the agent install prompt below to connect MCPViews to your tools.
 
 ### Linux
 

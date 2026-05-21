@@ -357,18 +357,10 @@ fn main() {
             let show_item = MenuItemBuilder::with_id("show", "Show Window").build(app)?;
             let manage_plugins_item =
                 MenuItemBuilder::with_id("manage_plugins", "Manage Plugins").build(app)?;
-            #[cfg(not(target_os = "windows"))]
-            let setup_item =
-                MenuItemBuilder::with_id("setup_integrations", "Setup Agent Integrations")
-                    .build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
-            let mut tray_menu_builder = MenuBuilder::new(app)
+            let tray_menu_builder = MenuBuilder::new(app)
                 .item(&show_item)
                 .item(&manage_plugins_item);
-            #[cfg(not(target_os = "windows"))]
-            {
-                tray_menu_builder = tray_menu_builder.item(&setup_item);
-            }
             let tray_menu = tray_menu_builder
                 .separator()
                 .item(&quit_item)
@@ -408,28 +400,12 @@ fn main() {
                             .build();
                         }
                     }
-                    #[cfg(not(target_os = "windows"))]
-                    "setup_integrations" => {
-                        if let Some(script) = installer::get_script_path(app) {
-                            let _ = installer::open_installer_terminal(&script);
-                        }
-                    }
                     "quit" => {
                         app.exit(0);
                     }
                     _ => {}
                 })
                 .build(app)?;
-
-            // First-run agent integration setup
-            #[cfg(not(target_os = "windows"))]
-            {
-                if !installer::check_first_run() {
-                    if let Some(script) = installer::get_script_path(&app.handle().clone()) {
-                        let _ = installer::open_installer_terminal(&script);
-                    }
-                }
-            }
 
             Ok(())
         })

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.12] - 2026-05-21
+
 ### Added
 - In-app update discovery now surfaces newer signed MCPViews release-candidate builds from GitHub releases with changelog and install actions.
 - Debug builds can force a mock update banner through `MCPVIEWS_DEV_UPDATE=1` or `npm run dev:update-test` for repeatable desktop UI testing.

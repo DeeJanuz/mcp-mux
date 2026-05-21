@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5-rc.17] - 2026-05-21
+
 ### Added
 - Full release-candidate rollup notes for the 0.2.5 train so the release page captures the signed-updater launch, renderer/rules upgrades, hosted AI workspace improvements, and CI hardening in one compressed entry.
 

@@ -18,7 +18,7 @@ npm run build
 
 The private signing key must never be committed. Store it in the release runner's secret store. The public key is safe to embed in the app and is picked up by `src-tauri/build.rs`.
 
-`src-tauri/tauri.conf.json` has `bundle.createUpdaterArtifacts` enabled. Each RC release should upload the app installers plus the generated updater artifacts and `latest.json` to the matching GitHub release. The changelog button opens that release page.
+`src-tauri/tauri.conf.json` has `bundle.createUpdaterArtifacts` enabled. Each RC release should upload the app installers plus the generated updater artifacts and `latest.json` to the matching GitHub release. The release workflow publishes RCs as normal GitHub releases, not GitHub pre-releases, so the update checker can distinguish supported release candidates from other pre-release channels. The changelog button opens that release page.
 
 ## Local Banner Testing
 

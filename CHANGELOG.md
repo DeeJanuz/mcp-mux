@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- In-app update discovery now surfaces newer signed MCPViews release-candidate builds from GitHub releases with changelog and install actions.
+- Debug builds can force a mock update banner through `MCPVIEWS_DEV_UPDATE=1` or `npm run dev:update-test` for repeatable desktop UI testing.
+
+### Changed
+- Release-candidate GitHub releases are published as normal releases with updater archives, signatures, and a combined `latest.json` manifest so the desktop updater can discover them.
+- The AI workspace entrypoint stays hidden on clean installs until a hosted AI provider base URL is configured.
+
 ## [0.2.5-rc.11] - 2026-05-20
 
 ### Removed

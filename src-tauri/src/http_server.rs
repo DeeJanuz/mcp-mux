@@ -1184,8 +1184,16 @@ async fn oauth_token() -> impl IntoResponse {
     }))
 }
 
-pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle, std_listener: std::net::TcpListener) {
-    eprintln!("[mcpviews] Starting HTTP server on :4200");
+pub async fn start_http_server(
+    app_state: Arc<AppState>,
+    app_handle: AppHandle,
+    std_listener: std::net::TcpListener,
+) {
+    let bind_address = std_listener
+        .local_addr()
+        .map(|addr| addr.to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string());
+    eprintln!("[mcpviews] Starting HTTP server on {bind_address}");
     let _ = get_start_info(); // Initialize start time
 
     let async_state = Arc::new(TokioMutex::new(AsyncAppState {
@@ -1250,7 +1258,7 @@ pub async fn start_http_server(app_state: Arc<AppState>, app_handle: AppHandle, 
 
     let listener = tokio::net::TcpListener::from_std(std_listener)
         .expect("Failed to convert std listener to tokio listener");
-    eprintln!("[mcpviews] HTTP server listening on :4200");
+    eprintln!("[mcpviews] HTTP server listening on {bind_address}");
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("[mcpviews] HTTP server error: {}", e);
     }

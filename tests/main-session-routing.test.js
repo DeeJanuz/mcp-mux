@@ -8,7 +8,7 @@ var mainCode = readFileSync(join(__dirnameResolved, '../public/main.js'), 'utf8'
 
 function loadMain() {
   var instrumented = mainCode.replace(
-    /  renderEmpty\(\);\n  initAiButton\(\);\n  initAppsButton\(\);\n  initTauri\(\);\n\}\)\(\);/,
+    /  renderEmpty\(\);\n  initAiButton\(\);\n  initUpdateBanner\(\);\n  initAppsButton\(\);\n  initTauri\(\);\n\}\)\(\);/,
     [
       '  window.__mainTest = {',
       '    handlePush: handlePush,',
@@ -16,9 +16,11 @@ function loadMain() {
       '    getSessionIds: function () { return Array.from(sessions.keys()); },',
       '    updateSessionMetadata: updateSessionMetadata,',
       '    loadPluginRenderers: loadPluginRenderers,',
+      '    checkForAppUpdate: checkForAppUpdate,',
       '  };',
       '  renderEmpty();',
       '  initAiButton();',
+      '  initUpdateBanner();',
       '  initAppsButton();',
       '  initTauri();',
       '})();',
@@ -26,6 +28,12 @@ function loadMain() {
   );
 
   new Function(instrumented).call(globalThis);
+}
+
+async function flushPromises(count = 4) {
+  for (let index = 0; index < count; index += 1) {
+    await new Promise(function (resolve) { setTimeout(resolve, 0); });
+  }
 }
 
 beforeEach(function () {
@@ -37,6 +45,12 @@ beforeEach(function () {
     '<button id="refresh-button"></button>',
     '<button id="ai-shell-toggle-button"></button>',
     '<button id="ai-home-button"></button>',
+    '<div id="update-banner" class="update-banner hidden">',
+    '<span id="update-banner-message"></span>',
+    '<button id="update-changelog-button"></button>',
+    '<button id="update-install-button"></button>',
+    '<button id="update-dismiss-button"></button>',
+    '</div>',
     '<button id="apps-button"></button>',
     '<div id="apps-dropdown" class="hidden"></div>',
     '<div id="content-area"></div>',
@@ -47,13 +61,161 @@ beforeEach(function () {
   delete window.__TAURI__;
   delete window.__tribexAiShell;
   delete window.__tribexAiState;
+  delete window.__tribexAiClient;
   delete window.__rendererRegistry;
+  if (localStorage && typeof localStorage.removeItem === 'function') {
+    localStorage.removeItem('mcpviews-dismissed-update-version');
+  }
   window.__renderers = {
     rich_content: vi.fn(),
   };
 });
 
 describe('main session routing', function () {
+  it('shows and dismisses the GitHub release update banner', async function () {
+    var update = {
+      version: '0.2.5-rc.12',
+      currentVersion: '0.2.5-rc.11',
+      title: 'MCPViews 0.2.5-rc.12',
+      releasePageUrl: 'https://github.com/DeeJanuz/mcpviews/releases/tag/v0.2.5-rc.12',
+      updateJsonUrl: 'https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.12/latest.json',
+      canInstall: true,
+    };
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') return Promise.resolve(update);
+      if (command === 'install_app_update') return Promise.resolve();
+      if (command === 'open_external_url') return Promise.resolve();
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('update-banner-message').textContent).toContain('0.2.5-rc.12');
+
+    document.getElementById('update-dismiss-button').click();
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(true);
+
+    await window.__mainTest.checkForAppUpdate();
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(true);
+  });
+
+  it('installs the pending update from the signed release manifest', async function () {
+    var update = {
+      version: '0.2.5-rc.12',
+      currentVersion: '0.2.5-rc.11',
+      title: 'MCPViews 0.2.5-rc.12',
+      releasePageUrl: 'https://github.com/DeeJanuz/mcpviews/releases/tag/v0.2.5-rc.12',
+      updateJsonUrl: 'https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5-rc.12/latest.json',
+      canInstall: true,
+    };
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') return Promise.resolve(update);
+      if (command === 'install_app_update') return Promise.resolve();
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+    document.getElementById('update-install-button').click();
+
+    expect(invoke).toHaveBeenCalledWith('install_app_update', {
+      updateJsonUrl: update.updateJsonUrl,
+    });
+    expect(document.getElementById('update-install-button').textContent).toBe('Installing...');
+  });
+
+  it('resets the install button after a development update simulation', async function () {
+    var update = {
+      version: '0.2.6-rc.0',
+      currentVersion: '0.2.5-rc.11',
+      title: 'MCPViews development update',
+      releasePageUrl: 'https://github.com/DeeJanuz/mcpviews/releases',
+      updateJsonUrl: 'mcpviews-dev://mock/latest.json',
+      canInstall: true,
+    };
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') return Promise.resolve(update);
+      if (command === 'install_app_update') {
+        return Promise.resolve({
+          relaunching: false,
+          message: 'Development update install simulated; MCPViews was not relaunched.',
+        });
+      }
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+    document.getElementById('update-install-button').click();
+    await flushPromises();
+
+    expect(document.getElementById('update-banner-message').textContent).toContain('simulated');
+    expect(document.getElementById('update-install-button').disabled).toBe(false);
+    expect(document.getElementById('update-install-button').textContent).toBe('Install and re-launch');
+  });
+
+  it('hides AI workspace entrypoints when no hosted AI provider is configured', async function () {
+    window.__tribexAiClient = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: false });
+      }),
+    };
+    window.__tribexAiState = {
+      toggleNavigator: vi.fn(),
+    };
+
+    loadMain();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(document.getElementById('ai-home-button').hidden).toBe(true);
+    expect(document.querySelector('.empty-state').textContent).not.toContain('Open AI workspace');
+
+    document.getElementById('ai-home-button').click();
+    expect(window.__tribexAiState.toggleNavigator).not.toHaveBeenCalled();
+  });
+
+  it('shows AI workspace entrypoints when a hosted AI provider is configured', async function () {
+    window.__tribexAiClient = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true, baseUrl: 'https://ai.example.com' });
+      }),
+    };
+    window.__tribexAiState = {
+      toggleNavigator: vi.fn(),
+    };
+
+    loadMain();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(document.getElementById('ai-home-button').hidden).toBe(false);
+    expect(document.querySelector('.empty-state').textContent).toContain('Open AI workspace');
+
+    document.getElementById('ai-home-button').click();
+    expect(window.__tribexAiState.toggleNavigator).toHaveBeenCalledTimes(1);
+  });
+
   it('opens standalone app sessions for thread-scoped artifact previews', function () {
     loadMain();
 

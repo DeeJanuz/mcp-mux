@@ -107,6 +107,8 @@ For the full manifest schema and auth reference, see [Plugin System Reference](d
 
 The bundled AI workspace can be pointed at a compatible hosted AI provider instead of a house service. Set `MCPVIEWS_AI_PROVIDER_BASE_URL` to your control-plane URL and implement the thread/runtime contract documented in [Hosted AI Thread Provider Contract](docs/hosted-ai-provider-contract.md). Existing `MCPVIEWS_FIRST_PARTY_AI_*` and `PROPAASAI_*` environment variables remain supported as legacy aliases.
 
+The AI workspace is dormant by default in open-source builds. MCPViews only shows the header entrypoint after a provider base URL is configured through `MCPVIEWS_AI_PROVIDER_BASE_URL`, bundled build-time defaults, or `~/.mcpviews/config.json`.
+
 ## Building from Source
 
 Requires Rust, Node.js 20+, and platform-specific system libraries.

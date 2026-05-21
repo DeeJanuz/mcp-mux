@@ -14,6 +14,8 @@ Set a hosted AI provider base URL before launching MCPViews:
 MCPVIEWS_AI_PROVIDER_BASE_URL="https://ai.example.com"
 ```
 
+If no provider base URL is configured, MCPViews hides the AI workspace entrypoint and behaves as a renderer/plugin host only.
+
 The value can also live in `~/.mcpviews/config.json` under the existing compatibility key:
 
 ```json

@@ -662,6 +662,106 @@ body {
   box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.14);
 }
 
+.update-banner {
+  position: relative;
+  z-index: calc(var(--z-app-chrome) - 1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--color-info-bg) 64%, var(--bg-surface) 36%);
+  color: var(--text-primary);
+  box-shadow: var(--glass-inset-highlight);
+  flex-shrink: 0;
+}
+
+.update-banner.hidden {
+  display: none;
+}
+
+.update-banner-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.update-banner-copy strong {
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.update-banner-copy span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.update-banner .primary-btn,
+.update-banner .secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: var(--border-radius-sm);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+
+.update-banner .primary-btn {
+  border: 1px solid transparent;
+  background: var(--accent-primary);
+  color: var(--text-inverse);
+}
+
+.update-banner .secondary-btn {
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.update-banner .primary-btn:hover,
+.update-banner .secondary-btn:hover {
+  transform: translateY(-1px);
+}
+
+.update-banner .primary-btn:hover {
+  background: var(--accent-primary-hover);
+}
+
+.update-banner .secondary-btn:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-surface-hover);
+}
+
+.update-banner .primary-btn:disabled,
+.update-banner .secondary-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+.update-banner .header-icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
 /* === Theme Toggle === */
 #theme-toggle {
   background: var(--glass-bg);
@@ -3913,6 +4013,22 @@ html[data-theme] .collapsible-body {
 
 /* Responsive: stack below 600px */
 @media (max-width: 600px) {
+  .update-banner {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .update-banner-copy {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .update-banner-copy span {
+    white-space: normal;
+  }
+  .update-banner-actions {
+    justify-content: flex-end;
+  }
   .diff-two-col { flex-direction: column; }
   .diff-doc-panel { border-right: none; border-bottom: 1px solid var(--border-default); }
   .diff-sidebar-panel { min-width: unset; }

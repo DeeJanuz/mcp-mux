@@ -18,6 +18,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "resources": [
       "scripts/setup-integrations.sh",
@@ -48,6 +49,10 @@
     }
   },
   "plugins": {
+    "updater": {
+      "pubkey": "development-placeholder",
+      "endpoints": []
+    },
     "shell": {
       "open": true
     }

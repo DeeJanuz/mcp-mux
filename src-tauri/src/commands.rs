@@ -182,6 +182,21 @@ pub fn get_health() -> serde_json::Value {
     })
 }
 
+#[tauri::command]
+pub async fn check_app_update(
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<crate::app_update::AppUpdateInfo>, String> {
+    crate::app_update::check_for_update(&state.http_client, env!("CARGO_PKG_VERSION")).await
+}
+
+#[tauri::command]
+pub async fn install_app_update(
+    update_json_url: String,
+    app_handle: tauri::AppHandle,
+) -> Result<crate::app_update::InstallAppUpdateResult, String> {
+    crate::app_update::install_and_relaunch(app_handle, update_json_url).await
+}
+
 fn open_system_browser(url: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let result = std::process::Command::new("xdg-open").arg(url).spawn();

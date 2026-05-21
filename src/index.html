@@ -29,7 +29,7 @@
             <span id="connection-dot" class="dot connected"></span>
             <span id="connection-text">Ready</span>
           </div>
-          <button id="ai-home-button" class="header-chip-btn" aria-label="Toggle AI workspace" title="Toggle AI workspace">
+          <button id="ai-home-button" class="header-chip-btn" aria-label="Toggle AI workspace" title="Toggle AI workspace" style="display:none;">
             <span class="header-chip-dot"></span>
             <span>AI Workspace</span>
           </button>
@@ -46,6 +46,17 @@
             </svg>
           </button>
           <div id="apps-dropdown" class="apps-dropdown hidden"></div>
+        </div>
+      </div>
+      <div id="update-banner" class="update-banner hidden" role="status" aria-live="polite">
+        <div class="update-banner-copy">
+          <strong id="update-banner-title">MCPViews update available</strong>
+          <span id="update-banner-message"></span>
+        </div>
+        <div class="update-banner-actions">
+          <button id="update-changelog-button" class="secondary-btn" type="button">Changelog</button>
+          <button id="update-install-button" class="primary-btn" type="button">Install and re-launch</button>
+          <button id="update-dismiss-button" class="header-icon-btn" type="button" aria-label="Dismiss update" title="Dismiss update">x</button>
         </div>
       </div>
       <div id="tab-bar"></div>

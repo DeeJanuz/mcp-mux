@@ -19,6 +19,18 @@
   const tabBar = document.getElementById('tab-bar');
   const refreshButton = document.getElementById('refresh-button');
   const aiShellToggleButton = document.getElementById('ai-shell-toggle-button');
+  const aiHomeButton = document.getElementById('ai-home-button');
+  const updateBanner = document.getElementById('update-banner');
+  const updateBannerMessage = document.getElementById('update-banner-message');
+  const updateInstallButton = document.getElementById('update-install-button');
+  const updateChangelogButton = document.getElementById('update-changelog-button');
+  const updateDismissButton = document.getElementById('update-dismiss-button');
+
+  let aiWorkspaceAvailable = false;
+  let aiWorkspaceConfig = null;
+  let pendingAppUpdate = null;
+  let appUpdateCheckTimer = null;
+  let dismissedAppUpdateVersionFallback = '';
 
   /** @type {Map<string, HTMLElement>} Cached content containers per session */
   const contentCache = new Map();
@@ -29,6 +41,64 @@
   // --- Heartbeat ---
   let heartbeatInterval = null;
   let lastActivity = Date.now();
+
+  function isAiWorkspaceConfigured(config) {
+    return !!(config && config.configured === true);
+  }
+
+  function closeAiWorkspaceIfUnavailable() {
+    if (aiWorkspaceAvailable) return;
+    if (
+      window.__tribexAiState &&
+      typeof window.__tribexAiState.getSnapshot === 'function' &&
+      typeof window.__tribexAiState.toggleNavigator === 'function'
+    ) {
+      var snapshot = window.__tribexAiState.getSnapshot();
+      if (snapshot && snapshot.navigatorVisible) {
+        window.__tribexAiState.toggleNavigator();
+        return;
+      }
+    }
+    if (window.__tribexAiShell && typeof window.__tribexAiShell.hide === 'function') {
+      window.__tribexAiShell.hide();
+    }
+  }
+
+  function applyAiWorkspaceAvailability(config) {
+    aiWorkspaceConfig = config || null;
+    aiWorkspaceAvailable = isAiWorkspaceConfigured(config);
+
+    if (aiHomeButton) {
+      aiHomeButton.style.display = aiWorkspaceAvailable ? '' : 'none';
+      aiHomeButton.hidden = !aiWorkspaceAvailable;
+      aiHomeButton.setAttribute('aria-hidden', aiWorkspaceAvailable ? 'false' : 'true');
+    }
+    if (aiShellToggleButton && !aiWorkspaceAvailable) {
+      aiShellToggleButton.style.display = 'none';
+    }
+    document.body.classList.toggle('ai-workspace-available', aiWorkspaceAvailable);
+
+    if (!aiWorkspaceAvailable) {
+      closeAiWorkspaceIfUnavailable();
+    }
+    if (!activeSessionId) {
+      renderEmpty();
+    }
+    return aiWorkspaceConfig;
+  }
+
+  function refreshAiWorkspaceAvailability() {
+    if (!window.__tribexAiClient || typeof window.__tribexAiClient.getConfig !== 'function') {
+      return Promise.resolve(applyAiWorkspaceAvailability(null));
+    }
+    return window.__tribexAiClient.getConfig()
+      .then(function (config) {
+        return applyAiWorkspaceAvailability(config);
+      })
+      .catch(function () {
+        return applyAiWorkspaceAvailability(null);
+      });
+  }
 
   function startHeartbeat(sessionId) {
     stopHeartbeat();
@@ -303,6 +373,10 @@
 
     connectionDot.classList.add('connected');
     connectionText.textContent = 'Ready';
+    checkForAppUpdate();
+    if (!appUpdateCheckTimer) {
+      appUpdateCheckTimer = window.setInterval(checkForAppUpdate, 4 * 60 * 60 * 1000);
+    }
   }
 
   async function loadPluginRenderers() {
@@ -742,10 +816,16 @@
     emptyState.appendChild(title);
 
     var subtitle = document.createElement('p');
-    subtitle.textContent = 'Open the AI workspace to browse live projects, threads, and companion activity.';
+    subtitle.textContent = aiWorkspaceAvailable
+      ? 'Open the AI workspace to browse live projects, threads, and companion activity.'
+      : 'Push content from an MCP tool or open an app renderer to preview it here.';
     emptyState.appendChild(subtitle);
 
-    if (window.__tribexAiState && typeof window.__tribexAiState.toggleNavigator === 'function') {
+    if (
+      aiWorkspaceAvailable &&
+      window.__tribexAiState &&
+      typeof window.__tribexAiState.toggleNavigator === 'function'
+    ) {
       var button = document.createElement('button');
       button.className = 'ai-primary-btn';
       button.type = 'button';
@@ -779,6 +859,13 @@
   };
   window.__companionUtils.updateSessionMetadata = updateSessionMetadata;
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
+  window.__companionUtils.refreshAiWorkspaceAvailability = refreshAiWorkspaceAvailability;
+  window.__companionUtils.getAiWorkspaceAvailability = function () {
+    return {
+      available: aiWorkspaceAvailable,
+      config: aiWorkspaceConfig,
+    };
+  };
   window.__companionUtils.rerenderActiveSession = rerenderActiveSession;
   window.__companionUtils.getActiveSession = function () {
     return activeSessionId ? {
@@ -924,6 +1011,124 @@
     }
   });
 
+  // --- App Updates ---
+
+  function dismissedUpdateVersion() {
+    try {
+      return localStorage.getItem('mcpviews-dismissed-update-version') ||
+        dismissedAppUpdateVersionFallback;
+    } catch (err) {
+      return dismissedAppUpdateVersionFallback;
+    }
+  }
+
+  function setDismissedUpdateVersion(version) {
+    dismissedAppUpdateVersionFallback = version || '';
+    try {
+      localStorage.setItem('mcpviews-dismissed-update-version', version || '');
+    } catch (err) {}
+  }
+
+  function hideUpdateBanner() {
+    if (!updateBanner) return;
+    updateBanner.classList.add('hidden');
+  }
+
+  function updateInstallButtonState(update, isInstalling) {
+    if (!updateInstallButton) return;
+    var canInstall = !!(update && update.canInstall && update.updateJsonUrl);
+    updateInstallButton.disabled = isInstalling || !canInstall;
+    updateInstallButton.textContent = isInstalling ? 'Installing...' : 'Install and re-launch';
+    updateInstallButton.title = canInstall
+      ? 'Install this MCPViews update and restart the app'
+      : 'This release is missing a signed updater manifest or the updater public key is not configured';
+  }
+
+  function showUpdateBanner(update) {
+    if (!updateBanner || !update) return;
+    if (dismissedUpdateVersion() === update.version) {
+      hideUpdateBanner();
+      return;
+    }
+
+    pendingAppUpdate = update;
+    if (updateBannerMessage) {
+      updateBannerMessage.textContent = 'Version ' + update.version + ' is ready from GitHub releases.';
+    }
+    updateInstallButtonState(update, false);
+    updateBanner.classList.remove('hidden');
+  }
+
+  function checkForAppUpdate() {
+    if (!window.__TAURI__ || !window.__TAURI__.core) return Promise.resolve(null);
+    return window.__TAURI__.core.invoke('check_app_update')
+      .then(function (update) {
+        if (update) {
+          showUpdateBanner(update);
+        } else {
+          pendingAppUpdate = null;
+          hideUpdateBanner();
+        }
+        return update;
+      })
+      .catch(function (err) {
+        console.warn('[updates] Failed to check for MCPViews updates:', err);
+        return null;
+      });
+  }
+
+  function installPendingAppUpdate() {
+    if (!pendingAppUpdate || !pendingAppUpdate.updateJsonUrl || !window.__TAURI__ || !window.__TAURI__.core) {
+      return;
+    }
+    updateInstallButtonState(pendingAppUpdate, true);
+    window.__TAURI__.core.invoke('install_app_update', {
+      updateJsonUrl: pendingAppUpdate.updateJsonUrl,
+    }).then(function (result) {
+      if (result && result.relaunching === false) {
+        if (updateBannerMessage) {
+          updateBannerMessage.textContent = result.message || 'Development install simulated.';
+        }
+        updateInstallButtonState(pendingAppUpdate, false);
+      }
+    }).catch(function (err) {
+      console.error('[updates] Failed to install MCPViews update:', err);
+      if (updateBannerMessage) {
+        updateBannerMessage.textContent = String(err || 'Failed to install update.');
+      }
+      updateInstallButtonState(pendingAppUpdate, false);
+    });
+  }
+
+  function openPendingUpdateChangelog() {
+    if (!pendingAppUpdate || !pendingAppUpdate.releasePageUrl || !window.__TAURI__ || !window.__TAURI__.core) {
+      return;
+    }
+    window.__TAURI__.core.invoke('open_external_url', {
+      url: pendingAppUpdate.releasePageUrl,
+    }).catch(function (err) {
+      console.error('[updates] Failed to open MCPViews release page:', err);
+    });
+  }
+
+  function initUpdateBanner() {
+    hideUpdateBanner();
+    if (updateInstallButton) {
+      updateInstallButton.addEventListener('click', installPendingAppUpdate);
+    }
+    if (updateChangelogButton) {
+      updateChangelogButton.addEventListener('click', openPendingUpdateChangelog);
+    }
+    if (updateDismissButton) {
+      updateDismissButton.addEventListener('click', function () {
+        if (pendingAppUpdate && pendingAppUpdate.version) {
+          setDismissedUpdateVersion(pendingAppUpdate.version);
+        }
+        hideUpdateBanner();
+      });
+    }
+  }
+
   // --- Apps Button ---
 
   function initAppsButton() {
@@ -949,10 +1154,14 @@
   }
 
   function initAiButton() {
-    var aiBtn = document.getElementById('ai-home-button');
+    var aiBtn = aiHomeButton || document.getElementById('ai-home-button');
     if (!aiBtn) return;
+    aiBtn.style.display = 'none';
+    aiBtn.hidden = true;
+    aiBtn.setAttribute('aria-hidden', 'true');
 
     aiBtn.addEventListener('click', function () {
+      if (!aiWorkspaceAvailable) return;
       if (window.__tribexAiState && typeof window.__tribexAiState.toggleNavigator === 'function') {
         window.__tribexAiState.toggleNavigator();
       }
@@ -965,6 +1174,8 @@
         }
       });
     }
+
+    refreshAiWorkspaceAvailability();
   }
 
   function populateAppsDropdown(dropdown) {
@@ -1076,6 +1287,7 @@
 
   renderEmpty();
   initAiButton();
+  initUpdateBanner();
   initAppsButton();
   initTauri();
 })();

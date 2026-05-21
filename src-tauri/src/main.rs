@@ -1,6 +1,7 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_update;
 mod auth;
 mod commands;
 mod desktop_relay;
@@ -40,6 +41,8 @@ use tauri_plugin_autostart::MacosLauncher;
 // both forms so the same renderer fetches succeed cross-platform.
 // See https://github.com/orgs/tauri-apps/discussions/5597
 const BASE_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net plugin://localhost https://plugin.localhost; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com plugin://localhost https://plugin.localhost; font-src 'self' https://fonts.gstatic.com plugin://localhost https://plugin.localhost; connect-src 'self' http://localhost:4200; img-src 'self' data: blob: plugin://localhost https://plugin.localhost";
+const DEFAULT_HTTP_PORT: u16 = 4200;
+const DEV_HTTP_PORT_ENV: &str = "MCPVIEWS_DEV_HTTP_PORT";
 
 fn build_csp(extra_origins: &[String]) -> String {
     if extra_origins.is_empty() {
@@ -107,6 +110,19 @@ fn first_party_ai_csp_origins() -> Vec<String> {
     first_party_ai_csp_origins_from_settings(&first_party_ai::load_settings())
 }
 
+fn http_bind_address() -> String {
+    let port = if cfg!(debug_assertions) {
+        std::env::var(DEV_HTTP_PORT_ENV)
+            .ok()
+            .and_then(|value| value.trim().parse::<u16>().ok())
+            .unwrap_or(DEFAULT_HTTP_PORT)
+    } else {
+        DEFAULT_HTTP_PORT
+    };
+
+    format!("0.0.0.0:{port}")
+}
+
 fn csp_request_hook(state: Arc<AppState>) -> impl Fn(tauri::http::Request<Vec<u8>>, &mut tauri::http::Response<std::borrow::Cow<'static, [u8]>>) + Send + Sync + 'static {
     move |_req, resp| {
         let mut origins: BTreeSet<String> = state.plugin_csp_origins().into_iter().collect();
@@ -144,6 +160,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
@@ -209,6 +226,8 @@ fn main() {
             commands::submit_decision,
             commands::dismiss_session,
             commands::get_health,
+            commands::check_app_update,
+            commands::install_app_update,
             commands::open_external_url,
             commands::list_plugins,
             commands::install_plugin,
@@ -298,8 +317,9 @@ fn main() {
 
             // Pre-bind the TCP listener on the main thread so the port is ready
             // before Claude Code probes it (eliminates MCP startup race condition)
-            let std_listener = std::net::TcpListener::bind("0.0.0.0:4200")
-                .map_err(|e| format!("Failed to bind to port 4200: {e}"))?;
+            let bind_address = http_bind_address();
+            let std_listener = std::net::TcpListener::bind(&bind_address)
+                .map_err(|e| format!("Failed to bind to {bind_address}: {e}"))?;
             std_listener.set_nonblocking(true)
                 .map_err(|e| format!("Failed to set non-blocking: {e}"))?;
 

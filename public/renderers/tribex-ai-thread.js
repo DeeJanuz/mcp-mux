@@ -618,6 +618,183 @@
     ) || content;
   }
 
+  function findBalancedJsonEnd(text, start) {
+    var depth = 0;
+    var inString = false;
+    var quote = '';
+    var escaped = false;
+    for (var index = start; index < text.length; index += 1) {
+      var char = text[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === quote) {
+          inString = false;
+          quote = '';
+        }
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        inString = true;
+        quote = char;
+      } else if (char === '{') {
+        depth += 1;
+      } else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) return index + 1;
+      }
+    }
+    return -1;
+  }
+
+  function normalizeWorkspaceFileRef(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    function stringValue(keys) {
+      for (var index = 0; index < keys.length; index += 1) {
+        if (typeof raw[keys[index]] === 'string') return raw[keys[index]];
+      }
+      return null;
+    }
+    var fileId = stringValue(['fileId', 'workspaceFileId', 'file_id', 'workspace_file_id', 'id']);
+    var relativePath = stringValue(['relativePath', 'workspacePath', 'relative_path', 'workspace_path', 'path']);
+    var workspaceId = stringValue(['workspaceId', 'workspace_id']);
+    if (!fileId && !relativePath) return null;
+    return {
+      fileId: fileId,
+      relativePath: relativePath,
+      workspaceId: workspaceId,
+      title: typeof raw.title === 'string' ? raw.title : null,
+      purpose: typeof raw.purpose === 'string' ? raw.purpose : null,
+    };
+  }
+
+  function parseWorkspaceFileRefsPayload(text) {
+    if (!text) return [];
+    try {
+      var parsed = JSON.parse(text);
+      var candidates = parsed && Array.isArray(parsed.fileRefs)
+        ? parsed.fileRefs
+        : (parsed && Array.isArray(parsed.workspaceFileRefs)
+          ? parsed.workspaceFileRefs
+          : (parsed && Array.isArray(parsed.file_refs)
+            ? parsed.file_refs
+            : (parsed && Array.isArray(parsed.workspace_file_refs) ? parsed.workspace_file_refs : [])));
+      return candidates.map(normalizeWorkspaceFileRef).filter(Boolean);
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  function findWorkspaceFileRefsObject(text, keyIndex) {
+    var objectStart = keyIndex;
+    while (objectStart >= 0) {
+      objectStart = text.lastIndexOf('{', objectStart);
+      if (objectStart < 0) return null;
+      var objectEnd = findBalancedJsonEnd(text, objectStart);
+      if (objectEnd > keyIndex) {
+        var refs = parseWorkspaceFileRefsPayload(text.slice(objectStart, objectEnd));
+        if (refs.length) {
+          return { refs: refs, start: objectStart, end: objectEnd };
+        }
+      }
+      objectStart -= 1;
+    }
+    return null;
+  }
+
+  function findNextWorkspaceFileRefsKey(text, searchStart) {
+    var keys = ['fileRefs', 'workspaceFileRefs', 'file_refs', 'workspace_file_refs'];
+    var match = null;
+    keys.forEach(function (key) {
+      var index = text.indexOf(key, searchStart);
+      if (index >= 0 && (!match || index < match.index)) {
+        match = { index: index, length: key.length };
+      }
+    });
+    return match;
+  }
+
+  function extractWorkspaceFileRefsFromText(text) {
+    var sourceText = String(text || '');
+    var refs = [];
+    var spans = [];
+    var seen = {};
+
+    function addRefs(nextRefs, start, end) {
+      if (!nextRefs.length) return;
+      nextRefs.forEach(function (ref) {
+        var key = [ref.fileId || '', ref.relativePath || '', ref.title || ''].join('|');
+        if (seen[key]) return;
+        seen[key] = true;
+        refs.push(ref);
+      });
+      if (typeof start === 'number' && typeof end === 'number' && end > start) {
+        spans.push({ start: start, end: end });
+      }
+    }
+
+    sourceText.replace(/```(?:json)?\s*([\s\S]*?)```/g, function (match, body, offset) {
+      addRefs(parseWorkspaceFileRefsPayload(body), offset, offset + match.length);
+      return match;
+    });
+
+    var searchStart = 0;
+    while (searchStart < sourceText.length) {
+      var keyMatch = findNextWorkspaceFileRefsKey(sourceText, searchStart);
+      if (!keyMatch) break;
+      var payload = findWorkspaceFileRefsObject(sourceText, keyMatch.index);
+      if (!payload) {
+        searchStart = keyMatch.index + keyMatch.length;
+        continue;
+      }
+      addRefs(payload.refs, payload.start, payload.end);
+      searchStart = payload.end > keyMatch.index ? payload.end : keyMatch.index + keyMatch.length;
+    }
+
+    return { refs: refs, spans: spans };
+  }
+
+  function stripWorkspaceFileRefSpans(text, spans) {
+    if (!spans || !spans.length) return text;
+    var sorted = spans.slice().sort(function (left, right) { return left.start - right.start; });
+    var cursor = 0;
+    var chunks = [];
+    sorted.forEach(function (span) {
+      if (span.start < cursor) return;
+      chunks.push(text.slice(cursor, span.start));
+      cursor = span.end;
+    });
+    chunks.push(text.slice(cursor));
+    return chunks.join('').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  function renderWorkspaceFileRefs(refs) {
+    var section = createEl('section', 'ai-codex-workspace-file-refs');
+    var header = createEl('div', 'ai-codex-workspace-file-refs-header');
+    header.appendChild(createEl('strong', '', 'Workspace files'));
+    header.appendChild(createEl('span', 'ai-codex-count', String(refs.length)));
+    section.appendChild(header);
+    var list = createEl('div', 'ai-codex-workspace-file-ref-list');
+    refs.forEach(function (ref) {
+      var button = createEl('button', 'ai-codex-workspace-file-ref');
+      button.type = 'button';
+      var title = ref.title || ref.relativePath || ref.fileId || 'Workspace file';
+      button.appendChild(createEl('span', 'ai-codex-workspace-file-ref-title', title));
+      if (ref.relativePath) button.appendChild(createEl('span', 'ai-codex-workspace-file-ref-path', ref.relativePath));
+      if (ref.purpose) button.appendChild(createEl('span', 'ai-codex-workspace-file-ref-purpose', ref.purpose));
+      button.addEventListener('click', function () {
+        if (window.__tribexAiState && typeof window.__tribexAiState.openWorkspaceFileRef === 'function') {
+          window.__tribexAiState.openWorkspaceFileRef(ref);
+        }
+      });
+      list.appendChild(button);
+    });
+    section.appendChild(list);
+    return section;
+  }
+
   function findSkillToken(content, invocation) {
     if (invocation && invocation.key) {
       var token = '/' + invocation.key;
@@ -659,9 +836,15 @@
     if (session.answer.createdAt) header.appendChild(createEl('span', 'ai-codex-time', formatTime(session.answer.createdAt)));
     if (session.answer.isStreaming) header.appendChild(createEl('span', 'ai-codex-live-chip', 'streaming'));
     answer.appendChild(header);
-    answer.appendChild(renderMarkdown(displayMarkdownText(session.answer.content), 'ai-codex-answer-copy', {
+    var rawAnswerContent = String(session.answer.content || '');
+    var fileRefInfo = extractWorkspaceFileRefsFromText(rawAnswerContent);
+    var displayTextWithoutFileRefs = displayMarkdownText(stripWorkspaceFileRefSpans(rawAnswerContent, fileRefInfo.spans));
+    if (displayTextWithoutFileRefs) answer.appendChild(renderMarkdown(displayTextWithoutFileRefs, 'ai-codex-answer-copy', {
       suppressEntryAnimation: !!session.answer.isStreaming || !!(state && state.hasRenderedThreadContent),
     }));
+    if (fileRefInfo.refs.length) {
+      answer.appendChild(renderWorkspaceFileRefs(fileRefInfo.refs));
+    }
     return answer;
   }
 

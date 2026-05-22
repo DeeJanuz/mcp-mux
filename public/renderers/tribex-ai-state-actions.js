@@ -1843,6 +1843,30 @@
       }) || null;
     }
 
+    function findWorkspaceFileByRef(workspaceId, ref) {
+      var files = getWorkspaceFiles(workspaceId);
+      var fileId = ref && (ref.fileId || ref.id || ref.file_id);
+      var relativePath = normalizeWorkspaceBrowserPath(ref && (ref.relativePath || ref.relative_path || ref.path));
+      var placeholderIds = {
+        item: true,
+        file: true,
+        workspace_file: true,
+      };
+      if (fileId && !placeholderIds[String(fileId)]) {
+        var byId = files.find(function (file) {
+          return file && file.id === fileId;
+        });
+        if (byId) return byId;
+      }
+      if (relativePath) {
+        var byPath = files.find(function (file) {
+          return file && normalizeWorkspaceBrowserPath(file.relativePath) === relativePath;
+        });
+        if (byPath) return byPath;
+      }
+      return null;
+    }
+
     function openWorkspaceFileBrowser() {
       var workspace = getActiveWorkspaceForFiles();
       state.ui.fileBrowserOpen = true;
@@ -1853,6 +1877,45 @@
         return refreshWorkspaceFiles(false);
       }
       return Promise.resolve(null);
+    }
+
+    function openWorkspaceFileRef(ref) {
+      var targetWorkspaceId = ref && (ref.workspaceId || ref.workspace_id);
+      var workspace = targetWorkspaceId && api.getWorkspace(targetWorkspaceId)
+        ? api.getWorkspace(targetWorkspaceId)
+        : getActiveWorkspaceForFiles();
+      if (!workspace) {
+        state.workspaceFileBrowser.error = 'No workspace is selected.';
+        api.notify();
+        return Promise.resolve(null);
+      }
+      if (targetWorkspaceId && workspace.id === targetWorkspaceId) {
+        state.selectedWorkspaceId = targetWorkspaceId;
+      }
+      state.ui.fileBrowserOpen = true;
+      state.workspaceFileBrowser.activeWorkspaceId = workspace.id;
+      state.workspaceFileBrowser.error = null;
+      api.notify();
+
+      function selectRef() {
+        var file = findWorkspaceFileByRef(workspace.id, ref || {});
+        if (file && file.id) {
+          return selectWorkspaceFile(file.id);
+        }
+        var label = (ref && (ref.relativePath || ref.relative_path || ref.path || ref.title || ref.fileId)) || 'workspace file';
+        state.workspaceFileBrowser.error = 'Workspace file not found: ' + label;
+        api.notify();
+        return null;
+      }
+
+      var existing = findWorkspaceFileByRef(workspace.id, ref || {});
+      if (existing && existing.id) {
+        return selectWorkspaceFile(existing.id);
+      }
+      return refreshWorkspaceFiles(true).then(function (result) {
+        if (!result && state.workspaceFileBrowser.error) return null;
+        return selectRef();
+      });
     }
 
     function closeWorkspaceFileBrowser() {
@@ -3144,6 +3207,7 @@
     api.schedulePauseCheckBurst = schedulePauseCheckBurst;
     api.syncPausePolling = syncPausePolling;
     api.openWorkspaceFileBrowser = openWorkspaceFileBrowser;
+    api.openWorkspaceFileRef = openWorkspaceFileRef;
     api.closeWorkspaceFileBrowser = closeWorkspaceFileBrowser;
     api.toggleWorkspaceFileBrowser = toggleWorkspaceFileBrowser;
     api.refreshWorkspaceFiles = refreshWorkspaceFiles;

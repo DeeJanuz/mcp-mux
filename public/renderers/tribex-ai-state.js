@@ -223,6 +223,7 @@
     moveWorkspaceFolderToPath: api.moveWorkspaceFolderToPath,
     openWorkspaceFileMoveComposer: api.openWorkspaceFileMoveComposer,
     openWorkspaceFileBrowser: api.openWorkspaceFileBrowser,
+    openWorkspaceFileRef: api.openWorkspaceFileRef,
     openWorkspaceFolderComposer: api.openWorkspaceFolderComposer,
     refreshWorkspaceFiles: api.refreshWorkspaceFiles,
     selectWorkspaceFile: api.selectWorkspaceFile,

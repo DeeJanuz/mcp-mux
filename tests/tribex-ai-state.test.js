@@ -5717,6 +5717,22 @@ describe('tribex-ai-state', function () {
     await window.__tribexAiState.refreshNavigator(true);
     await window.__tribexAiState.openWorkspaceFileBrowser();
 
+    await window.__tribexAiState.openWorkspaceFileRef({
+      fileId: 'item',
+      relativePath: 'data/config.json',
+      title: 'Config JSON',
+    });
+    expect(window.__tribexAiState.getSnapshot().fileBrowserOpen).toBe(true);
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser).toMatchObject({
+      selectedType: 'file',
+      selectedFileId: 'file-json',
+      selectedFolderPath: 'data',
+    });
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      status: 'ready',
+      kind: 'json',
+    });
+
     await window.__tribexAiState.selectWorkspaceFile('file-text');
     expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
       status: 'ready',

@@ -50,4 +50,6 @@ If the worker uses a local R2 binding for development, configure `USER_WORKSPACE
 - Move folders through `PATCH /workspaces/:workspaceId/user-sandbox/folders`.
 - Delete individual files.
 
+Assistant answers may include a `fileRefs` or `workspaceFileRefs` JSON object for durable workspace files. The AI thread hides that raw JSON, renders a `Workspace files` link group inline with the answer, and opens the referenced file in this browser when a user clicks a link. Links resolve by real file id first, then by relative path, so assistant-generated placeholder ids still work when the reference includes a durable path.
+
 The browser renders provider folder markers as folders instead of user files. Folder marker files should set `metadata.isFolderMarker` to `true` and include `metadata.folderPath`. Folder deletion is intentionally not part of the first version.

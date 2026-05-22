@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- TribeX AI thread answers now render durable `fileRefs` as clickable Workspace files links that open the referenced file in the workspace file browser instead of showing raw JSON.
+
 ## [0.2.5] - 2026-05-21
 
 ### Changed

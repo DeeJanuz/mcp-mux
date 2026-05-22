@@ -41,7 +41,7 @@ The chat surface has four conceptual regions:
 1. Timeline: the single vertical scroll container for messages, tool events, review cards, queued context, and completion events.
 2. Latest action dock: a stable bottom area directly above the composer that summarizes and controls the newest pending user action.
 3. Composer: the user's message entry point, fixed at the bottom of the thread layout.
-4. Secondary chatOutput area: side panels or drawers for large chatOutputs. These should not steal the primary review or resume controls from the thread.
+4. Secondary chatOutput area: inline expandable chat outputs and linked durable workspace file references. These should not steal the primary review or resume controls from the thread.
 
 The timeline and action dock are part of the same conversational model. The dock may mirror the latest pending action for convenience, but the corresponding action event still exists inline in the timeline at the point it occurred.
 

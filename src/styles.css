@@ -7439,6 +7439,58 @@ body.ai-mode-session-active .ai-codex-review-bundle .ai-codex-reject-all:hover {
   min-width: 0;
 }
 
+.ai-codex-workspace-file-refs {
+  margin-top: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--ai-codex-surface-subtle);
+  overflow: hidden;
+}
+
+.ai-codex-workspace-file-refs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.ai-codex-workspace-file-ref-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.ai-codex-workspace-file-ref {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--ai-codex-surface);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-codex-workspace-file-ref:hover {
+  border-color: var(--accent-primary);
+}
+
+.ai-codex-workspace-file-ref-title {
+  font-weight: 650;
+}
+
+.ai-codex-workspace-file-ref-path,
+.ai-codex-workspace-file-ref-purpose {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .ai-codex-diagnostics {
   overflow: auto;
   max-height: calc(100vh - 220px);

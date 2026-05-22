@@ -329,6 +329,143 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(markdownCall[0]).not.toContain('accountId=');
   });
 
+  it('renders assistant fileRefs as workspace file links and hides raw JSON blocks', function () {
+    var fileId = 'cmworkspacefileref12345';
+    var answer = [
+      'Done.',
+      '',
+      '```json',
+      '{"fileRefs":[{"fileId":"' + fileId + '","relativePath":"ui-validation/sample.json","title":"JSON Preview Check","purpose":"Inspect JSON"}]}',
+      '```',
+    ].join('\n');
+    var openWorkspaceFileRef = vi.fn();
+
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      openWorkspaceFileRef: openWorkspaceFileRef,
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Create a file.' },
+                answer: { id: 'a1', role: 'assistant', content: answer },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var markdownCall = window.__companionUtils.renderMarkdown.mock.calls.find(function (call) {
+      return String(call[0] || '').indexOf('Done.') >= 0;
+    });
+    expect(markdownCall[0]).toBe('Done.');
+    expect(document.querySelector('.ai-codex-thread').textContent).toContain('Workspace files');
+    expect(document.querySelector('.ai-codex-thread').textContent).toContain('JSON Preview Check');
+    expect(document.querySelector('.ai-codex-thread').textContent).toContain('ui-validation/sample.json');
+    expect(document.querySelector('.ai-codex-thread').textContent).not.toContain('"fileRefs"');
+
+    document.querySelector('.ai-codex-workspace-file-ref').click();
+    expect(openWorkspaceFileRef).toHaveBeenCalledWith(expect.objectContaining({
+      fileId: fileId,
+      relativePath: 'ui-validation/sample.json',
+      title: 'JSON Preview Check',
+    }));
+  });
+
+  it('extracts nested inline and snake_case file refs without hanging the thread render', function () {
+    var answer = 'Created {"meta":{"request":{"id":"cmnestedrequest12345"}},"file_refs":[{"file_id":"cmnestedfileref12345","relative_path":"reports/nested.json","title":"Nested JSON"}]}.';
+    var openWorkspaceFileRef = vi.fn();
+
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      openWorkspaceFileRef: openWorkspaceFileRef,
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Create a nested file ref.' },
+                answer: { id: 'a1', role: 'assistant', content: answer },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-thread').textContent).toContain('Created');
+    expect(document.querySelector('.ai-codex-thread').textContent).toContain('Workspace files');
+    expect(document.querySelector('.ai-codex-thread').textContent).toContain('Nested JSON');
+    expect(document.querySelector('.ai-codex-thread').textContent).not.toContain('"file_refs"');
+
+    document.querySelector('.ai-codex-workspace-file-ref').click();
+    expect(openWorkspaceFileRef).toHaveBeenCalledWith(expect.objectContaining({
+      fileId: 'cmnestedfileref12345',
+      relativePath: 'reports/nested.json',
+      title: 'Nested JSON',
+    }));
+  });
+
+  it('does not treat arbitrary files JSON examples as workspace file refs', function () {
+    var answer = [
+      'Example manifest:',
+      '',
+      '```json',
+      '{"files":[{"id":"example","path":"example.json"}]}',
+      '```',
+    ].join('\n');
+
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      openWorkspaceFileRef: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Show a manifest.' },
+                answer: { id: 'a1', role: 'assistant', content: answer },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-workspace-file-ref')).toBeNull();
+    expect(document.querySelector('.ai-codex-thread').textContent).not.toContain('Workspace files');
+    var markdownCall = window.__companionUtils.renderMarkdown.mock.calls.find(function (call) {
+      return String(call[0] || '').indexOf('"files"') >= 0;
+    });
+    expect(markdownCall[0]).toContain('"files"');
+  });
+
   it('hides synthetic review resume prompts and redacts internal IDs from the thread UI', function () {
     var syntheticPrompt = 'The user submitted a review decision for session archive_review_cmobypfhy0000l904abcd1234. Call await_review with session_id=archive_review_cmobypfhy0000l904abcd1234, inspect the accepted rows, then continue.';
     window.__tribexAiState = {

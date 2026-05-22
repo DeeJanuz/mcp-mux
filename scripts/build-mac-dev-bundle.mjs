@@ -132,7 +132,7 @@ rmSync(stageRoot, { recursive: true, force: true });
 mkdirSync(stageRoot, { recursive: true });
 
 const staged = [
-  stageDirectPlugin(resolve(repoRoot, '../tribe-x-ai-plugin'), [
+  stageDirectPlugin(resolve(repoRoot, '../tribe-x-persona-studio'), [
     'manifest.json',
     'renderers',
     'tools',

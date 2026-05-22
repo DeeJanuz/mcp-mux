@@ -16,7 +16,7 @@ const SHARED_FIRST_PARTY_AUTH_NAMESPACES: &[&str] = &[
     AUTH_NAMESPACE,
     RELAY_AUTH_NAMESPACE,
     "tribex_ai",
-    "tribe-x-ai-plugin",
+    "tribe-x-persona-studio",
 ];
 
 fn has_persisted_session(auth_dir: &std::path::Path) -> bool {

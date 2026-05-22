@@ -126,29 +126,29 @@
       }
     },
     {
-      "name": "tribe-x-ai-plugin",
-      "version": "0.1.17-rc.1",
-      "description": "Standalone Persona Studio for editing organization-scoped TribeX AI personas and validating native MCPViews runs",
+      "name": "tribe-x-persona-studio",
+      "version": "0.1.0",
+      "description": "Consultant-scoped Persona Studio for creating TribeX AI personas and validating native MCPViews runs",
       "author": "TribeX AI",
-      "homepage": "https://github.com/deejanus/tribe-x-ai-plugin",
-      "manifest_url": "https://raw.githubusercontent.com/deejanus/tribe-x-ai-plugin/master/manifest.json",
-      "tags": ["persona", "ai", "testing", "cloudflare-dev"],
+      "homepage": "https://github.com/DeeJanuz/tribe-x-persona-studio",
+      "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/tribe-x-persona-studio/master/manifest.json",
+      "tags": ["persona", "ai", "testing", "cloudflare-dev", "consultants"],
       "manifest": {
-        "name": "tribe-x-ai-plugin",
-        "version": "0.1.17-rc.1",
-        "download_url": "https://github.com/deejanus/tribe-x-ai-plugin/releases/download/0.1.17-rc.1/tribe-x-ai-plugin.zip",
+        "name": "tribe-x-persona-studio",
+        "version": "0.1.0",
+        "download_url": "https://github.com/DeeJanuz/tribe-x-persona-studio/releases/download/0.1.0/tribe-x-persona-studio.zip",
         "renderers": {
           "relay-probe": "rich_content"
         },
         "mcp": {
           "url": "http://127.0.0.1:4877/mcp",
           "auth": null,
-          "tool_prefix": "tribe-x-ai-plugin__"
+          "tool_prefix": "tribe_x_persona_studio__"
         },
         "renderer_definitions": [
           {
             "name": "persona_lab",
-            "description": "Standalone Persona Studio for editing org-scoped TribeX AI personas against the Cloudflare dev control plane and launching save-first single-run and parallel run batches.",
+            "description": "Standalone Persona Studio for editing consultant-scoped TribeX AI personas against the Cloudflare dev control plane and launching save-first single-run and parallel run batches.",
             "scope": "universal",
             "data_hint": "{}",
             "display_mode": "replace",
@@ -157,10 +157,11 @@
           }
         ],
         "registry_index": {
-          "summary": "Standalone Persona Studio for editing organization-scoped TribeX AI personas through the Cloudflare dev control plane and launching native MCPViews single-run and parallel run test chats.",
+          "summary": "Standalone consultant-scoped Persona Studio for editing TribeX AI personas through the Cloudflare dev control plane and launching native MCPViews single-run and parallel run test chats.",
           "tags": [
             "persona",
             "ai",
+            "consultants",
             "testing",
             "cloudflare-dev"
           ],
@@ -181,7 +182,8 @@
           "relay-probe": "Use only for Persona Studio and MCPViews relay integration tests. Pass a unique marker and ask the tool to echo it back so the operator can verify the plugin relay path."
         },
         "plugin_rules": [
-          "Persona Studio is a standalone renderer that should target the TribeX AI Cloudflare dev control plane at https://dev.app.tribexai.com through MCPViews first-party AI configuration. It reads the currently selected native AI organization, scopes Persona Studio catalog calls to that organization, creates consultant-owned drafts when the selected organization is a consultant account, and launches save-first native AI single-run and parallel run batches in that organization.",
+          "Persona Studio is a standalone consultant-only authoring renderer that targets the TribeX AI Cloudflare dev control plane at https://dev.app.tribexai.com through MCPViews first-party AI configuration. It reads the currently selected native AI organization, requires that organization to have kind CONSULTANT, scopes every Persona Studio authoring call to that consultant organization, and launches save-first native AI single-run and parallel run batches in that organization.",
+          "Persona Studio is for creating and editing consultant-owned personas. Child organization assignment and enablement management remain outside this renderer in consultant/customer management flows.",
           "The relay-probe tool is a local deterministic MCP tool for end-to-end testing of consultant-owned plugin relay grants. It requires tools/relay-probe-server.mjs to be running on http://127.0.0.1:4877/mcp."
         ]
       }

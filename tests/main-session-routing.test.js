@@ -341,7 +341,7 @@ describe('main session routing', function () {
         invoke: vi.fn(function (command) {
           if (command === 'get_standalone_renderers') {
             return Promise.resolve([{
-              plugin: 'tribe-x-ai-plugin',
+              plugin: 'tribe-x-persona-studio',
               renderers: [{
                 name: 'persona_lab',
                 label: 'Persona Studio',

@@ -5349,6 +5349,12 @@ describe('tribex-ai-state', function () {
       selectedType: 'folder',
       selectedFolderPath: 'reports',
     });
+
+    await window.__tribexAiState.toggleWorkspaceFolderExpanded('reports');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.expandedFolderPaths.reports).toBe(false);
+
+    await window.__tribexAiState.toggleWorkspaceFolderExpanded('reports');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.expandedFolderPaths.reports).toBe(true);
   });
 
   it('creates folders and moves workspace files or folders through the sandbox API client', async function () {

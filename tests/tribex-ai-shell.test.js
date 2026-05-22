@@ -50,6 +50,7 @@ function createState(snapshot) {
     refreshWorkspaceFiles: vi.fn(function () { return Promise.resolve(); }),
     selectWorkspaceFile: vi.fn(function () { return Promise.resolve(); }),
     selectWorkspaceFolder: vi.fn(function () { return Promise.resolve(); }),
+    toggleWorkspaceFolderExpanded: vi.fn(function () { return Promise.resolve(); }),
     toggleWorkspaceFileBrowser: vi.fn(function () { return Promise.resolve(); }),
     uploadWorkspaceFiles: vi.fn(function () { return Promise.resolve(); }),
     refreshNavigator: vi.fn(),
@@ -906,6 +907,137 @@ describe('tribex-ai-shell', function () {
     expect(state.uploadWorkspaceFiles).toHaveBeenCalledWith([uploadFile]);
     document.querySelector('.workspace-file-close').click();
     expect(state.closeWorkspaceFileBrowser).toHaveBeenCalled();
+  });
+
+  it('lets workspace file browser folders collapse and expand from the chevron', function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      searchTerm: '',
+      fileBrowserOpen: true,
+      organizations: [{ id: 'org-1', name: 'Org 1' }],
+      selectedOrganization: { id: 'org-1', name: 'Org 1' },
+      selectedWorkspace: { id: 'workspace-1', name: 'Finance', packageKey: 'generic' },
+      selectedProject: null,
+      projectGroups: [],
+      projectExpansion: {},
+      packages: [],
+      workspaceFiles: [
+        { id: 'file-1', relativePath: 'reports/april.csv', name: 'april.csv', sizeBytes: 42, contentType: 'text/csv' },
+      ],
+      workspaceFileBrowser: {
+        loading: false,
+        error: null,
+        selectedType: null,
+        selectedFileId: null,
+        selectedFolderPath: '',
+        expandedFolderPaths: { reports: false },
+        preview: { status: 'idle' },
+      },
+      composer: {},
+      hasProjects: false,
+      canRunSmokeTest: false,
+      activeProjectId: null,
+      activeThreadId: null,
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    var reportsRow = document.querySelector('.workspace-file-folder[title="reports"]');
+    expect(reportsRow).not.toBeNull();
+    expect(reportsRow.getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelector('.workspace-file-leaf')).toBeNull();
+
+    reportsRow.querySelector('.workspace-file-chevron').click();
+    expect(state.toggleWorkspaceFolderExpanded).toHaveBeenCalledWith('reports', true);
+    expect(state.selectWorkspaceFolder).not.toHaveBeenCalledWith('reports');
+
+    state.updateSnapshot(Object.assign({}, snapshot, {
+      workspaceFileBrowser: Object.assign({}, snapshot.workspaceFileBrowser, {
+        expandedFolderPaths: { reports: true },
+      }),
+    }));
+
+    expect(document.querySelector('.workspace-file-folder[title="reports"]').getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelector('.workspace-file-leaf').textContent).toContain('april.csv');
+  });
+
+  it('auto-expands workspace file folders only through root children', function () {
+    var snapshot = {
+      navigatorVisible: true,
+      navigatorCollapsed: false,
+      loadingNavigator: false,
+      projectComposerOpen: false,
+      threadComposerOpen: false,
+      searchTerm: '',
+      fileBrowserOpen: true,
+      organizations: [{ id: 'org-1', name: 'Org 1' }],
+      selectedOrganization: { id: 'org-1', name: 'Org 1' },
+      selectedWorkspace: { id: 'workspace-1', name: 'Finance', packageKey: 'generic' },
+      selectedProject: null,
+      projectGroups: [],
+      projectExpansion: {},
+      packages: [],
+      workspaceFiles: [
+        { id: 'file-1', relativePath: 'reports/summary.csv', name: 'summary.csv', sizeBytes: 20, contentType: 'text/csv' },
+        { id: 'file-2', relativePath: 'reports/monthly/april.csv', name: 'april.csv', sizeBytes: 42, contentType: 'text/csv' },
+      ],
+      workspaceFileBrowser: {
+        loading: false,
+        error: null,
+        selectedType: null,
+        selectedFileId: null,
+        selectedFolderPath: '',
+        expandedFolderPaths: {},
+        preview: { status: 'idle' },
+      },
+      composer: {},
+      hasProjects: false,
+      canRunSmokeTest: false,
+      activeProjectId: null,
+      activeThreadId: null,
+      integration: {
+        config: { configured: true },
+        status: 'authenticated',
+        authEmail: '',
+        verificationInput: '',
+        magicLinkSentTo: null,
+        sendingMagicLink: false,
+        verifyingMagicLink: false,
+        error: null,
+      },
+    };
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    expect(document.querySelector('.workspace-file-folder[title="reports"]').getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelector('.workspace-file-folder[title="reports/monthly"]').getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelector('#workspace-file-browser').textContent).toContain('summary.csv');
+    expect(document.querySelector('#workspace-file-browser').textContent).not.toContain('april.csv');
+
+    document.querySelector('.workspace-file-folder[title="reports/monthly"] .workspace-file-chevron').click();
+    expect(state.toggleWorkspaceFolderExpanded).toHaveBeenCalledWith('reports/monthly', true);
   });
 
   it('renders workspace folder creation and move dialogs', function () {

@@ -45,6 +45,7 @@
         selectedType: null,
         selectedFileId: null,
         selectedFolderPath: '',
+        expandedFolderPaths: {},
         preview: {
           status: 'idle',
           fileId: null,
@@ -218,6 +219,7 @@
     selectWorkspaceFolder: api.selectWorkspaceFolder,
     setWorkspaceFolderDraftName: api.setWorkspaceFolderDraftName,
     setWorkspaceMoveDraftPath: api.setWorkspaceMoveDraftPath,
+    toggleWorkspaceFolderExpanded: api.toggleWorkspaceFolderExpanded,
     toggleNavigator: api.toggleNavigator,
     toggleNavigatorCollapsed: api.toggleNavigatorCollapsed,
     toggleWorkspaceFileBrowser: api.toggleWorkspaceFileBrowser,

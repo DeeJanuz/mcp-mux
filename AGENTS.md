@@ -1,14 +1,6 @@
-<!-- mcpviews-rules-version: 12 -->
-
 # AGENTS.md
 
 This project inherits the global Codex rules from `/Users/daenonjanis/AGENTS.md` and `/Users/daenonjanis/projects/AGENTS.md`.
-
-## MCPViews Session Startup
-
-IMPORTANT: At the start of every conversation, chat session, interaction, project, folder, or task, call the `init_session` MCP tool with `agent_type: "codex"` before choosing other MCP, app, plugin, or skill workflows.
-
-This is a global Codex rule. It applies across every workspace, including DecidR, Ludflow, Notion, Stripe, and local coding tasks. Initialize MCPViews first so the current renderer definitions, plugin rules, auth status, org tokens, and available tools are loaded before interpreting the user's request.
 
 ## Ludflow Decision Graph Planning Lifecycle
 

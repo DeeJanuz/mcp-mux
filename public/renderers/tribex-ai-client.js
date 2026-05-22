@@ -491,6 +491,7 @@
       name: pickFirst([raw.name, raw.title, raw.slug], 'Organization'),
       slug: pickFirst([raw.slug, raw.name && String(raw.name).toLowerCase().replace(/\s+/g, '-')], id),
       role: pickFirst([raw.role, raw.membershipRole], null),
+      kind: pickFirst([raw.kind], 'OTHER'),
     };
   }
 

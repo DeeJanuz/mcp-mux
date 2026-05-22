@@ -1270,10 +1270,22 @@
     });
   }
 
+  function isWorkspaceFolderExpanded(browser, folderPath, depth) {
+    if (!folderPath) return true;
+    var expandedMap = browser && browser.expandedFolderPaths && typeof browser.expandedFolderPaths === 'object'
+      ? browser.expandedFolderPaths
+      : {};
+    if (Object.prototype.hasOwnProperty.call(expandedMap, folderPath)) {
+      return expandedMap[folderPath] !== false;
+    }
+    return depth <= 1;
+  }
+
   function appendFileTree(parent, node, snapshot, aiState, depth) {
     var folders = Object.keys(node.children || {}).sort();
     folders.forEach(function (folderName) {
       var folder = node.children[folderName];
+      var folderExpanded = isWorkspaceFolderExpanded(snapshot.workspaceFileBrowser || {}, folder.path, depth);
       var row = document.createElement('button');
       row.className = 'workspace-file-row workspace-file-folder' + (
         snapshot.workspaceFileBrowser.selectedType === 'folder' &&
@@ -1281,10 +1293,28 @@
       );
       row.type = 'button';
       row.draggable = true;
+      row.setAttribute('aria-expanded', String(folderExpanded));
       row.style.setProperty('--depth', String(depth));
       row.title = folder.path;
-      row.addEventListener('click', function () {
+      row.addEventListener('click', function (event) {
+        if (event.target && event.target.closest && event.target.closest('.workspace-file-chevron')) {
+          if (aiState.toggleWorkspaceFolderExpanded) {
+            aiState.toggleWorkspaceFolderExpanded(folder.path, !folderExpanded).catch(function () {});
+          }
+          return;
+        }
         aiState.selectWorkspaceFolder(folder.path);
+      });
+      row.addEventListener('keydown', function (event) {
+        if (
+          (event.key === 'ArrowLeft' && folderExpanded) ||
+          (event.key === 'ArrowRight' && !folderExpanded)
+        ) {
+          event.preventDefault();
+          if (aiState.toggleWorkspaceFolderExpanded) {
+            aiState.toggleWorkspaceFolderExpanded(folder.path, !folderExpanded).catch(function () {});
+          }
+        }
       });
       row.addEventListener('dragstart', function (event) {
         if (event.dataTransfer) {
@@ -1293,7 +1323,16 @@
         }
       });
       attachWorkspaceFolderDrop(row, folder.path, aiState);
-      row.innerHTML = '<span class="workspace-file-chevron">⌄</span><span class="workspace-file-glyph">▸</span>';
+      var chevron = document.createElement('span');
+      chevron.className = 'workspace-file-chevron';
+      chevron.setAttribute('aria-hidden', 'true');
+      chevron.title = folderExpanded ? 'Collapse folder' : 'Expand folder';
+      chevron.textContent = folderExpanded ? '⌄' : '›';
+      row.appendChild(chevron);
+      var glyph = document.createElement('span');
+      glyph.className = 'workspace-file-glyph';
+      glyph.textContent = '▸';
+      row.appendChild(glyph);
       var label = document.createElement('span');
       label.className = 'workspace-file-name';
       label.textContent = folder.name;
@@ -1303,7 +1342,9 @@
       meta.textContent = String(countFolderFiles(folder));
       row.appendChild(meta);
       parent.appendChild(row);
-      appendFileTree(parent, folder, snapshot, aiState, depth + 1);
+      if (folderExpanded) {
+        appendFileTree(parent, folder, snapshot, aiState, depth + 1);
+      }
     });
 
     (node.files || []).sort(function (left, right) {

@@ -1731,6 +1731,7 @@
           selectedType: null,
           selectedFileId: null,
           selectedFolderPath: '',
+          expandedFolderPaths: {},
           preview: {
             status: 'idle',
             fileId: null,
@@ -1910,6 +1911,38 @@
       return folder && entry ? folder + '/' + entry : (folder || entry);
     }
 
+    function workspaceFolderExpansionMap() {
+      if (
+        !state.workspaceFileBrowser.expandedFolderPaths ||
+        typeof state.workspaceFileBrowser.expandedFolderPaths !== 'object'
+      ) {
+        state.workspaceFileBrowser.expandedFolderPaths = {};
+      }
+      return state.workspaceFileBrowser.expandedFolderPaths;
+    }
+
+    function expandWorkspaceFolderPath(folderPath, includeSelf) {
+      var parts = normalizeWorkspaceBrowserPath(folderPath).split('/').filter(Boolean);
+      if (!parts.length) return;
+      var map = workspaceFolderExpansionMap();
+      var cursor = [];
+      parts.forEach(function (part, index) {
+        cursor.push(part);
+        if (includeSelf || index < parts.length - 1) {
+          map[cursor.join('/')] = true;
+        }
+      });
+    }
+
+    function toggleWorkspaceFolderExpanded(folderPath, expanded) {
+      var normalized = normalizeWorkspaceBrowserPath(folderPath);
+      if (!normalized) return Promise.resolve(true);
+      var map = workspaceFolderExpansionMap();
+      map[normalized] = typeof expanded === 'boolean' ? expanded : map[normalized] === false;
+      api.notify();
+      return Promise.resolve(map[normalized]);
+    }
+
     function workspaceBasename(path) {
       var parts = normalizeWorkspaceBrowserPath(path).split('/').filter(Boolean);
       return parts.length ? parts[parts.length - 1] : '';
@@ -1941,6 +1974,7 @@
       state.workspaceFileBrowser.selectedType = 'folder';
       state.workspaceFileBrowser.selectedFileId = null;
       state.workspaceFileBrowser.selectedFolderPath = normalizeWorkspaceBrowserPath(folderPath);
+      expandWorkspaceFolderPath(state.workspaceFileBrowser.selectedFolderPath, false);
       state.workspaceFileBrowser.error = null;
       api.notify();
       return Promise.resolve(state.workspaceFileBrowser.selectedFolderPath);
@@ -1954,6 +1988,7 @@
       state.workspaceFileBrowser.selectedType = 'file';
       state.workspaceFileBrowser.selectedFileId = fileId;
       state.workspaceFileBrowser.selectedFolderPath = file && file.relativePath ? file.relativePath.split('/').slice(0, -1).join('/') : '';
+      expandWorkspaceFolderPath(state.workspaceFileBrowser.selectedFolderPath, true);
       state.workspaceFileBrowser.preview = {
         status: 'loading',
         fileId: fileId,
@@ -2171,6 +2206,7 @@
           state.workspaceFileBrowser.selectedType = 'folder';
           state.workspaceFileBrowser.selectedFileId = null;
           state.workspaceFileBrowser.selectedFolderPath = folderPath;
+          expandWorkspaceFolderPath(folderPath, false);
           state.ui.workspaceFolderComposerOpen = false;
           state.workspaceFileBrowser.folderDraftName = '';
           resetWorkspaceFilePreview();
@@ -2244,6 +2280,7 @@
           state.workspaceFileBrowser.selectedType = 'file';
           state.workspaceFileBrowser.selectedFileId = file.id;
           state.workspaceFileBrowser.selectedFolderPath = destinationFolder;
+          expandWorkspaceFolderPath(destinationFolder, true);
           resetWorkspaceFilePreview();
           return true;
         })
@@ -2281,6 +2318,7 @@
           state.workspaceFileBrowser.selectedType = 'folder';
           state.workspaceFileBrowser.selectedFileId = null;
           state.workspaceFileBrowser.selectedFolderPath = targetPath;
+          expandWorkspaceFolderPath(targetPath, false);
           resetWorkspaceFilePreview();
           return true;
         })
@@ -2809,6 +2847,7 @@
     api.moveWorkspaceFolderToPath = moveWorkspaceFolderToPath;
     api.selectWorkspaceFile = selectWorkspaceFile;
     api.selectWorkspaceFolder = selectWorkspaceFolder;
+    api.toggleWorkspaceFolderExpanded = toggleWorkspaceFolderExpanded;
     api.uploadWorkspaceFiles = uploadWorkspaceFiles;
     api.downloadSelectedWorkspaceEntry = downloadSelectedWorkspaceEntry;
     api.deleteSelectedWorkspaceFile = deleteSelectedWorkspaceFile;

@@ -2605,6 +2605,42 @@ describe('tribex-ai-client', function () {
     }));
   });
 
+  it('preserves organization kind when listing hosted organizations', async function () {
+    var invoke = vi.fn(function (_command, args) {
+      if (args.path === '/organizations') {
+        return Promise.resolve([
+          {
+            id: 'org-consultant',
+            name: 'Consultant Co',
+            slug: 'consultant-co',
+            role: 'MANAGER',
+            kind: 'CONSULTANT',
+          },
+          {
+            id: 'org-customer',
+            name: 'Customer Co',
+            slug: 'customer-co',
+            role: 'ADMIN',
+            kind: 'CUSTOMER',
+          },
+        ]);
+      }
+      return Promise.reject(new Error('Unexpected path: ' + args.path));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+
+    await expect(window.__tribexAiClient.fetchOrganizations()).resolves.toMatchObject([
+      { id: 'org-consultant', kind: 'CONSULTANT' },
+      { id: 'org-customer', kind: 'CUSTOMER' },
+    ]);
+  });
+
   it('calls the desktop relay tauri commands for registration, refresh, stream, and heartbeat', async function () {
     var invoke = vi.fn(function () {
       return Promise.resolve({ ok: true });

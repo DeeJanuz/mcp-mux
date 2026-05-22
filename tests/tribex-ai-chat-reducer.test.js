@@ -239,9 +239,9 @@ describe('tribex-ai-chat-reducer', function () {
     var groups = window.__tribexAiChatReducer.groupActivity([
       { id: 'tool-1', toolName: 'code_search', status: 'completed' },
       {
-        id: 'artifact-1',
+        id: 'chat-output-1',
         toolName: 'rich_content',
-        artifactKey: 'artifact-1',
+        chatOutputKey: 'chat-output-1',
         resultContentType: 'rich_content',
         resultData: { title: 'Plan' },
       },
@@ -249,11 +249,11 @@ describe('tribex-ai-chat-reducer', function () {
       { id: 'sub-1', title: 'Subagent explorer', childThreadId: 'child-1' },
     ]);
 
-    expect(groups.map(function (group) { return group.kind; })).toEqual(['tool', 'artifact', 'review', 'subagent']);
-    expect(groups.find(function (group) { return group.kind === 'artifact'; }).items[0].artifactKey).toBe('artifact-1');
+    expect(groups.map(function (group) { return group.kind; })).toEqual(['tool', 'chat_output', 'review', 'subagent']);
+    expect(groups.find(function (group) { return group.kind === 'chat_output'; }).items[0].chatOutputKey).toBe('chat-output-1');
   });
 
-  it('keeps ordinary non-renderer tool results out of the artifact shelf', function () {
+  it('keeps ordinary non-renderer tool results out of the chatOutput shelf', function () {
     var emailSearch = {
       id: 'tool-email-search-1',
       toolName: 'user_email_search',
@@ -269,7 +269,7 @@ describe('tribex-ai-chat-reducer', function () {
     var groups = window.__tribexAiChatReducer.groupActivity([emailSearch]);
 
     expect(groups.map(function (group) { return group.kind; })).toEqual(['tool']);
-    expect(window.__tribexAiChatReducer.collectArtifacts({
+    expect(window.__tribexAiChatReducer.collectChatOutputs({
       activityItems: [emailSearch],
     })).toEqual([]);
   });
@@ -280,9 +280,9 @@ describe('tribex-ai-chat-reducer', function () {
       { id: 'tool-late', toolName: 'send_email', status: 'completed', createdAt: '2026-04-24T18:03:00.000Z' },
       { id: 'sub-1', title: 'Subagent explorer', childThreadId: 'child-1', createdAt: '2026-04-24T18:02:00.000Z' },
       {
-        id: 'artifact-1',
+        id: 'chat-output-1',
         toolName: 'rich_content',
-        artifactKey: 'artifact-1',
+        chatOutputKey: 'chat-output-1',
         resultContentType: 'rich_content',
         resultData: { title: 'Plan' },
         createdAt: '2026-04-24T18:05:00.000Z',
@@ -290,7 +290,7 @@ describe('tribex-ai-chat-reducer', function () {
       { id: 'tool-early', toolName: 'code_search', status: 'completed', createdAt: '2026-04-24T18:01:00.000Z' },
     ]);
 
-    expect(groups.map(function (group) { return group.kind; })).toEqual(['tool', 'subagent', 'review', 'artifact']);
+    expect(groups.map(function (group) { return group.kind; })).toEqual(['tool', 'subagent', 'review', 'chat_output']);
     expect(groups[0].items.map(function (item) { return item.id; })).toEqual(['tool-early', 'tool-late']);
   });
 
@@ -338,21 +338,21 @@ describe('tribex-ai-chat-reducer', function () {
     expect(session.activityGroups[1].items[0].title).toBe('Prepare archive review');
   });
 
-  it('keeps subagent dispatch and listen events out of the artifact group', function () {
+  it('keeps subagent dispatch and listen events out of the chatOutput group', function () {
     var groups = window.__tribexAiChatReducer.groupActivity([
       {
         id: 'dispatch-1',
         toolName: 'subagent_dispatch',
         status: 'completed',
         resultData: { childThreadId: 'thread-child' },
-        artifactKey: 'legacy-dispatch-artifact',
+        chatOutputKey: 'legacy-dispatch-chatOutput',
       },
       {
         id: 'listen-1',
         toolName: 'subagent_listen',
         status: 'completed',
         resultData: { childThreadId: 'thread-child', status: 'completed' },
-        artifactKey: 'legacy-listen-artifact',
+        chatOutputKey: 'legacy-listen-chatOutput',
       },
     ]);
 

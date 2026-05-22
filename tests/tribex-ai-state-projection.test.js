@@ -74,7 +74,7 @@ describe('tribex-ai-state projection helpers', function () {
           id: 'activity-1',
           toolName: 'push_review',
           status: 'completed',
-          detail: 'Stored artifact',
+          detail: 'Stored chatOutput',
           createdAt: '2026-04-16T10:01:00.000Z',
           updatedAt: '2026-04-16T10:01:30.000Z',
           turnId: 'turn-1',
@@ -428,7 +428,7 @@ describe('tribex-ai-state projection helpers', function () {
     });
   });
 
-  it('normalizes pending approvals and review artifact links for timeline rendering', function () {
+  it('normalizes pending approvals and review chatOutput links for timeline rendering', function () {
     var context = {
       state: {
         threadDetails: {},
@@ -469,10 +469,10 @@ describe('tribex-ai-state projection helpers', function () {
         reviewSessionId: 'review-archive-pending',
       }),
     ]);
-    expect(reviewStep.artifacts).toEqual([
+    expect(reviewStep.outputs).toEqual([
       expect.objectContaining({
-        id: 'artifact:archive-review',
-        rendererArtifactKey: 'tribex-ai-result:thread-email-ops:op-email-pending:archive-review',
+        id: 'output:archive-review',
+        rendererChatOutputKey: 'tribex-ai-result:thread-email-ops:op-email-pending:archive-review',
       }),
     ]);
   });
@@ -724,13 +724,13 @@ describe('tribex-ai-state projection helpers', function () {
     });
   });
 
-  it('builds concrete artifact records with stable session keys and preserves the current default artifact selection', function () {
+  it('builds concrete chatOutput records with stable session keys and preserves the current default chatOutput selection', function () {
     window.__renderers = {
       rich_content: function () {},
     };
     window.__companionUtils = {
-      setThreadArtifactContext: vi.fn(),
-      syncThreadArtifactDrawer: vi.fn(),
+      setThreadChatOutputContext: vi.fn(),
+      syncThreadChatOutputDrawer: vi.fn(),
     };
 
     var context = {
@@ -765,71 +765,71 @@ describe('tribex-ai-state projection helpers', function () {
       id: 'thread-1',
       activity: {
         itemsById: {
-          'artifact-1': {
-            id: 'artifact-1',
+          'chat-output-1': {
+            id: 'chat-output-1',
             toolCallId: 'tool-1',
             toolName: 'rich_content',
             status: 'completed',
-            displayMode: 'artifact',
-            resultData: { title: 'First artifact', body: 'One' },
+            displayMode: 'inline_summary',
+            resultData: { title: 'First chatOutput', body: 'One' },
             createdAt: '2026-04-16T10:00:00.000Z',
             updatedAt: '2026-04-16T10:00:00.000Z',
             turnId: 'turn-1',
             turnOrdinal: 1,
           },
-          'artifact-2': {
-            id: 'artifact-2',
+          'chat-output-2': {
+            id: 'chat-output-2',
             toolCallId: 'tool-2',
             toolName: 'rich_content',
             status: 'completed',
-            displayMode: 'artifact',
-            resultData: { title: 'Second artifact', body: 'Two' },
+            displayMode: 'inline_summary',
+            resultData: { title: 'Second chatOutput', body: 'Two' },
             createdAt: '2026-04-16T10:01:00.000Z',
             updatedAt: '2026-04-16T10:01:00.000Z',
             turnId: 'turn-1',
             turnOrdinal: 1,
           },
         },
-        order: ['artifact-1', 'artifact-2'],
+        order: ['chat-output-1', 'chat-output-2'],
       },
-      artifactDrawer: {
-        drawerId: 'tribex-ai-thread-artifacts:thread-1',
-        selectedArtifactKey: null,
+      chatOutputPanel: {
+        drawerId: 'tribex-ai-thread-chat-outputs:thread-1',
+        selectedChatOutputKey: null,
       },
       turnHistoryById: {},
       turnCompletedAtById: {},
     };
 
-    api.syncThreadArtifactDrawer(record);
+    api.syncThreadChatOutputDrawer(record);
 
     var projection = api.buildThreadProjection(record);
 
-    expect(window.__companionUtils.setThreadArtifactContext).not.toHaveBeenCalled();
-    expect(window.__companionUtils.syncThreadArtifactDrawer).not.toHaveBeenCalled();
-    expect(projection.artifacts).toEqual(
+    expect(window.__companionUtils.setThreadChatOutputContext).not.toHaveBeenCalled();
+    expect(window.__companionUtils.syncThreadChatOutputDrawer).not.toHaveBeenCalled();
+    expect(projection.chatOutputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          artifactKey: expect.stringContaining('tool-1'),
-          sessionKey: expect.stringContaining('tribex-ai-artifact:thread-1:tribex-ai-result:thread-1'),
-          title: 'First artifact',
+          chatOutputKey: expect.stringContaining('tool-1'),
+          sessionKey: expect.stringContaining('tribex-ai-chat-output:thread-1:tribex-ai-result:thread-1'),
+          title: 'First chatOutput',
           contentType: 'rich_content',
-          data: expect.objectContaining({ title: 'First artifact' }),
+          data: expect.objectContaining({ title: 'First chatOutput' }),
         }),
         expect.objectContaining({
-          artifactKey: expect.stringContaining('tool-2'),
-          title: 'Second artifact',
+          chatOutputKey: expect.stringContaining('tool-2'),
+          title: 'Second chatOutput',
         }),
       ]),
     );
-    expect(projection.artifactDrawer).toEqual(
+    expect(projection.chatOutputPanel).toEqual(
       expect.objectContaining({
-        drawerId: 'tribex-ai-thread-artifacts:thread-1',
-        selectedArtifactKey: expect.stringContaining('tool-1'),
+        drawerId: 'tribex-ai-thread-chat-outputs:thread-1',
+        selectedChatOutputKey: null,
       }),
     );
   });
 
-  it('keeps inline-display renderer activity in the run answer instead of the artifact drawer', function () {
+  it('promotes non-review renderer activity to chatOutput projection', function () {
     window.__renderers = {
       rich_content: function () {},
     };
@@ -867,7 +867,8 @@ describe('tribex-ai-state projection helpers', function () {
             toolCallId: 'tool-1',
             toolName: 'rich_content',
             status: 'completed',
-            inlineDisplay: true,
+            displayMode: 'inline_summary',
+            inlineDisplay: false,
             resultData: { title: 'Inline summary', body: '- One\\n- Two' },
             createdAt: '2026-04-16T10:00:30.000Z',
             updatedAt: '2026-04-16T10:00:30.000Z',
@@ -897,9 +898,9 @@ describe('tribex-ai-state projection helpers', function () {
           },
         ],
       },
-      artifactDrawer: {
-        drawerId: 'tribex-ai-thread-artifacts:thread-1',
-        selectedArtifactKey: null,
+      chatOutputPanel: {
+        drawerId: 'tribex-ai-thread-chat-outputs:thread-1',
+        selectedChatOutputKey: null,
       },
       turnHistoryById: {},
       turnCompletedAtById: {},
@@ -907,19 +908,29 @@ describe('tribex-ai-state projection helpers', function () {
 
     var projection = api.buildThreadProjection(record);
 
-    expect(projection.artifacts).toEqual([]);
-    expect(projection.runs).toHaveLength(1);
-    expect(projection.runs[0].workSession).toBeNull();
-    expect(projection.runs[0].answer.inlineResults).toEqual([
+    expect(projection.chatOutputs).toEqual([
       expect.objectContaining({
-        id: 'inline-1',
+        chatOutputKey: expect.stringContaining('tool-1'),
         contentType: 'rich_content',
-        inlineDisplay: true,
+        data: expect.objectContaining({
+          title: 'Inline summary',
+        }),
       }),
     ]);
+    expect(projection.runs).toHaveLength(1);
+    expect(projection.runs[0].workSession.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'inline-1',
+          toolName: 'rich_content',
+          inlineDisplay: false,
+        }),
+      ]),
+    );
+    expect(projection.runs[0].answer.inlineResults).toEqual([]);
   });
 
-  it('keeps completed universal_graph activity inline by default', function () {
+  it('keeps completed universal_graph activity as an chatOutput by default', function () {
     window.__renderers = {
       universal_graph: function () {},
     };
@@ -997,9 +1008,9 @@ describe('tribex-ai-state projection helpers', function () {
           },
         ],
       },
-      artifactDrawer: {
-        drawerId: 'tribex-ai-thread-artifacts:thread-1',
-        selectedArtifactKey: null,
+      chatOutputPanel: {
+        drawerId: 'tribex-ai-thread-chat-outputs:thread-1',
+        selectedChatOutputKey: null,
       },
       turnHistoryById: {},
       turnCompletedAtById: {},
@@ -1007,16 +1018,19 @@ describe('tribex-ai-state projection helpers', function () {
 
     var projection = api.buildThreadProjection(record);
 
-    expect(projection.artifacts).toEqual([]);
-    expect(projection.runs[0].answer.inlineResults).toEqual([
+    expect(projection.chatOutputs).toEqual([
       expect.objectContaining({
-        id: 'graph-1',
+        chatOutputKey: expect.stringContaining('graph-1'),
         contentType: 'universal_graph',
+        data: expect.objectContaining({
+          title: 'Revenue Trend',
+        }),
       }),
     ]);
+    expect(projection.runs[0].answer.inlineResults).toEqual([]);
   });
 
-  it('includes legacy message-backed renderer artifacts in the shared artifact projection', function () {
+  it('includes legacy message-backed renderer outputs in the shared chatOutput projection', function () {
     window.__renderers = {
       structured_data: function () {},
     };
@@ -1050,12 +1064,12 @@ describe('tribex-ai-state projection helpers', function () {
       base: {
         messages: [
           {
-            id: 'legacy-artifact-1',
+            id: 'legacy-chat-output-1',
             role: 'tool',
             toolName: 'structured_data',
             status: 'success',
-            displayMode: 'artifact',
-            artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+            displayMode: 'inline_summary',
+            chatOutputKey: 'tribex-ai-result:thread-1:legacy:chat-output-0',
             resultContentType: 'structured_data',
             resultData: {
               title: 'Expense Review',
@@ -1076,30 +1090,30 @@ describe('tribex-ai-state projection helpers', function () {
         itemsById: {},
         order: [],
       },
-      artifactDrawer: {
-        drawerId: 'tribex-ai-thread-artifacts:thread-1',
-        selectedArtifactKey: null,
+      chatOutputPanel: {
+        drawerId: 'tribex-ai-thread-chat-outputs:thread-1',
+        selectedChatOutputKey: null,
       },
       turnHistoryById: {},
       turnCompletedAtById: {},
     };
 
-    api.syncThreadArtifactDrawer(record);
+    api.syncThreadChatOutputDrawer(record);
     var projection = api.buildThreadProjection(record);
 
-    expect(projection.artifacts).toEqual([
+    expect(projection.chatOutputs).toEqual([
       expect.objectContaining({
-        artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
-        sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:legacy:artifact-0',
+        chatOutputKey: 'tribex-ai-result:thread-1:legacy:chat-output-0',
+        sessionKey: 'tribex-ai-chat-output:thread-1:tribex-ai-result:thread-1:legacy:chat-output-0',
         contentType: 'structured_data',
         data: expect.objectContaining({
           title: 'Expense Review',
         }),
       }),
     ]);
-    expect(projection.artifactDrawer).toEqual(
+    expect(projection.chatOutputPanel).toEqual(
       expect.objectContaining({
-        selectedArtifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+        selectedChatOutputKey: null,
       }),
     );
   });
@@ -1426,7 +1440,7 @@ describe('tribex-ai-state projection helpers', function () {
           {
             id: 'user-1',
             role: 'user',
-            content: 'Create an old artifact',
+            content: 'Create an old chatOutput',
             createdAt: '2026-04-20T20:00:00.000Z',
           },
           {
@@ -1447,7 +1461,7 @@ describe('tribex-ai-state projection helpers', function () {
           {
             id: 'runtime-user-1',
             role: 'user',
-            content: 'Create an old artifact',
+            content: 'Create an old chatOutput',
             createdAt: null,
           },
           {
@@ -1465,7 +1479,7 @@ describe('tribex-ai-state projection helpers', function () {
 
     api.rebuildTurnHistory(record);
     api.upsertActivityItem(record, {
-      id: 'artifact-1',
+      id: 'chat-output-1',
       toolName: 'rich_content',
       status: 'completed',
       detail: 'Prepared Rich Content result.',

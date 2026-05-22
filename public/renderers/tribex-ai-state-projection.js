@@ -195,14 +195,14 @@
       }, {});
     }
 
-    function normalizeWorkflowArtifact(raw) {
+    function normalizeWorkflowOutput(raw) {
       if (!raw || !raw.id) return null;
       return {
         id: String(raw.id),
-        kind: String(raw.kind || 'artifact'),
+        kind: String(raw.kind || 'chat_output'),
         title: raw.title || raw.id,
         status: normalizeWorkflowStatus(raw.status || 'created'),
-        rendererArtifactKey: raw.rendererArtifactKey || raw.renderer_artifact_key || null,
+        rendererChatOutputKey: raw.rendererChatOutputKey || raw.renderer_chat_output_key || null,
         externalRef: raw.externalRef || raw.external_ref || null,
       };
     }
@@ -214,15 +214,15 @@
         title: raw.title || raw.id,
         status: normalizeWorkflowStatus(raw.status || 'pending'),
         reviewSessionId: raw.reviewSessionId || raw.review_session_id || null,
-        artifactRef: raw.artifactRef || raw.artifact_ref || null,
+        outputRef: raw.outputRef || raw.output_ref || null,
       };
     }
 
-    function normalizeWorkflowStep(raw, index, artifactsById, approvalsById) {
+    function normalizeWorkflowStep(raw, index, outputsById, approvalsById) {
       if (!raw || !raw.id) return null;
       var rawKind = String(raw.kind || '');
       var kind = normalizeWorkflowStepKind(rawKind);
-      var artifactRefs = arrayCopy(raw.artifactRefs || raw.artifact_refs);
+      var outputRefs = arrayCopy(raw.outputRefs || raw.output_refs);
       var approvalRefs = arrayCopy(raw.approvalRefs || raw.approval_refs);
       return {
         id: String(raw.id),
@@ -237,9 +237,9 @@
         updatedAt: raw.updatedAt || raw.updated_at || null,
         detail: raw.detail || null,
         evidenceRefs: arrayCopy(raw.evidenceRefs || raw.evidence_refs),
-        artifactRefs: artifactRefs,
+        outputRefs: outputRefs,
         approvalRefs: approvalRefs,
-        artifacts: artifactRefs.map(function (ref) { return artifactsById[ref] || null; }).filter(Boolean),
+        outputs: outputRefs.map(function (ref) { return outputsById[ref] || null; }).filter(Boolean),
         approvals: approvalRefs.map(function (ref) { return approvalsById[ref] || null; }).filter(Boolean),
         repairOfStepId: raw.repairOfStepId || raw.repair_of_step_id || null,
         repairOfTitle: null,
@@ -284,13 +284,13 @@
       if (!raw.operationId && !raw.operation_id) return null;
       if (!Array.isArray(raw.steps)) return null;
 
-      var artifacts = (raw.artifacts || []).map(normalizeWorkflowArtifact).filter(Boolean);
+      var outputs = (raw.outputs || []).map(normalizeWorkflowOutput).filter(Boolean);
       var approvals = (raw.approvals || []).map(normalizeWorkflowApproval).filter(Boolean);
-      var artifactsById = mapById(artifacts);
+      var outputsById = mapById(outputs);
       var approvalsById = mapById(approvals);
       var stepsById = {};
       var steps = raw.steps.map(function (step, index) {
-        return normalizeWorkflowStep(step, index, artifactsById, approvalsById);
+        return normalizeWorkflowStep(step, index, outputsById, approvalsById);
       }).filter(Boolean).sort(compareWorkflowSteps);
       steps.forEach(function (step) {
         stepsById[step.id] = step;
@@ -328,7 +328,7 @@
         updatedAt: raw.updatedAt || raw.updated_at || null,
         heartbeatAt: heartbeat.at,
         heartbeat: heartbeat,
-        artifacts: artifacts,
+        outputs: outputs,
         approvals: approvals,
         summary: raw.summary || '',
         timeline: {
@@ -336,7 +336,7 @@
           status: heartbeat.stale ? 'degraded' : status,
           steps: steps,
           repairs: repairs,
-          artifacts: artifacts,
+          outputs: outputs,
           approvals: approvals,
           delegatedGroups: steps.filter(function (step) {
             return step.childRunRefs && step.childRunRefs.length;
@@ -426,9 +426,9 @@
           itemsById: {},
           order: [],
         },
-        artifactDrawer: {
-          drawerId: 'tribex-ai-thread-artifacts:' + threadId,
-          selectedArtifactKey: null,
+        chatOutputPanel: {
+          drawerId: 'tribex-ai-thread-chat-outputs:' + threadId,
+          selectedChatOutputKey: null,
         },
         connection: {
           runtimeStatus: null,
@@ -447,7 +447,7 @@
       var record = createThreadDetailRecord(threadId);
       if (existing) {
         Object.keys(existing).forEach(function (key) {
-          if (key === 'base' || key === 'activity' || key === 'artifactDrawer' || key === 'connection') {
+          if (key === 'base' || key === 'activity' || key === 'chatOutputPanel' || key === 'connection') {
             return;
           }
           if (existing[key] !== undefined) {
@@ -466,8 +466,8 @@
             order: Array.isArray(existing.activity.order) ? existing.activity.order.slice() : record.activity.order,
           });
         }
-        if (existing.artifactDrawer) {
-          record.artifactDrawer = Object.assign({}, record.artifactDrawer, existing.artifactDrawer);
+        if (existing.chatOutputPanel) {
+          record.chatOutputPanel = Object.assign({}, record.chatOutputPanel, existing.chatOutputPanel);
         }
         if (existing.connection) {
           record.connection = Object.assign({}, record.connection, existing.connection);
@@ -913,6 +913,7 @@
 
     function resolveActivityDisplayMode(previous, contentType, reviewRequired, explicitInlineDisplay) {
       if (previous && previous.displayMode) {
+        if (previous.displayMode === 'chat_output') return 'inline_summary';
         return previous.displayMode;
       }
       if (previous && previous.inlineDisplay === true) {
@@ -921,10 +922,10 @@
       if (explicitInlineDisplay === true) {
         return 'inline';
       }
-      if (reviewRequired) {
-        return 'artifact';
+      if (isInlineCapableContentType(contentType) || reviewRequired) {
+        return 'inline_summary';
       }
-      return isInlineCapableContentType(contentType) ? 'inline' : 'artifact';
+      return null;
     }
 
     function getCanonicalActivityDisplayMode(item) {
@@ -938,6 +939,16 @@
         ),
         item.inlineDisplay === true ? true : undefined
       );
+    }
+
+    function normalizeActivityDisplay(item) {
+      if (!item) return item;
+      var displayMode = getCanonicalActivityDisplayMode(item);
+      if (!displayMode) return item;
+      return Object.assign({}, item, {
+        displayMode: displayMode,
+        inlineDisplay: displayMode === 'inline',
+      });
     }
 
     function copyActivityItem(item) {
@@ -967,7 +978,7 @@
       return !!(
         item &&
         isRendererResultItem(item) &&
-        getCanonicalActivityDisplayMode(item) === 'artifact'
+        getCanonicalActivityDisplayMode(item) === 'inline_summary'
       );
     }
 
@@ -980,7 +991,7 @@
       var contentType = resolveActivityContentType(item);
       return !!(
         item &&
-        getCanonicalActivityDisplayMode(item) === 'artifact' &&
+        getCanonicalActivityDisplayMode(item) === 'inline_summary' &&
         isCompletedActivityStatus(item.status) &&
         item.resultData &&
         contentType &&
@@ -1202,11 +1213,11 @@
       });
     }
 
-    function buildArtifactSessionKey(threadId, artifactKey) {
-      return 'tribex-ai-artifact:' + String(threadId || 'thread') + ':' + String(artifactKey || 'result');
+    function buildChatOutputSessionKey(threadId, chatOutputKey) {
+      return 'tribex-ai-chat-output:' + String(threadId || 'thread') + ':' + String(chatOutputKey || 'result');
     }
 
-    function buildActivityArtifactConfig(threadId, item) {
+    function buildActivityChatOutputConfig(threadId, item) {
       var contentType = resolveActivityContentType(item);
       var title = (item.resultData && item.resultData.title)
         || item.title
@@ -1216,16 +1227,16 @@
         item.reviewRequired ||
         (item.resultMeta && item.resultMeta.reviewRequired)
       );
-      var artifactKey = [
+      var chatOutputKey = [
         'tribex-ai-result',
         threadId || 'thread',
         item.turnId || ('ordinal-' + String(item.turnOrdinal || '0')),
         item.toolCallId || item.id || contentType || 'result',
       ].join(':');
       return {
-        drawerId: 'tribex-ai-thread-artifacts:' + (threadId || 'thread'),
-        artifactKey: artifactKey,
-        sessionKey: buildArtifactSessionKey(threadId, artifactKey),
+        drawerId: 'tribex-ai-thread-chat-outputs:' + (threadId || 'thread'),
+        chatOutputKey: chatOutputKey,
+        sessionKey: buildChatOutputSessionKey(threadId, chatOutputKey),
         sessionId: item.sessionId || null,
         title: title,
         contentType: contentType || 'rich_content',
@@ -1238,8 +1249,8 @@
           turnId: item.turnId || null,
           turnOrdinal: item.turnOrdinal || null,
           activityId: item.id || null,
-          artifactSource: 'tribex-ai-thread-result',
-          artifactKey: artifactKey,
+          chatOutputSource: 'tribex-ai-thread-result',
+          chatOutputKey: chatOutputKey,
         }),
         toolArgs: item.toolArgs || {},
         reviewRequired: reviewRequired,
@@ -1247,7 +1258,7 @@
       };
     }
 
-    function buildLegacyMessageArtifactConfig(threadId, message) {
+    function buildLegacyMessageChatOutputConfig(threadId, message) {
       var contentType = resolveActivityContentType(message);
       var title = (message.resultData && message.resultData.title)
         || message.resultTitle
@@ -1263,8 +1274,8 @@
       );
 
       return {
-        artifactKey: message.artifactKey,
-        sessionKey: buildArtifactSessionKey(threadId, message.artifactKey),
+        chatOutputKey: message.chatOutputKey,
+        sessionKey: buildChatOutputSessionKey(threadId, message.chatOutputKey),
         sessionId: reviewSessionId,
         title: title,
         contentType: contentType || 'rich_content',
@@ -1275,8 +1286,8 @@
           reviewSessionId: reviewSessionId,
           threadId: threadId || null,
           activityId: message.id || null,
-          artifactSource: 'tribex-ai-thread-result',
-          artifactKey: message.artifactKey,
+          chatOutputSource: 'tribex-ai-thread-result',
+          chatOutputKey: message.chatOutputKey,
         }),
         toolArgs: message.toolArgs || {},
         reviewRequired: reviewRequired,
@@ -1284,16 +1295,16 @@
       };
     }
 
-    function normalizeArtifactItems(record) {
+    function normalizeChatOutputItems(record) {
       if (!record) return [];
       var byKey = {};
 
-      function registerArtifact(config, item) {
-        if (!config || !config.artifactKey) return;
-        var artifactKey = config.artifactKey;
+      function registerChatOutput(config, item) {
+        if (!config || !config.chatOutputKey) return;
+        var chatOutputKey = config.chatOutputKey;
         if (!item) return;
-        byKey[artifactKey] = {
-          artifactKey: artifactKey,
+        byKey[chatOutputKey] = {
+          chatOutputKey: chatOutputKey,
           sessionKey: config.sessionKey,
           sessionId: config.sessionId,
           title: item.resultTitle || config.title,
@@ -1310,17 +1321,17 @@
 
       function registerActivityItem(item) {
         if (!item) return;
-        var config = buildActivityArtifactConfig(record.id, item);
-        if (item.artifactKey) {
-          config.artifactKey = item.artifactKey;
-          config.sessionKey = buildArtifactSessionKey(record.id, item.artifactKey);
+        var config = buildActivityChatOutputConfig(record.id, item);
+        if (item.chatOutputKey) {
+          config.chatOutputKey = item.chatOutputKey;
+          config.sessionKey = buildChatOutputSessionKey(record.id, item.chatOutputKey);
         }
-        registerArtifact(config, item);
+        registerChatOutput(config, item);
       }
 
       function registerLegacyMessage(message) {
-        if (!message || !message.artifactKey || byKey[message.artifactKey]) return;
-        registerArtifact(buildLegacyMessageArtifactConfig(record.id, message), message);
+        if (!message || !message.chatOutputKey || byKey[message.chatOutputKey]) return;
+        registerChatOutput(buildLegacyMessageChatOutputConfig(record.id, message), message);
       }
 
       buildActivityItems(record)
@@ -1331,7 +1342,7 @@
 
       extractSnapshotMessages(record)
         .filter(function (message) {
-          if (!message || message.role !== 'tool' || !message.artifactKey || !message.resultData) {
+          if (!message || message.role !== 'tool' || !message.chatOutputKey || !message.resultData) {
             return false;
           }
           return getCanonicalActivityDisplayMode({
@@ -1344,64 +1355,32 @@
             toolName: message.toolName || null,
             resultData: message.resultData || null,
             status: message.status || 'completed',
-          }) === 'artifact';
+          }) === 'inline_summary';
         })
         .forEach(registerLegacyMessage);
 
-      return Object.keys(byKey).map(function (artifactKey) {
-        return byKey[artifactKey];
+      return Object.keys(byKey).map(function (chatOutputKey) {
+        return byKey[chatOutputKey];
       });
     }
 
-    function syncThreadArtifactDrawer(record) {
+    function syncThreadChatOutputDrawer(record) {
       if (!record) return;
-
-      var artifacts = normalizeArtifactItems(record);
-      if (!record.artifactDrawer) {
-        record.artifactDrawer = {
-          drawerId: 'tribex-ai-thread-artifacts:' + record.id,
-          selectedArtifactKey: null,
-        };
-      }
-
-      if (
-        record.artifactDrawer.selectedArtifactKey &&
-        !artifacts.some(function (artifact) {
-          return artifact.artifactKey === record.artifactDrawer.selectedArtifactKey;
-        })
-      ) {
-        record.artifactDrawer.selectedArtifactKey = null;
-      }
-
-      if (!record.artifactDrawer.selectedArtifactKey && artifacts.length) {
-        record.artifactDrawer.selectedArtifactKey = artifacts[artifacts.length - 1].artifactKey;
-      }
-
-      if (!artifacts.length && !record.artifactDrawer.selectedArtifactKey) {
-        return;
+      if (record.chatOutputPanel) {
+        record.chatOutputPanel.selectedChatOutputKey = null;
       }
     }
 
     function attachActivityResultDrawer(record, item) {
       if (!record || !item || !isRendererResultItem(item)) return item;
-      var config = buildActivityArtifactConfig(record.id, item);
+      var config = buildActivityChatOutputConfig(record.id, item);
       var nextItem = Object.assign({}, item, {
-        artifactKey: item.artifactKey || config.artifactKey,
+        chatOutputKey: item.chatOutputKey || config.chatOutputKey,
         resultContentType: item.resultContentType || config.contentType,
         resultTitle: item.resultTitle || config.title,
       });
+      nextItem = normalizeActivityDisplay(nextItem);
 
-      if (nextItem.displayMode === 'inline' || nextItem.inlineDisplay === true) {
-        return nextItem;
-      }
-
-      record.artifactDrawer = record.artifactDrawer || {
-        drawerId: config.drawerId,
-        selectedArtifactKey: null,
-      };
-      record.artifactDrawer.drawerId = config.drawerId;
-      record.artifactDrawer.selectedArtifactKey = nextItem.artifactKey;
-      nextItem.artifactDrawerId = config.drawerId;
       return nextItem;
     }
 
@@ -1538,7 +1517,7 @@
             reviewRequired,
             stored && stored.displayMode === 'inline'
               ? true
-              : (stored && stored.displayMode === 'artifact' ? false : undefined)
+              : (stored && (stored.displayMode === 'chat_output' || stored.displayMode === 'inline_summary') ? false : undefined)
           );
           var status = normalizeToolPartStatus(part, message);
           var createdAt = (existing && existing.createdAt) || getActivityStartedAt(part, message.createdAt || null);
@@ -1620,7 +1599,7 @@
         record.activity.order.push(item.id);
       }
       syncActivityItemToTurn(record, nextItem);
-      syncThreadArtifactDrawer(record);
+      syncThreadChatOutputDrawer(record);
       return nextItem;
     }
 
@@ -1650,7 +1629,7 @@
         });
         syncActivityItemToTurn(record, record.activity.itemsById[item.id]);
       });
-      syncThreadArtifactDrawer(record);
+      syncThreadChatOutputDrawer(record);
     }
 
     function buildActivityItems(record) {
@@ -1695,7 +1674,7 @@
           return left.index - right.index;
         })
         .map(function (entry) {
-          return entry.item;
+          return normalizeActivityDisplay(entry.item);
         });
     }
 
@@ -2027,7 +2006,7 @@
       var displayMessages = buildDisplayMessages(record);
       var activityItems = buildActivityItems(record);
       var runs = buildRunGroups(record, displayMessages, activityItems);
-      var artifacts = normalizeArtifactItems(record);
+      var chatOutputs = normalizeChatOutputItems(record);
       var workflowProjection = record && record.workflowProjection
         ? cloneValue(record.workflowProjection)
         : null;
@@ -2106,15 +2085,15 @@
         displayMessages: displayMessages,
         activityItems: activityItems,
         runs: runs,
-        artifacts: artifacts,
+        chatOutputs: chatOutputs,
         workflowProjection: workflowProjection,
         workflowTimeline: workflowProjection ? workflowProjection.timeline : null,
-        artifactDrawer: record && record.artifactDrawer
+        chatOutputPanel: record && record.chatOutputPanel
           ? {
-            drawerId: record.artifactDrawer.drawerId || null,
-            selectedArtifactKey: record.artifactDrawer.selectedArtifactKey || null,
-            artifactKeys: artifacts.map(function (artifact) {
-              return artifact.artifactKey;
+            drawerId: record.chatOutputPanel.drawerId || null,
+            selectedChatOutputKey: record.chatOutputPanel.selectedChatOutputKey || null,
+            chatOutputKeys: chatOutputs.map(function (chatOutput) {
+              return chatOutput.chatOutputKey;
             }),
           }
           : null,
@@ -2339,10 +2318,10 @@
           displayMessages: projection.displayMessages,
           activityItems: projection.activityItems,
           runs: projection.runs,
-          artifacts: projection.artifacts,
+          chatOutputs: projection.chatOutputs,
           workflowProjection: projection.workflowProjection,
           workflowTimeline: projection.workflowTimeline,
-          artifactDrawer: projection.artifactDrawer,
+          chatOutputPanel: projection.chatOutputPanel,
           preview: projection.preview,
           messageActivityAt: projection.messageActivityAt,
           lastActivityAt: projection.lastActivityAt,
@@ -2383,10 +2362,10 @@
     api.reconcileRuntimeSnapshotTurnReferences = reconcileRuntimeSnapshotTurnReferences;
     api.isCompletedActivityStatus = isCompletedActivityStatus;
     api.isRendererBackedActivityItem = isRendererBackedActivityItem;
-    api.buildArtifactSessionKey = buildArtifactSessionKey;
-    api.buildActivityArtifactConfig = buildActivityArtifactConfig;
-    api.normalizeArtifactItems = normalizeArtifactItems;
-    api.syncThreadArtifactDrawer = syncThreadArtifactDrawer;
+    api.buildChatOutputSessionKey = buildChatOutputSessionKey;
+    api.buildActivityChatOutputConfig = buildActivityChatOutputConfig;
+    api.normalizeChatOutputItems = normalizeChatOutputItems;
+    api.syncThreadChatOutputDrawer = syncThreadChatOutputDrawer;
     api.attachActivityResultDrawer = attachActivityResultDrawer;
     api.normalizeToolPartStatus = normalizeToolPartStatus;
     api.buildToolPartDetail = buildToolPartDetail;

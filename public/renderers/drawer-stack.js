@@ -5,7 +5,7 @@
   'use strict';
 
   var stacks = new Map();
-  var threadArtifactDrawers = new Map();
+  var threadChatOutputDrawers = new Map();
   var currentSessionId = null;
   var BASE_Z = 150;
   var Z_INCREMENT = 2;
@@ -35,9 +35,9 @@
       }
     }
 
-    var artifactEntry = threadArtifactDrawers.get(sessionId);
-    if (!artifactEntry) return;
-    setDrawerDisplay(artifactEntry, false);
+    var chatOutputEntry = threadChatOutputDrawers.get(sessionId);
+    if (!chatOutputEntry) return;
+    setDrawerDisplay(chatOutputEntry, false);
   }
 
   function showSessionDrawers(sessionId) {
@@ -48,14 +48,14 @@
       }
     }
 
-    var artifactEntry = threadArtifactDrawers.get(sessionId);
-    if (!artifactEntry) return;
-    var artifactState = getActiveThreadArtifactState(artifactEntry);
-    if (artifactState && artifactState.isOpen && artifactState.order.length) {
-      openDrawerUi(artifactEntry);
+    var chatOutputEntry = threadChatOutputDrawers.get(sessionId);
+    if (!chatOutputEntry) return;
+    var chatOutputState = getActiveThreadChatOutputState(chatOutputEntry);
+    if (chatOutputState && chatOutputState.isOpen && chatOutputState.order.length) {
+      openDrawerUi(chatOutputEntry);
       return;
     }
-    setDrawerDisplay(artifactEntry, false);
+    setDrawerDisplay(chatOutputEntry, false);
   }
 
   function closeSessionDrawers(sessionId) {
@@ -67,10 +67,10 @@
       stacks.delete(sessionId);
     }
 
-    var artifactEntry = threadArtifactDrawers.get(sessionId);
-    if (!artifactEntry) return;
-    removeDrawerEntry(artifactEntry);
-    threadArtifactDrawers.delete(sessionId);
+    var chatOutputEntry = threadChatOutputDrawers.get(sessionId);
+    if (!chatOutputEntry) return;
+    removeDrawerEntry(chatOutputEntry);
+    threadChatOutputDrawers.delete(sessionId);
   }
 
   function createOverlay(level) {
@@ -129,7 +129,7 @@
     }
   }
 
-  function submitArtifactDecision(reviewSessionId, decision) {
+  function submitChatOutputDecision(reviewSessionId, decision) {
     if (!reviewSessionId || !window.__TAURI__ || !window.__TAURI__.core) return;
 
     var decisionStr = '';
@@ -171,7 +171,7 @@
       suggestionDecisions: suggestionDecisions,
       tableDecisions: tableDecisions,
     }).catch(function (error) {
-      console.error('[drawer-stack] Failed to submit artifact decision:', error);
+      console.error('[drawer-stack] Failed to submit chatOutput decision:', error);
     });
   }
 
@@ -325,7 +325,7 @@
       return;
     }
 
-    closeThreadArtifactDrawer(currentSessionId);
+    closeThreadChatOutputDrawer(currentSessionId);
   }
 
   function closeAllDrawers() {
@@ -334,109 +334,109 @@
       var entry = stack.pop();
       removeDrawerEntry(entry);
     }
-    closeThreadArtifactDrawer(currentSessionId);
+    closeThreadChatOutputDrawer(currentSessionId);
   }
 
-  function ensureThreadArtifactEntry(sessionId) {
+  function ensureThreadChatOutputEntry(sessionId) {
     if (sessionId == null) return null;
-    var existing = threadArtifactDrawers.get(sessionId);
+    var existing = threadChatOutputDrawers.get(sessionId);
     if (existing) return existing;
 
     var entry = createDrawerEntry(sessionId, 0, {
-      rendererName: 'thread_artifacts',
-      title: 'Artifacts',
-      displayMode: 'thread-artifact-drawer',
-      overlayClassName: 'thread-artifact-shell-overlay',
-      panelClassName: 'thread-artifact-shell-panel',
-      headerClassName: 'thread-artifact-shell-header',
-      contentClassName: 'thread-artifact-shell-content',
+      rendererName: 'thread_chatOutputs',
+      title: 'Chat outputs',
+      displayMode: 'thread-chat-output-drawer',
+      overlayClassName: 'thread-chat-output-shell-overlay',
+      panelClassName: 'thread-chat-output-shell-panel',
+      headerClassName: 'thread-chat-output-shell-header',
+      contentClassName: 'thread-chat-output-shell-content',
       onClose: function () {
-        closeThreadArtifactDrawer(sessionId);
+        closeThreadChatOutputDrawer(sessionId);
       },
     });
 
     entry.threads = new Map();
     entry.activeThreadId = null;
-    threadArtifactDrawers.set(sessionId, entry);
+    threadChatOutputDrawers.set(sessionId, entry);
     return entry;
   }
 
-  function ensureThreadArtifactState(entry, threadId) {
+  function ensureThreadChatOutputState(entry, threadId) {
     if (!entry || !threadId) return null;
     if (!entry.threads.has(threadId)) {
       entry.threads.set(threadId, {
-        drawerId: 'tribex-ai-thread-artifacts:' + threadId,
-        artifactsByKey: {},
+        drawerId: 'tribex-ai-thread-chat-outputs:' + threadId,
+        chatOutputsByKey: {},
         order: [],
-        selectedArtifactKey: null,
+        selectedChatOutputKey: null,
         isOpen: false,
       });
     }
     return entry.threads.get(threadId);
   }
 
-  function getActiveThreadArtifactState(entry) {
+  function getActiveThreadChatOutputState(entry) {
     if (!entry || !entry.activeThreadId) return null;
     return entry.threads.get(entry.activeThreadId) || null;
   }
 
-  function renderThreadArtifactContent(entry) {
+  function renderThreadChatOutputContent(entry) {
     if (!entry) return;
     clearElementChildren(entry.content);
 
-    var threadState = getActiveThreadArtifactState(entry);
+    var threadState = getActiveThreadChatOutputState(entry);
     if (!threadState || !threadState.order.length) {
-      updateDrawerTitle(entry, 'Artifacts');
+      updateDrawerTitle(entry, 'Chat outputs');
       closeDrawerUi(entry);
       return;
     }
 
-    var selectedKey = threadState.selectedArtifactKey;
-    if (!selectedKey || !threadState.artifactsByKey[selectedKey]) {
+    var selectedKey = threadState.selectedChatOutputKey;
+    if (!selectedKey || !threadState.chatOutputsByKey[selectedKey]) {
       selectedKey = threadState.order[threadState.order.length - 1];
-      threadState.selectedArtifactKey = selectedKey;
+      threadState.selectedChatOutputKey = selectedKey;
     }
 
-    var artifact = threadState.artifactsByKey[selectedKey];
-    if (!artifact) {
-      updateDrawerTitle(entry, 'Artifacts');
+    var chatOutput = threadState.chatOutputsByKey[selectedKey];
+    if (!chatOutput) {
+      updateDrawerTitle(entry, 'Chat outputs');
       closeDrawerUi(entry);
       return;
     }
 
-    updateDrawerTitle(entry, artifact.title || 'Artifact');
+    updateDrawerTitle(entry, chatOutput.title || 'Chat output');
 
     var body = document.createElement('div');
-    body.className = 'thread-artifact-shell';
+    body.className = 'thread-chat-output-shell';
     entry.content.appendChild(body);
 
     if (threadState.order.length > 1) {
       var tabs = document.createElement('div');
-      tabs.className = 'thread-artifact-tabs';
+      tabs.className = 'thread-chat-output-tabs';
 
-      threadState.order.forEach(function (artifactKey) {
-        var tabArtifact = threadState.artifactsByKey[artifactKey];
-        if (!tabArtifact) return;
+      threadState.order.forEach(function (chatOutputKey) {
+        var tabChatOutput = threadState.chatOutputsByKey[chatOutputKey];
+        if (!tabChatOutput) return;
 
         var tab = document.createElement('button');
         tab.type = 'button';
-        tab.className = 'thread-artifact-tab' + (artifactKey === selectedKey ? ' is-active' : '');
+        tab.className = 'thread-chat-output-tab' + (chatOutputKey === selectedKey ? ' is-active' : '');
         tab.addEventListener('click', function () {
-          selectThreadArtifact(entry.sessionId, entry.activeThreadId, artifactKey);
+          selectThreadChatOutput(entry.sessionId, entry.activeThreadId, chatOutputKey);
         });
 
         var label = document.createElement('span');
-        label.className = 'thread-artifact-tab-label';
-        label.textContent = tabArtifact.title || 'Artifact';
+        label.className = 'thread-chat-output-tab-label';
+        label.textContent = tabChatOutput.title || 'Chat output';
         tab.appendChild(label);
 
         var close = document.createElement('span');
-        close.className = 'thread-artifact-tab-close';
+        close.className = 'thread-chat-output-tab-close';
         close.textContent = '\u00D7';
         close.addEventListener('click', function (event) {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
           if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
-          closeThreadArtifact(entry.sessionId, entry.activeThreadId, artifactKey);
+          closeThreadChatOutput(entry.sessionId, entry.activeThreadId, chatOutputKey);
         });
         tab.appendChild(close);
         tabs.appendChild(tab);
@@ -446,34 +446,34 @@
     }
 
     var content = document.createElement('div');
-    content.className = 'thread-artifact-content';
+    content.className = 'thread-chat-output-content';
     body.appendChild(content);
 
-    var renderer = window.__renderers && window.__renderers[artifact.contentType];
+    var renderer = window.__renderers && window.__renderers[chatOutput.contentType];
     if (typeof renderer !== 'function') {
-      content.textContent = 'Renderer not found: ' + artifact.contentType;
+      content.textContent = 'Renderer not found: ' + chatOutput.contentType;
       content.style.padding = '24px';
       content.style.color = 'var(--text-secondary, #888)';
       return;
     }
 
     try {
-      var reviewRequired = !!(artifact.reviewRequired || (artifact.meta && artifact.meta.reviewRequired));
-      var reviewSessionId = artifact.reviewSessionId || (artifact.meta && artifact.meta.reviewSessionId) || null;
+      var reviewRequired = !!(chatOutput.reviewRequired || (chatOutput.meta && chatOutput.meta.reviewRequired));
+      var reviewSessionId = chatOutput.reviewSessionId || (chatOutput.meta && chatOutput.meta.reviewSessionId) || null;
       renderer(
         content,
-        artifact.data || {},
-        artifact.meta || {},
-        artifact.toolArgs || {},
+        chatOutput.data || {},
+        chatOutput.meta || {},
+        chatOutput.toolArgs || {},
         reviewRequired,
         reviewRequired && reviewSessionId
           ? function (decision) {
-              submitArtifactDecision(reviewSessionId, decision);
+              submitChatOutputDecision(reviewSessionId, decision);
             }
           : null,
         {
-          mode: 'thread-artifact-drawer',
-          params: artifact.data || {},
+          mode: 'thread-chat-output-drawer',
+          params: chatOutput.data || {},
           level: 0,
           invoke: function (name, p) {
             invokeRenderer(name, p);
@@ -481,103 +481,64 @@
         },
       );
     } catch (error) {
-      console.error('[drawer-stack] Thread artifact renderer error:', artifact.contentType, error);
-      content.textContent = 'Failed to load renderer: ' + artifact.contentType;
+      console.error('[drawer-stack] Thread chatOutput renderer error:', chatOutput.contentType, error);
+      content.textContent = 'Failed to load renderer: ' + chatOutput.contentType;
       content.style.padding = '24px';
       content.style.color = 'var(--text-secondary, #888)';
     }
   }
 
-  function syncThreadArtifactDrawer(payload) {
+  function syncThreadChatOutputDrawer(payload) {
     if (!payload || !payload.sessionId || !payload.threadId) return null;
-    var entry = ensureThreadArtifactEntry(payload.sessionId);
-    if (!entry) return null;
-
-    var threadState = ensureThreadArtifactState(entry, payload.threadId);
-    entry.activeThreadId = payload.threadId;
-
-    threadState.drawerId = payload.drawerId || threadState.drawerId;
-    threadState.artifactsByKey = {};
-    threadState.order = [];
-
-    (payload.artifacts || []).forEach(function (artifact) {
-      if (!artifact || !artifact.artifactKey) return;
-      threadState.artifactsByKey[artifact.artifactKey] = Object.assign({}, artifact);
-      threadState.order.push(artifact.artifactKey);
-    });
-
-    if (!threadState.order.length) {
-      threadState.selectedArtifactKey = null;
-      threadState.isOpen = false;
-      renderThreadArtifactContent(entry);
-      return threadState.drawerId;
+    var entry = threadChatOutputDrawers.get(payload.sessionId);
+    if (entry) {
+      removeDrawerEntry(entry);
+      threadChatOutputDrawers.delete(payload.sessionId);
     }
-
-    if (payload.selectedArtifactKey && threadState.artifactsByKey[payload.selectedArtifactKey]) {
-      threadState.selectedArtifactKey = payload.selectedArtifactKey;
-    } else if (!threadState.selectedArtifactKey || !threadState.artifactsByKey[threadState.selectedArtifactKey]) {
-      threadState.selectedArtifactKey = threadState.order[threadState.order.length - 1];
-    }
-
-    threadState.isOpen = payload.open !== false;
-    renderThreadArtifactContent(entry);
-    if (threadState.isOpen) {
-      openDrawerUi(entry);
-    } else {
-      closeDrawerUi(entry);
-    }
-    return threadState.drawerId;
+    return payload.drawerId || 'tribex-ai-thread-chat-outputs:' + payload.threadId;
   }
 
-  function selectThreadArtifact(sessionId, threadId, artifactKey) {
+  function selectThreadChatOutput(sessionId, threadId, chatOutputKey) {
     if (!sessionId || !threadId) return null;
-    var entry = ensureThreadArtifactEntry(sessionId);
-    var threadState = ensureThreadArtifactState(entry, threadId);
-    if (!threadState || !threadState.order.length) return null;
-
-    entry.activeThreadId = threadId;
-    if (artifactKey && threadState.artifactsByKey[artifactKey]) {
-      threadState.selectedArtifactKey = artifactKey;
-    } else if (!threadState.selectedArtifactKey || !threadState.artifactsByKey[threadState.selectedArtifactKey]) {
-      threadState.selectedArtifactKey = threadState.order[threadState.order.length - 1];
+    var entry = threadChatOutputDrawers.get(sessionId);
+    if (entry) {
+      removeDrawerEntry(entry);
+      threadChatOutputDrawers.delete(sessionId);
     }
-    threadState.isOpen = true;
-    renderThreadArtifactContent(entry);
-    openDrawerUi(entry);
-    return threadState.selectedArtifactKey;
+    return null;
   }
 
-  function closeThreadArtifact(sessionId, threadId, artifactKey) {
-    if (!sessionId || !threadId || !artifactKey) return null;
-    var entry = threadArtifactDrawers.get(sessionId);
+  function closeThreadChatOutput(sessionId, threadId, chatOutputKey) {
+    if (!sessionId || !threadId || !chatOutputKey) return null;
+    var entry = threadChatOutputDrawers.get(sessionId);
     if (!entry) return null;
     var threadState = entry.threads.get(threadId);
-    if (!threadState || !threadState.artifactsByKey[artifactKey]) return null;
+    if (!threadState || !threadState.chatOutputsByKey[chatOutputKey]) return null;
 
-    delete threadState.artifactsByKey[artifactKey];
+    delete threadState.chatOutputsByKey[chatOutputKey];
     threadState.order = threadState.order.filter(function (candidate) {
-      return candidate !== artifactKey;
+      return candidate !== chatOutputKey;
     });
 
     if (!threadState.order.length) {
-      threadState.selectedArtifactKey = null;
+      threadState.selectedChatOutputKey = null;
       threadState.isOpen = false;
-    } else if (threadState.selectedArtifactKey === artifactKey) {
-      threadState.selectedArtifactKey = threadState.order[threadState.order.length - 1];
+    } else if (threadState.selectedChatOutputKey === chatOutputKey) {
+      threadState.selectedChatOutputKey = threadState.order[threadState.order.length - 1];
     }
 
-    renderThreadArtifactContent(entry);
+    renderThreadChatOutputContent(entry);
     if (threadState.isOpen) {
       openDrawerUi(entry);
     } else {
       closeDrawerUi(entry);
     }
-    return threadState.selectedArtifactKey;
+    return threadState.selectedChatOutputKey;
   }
 
-  function closeThreadArtifactDrawer(sessionId, threadId) {
+  function closeThreadChatOutputDrawer(sessionId, threadId) {
     if (!sessionId) return;
-    var entry = threadArtifactDrawers.get(sessionId);
+    var entry = threadChatOutputDrawers.get(sessionId);
     if (!entry) return;
     var targetThreadId = threadId || entry.activeThreadId;
     var threadState = targetThreadId ? entry.threads.get(targetThreadId) : null;
@@ -587,19 +548,16 @@
     closeDrawerUi(entry);
   }
 
-  function setThreadArtifactContext(sessionId, threadId) {
+  function setThreadChatOutputContext(sessionId, threadId) {
     if (!sessionId) return;
-    var entry = threadArtifactDrawers.get(sessionId);
+    var entry = threadChatOutputDrawers.get(sessionId);
     if (!entry) return;
     entry.activeThreadId = threadId || null;
-    renderThreadArtifactContent(entry);
+    renderThreadChatOutputContent(entry);
 
-    var threadState = getActiveThreadArtifactState(entry);
-    if (threadState && threadState.isOpen && threadState.order.length) {
-      openDrawerUi(entry);
-    } else {
-      closeDrawerUi(entry);
-    }
+    var threadState = getActiveThreadChatOutputState(entry);
+    if (threadState) threadState.isOpen = false;
+    closeDrawerUi(entry);
   }
 
   var utils = window.__companionUtils || {};
@@ -610,10 +568,10 @@
   utils.hideSessionDrawers = hideSessionDrawers;
   utils.showSessionDrawers = showSessionDrawers;
   utils.closeSessionDrawers = closeSessionDrawers;
-  utils.syncThreadArtifactDrawer = syncThreadArtifactDrawer;
-  utils.selectThreadArtifact = selectThreadArtifact;
-  utils.closeThreadArtifact = closeThreadArtifact;
-  utils.closeThreadArtifactDrawer = closeThreadArtifactDrawer;
-  utils.setThreadArtifactContext = setThreadArtifactContext;
+  utils.syncThreadChatOutputDrawer = syncThreadChatOutputDrawer;
+  utils.selectThreadChatOutput = selectThreadChatOutput;
+  utils.closeThreadChatOutput = closeThreadChatOutput;
+  utils.closeThreadChatOutputDrawer = closeThreadChatOutputDrawer;
+  utils.setThreadChatOutputContext = setThreadChatOutputContext;
   window.__companionUtils = utils;
 })();

@@ -450,13 +450,13 @@
     return '';
   }
 
-  function buildLegacyArtifactKey(raw, index, contentType) {
+  function buildLegacyChatOutputKey(raw, index, contentType) {
     var threadId = extractCompanionThreadId(raw);
     if (!threadId || !contentType) return null;
     if (typeof raw.sequence === 'number' && Number.isFinite(raw.sequence)) {
       return ['tribex-ai-result', threadId, 'sequence', String(raw.sequence)].join(':');
     }
-    var itemId = pickFirst([raw.toolCallId, raw.id, raw.eventId], 'artifact-' + index);
+    var itemId = pickFirst([raw.toolCallId, raw.id, raw.eventId], 'chat-output-' + index);
     return ['tribex-ai-result', threadId, 'legacy', itemId].join(':');
   }
 
@@ -670,7 +670,7 @@
       ], id),
       renderer: pickFirst([raw.renderer, raw.toolName, raw.tool_name], null),
       rendererPayload: raw.rendererPayload || raw.renderer_payload || raw.safePayload || raw.safe_payload || raw.payload || {},
-      artifactId: pickFirst([raw.artifactId, raw.artifact_id], null),
+      chatOutputId: pickFirst([raw.chatOutputId, raw.chatOutput_id], null),
       createdAt: normalizeTimestamp(pickFirst([raw.createdAt, raw.created_at], null)),
       updatedAt: normalizeTimestamp(pickFirst([raw.updatedAt, raw.updated_at], null)),
       index: index,
@@ -807,8 +807,8 @@
         resultMeta,
         sessionId
       );
-      var artifactKey = rendererPayload && resultData && !inlineDisplay
-        ? (raw.artifactKey || raw.artifact_key || buildLegacyArtifactKey(raw, index, resultContentType))
+      var chatOutputKey = rendererPayload && resultData && !inlineDisplay
+        ? (raw.chatOutputKey || raw.chatOutput_key || buildLegacyChatOutputKey(raw, index, resultContentType))
         : null;
       return {
         id: buildCompanionToolMessageId(raw, index),
@@ -823,7 +823,7 @@
         modelName: pickFirst([raw.modelName, raw.model_name, raw.modelId, raw.model_id, raw.model], null),
         modelProvider: pickFirst([raw.modelProvider, raw.model_provider, raw.providerName, raw.provider_name, raw.provider], null),
         resultContentType: resultContentType,
-        artifactKey: artifactKey,
+        chatOutputKey: chatOutputKey,
         sessionId: sessionId,
         inlineDisplay: inlineDisplay,
         sequence: typeof raw.sequence === 'number' ? raw.sequence : null,

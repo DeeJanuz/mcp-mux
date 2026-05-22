@@ -18,21 +18,21 @@ export const workflowProjectionFixtures = {
     steps: [
       step('accept', 10, 'Accept request', 'plan', 'completed'),
       step('accounts', 20, 'Discover connected email accounts', 'tool', 'completed', {
-        evidenceRefs: ['artifact:account-discovery'],
+        evidenceRefs: ['output:account-discovery'],
       }),
       step('delegate', 30, 'Dispatch inbox analysis delegates', 'delegate', 'completed', {
         childRunRefs: ['subagent:gmail-primary', 'subagent:gmail-support'],
       }),
       step('evidence', 40, 'Collect evidence', 'synthesis', 'completed', {
-        evidenceRefs: ['artifact:primary-analysis', 'artifact:support-analysis'],
-        artifactRefs: ['artifact:primary-analysis', 'artifact:support-analysis'],
+        evidenceRefs: ['output:primary-analysis', 'output:support-analysis'],
+        outputRefs: ['output:primary-analysis', 'output:support-analysis'],
       }),
       step('drafts', 50, 'Create user-mailbox drafts', 'draft', 'completed', {
-        artifactRefs: ['artifact:draft-followup'],
+        outputRefs: ['output:draft-followup'],
         mutationRisk: 'draft_or_stage',
       }),
       step('archive-review', 60, 'Open archive review', 'review', 'completed', {
-        artifactRefs: ['artifact:archive-review'],
+        outputRefs: ['output:archive-review'],
         approvalRefs: ['approval:archive-review'],
         mutationRisk: 'approval_required',
       }),
@@ -41,25 +41,25 @@ export const workflowProjectionFixtures = {
         mutationRisk: 'apply_approved_change',
       }),
       step('final', 80, 'Produce evidence-backed final summary', 'final', 'completed', {
-        evidenceRefs: ['artifact:primary-analysis', 'artifact:support-analysis'],
-        artifactRefs: ['artifact:final-summary'],
+        evidenceRefs: ['output:primary-analysis', 'output:support-analysis'],
+        outputRefs: ['output:final-summary'],
       }),
     ],
-    artifacts: [
-      artifact('artifact:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
-      artifact('artifact:support-analysis', 'analysis', 'Support inbox analysis', 'created'),
-      artifact('artifact:draft-followup', 'draft', 'Follow-up draft', 'staged', {
+    outputs: [
+      output('output:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
+      output('output:support-analysis', 'analysis', 'Support inbox analysis', 'created'),
+      output('output:draft-followup', 'draft', 'Follow-up draft', 'staged', {
         externalRef: 'gmail:draft:followup-1',
       }),
-      artifact('artifact:archive-review', 'review', 'Archive candidate review', 'applied', {
-        rendererArtifactKey: 'tribex-ai-result:thread-email-ops:op-email-happy:archive-review',
+      output('output:archive-review', 'review', 'Archive candidate review', 'applied', {
+        rendererChatOutputKey: 'tribex-ai-result:thread-email-ops:op-email-happy:archive-review',
       }),
-      artifact('artifact:final-summary', 'summary', 'Final summary', 'created'),
+      output('output:final-summary', 'summary', 'Final summary', 'created'),
     ],
     approvals: [
       approval('approval:archive-review', 'Archive candidate review', 'applied', {
         reviewSessionId: 'review-archive-1',
-        artifactRef: 'artifact:archive-review',
+        outputRef: 'output:archive-review',
       }),
     ],
     summary: 'Reviewed two inboxes, staged one draft, and archived approved messages.',
@@ -81,11 +81,11 @@ export const workflowProjectionFixtures = {
     steps: [
       step('accept', 10, 'Accept request', 'plan', 'completed', { operationId: 'op-email-pending' }),
       step('evidence', 20, 'Collect evidence', 'synthesis', 'completed', { operationId: 'op-email-pending',
-        evidenceRefs: ['artifact:primary-analysis'],
-        artifactRefs: ['artifact:primary-analysis'],
+        evidenceRefs: ['output:primary-analysis'],
+        outputRefs: ['output:primary-analysis'],
       }),
       step('archive-review', 30, 'Open archive review', 'review', 'review_needed', { operationId: 'op-email-pending',
-        artifactRefs: ['artifact:archive-review'],
+        outputRefs: ['output:archive-review'],
         approvalRefs: ['approval:archive-review'],
         mutationRisk: 'approval_required',
       }),
@@ -94,16 +94,16 @@ export const workflowProjectionFixtures = {
         mutationRisk: 'apply_approved_change',
       }),
     ],
-    artifacts: [
-      artifact('artifact:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
-      artifact('artifact:archive-review', 'review', 'Archive candidate review', 'reviewing', {
-        rendererArtifactKey: 'tribex-ai-result:thread-email-ops:op-email-pending:archive-review',
+    outputs: [
+      output('output:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
+      output('output:archive-review', 'review', 'Archive candidate review', 'reviewing', {
+        rendererChatOutputKey: 'tribex-ai-result:thread-email-ops:op-email-pending:archive-review',
       }),
     ],
     approvals: [
       approval('approval:archive-review', 'Archive candidate review', 'pending', {
         reviewSessionId: 'review-archive-pending',
-        artifactRef: 'artifact:archive-review',
+        outputRef: 'output:archive-review',
       }),
     ],
     summary: 'Archive candidates are ready for review; no archive changes have been applied.',
@@ -126,7 +126,7 @@ export const workflowProjectionFixtures = {
       step('accept', 10, 'Accept request', 'plan', 'completed', { operationId: 'op-email-partial' }),
       step('delegate-primary', 20, 'Analyze primary inbox', 'delegate', 'completed', { operationId: 'op-email-partial',
         childRunRefs: ['subagent:gmail-primary'],
-        evidenceRefs: ['artifact:primary-analysis'],
+        evidenceRefs: ['output:primary-analysis'],
       }),
       step('delegate-support', 30, 'Analyze support inbox', 'delegate', 'failed', { operationId: 'op-email-partial',
         childRunRefs: ['subagent:gmail-support'],
@@ -134,15 +134,15 @@ export const workflowProjectionFixtures = {
       }),
       step('repair-support', 31, 'Continue with partial delegate results', 'repair', 'completed', { operationId: 'op-email-partial',
         repairOfStepId: 'op-email-partial:email_ops_v1:delegate-support',
-        evidenceRefs: ['artifact:primary-analysis'],
+        evidenceRefs: ['output:primary-analysis'],
       }),
       step('final', 40, 'Produce partial evidence summary', 'final', 'completed', { operationId: 'op-email-partial',
-        evidenceRefs: ['artifact:primary-analysis'],
+        evidenceRefs: ['output:primary-analysis'],
         detail: 'Summary is explicit that support inbox coverage is missing.',
       }),
     ],
-    artifacts: [
-      artifact('artifact:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
+    outputs: [
+      output('output:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
     ],
     approvals: [],
     summary: 'Primary inbox analysis completed. Support inbox analysis timed out and is excluded.',
@@ -164,7 +164,7 @@ export const workflowProjectionFixtures = {
     steps: [
       step('accept', 10, 'Accept request', 'plan', 'completed', { operationId: 'op-email-repaired' }),
       step('evidence', 20, 'Collect evidence', 'synthesis', 'completed', { operationId: 'op-email-repaired',
-        evidenceRefs: ['artifact:primary-analysis'],
+        evidenceRefs: ['output:primary-analysis'],
       }),
       step('drafts', 30, 'Create user-mailbox drafts', 'draft', 'failed', { operationId: 'op-email-repaired',
         detail: 'Draft validation failed because unresolved placeholder text was detected.',
@@ -172,16 +172,16 @@ export const workflowProjectionFixtures = {
       }),
       step('repair-drafts', 31, 'Repair draft validation', 'repair', 'completed', { operationId: 'op-email-repaired',
         repairOfStepId: 'op-email-repaired:email_ops_v1:drafts',
-        artifactRefs: ['artifact:draft-followup'],
+        outputRefs: ['output:draft-followup'],
       }),
       step('final', 40, 'Produce evidence-backed final summary', 'final', 'completed', { operationId: 'op-email-repaired',
-        evidenceRefs: ['artifact:primary-analysis'],
-        artifactRefs: ['artifact:draft-followup'],
+        evidenceRefs: ['output:primary-analysis'],
+        outputRefs: ['output:draft-followup'],
       }),
     ],
-    artifacts: [
-      artifact('artifact:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
-      artifact('artifact:draft-followup', 'draft', 'Repaired follow-up draft', 'staged'),
+    outputs: [
+      output('output:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
+      output('output:draft-followup', 'draft', 'Repaired follow-up draft', 'staged'),
     ],
     approvals: [],
     summary: 'Draft placeholder was repaired before the final response.',
@@ -212,7 +212,7 @@ export const workflowProjectionFixtures = {
         repairOfStepId: 'op-email-exhausted:email_ops_v1:accounts',
       }),
     ],
-    artifacts: [],
+    outputs: [],
     approvals: [],
     summary: 'Account discovery repair budget was exhausted. No email mutation was attempted.',
   },
@@ -235,21 +235,21 @@ export const workflowProjectionFixtures = {
         step('accept', 10, 'Accept email coordinator request', 'plan', 'completed', { operationId: 'op-email-complex' }),
         step('delegate-primary', 20, 'Delegate primary inbox run run_email_primary_0123456789abcdef0123456789abcdef', 'delegate', 'completed', { operationId: 'op-email-complex',
           childRunRefs: ['subagent:gmail-primary:run_email_primary_0123456789abcdef0123456789abcdef'],
-          evidenceRefs: ['artifact:primary-analysis'],
+          evidenceRefs: ['output:primary-analysis'],
         }),
         step('delegate-security', 30, 'Delegate security questionnaire inbox run run_email_security_0123456789abcdef0123456789abcdef', 'delegate', 'completed', { operationId: 'op-email-complex',
           childRunRefs: ['subagent:gmail-security:run_email_security_0123456789abcdef0123456789abcdef'],
-          evidenceRefs: ['artifact:security-analysis'],
+          evidenceRefs: ['output:security-analysis'],
         }),
         step('delegate-vendor', 40, 'Delegate vendor follow-up inbox run run_email_vendor_0123456789abcdef0123456789abcdef', 'delegate', 'completed', { operationId: 'op-email-complex',
           childRunRefs: ['subagent:gmail-vendor:run_email_vendor_0123456789abcdef0123456789abcdef'],
-          evidenceRefs: ['artifact:vendor-analysis'],
+          evidenceRefs: ['output:vendor-analysis'],
         }),
         step('pause-listen', 50, 'Pause for subagent_listen resolution', 'tool', 'completed', { operationId: 'op-email-complex',
           detail: 'subagent_listen paused until all delegated runs resolved.',
         }),
         step('archive-review', 60, 'Open archive review with mixed needs_review/archive candidates', 'review', 'review_needed', { operationId: 'op-email-complex',
-          artifactRefs: ['artifact:archive-review'],
+          outputRefs: ['output:archive-review'],
           approvalRefs: ['approval:archive-review'],
           mutationRisk: 'approval_required',
         }),
@@ -257,12 +257,12 @@ export const workflowProjectionFixtures = {
           detail: 'Final response waits on archive approval; needs_review items stay visible.',
         }),
       ],
-      artifacts: [
-        artifact('artifact:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
-        artifact('artifact:security-analysis', 'analysis', 'Security questionnaire analysis', 'created'),
-        artifact('artifact:vendor-analysis', 'analysis', 'Vendor follow-up analysis', 'created'),
-        artifact('artifact:archive-review', 'review', 'Archive review candidates', 'reviewing', {
-          rendererArtifactKey: 'tribex-ai-result:thread-email-complex:op-email-complex:archive-review',
+      outputs: [
+        output('output:primary-analysis', 'analysis', 'Primary inbox analysis', 'created'),
+        output('output:security-analysis', 'analysis', 'Security questionnaire analysis', 'created'),
+        output('output:vendor-analysis', 'analysis', 'Vendor follow-up analysis', 'created'),
+        output('output:archive-review', 'review', 'Archive review candidates', 'reviewing', {
+          rendererChatOutputKey: 'tribex-ai-result:thread-email-complex:op-email-complex:archive-review',
           data: archiveReviewPayload(),
           meta: {
             reviewRequired: true,
@@ -277,13 +277,13 @@ export const workflowProjectionFixtures = {
       approvals: [
         approval('approval:archive-review', 'Archive review candidates', 'pending', {
           reviewSessionId: 'review-email-complex',
-          artifactRef: 'artifact:archive-review',
+          outputRef: 'output:archive-review',
         }),
       ],
       summary: 'Archive candidates include three archive-ready messages and two needs_review summaries.',
     },
-    reviewArtifact: {
-      artifactKey: 'tribex-ai-result:thread-email-complex:op-email-complex:archive-review',
+    reviewOutput: {
+      chatOutputKey: 'tribex-ai-result:thread-email-complex:op-email-complex:archive-review',
       title: 'Archive review candidates',
       contentType: 'structured_data',
       reviewRequired: true,
@@ -316,7 +316,7 @@ function step(key, order, title, kind, status, overrides = {}) {
     updatedAt: '2026-04-24T18:02:00.000Z',
     detail: null,
     evidenceRefs: [],
-    artifactRefs: [],
+    outputRefs: [],
     approvalRefs: [],
     repairOfStepId: null,
     childRunRefs: [],
@@ -324,13 +324,13 @@ function step(key, order, title, kind, status, overrides = {}) {
   };
 }
 
-function artifact(id, kind, title, status, overrides = {}) {
+function output(id, kind, title, status, overrides = {}) {
   return {
     id,
     kind,
     title,
     status,
-    rendererArtifactKey: null,
+    rendererChatOutputKey: null,
     externalRef: null,
     ...overrides,
   };
@@ -342,7 +342,7 @@ function approval(id, title, status, overrides = {}) {
     title,
     status,
     reviewSessionId: null,
-    artifactRef: null,
+    outputRef: null,
     ...overrides,
   };
 }

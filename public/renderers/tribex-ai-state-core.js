@@ -366,7 +366,7 @@
         draftText: '',
         scrollTop: null,
         wasNearBottom: true,
-        selectedArtifactKey: null,
+        selectedChatOutputKey: null,
         workSessionOpen: {},
         lastViewedAt: null,
       };
@@ -664,7 +664,7 @@
           draftText: '',
           scrollTop: null,
           wasNearBottom: true,
-          selectedArtifactKey: null,
+          selectedChatOutputKey: null,
           workSessionOpen: {},
           lastViewedAt: null,
         };

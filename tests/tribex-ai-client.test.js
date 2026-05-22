@@ -466,7 +466,7 @@ describe('tribex-ai-client', function () {
     })).toBe(false);
   });
 
-  it('treats thread-scoped rich content as a previewable artifact session', function () {
+  it('treats thread-scoped rich content as a previewable chatOutput session', function () {
     expect(window.__tribexAiClient.shouldPreviewCompanionPayload({
       toolName: 'rich_content',
       toolArgs: { threadId: 'thread-1' },
@@ -784,7 +784,7 @@ describe('tribex-ai-client', function () {
     });
   });
 
-  it('keeps non-renderer subagent tool results out of artifact slots', function () {
+  it('keeps non-renderer subagent tool results out of chatOutput slots', function () {
     expect(window.__tribexAiClient.normalizeMessage({
       toolName: 'subagent_dispatch',
       result: {
@@ -797,7 +797,7 @@ describe('tribex-ai-client', function () {
     }, 0)).toMatchObject({
       role: 'tool',
       toolName: 'subagent_dispatch',
-      artifactKey: null,
+      chatOutputKey: null,
       inlineDisplay: false,
       resultContentType: 'subagent_dispatch',
       resultData: {
@@ -824,7 +824,7 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'rich_content',
       toolArgs: { threadId: 'thread-1' },
-      artifactKey: null,
+      chatOutputKey: null,
       inlineDisplay: true,
       resultContentType: 'rich_content',
       resultData: {
@@ -1032,7 +1032,7 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'structured_data',
       sessionId: 'review-session-1',
-      artifactKey: 'tribex-ai-result:thread-1:sequence:12',
+      chatOutputKey: 'tribex-ai-result:thread-1:sequence:12',
       resultContentType: 'structured_data',
       resultMeta: {
         reviewRequired: true,
@@ -1040,7 +1040,7 @@ describe('tribex-ai-client', function () {
     });
   });
 
-  it('preserves structured_data payloads and legacy artifact identity for thread-scoped tool messages', function () {
+  it('preserves structured_data payloads and legacy chatOutput identity for thread-scoped tool messages', function () {
     expect(window.__tribexAiClient.normalizeMessage({
       toolName: 'structured_data',
       toolArgs: { threadId: 'thread-1' },
@@ -1058,7 +1058,7 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'structured_data',
       resultContentType: 'structured_data',
-      artifactKey: null,
+      chatOutputKey: null,
       inlineDisplay: true,
       resultData: {
         tables: [{
@@ -1091,7 +1091,7 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'universal_graph',
       resultContentType: 'universal_graph',
-      artifactKey: null,
+      chatOutputKey: null,
       inlineDisplay: true,
       resultData: {
         title: 'Revenue Trend',
@@ -1134,7 +1134,7 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'structured_data',
       resultContentType: 'structured_data',
-      artifactKey: null,
+      chatOutputKey: null,
       inlineDisplay: true,
       resultMeta: {
         source: 'push-content',
@@ -1181,7 +1181,7 @@ describe('tribex-ai-client', function () {
       role: 'tool',
       toolName: 'universal_graph',
       resultContentType: 'universal_graph',
-      artifactKey: null,
+      chatOutputKey: null,
       inlineDisplay: true,
       resultMeta: {
         source: 'push-content',

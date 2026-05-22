@@ -473,8 +473,8 @@
       var activityItem = buildCompanionActivityItem(normalizedMessage, record);
       if (!activityItem) return false;
       var nextItem = api.upsertActivityItem(record, activityItem);
-      if (shouldAutoOpenArtifactItem(nextItem)) {
-        api.openThreadArtifact(threadId, nextItem.artifactKey, {
+      if (shouldAutoOpenChatOutputItem(nextItem)) {
+        api.openThreadChatOutput(threadId, nextItem.chatOutputKey, {
           autoFocus: true,
         });
       }
@@ -707,7 +707,7 @@
         api.rebuildTurnHistory(merged);
         api.reconcileActiveTurn(merged);
         api.reconcileLiveActivity(merged);
-        api.syncThreadArtifactDrawer(merged);
+        api.syncThreadChatOutputDrawer(merged);
       } else if (Array.isArray(detail.messages)) {
         merged.base.messages = detail.messages.slice();
         api.rebuildTurnHistory(merged);
@@ -1080,20 +1080,8 @@
       };
     }
 
-    function shouldAutoOpenArtifactItem(item) {
-      if (!item || !api.isRendererBackedActivityItem(item) || !item.artifactKey) {
-        return false;
-      }
-      if (item.displayMode === 'inline' || item.inlineDisplay === true) {
-        return false;
-      }
-      if (item.sessionId) {
-        return false;
-      }
-      if (item.reviewRequired || (item.resultMeta && item.resultMeta.reviewRequired)) {
-        return false;
-      }
-      return true;
+    function shouldAutoOpenChatOutputItem(item) {
+      return false;
     }
 
     function applySendResult(threadId, result) {
@@ -1466,11 +1454,11 @@
           api.notify();
           return;
         }
-        var isRendererArtifact = !!(activityItem && api.isRendererBackedActivityItem(activityItem));
-        if (isRendererArtifact) {
-          var storedArtifactItem = api.upsertActivityItem(record, activityItem);
-          if (shouldAutoOpenArtifactItem(storedArtifactItem)) {
-            api.openThreadArtifact(record.id, storedArtifactItem.artifactKey, {
+        var isRendererChatOutput = !!(activityItem && api.isRendererBackedActivityItem(activityItem));
+        if (isRendererChatOutput) {
+          var storedChatOutputItem = api.upsertActivityItem(record, activityItem);
+          if (shouldAutoOpenChatOutputItem(storedChatOutputItem)) {
+            api.openThreadChatOutput(record.id, storedChatOutputItem.chatOutputKey, {
               autoFocus: true,
             });
           }
@@ -1851,8 +1839,8 @@
           turnOrdinal: event.item.turnOrdinal || (detail.activeTurn && detail.activeTurn.turnOrdinal) || detail.lastTurnOrdinal || null,
         }));
         registerSubAgentChildThread(threadId, nextItem || normalizedActivityItem || event.item);
-        if (shouldAutoOpenArtifactItem(nextItem)) {
-          api.openThreadArtifact(threadId, nextItem.artifactKey, {
+        if (shouldAutoOpenChatOutputItem(nextItem)) {
+          api.openThreadChatOutput(threadId, nextItem.chatOutputKey, {
             autoFocus: true,
           });
         }

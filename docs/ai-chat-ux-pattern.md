@@ -27,7 +27,7 @@ Use language that matches how a person experiences the chat. Do not expose `sess
 
 - **Thread**: the full conversation.
 - **Request**: one user prompt or intentional follow-up. This is the top-level timeline unit and should be labeled `Request N` when a numbered label is needed.
-- **Activity**: work the AI performs inside a request, including tool calls, delegated work, file edits, test runs, and generated artifacts.
+- **Activity**: work the AI performs inside a request, including tool calls, delegated work, file edits, test runs, and generated chatOutputs.
 - **Decision** or **Action required**: a user checkpoint inside the request, such as a review, approval, auth step, or continue control.
 - **Queued follow-up**: a user message submitted while the active request is still running.
 - **Result**: the assistant's answer or completion output for a request.
@@ -41,7 +41,7 @@ The chat surface has four conceptual regions:
 1. Timeline: the single vertical scroll container for messages, tool events, review cards, queued context, and completion events.
 2. Latest action dock: a stable bottom area directly above the composer that summarizes and controls the newest pending user action.
 3. Composer: the user's message entry point, fixed at the bottom of the thread layout.
-4. Secondary artifact area: side panels or drawers for large artifacts. These should not steal the primary review or resume controls from the thread.
+4. Secondary chatOutput area: side panels or drawers for large chatOutputs. These should not steal the primary review or resume controls from the thread.
 
 The timeline and action dock are part of the same conversational model. The dock may mirror the latest pending action for convenience, but the corresponding action event still exists inline in the timeline at the point it occurred.
 

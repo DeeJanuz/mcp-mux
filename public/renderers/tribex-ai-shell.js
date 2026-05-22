@@ -1389,6 +1389,81 @@
     }) || null;
   }
 
+  function renderHtmlFilePreview(preview, file) {
+    var wrap = document.createElement('div');
+    wrap.className = 'workspace-file-html-preview';
+
+    var frame = document.createElement('iframe');
+    frame.className = 'workspace-file-html-frame';
+    frame.title = (file && file.name ? file.name : 'HTML file') + ' preview';
+    frame.setAttribute('sandbox', '');
+    frame.srcdoc = preview.sourceText || preview.text || '';
+    wrap.appendChild(frame);
+
+    var source = document.createElement('details');
+    source.className = 'workspace-file-source-fallback';
+    var summary = document.createElement('summary');
+    summary.textContent = 'Source';
+    source.appendChild(summary);
+    var pre = document.createElement('pre');
+    pre.textContent = preview.sourceText || preview.text || '';
+    source.appendChild(pre);
+    wrap.appendChild(source);
+
+    return wrap;
+  }
+
+  function renderJsonFilePreview(preview, aiState) {
+    var wrap = document.createElement('div');
+    wrap.className = 'workspace-file-json-preview';
+
+    var toolbar = document.createElement('div');
+    toolbar.className = 'workspace-file-json-toolbar';
+    toolbar.appendChild(createButton('workspace-file-text-button', 'Format', {
+      disabled: !!preview.saving,
+      onClick: function () {
+        if (aiState.formatWorkspaceJsonDraft) aiState.formatWorkspaceJsonDraft();
+      },
+    }));
+    toolbar.appendChild(createButton('workspace-file-text-button', 'Reset', {
+      disabled: !!preview.saving || !preview.jsonDirty,
+      onClick: function () {
+        if (aiState.resetWorkspaceJsonDraft) aiState.resetWorkspaceJsonDraft();
+      },
+    }));
+    toolbar.appendChild(createButton('workspace-file-text-button primary', preview.saving ? 'Saving...' : 'Save JSON', {
+      disabled: !!preview.saving || !!preview.jsonError || !preview.jsonDirty,
+      onClick: function () {
+        if (aiState.saveWorkspaceJsonDraft) aiState.saveWorkspaceJsonDraft().catch(function () {});
+      },
+    }));
+    wrap.appendChild(toolbar);
+
+    var editor = document.createElement('textarea');
+    editor.className = 'workspace-file-json-editor';
+    editor.spellcheck = false;
+    editor.value = preview.jsonDraft || preview.text || '';
+    editor.addEventListener('input', function () {
+      if (aiState.setWorkspaceJsonDraft) aiState.setWorkspaceJsonDraft(editor.value);
+    });
+    wrap.appendChild(editor);
+
+    if (preview.jsonError || preview.saveError || preview.jsonDirty) {
+      var status = document.createElement('div');
+      status.className = 'workspace-file-json-status' + ((preview.jsonError || preview.saveError) ? ' error' : '');
+      if (preview.jsonError) {
+        status.textContent = 'Parse error: ' + preview.jsonError;
+      } else if (preview.saveError) {
+        status.textContent = preview.saveError;
+      } else {
+        status.textContent = 'Unsaved changes';
+      }
+      wrap.appendChild(status);
+    }
+
+    return wrap;
+  }
+
   function renderFileBrowserDetails(root, snapshot, aiState) {
     var details = document.createElement('section');
     details.className = 'workspace-file-details';
@@ -1426,13 +1501,18 @@
     if (file && browser.preview) {
       var preview = document.createElement('div');
       preview.className = 'workspace-file-preview';
+      var previewKind = browser.preview.kind || (browser.preview.objectUrl ? 'image' : 'text');
       if (browser.preview.status === 'loading') {
         preview.textContent = 'Loading preview...';
-      } else if (browser.preview.status === 'ready' && browser.preview.objectUrl) {
+      } else if (browser.preview.status === 'ready' && previewKind === 'image' && browser.preview.objectUrl) {
         var image = document.createElement('img');
         image.src = browser.preview.objectUrl;
         image.alt = file.name;
         preview.appendChild(image);
+      } else if (browser.preview.status === 'ready' && previewKind === 'html') {
+        preview.appendChild(renderHtmlFilePreview(browser.preview, file));
+      } else if (browser.preview.status === 'ready' && previewKind === 'json') {
+        preview.appendChild(renderJsonFilePreview(browser.preview, aiState));
       } else if (browser.preview.status === 'ready') {
         var pre = document.createElement('pre');
         pre.textContent = browser.preview.text || '';

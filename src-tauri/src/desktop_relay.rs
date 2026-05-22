@@ -514,7 +514,7 @@ fn enrich_thread_scoped_renderer_arguments(request: &HostedToolRequest) -> Value
         .cloned()
         .unwrap_or_default();
     meta.insert("threadId".to_string(), json!(thread_id));
-    meta.insert("artifactSource".to_string(), json!("tribex-ai-thread-result"));
+    meta.insert("chatOutputSource".to_string(), json!("tribex-ai-thread-result"));
     object.insert("meta".to_string(), Value::Object(meta));
 
     let mut tool_args = object
@@ -523,7 +523,7 @@ fn enrich_thread_scoped_renderer_arguments(request: &HostedToolRequest) -> Value
         .cloned()
         .unwrap_or_default();
     tool_args.insert("threadId".to_string(), json!(thread_id));
-    tool_args.insert("artifactSource".to_string(), json!("tribex-ai-thread-result"));
+    tool_args.insert("chatOutputSource".to_string(), json!("tribex-ai-thread-result"));
     object.insert("toolArgs".to_string(), Value::Object(tool_args));
 
     Value::Object(object)
@@ -2317,7 +2317,7 @@ mod tests {
     }
 
     #[test]
-    fn enriches_thread_scoped_renderer_requests_with_thread_artifact_metadata() {
+    fn enriches_thread_scoped_renderer_requests_with_thread_chat_output_metadata() {
         for (tool_name, arguments) in [
             ("structured_data", json!({ "tables": [] })),
             ("universal_graph", json!({ "graphs": [] })),
@@ -2336,12 +2336,12 @@ mod tests {
             let enriched = enrich_thread_scoped_renderer_arguments(&request);
             assert_eq!(enriched["meta"]["threadId"], "thread-3");
             assert_eq!(
-                enriched["meta"]["artifactSource"],
+                enriched["meta"]["chatOutputSource"],
                 "tribex-ai-thread-result"
             );
             assert_eq!(enriched["toolArgs"]["threadId"], "thread-3");
             assert_eq!(
-                enriched["toolArgs"]["artifactSource"],
+                enriched["toolArgs"]["chatOutputSource"],
                 "tribex-ai-thread-result"
             );
         }

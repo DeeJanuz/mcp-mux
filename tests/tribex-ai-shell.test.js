@@ -50,6 +50,16 @@ function createState(snapshot) {
     refreshWorkspaceFiles: vi.fn(function () { return Promise.resolve(); }),
     selectWorkspaceFile: vi.fn(function () { return Promise.resolve(); }),
     selectWorkspaceFolder: vi.fn(function () { return Promise.resolve(); }),
+    setWorkspaceJsonDraft: vi.fn(function (value) {
+      current.workspaceFileBrowser = current.workspaceFileBrowser || {};
+      current.workspaceFileBrowser.preview = Object.assign({}, current.workspaceFileBrowser.preview || {}, {
+        jsonDraft: value,
+      });
+      if (subscriber) subscriber(current);
+    }),
+    formatWorkspaceJsonDraft: vi.fn(),
+    resetWorkspaceJsonDraft: vi.fn(),
+    saveWorkspaceJsonDraft: vi.fn(function () { return Promise.resolve(true); }),
     toggleWorkspaceFolderExpanded: vi.fn(function () { return Promise.resolve(); }),
     toggleWorkspaceFileBrowser: vi.fn(function () { return Promise.resolve(); }),
     uploadWorkspaceFiles: vi.fn(function () { return Promise.resolve(); }),
@@ -110,6 +120,50 @@ function createState(snapshot) {
     clearConnection: vi.fn(function () { return Promise.resolve(); }),
     setActiveSession: vi.fn(),
   };
+}
+
+function baseFileBrowserSnapshot(overrides) {
+  return Object.assign({
+    navigatorVisible: true,
+    navigatorCollapsed: false,
+    loadingNavigator: false,
+    projectComposerOpen: false,
+    threadComposerOpen: false,
+    searchTerm: '',
+    fileBrowserOpen: true,
+    organizations: [{ id: 'org-1', name: 'Org 1' }],
+    selectedOrganization: { id: 'org-1', name: 'Org 1' },
+    selectedWorkspace: { id: 'workspace-1', name: 'Finance', packageKey: 'generic' },
+    selectedProject: null,
+    projectGroups: [],
+    projectExpansion: {},
+    packages: [],
+    workspaceFiles: [],
+    workspaceFileBrowser: {
+      loading: false,
+      error: null,
+      selectedType: null,
+      selectedFileId: null,
+      selectedFolderPath: '',
+      expandedFolderPaths: {},
+      preview: { status: 'idle', kind: 'idle' },
+    },
+    composer: {},
+    hasProjects: false,
+    canRunSmokeTest: false,
+    activeProjectId: null,
+    activeThreadId: null,
+    integration: {
+      config: { configured: true },
+      status: 'authenticated',
+      authEmail: '',
+      verificationInput: '',
+      magicLinkSentTo: null,
+      sendingMagicLink: false,
+      verifyingMagicLink: false,
+      error: null,
+    },
+  }, overrides || {});
 }
 
 beforeEach(function () {
@@ -907,6 +961,104 @@ describe('tribex-ai-shell', function () {
     expect(state.uploadWorkspaceFiles).toHaveBeenCalledWith([uploadFile]);
     document.querySelector('.workspace-file-close').click();
     expect(state.closeWorkspaceFileBrowser).toHaveBeenCalled();
+  });
+
+  it('renders sandboxed HTML workspace previews with source fallback', function () {
+    var snapshot = baseFileBrowserSnapshot({
+      workspaceFiles: [
+        { id: 'file-html', relativePath: 'pages/index.html', name: 'index.html', sizeBytes: 28, contentType: 'text/html' },
+      ],
+      workspaceFileBrowser: {
+        loading: false,
+        error: null,
+        selectedType: 'file',
+        selectedFileId: 'file-html',
+        selectedFolderPath: 'pages',
+        expandedFolderPaths: { pages: true },
+        preview: {
+          status: 'ready',
+          kind: 'html',
+          fileId: 'file-html',
+          contentType: 'text/html',
+          sourceText: '<main><h1>Hello</h1></main>',
+          text: '<main><h1>Hello</h1></main>',
+        },
+      },
+    });
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    var frame = document.querySelector('.workspace-file-html-frame');
+    expect(frame).not.toBeNull();
+    expect(frame.getAttribute('sandbox')).toBe('');
+    expect(frame.srcdoc).toBe('<main><h1>Hello</h1></main>');
+    expect(document.querySelector('.workspace-file-source-fallback pre').textContent).toBe('<main><h1>Hello</h1></main>');
+  });
+
+  it('renders JSON editor controls and parse feedback for workspace previews', function () {
+    var snapshot = baseFileBrowserSnapshot({
+      workspaceFiles: [
+        { id: 'file-json', relativePath: 'data/config.json', name: 'config.json', sizeBytes: 18, contentType: 'application/json' },
+      ],
+      workspaceFileBrowser: {
+        loading: false,
+        error: null,
+        selectedType: 'file',
+        selectedFileId: 'file-json',
+        selectedFolderPath: 'data',
+        expandedFolderPaths: { data: true },
+        preview: {
+          status: 'ready',
+          kind: 'json',
+          fileId: 'file-json',
+          contentType: 'application/json',
+          jsonDraft: '{\n  "name": "April"\n}',
+          jsonDirty: true,
+          jsonError: 'Unexpected end of JSON input',
+          saveError: null,
+        },
+      },
+    });
+
+    var state = createState(snapshot);
+    window.__tribexAiState = state;
+    loadShell();
+
+    window.__tribexAiShell.render();
+
+    var editor = document.querySelector('.workspace-file-json-editor');
+    expect(editor.value).toBe('{\n  "name": "April"\n}');
+    expect(document.querySelector('.workspace-file-json-status.error').textContent).toContain('Parse error');
+    expect(Array.from(document.querySelectorAll('.workspace-file-json-toolbar button')).find(function (button) {
+      return button.textContent === 'Save JSON';
+    }).disabled).toBe(true);
+
+    editor.value = '{"name":"May"}';
+    editor.dispatchEvent(new Event('input'));
+    expect(state.setWorkspaceJsonDraft).toHaveBeenCalledWith('{"name":"May"}');
+
+    state.updateSnapshot(Object.assign({}, snapshot, {
+      workspaceFileBrowser: Object.assign({}, snapshot.workspaceFileBrowser, {
+        preview: Object.assign({}, snapshot.workspaceFileBrowser.preview, {
+          jsonDraft: '{"name":"May"}',
+          jsonError: null,
+          jsonDirty: true,
+        }),
+      }),
+    }));
+
+    var buttons = Array.from(document.querySelectorAll('.workspace-file-json-toolbar button'));
+    buttons.find(function (button) { return button.textContent === 'Format'; }).click();
+    buttons.find(function (button) { return button.textContent === 'Reset'; }).click();
+    buttons.find(function (button) { return button.textContent === 'Save JSON'; }).click();
+
+    expect(state.formatWorkspaceJsonDraft).toHaveBeenCalled();
+    expect(state.resetWorkspaceJsonDraft).toHaveBeenCalled();
+    expect(state.saveWorkspaceJsonDraft).toHaveBeenCalled();
   });
 
   it('lets workspace file browser folders collapse and expand from the chevron', function () {

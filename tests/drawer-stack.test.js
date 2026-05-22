@@ -116,19 +116,19 @@ describe('drawer-stack', function () {
     delete window.__renderers.level_test;
   });
 
-  it('renders thread artifacts inside the standard drawer shell', function () {
+  it('does not open a drawer for thread chatOutputs', function () {
     window.__renderers.rich_content = function (container, data) {
       container.textContent = data.title;
     };
 
-    utils.syncThreadArtifactDrawer({
+    utils.syncThreadChatOutputDrawer({
       sessionId: 'test-session',
       threadId: 'thread-1',
-      drawerId: 'tribex-ai-thread-artifacts:thread-1',
-      selectedArtifactKey: 'artifact-1',
+      drawerId: 'tribex-ai-thread-chat-outputs:thread-1',
+      selectedChatOutputKey: 'chat-output-1',
       open: true,
-      artifacts: [{
-        artifactKey: 'artifact-1',
+      chatOutputs: [{
+        chatOutputKey: 'chat-output-1',
         title: 'Architecture',
         contentType: 'rich_content',
         data: { title: 'Architecture' },
@@ -137,12 +137,8 @@ describe('drawer-stack', function () {
       }],
     });
 
-    expect(document.body._children.length).toBe(2);
-    expect(document.body._children[0].className).toContain('drawer-stack-overlay');
-    expect(document.body._children[1].className).toContain('drawer-stack-panel');
-    expect(document.body._children[1].className).toContain('thread-artifact-shell-panel');
-    expect(document.body._children[0].className).toContain('thread-artifact-shell-overlay');
-    expect(document.body._children[1].children[0].className).toContain('thread-artifact-shell-header');
-    expect(document.body._children[1].children[1].className).toContain('thread-artifact-shell-content');
+    expect(document.body._children.length).toBe(0);
+    expect(utils.selectThreadChatOutput('test-session', 'thread-1', 'chat-output-1')).toBeNull();
+    expect(document.body._children.length).toBe(0);
   });
 });

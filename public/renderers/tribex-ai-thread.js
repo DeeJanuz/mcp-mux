@@ -217,8 +217,9 @@
     var state = {
       threadId: threadId,
       expandedGroups: {},
+      expandedChatOutputs: {},
       drawerOpen: false,
-      selectedArtifactKey: null,
+      selectedChatOutputKey: null,
       diagnosticsOpen: false,
       draftText: '',
       selectedSkill: null,
@@ -309,7 +310,7 @@
           status: item.status || null,
           title: item.title || null,
           detail: item.detail || null,
-          artifactKey: item.artifactKey || null,
+          chatOutputKey: item.chatOutputKey || null,
           childThreadId: item.childThreadId || null,
         };
       }),
@@ -359,13 +360,13 @@
           activityGroups: (session.activityGroups || []).map(activityGroupSignature),
         };
       }),
-      artifacts: (viewModel.artifacts || []).map(function (artifact) {
+      chatOutputs: (viewModel.chatOutputs || []).map(function (chatOutput) {
         return {
-          artifactKey: artifact.artifactKey || null,
-          title: artifact.title || null,
-          detail: artifact.detail || null,
-          contentType: artifact.contentType || null,
-          reviewRequired: !!artifact.reviewRequired,
+          chatOutputKey: chatOutput.chatOutputKey || null,
+          title: chatOutput.title || null,
+          detail: chatOutput.detail || null,
+          contentType: chatOutput.contentType || null,
+          reviewRequired: !!chatOutput.reviewRequired,
         };
       }),
       pendingHumanInputs: (viewModel.pendingHumanInputs || []).map(reviewInputSignature),
@@ -678,12 +679,8 @@
       copy.appendChild(createEl('div', 'ai-codex-activity-detail', 'Delegated thread'));
     }
     row.appendChild(copy);
-    if (item.artifactKey) {
-      row.appendChild(createButton('ai-secondary-btn ai-codex-small-btn', 'Open', function () {
-        state.drawerOpen = true;
-        state.selectedArtifactKey = item.artifactKey;
-        if (typeof state.render === 'function') state.render({ force: true });
-      }));
+    if (item.chatOutputKey) {
+      row.appendChild(createEl('span', 'ai-codex-chat-output-inline-chip', 'Output below'));
     }
     return row;
   }
@@ -1222,25 +1219,127 @@
     root.appendChild(wrap);
   }
 
-  function renderArtifactCards(root, state, viewModel) {
-    if (!viewModel.artifacts.length) return;
-    var shelf = createEl('section', 'ai-codex-artifact-shelf');
+  function submitChatOutputDecision(reviewSessionId, decision) {
+    if (!reviewSessionId || !window.__TAURI__ || !window.__TAURI__.core) return;
+    var decisionStr = '';
+    var operationDecisions = null;
+    var comments = null;
+    var modifications = null;
+    var additions = null;
+    var suggestionDecisions = null;
+    var tableDecisions = null;
+
+    if (typeof decision === 'string') {
+      decisionStr = decision;
+    } else if (decision && typeof decision === 'object') {
+      if (decision.type === 'review_decision') {
+        decisionStr = decision.decision || '';
+      } else if (decision.type === 'operation_decisions') {
+        decisionStr = 'partial';
+        operationDecisions = decision.decisions || null;
+        comments = decision.comments || null;
+        modifications = decision.modifications || null;
+        additions = decision.additions || null;
+      } else if (decision.type === 'rich_content_decisions') {
+        decisionStr = 'partial';
+        suggestionDecisions = decision.suggestion_decisions || null;
+        tableDecisions = decision.table_decisions || null;
+      } else {
+        decisionStr = 'partial';
+        operationDecisions = decision;
+      }
+    }
+
+    window.__TAURI__.core.invoke('submit_decision', {
+      sessionId: reviewSessionId,
+      decision: decisionStr,
+      operationDecisions: operationDecisions,
+      comments: comments,
+      modifications: modifications,
+      additions: additions,
+      suggestionDecisions: suggestionDecisions,
+      tableDecisions: tableDecisions,
+    }).catch(function (error) {
+      console.error('[tribex-ai-thread] Failed to submit chat output decision:', error);
+    });
+  }
+
+  function renderChatOutputBody(chatOutput) {
+    var content = createEl('div', 'ai-codex-chat-output-content');
+    var renderer = window.__renderers && window.__renderers[chatOutput.contentType];
+    if (!renderer) {
+      content.textContent = 'Renderer not found: ' + chatOutput.contentType;
+      return content;
+    }
+    try {
+      var rendererData = chatOutput.data || chatOutput.resultData || {};
+      var rendererMeta = chatOutput.meta || chatOutput.resultMeta || {};
+      var reviewRequired = !!(chatOutput.reviewRequired || (rendererMeta && rendererMeta.reviewRequired));
+      var reviewSessionId = chatOutput.reviewSessionId || chatOutput.sessionId || (rendererMeta && rendererMeta.reviewSessionId) || null;
+      renderer(
+        content,
+        rendererData,
+        rendererMeta,
+        Object.assign({}, chatOutput.toolArgs || {}, {
+          mode: 'inline_summary',
+          params: rendererData,
+        }),
+        reviewRequired,
+        reviewRequired && reviewSessionId
+          ? function (decision) {
+              submitChatOutputDecision(reviewSessionId, decision);
+            }
+          : null,
+      );
+    } catch (error) {
+      console.error('[tribex-ai-thread] Chat output renderer error:', chatOutput.contentType, error);
+      content.textContent = 'Failed to load renderer: ' + chatOutput.contentType;
+    }
+    return content;
+  }
+
+  function renderChatOutputCards(root, state, viewModel) {
+    if (!viewModel.chatOutputs.length) return;
+    var shelf = createEl('section', 'ai-codex-chat-output-shelf');
     var header = createEl('div', 'ai-codex-shelf-header');
-    header.appendChild(createEl('strong', '', 'Artifacts'));
-    header.appendChild(createEl('span', 'ai-codex-count', String(viewModel.artifacts.length)));
+    header.appendChild(createEl('strong', '', 'Chat outputs'));
+    header.appendChild(createEl('span', 'ai-codex-count', String(viewModel.chatOutputs.length)));
     shelf.appendChild(header);
-    var list = createEl('div', 'ai-codex-artifact-list');
-    viewModel.artifacts.forEach(function (artifact) {
-      var chip = createButton('ai-codex-artifact-chip', displayText(artifact.title, 'Artifact'), function () {
-        state.drawerOpen = true;
-        state.selectedArtifactKey = artifact.artifactKey;
-        state.render({ force: true });
+    var list = createEl('div', 'ai-codex-chat-output-list');
+    viewModel.chatOutputs.forEach(function (chatOutput) {
+      var details = createEl('details', 'ai-codex-chat-output-card');
+      var key = chatOutput.chatOutputKey || chatOutput.id || chatOutput.title || 'chat-output';
+      details.open = state.expandedChatOutputs[key] === true;
+      details.addEventListener('toggle', function () {
+        state.expandedChatOutputs[key] = details.open;
       });
-      if (artifact.reviewRequired) chip.appendChild(createEl('span', 'ai-codex-artifact-flag', 'review'));
-      list.appendChild(chip);
+      var summary = createEl('summary', 'ai-codex-chat-output-summary');
+      var title = createEl('span', 'ai-codex-chat-output-title', displayText(chatOutput.title, 'Chat output'));
+      summary.appendChild(title);
+      if (chatOutput.contentType) summary.appendChild(createEl('span', 'ai-codex-chat-output-type', chatOutput.contentType));
+      if (chatOutput.reviewRequired) summary.appendChild(createEl('span', 'ai-codex-chat-output-flag', 'review'));
+      if (chatOutput.detail) summary.appendChild(createEl('span', 'ai-codex-chat-output-detail', displayText(chatOutput.detail)));
+      details.appendChild(summary);
+      details.appendChild(renderChatOutputBody(chatOutput));
+      list.appendChild(details);
     });
     shelf.appendChild(list);
     root.appendChild(shelf);
+  }
+
+  function openThreadChatOutputTab(state, chatOutputKey) {
+    if (
+      !state ||
+      !state.threadId ||
+      !chatOutputKey ||
+      !window.__tribexAiState ||
+      typeof window.__tribexAiState.openThreadChatOutput !== 'function'
+    ) {
+      return null;
+    }
+    return window.__tribexAiState.openThreadChatOutput(state.threadId, chatOutputKey, {
+      autoFocus: true,
+    });
   }
 
   function renderTimeline(root, state, threadContext, viewModel) {
@@ -1251,14 +1350,14 @@
     if (!viewModel.sessions.length) {
       var empty = createEl('section', 'ai-codex-empty');
       empty.appendChild(createEl('h2', '', 'Start a request'));
-      empty.appendChild(createEl('p', '', 'Ask the agent to do work. Progress, reviews, artifacts, and recovery will appear here.'));
+      empty.appendChild(createEl('p', '', 'Ask the agent to do work. Progress, reviews, chat outputs, and recovery will appear here.'));
       timeline.appendChild(empty);
     } else {
       viewModel.sessions.forEach(function (session, index) {
         timeline.appendChild(renderSession(session, index, state, viewModel));
       });
     }
-    renderArtifactCards(timeline, state, viewModel);
+    renderChatOutputCards(timeline, state, viewModel);
     if (hasBlockers) renderBlockers(timeline, state, viewModel);
     root.appendChild(timeline);
   }
@@ -1365,17 +1464,10 @@
     root.appendChild(dock);
   }
 
-  function renderArtifactDrawer(root, state, viewModel) {
-    if (!state.drawerOpen && !state.diagnosticsOpen) return;
+  function renderDiagnosticsDrawer(root, state, viewModel) {
+    if (!state.diagnosticsOpen) return;
     var aside = createEl('aside', 'ai-codex-drawer');
     var tabs = createEl('div', 'ai-codex-drawer-tabs');
-    if (viewModel.artifacts.length) {
-      tabs.appendChild(createButton(cx('ai-codex-drawer-tab', !state.diagnosticsOpen && 'is-active'), 'Artifact', function () {
-        state.diagnosticsOpen = false;
-        state.drawerOpen = true;
-        state.render({ force: true });
-      }));
-    }
     if (shouldShowDiagnostics(viewModel)) {
       tabs.appendChild(createButton(cx('ai-codex-drawer-tab', state.diagnosticsOpen && 'is-active'), 'Diagnostics', function () {
         state.diagnosticsOpen = true;
@@ -1396,37 +1488,7 @@
       pre.textContent = JSON.stringify(viewModel.diagnostics, null, 2);
       aside.appendChild(pre);
       root.appendChild(aside);
-      return;
     }
-
-    var selected = viewModel.artifacts.find(function (artifact) {
-      return artifact.artifactKey === state.selectedArtifactKey;
-    }) || viewModel.artifacts[viewModel.artifacts.length - 1];
-    if (!selected) {
-      aside.appendChild(createEl('p', 'ai-codex-muted', 'No artifact selected.'));
-      root.appendChild(aside);
-      return;
-    }
-    state.selectedArtifactKey = selected.artifactKey;
-    aside.appendChild(createEl('h2', 'ai-codex-drawer-title', displayText(selected.title, 'Artifact')));
-    if (selected.detail) aside.appendChild(createEl('p', 'ai-codex-muted', displayText(selected.detail)));
-    var preview = createEl('div', 'ai-codex-artifact-preview');
-    var renderer = selected.contentType && window.__renderers ? window.__renderers[selected.contentType] : null;
-    if (typeof renderer === 'function' && selected.resultData) {
-      try {
-        renderer(preview, selected.resultData, selected.resultMeta || {}, selected.toolArgs || {}, !!selected.reviewRequired);
-      } catch (error) {
-        preview.textContent = error && error.message ? error.message : 'Artifact preview failed.';
-      }
-    } else if (selected.resultData) {
-      var raw = createEl('pre', 'ai-codex-diagnostics');
-      raw.textContent = JSON.stringify(selected.resultData, null, 2);
-      preview.appendChild(raw);
-    } else {
-      preview.textContent = 'This artifact has no inline preview data.';
-    }
-    aside.appendChild(preview);
-    root.appendChild(aside);
   }
 
   function getSkillsApi() {
@@ -1968,7 +2030,7 @@
     renderHeader(root, state, threadContext, viewModel);
     var layout = createEl('div', 'ai-codex-layout');
     renderTimeline(layout, state, threadContext, viewModel);
-    renderArtifactDrawer(layout, state, viewModel);
+    renderDiagnosticsDrawer(layout, state, viewModel);
     root.appendChild(layout);
     renderLatestActionDock(root, state, viewModel);
     renderComposer(root, state, viewModel);

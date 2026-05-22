@@ -10,10 +10,10 @@ beforeEach(function () {
     replaceSession: vi.fn(function () { return 'session-1'; }),
     getSession: vi.fn(function () { return null; }),
     updateSessionMetadata: vi.fn(),
-    syncThreadArtifactDrawer: vi.fn(function (payload) { return payload && payload.drawerId ? payload.drawerId : 'drawer-1'; }),
-    selectThreadArtifact: vi.fn(),
+    syncThreadChatOutputDrawer: vi.fn(function (payload) { return payload && payload.drawerId ? payload.drawerId : 'drawer-1'; }),
+    selectThreadChatOutput: vi.fn(),
     selectSession: vi.fn(),
-    setThreadArtifactContext: vi.fn(),
+    setThreadChatOutputContext: vi.fn(),
     refreshActiveSession: vi.fn(),
     rerenderActiveSession: vi.fn(),
   };
@@ -1798,7 +1798,7 @@ describe('tribex-ai-state', function () {
     expect(window.__tribexAiState.getThreadContext('thread-1').error).toBeNull();
   });
 
-  it('turns local desktop relay tool requests into inline structured-data results instead of reopenable artifacts', async function () {
+  it('turns local desktop relay tool requests into inline structured-data results instead of reopenable chatOutputs', async function () {
     vi.useFakeTimers();
     var relayHandler = null;
     window.__renderers = {
@@ -1986,17 +1986,26 @@ describe('tribex-ai-state', function () {
     var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
     expect(thread.runs).toHaveLength(1);
     expect(thread.runs[0].user.content).toBe('Push an example finance review table.');
-    expect(thread.runs[0].workSession).toBeNull();
-    expect(thread.runs[0].answer.inlineResults).toEqual(
+    expect(thread.runs[0].workSession.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           toolName: 'structured_data',
-          inlineDisplay: true,
+          inlineDisplay: false,
           status: 'completed',
         }),
       ]),
     );
-    expect(thread.artifacts).toEqual([]);
+    expect(thread.runs[0].answer.inlineResults).toEqual([]);
+    expect(thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contentType: 'structured_data',
+          data: expect.objectContaining({
+            title: 'Finance Review',
+          }),
+        }),
+      ]),
+    );
     expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
@@ -2082,7 +2091,7 @@ describe('tribex-ai-state', function () {
     });
 
     var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
-    expect(thread.artifacts).toEqual([]);
+    expect(thread.chatOutputs).toEqual([]);
     expect(thread.runs[0].answer.inlineResults || []).toEqual([]);
     expect(thread.runs[0].workSession.items).toEqual([
       expect.objectContaining({
@@ -2096,7 +2105,7 @@ describe('tribex-ai-state', function () {
     vi.useRealTimers();
   });
 
-  it('routes thread-scoped rich_content companion payloads into inline transcript results instead of artifact tabs', async function () {
+  it('routes thread-scoped rich_content companion payloads into inline transcript results instead of chatOutput tabs', async function () {
     var streamHandler = null;
     var fetchMock = vi.fn(function () {
       return Promise.resolve({ ok: true });
@@ -2186,7 +2195,7 @@ describe('tribex-ai-state', function () {
           role: 'tool',
           toolName: value.toolName,
           status: 'success',
-          summary: value.result && value.result.data ? value.result.data.title : 'Inline artifact',
+          summary: value.result && value.result.data ? value.result.data.title : 'Inline chatOutput',
           detail: value.result && value.result.data ? value.result.data.body : '',
           resultData: value.result && value.result.data ? value.result.data : null,
           resultMeta: value.result ? value.result.meta || null : null,
@@ -2241,20 +2250,29 @@ describe('tribex-ai-state', function () {
         }),
       ]),
     );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].workSession).toBeNull();
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].answer.inlineResults).toEqual(
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].workSession.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           toolName: 'rich_content',
-          inlineDisplay: true,
-          contentType: 'rich_content',
+          inlineDisplay: false,
+          resultContentType: 'rich_content',
         }),
       ]),
     );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.runs[0].answer.inlineResults).toEqual([]);
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contentType: 'rich_content',
+          data: expect.objectContaining({
+            title: 'Smoke Test Passed',
+          }),
+        }),
+      ]),
+    );
   });
 
-  it('keeps runtime rich_content activity updates inline instead of opening artifact tabs', async function () {
+  it('stores runtime rich_content activity updates as chatOutputs without auto-opening tabs', async function () {
     var runtimeHandler = null;
     window.__renderers = {
       rich_content: vi.fn(),
@@ -2383,7 +2401,7 @@ describe('tribex-ai-state', function () {
         expect.objectContaining({
           toolName: 'rich_content',
           resultContentType: 'rich_content',
-          inlineDisplay: true,
+          inlineDisplay: false,
         }),
       ]),
     );
@@ -2392,14 +2410,23 @@ describe('tribex-ai-state', function () {
         expect.objectContaining({
           id: 'tool-push-1',
           resultContentType: 'rich_content',
-          inlineDisplay: true,
+          inlineDisplay: false,
         }),
       ]),
     );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contentType: 'rich_content',
+          data: expect.objectContaining({
+            title: 'Example Architecture Document',
+          }),
+        }),
+      ]),
+    );
   });
 
-  it('reopens legacy message-backed renderer artifacts for older threads', async function () {
+  it('reopens legacy message-backed renderer chatOutputs for older threads', async function () {
     window.__renderers = {
       structured_data: vi.fn(),
     };
@@ -2431,23 +2458,23 @@ describe('tribex-ai-state', function () {
           id: 'thread-1',
           projectId: 'project-1',
           workspaceId: 'workspace-1',
-          title: 'Legacy artifact thread',
+          title: 'Legacy chatOutput thread',
         }]);
       }),
       fetchThread: vi.fn(function () {
         return Promise.resolve({
           id: 'thread-1',
-          title: 'Legacy artifact thread',
+          title: 'Legacy chatOutput thread',
           projectId: 'project-1',
           workspaceId: 'workspace-1',
           messages: [
             {
-              id: 'legacy-artifact-1',
+              id: 'legacy-chat-output-1',
               role: 'tool',
               toolName: 'structured_data',
               status: 'success',
-              displayMode: 'artifact',
-              artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+              displayMode: 'inline_summary',
+              chatOutputKey: 'tribex-ai-result:thread-1:legacy:chat-output-0',
               resultContentType: 'structured_data',
               resultData: {
                 title: 'Expense Review',
@@ -2486,26 +2513,26 @@ describe('tribex-ai-state', function () {
     await Promise.resolve();
     window.__companionUtils.openSession.mockClear();
 
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual(
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.chatOutputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+          chatOutputKey: 'tribex-ai-result:thread-1:legacy:chat-output-0',
           contentType: 'structured_data',
         }),
       ]),
     );
 
-    window.__tribexAiState.openThreadArtifact('thread-1', 'tribex-ai-result:thread-1:legacy:artifact-0');
+    window.__tribexAiState.openThreadChatOutput('thread-1', 'tribex-ai-result:thread-1:legacy:chat-output-0');
     expect(window.__companionUtils.openSession).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionKey: 'tribex-ai-artifact:thread-1:tribex-ai-result:thread-1:legacy:artifact-0',
+        sessionKey: 'tribex-ai-chat-output:thread-1:tribex-ai-result:thread-1:legacy:chat-output-0',
         contentType: 'structured_data',
         data: expect.objectContaining({
           title: 'Expense Review',
         }),
         meta: expect.objectContaining({
           threadId: 'thread-1',
-          artifactKey: 'tribex-ai-result:thread-1:legacy:artifact-0',
+          chatOutputKey: 'tribex-ai-result:thread-1:legacy:chat-output-0',
         }),
       }),
       expect.objectContaining({
@@ -2514,7 +2541,7 @@ describe('tribex-ai-state', function () {
     );
   });
 
-  it('keeps multiple inline rich-content results distinct inside the same thread turn', async function () {
+  it('keeps multiple rich-content chatOutputs distinct inside the same thread turn', async function () {
     var runtimeHandler = null;
     window.__renderers = {
       rich_content: vi.fn(),
@@ -2602,7 +2629,7 @@ describe('tribex-ai-state', function () {
       message: {
         id: 'user-1',
         role: 'user',
-        content: 'Create artifacts.',
+        content: 'Create chatOutputs.',
         createdAt: '2026-04-15T10:41:00.000Z',
       },
     });
@@ -2646,16 +2673,21 @@ describe('tribex-ai-state', function () {
     });
 
     expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ chatOutputKey: expect.stringContaining('tool-push-1'), data: expect.objectContaining({ title: 'Architecture Overview' }) }),
+        expect.objectContaining({ chatOutputKey: expect.stringContaining('tool-push-2'), data: expect.objectContaining({ title: 'Deployment Diagram' }) }),
+      ]),
+    );
     expect(window.__tribexAiState.getThreadContext('thread-1').thread.activityItems).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: 'tool-push-1', inlineDisplay: true, resultData: expect.objectContaining({ title: 'Architecture Overview' }) }),
-        expect.objectContaining({ id: 'tool-push-2', inlineDisplay: true, resultData: expect.objectContaining({ title: 'Deployment Diagram' }) }),
+        expect.objectContaining({ id: 'tool-push-1', inlineDisplay: false, resultData: expect.objectContaining({ title: 'Architecture Overview' }) }),
+        expect.objectContaining({ id: 'tool-push-2', inlineDisplay: false, resultData: expect.objectContaining({ title: 'Deployment Diagram' }) }),
       ]),
     );
   });
 
-  it('preserves a completed inline runtime result after the follow-up runtime snapshot', async function () {
+  it('preserves a completed runtime chatOutput after the follow-up runtime snapshot', async function () {
     var runtimeHandler = null;
     window.__renderers = {
       rich_content: vi.fn(),
@@ -2760,7 +2792,7 @@ describe('tribex-ai-state', function () {
         resultContentType: 'rich_content',
         resultData: {
           title: 'Runtime Architecture',
-          body: 'Artifact body.',
+          body: 'ChatOutput body.',
         },
         resultMeta: {
           source: 'runtime-test',
@@ -2816,12 +2848,22 @@ describe('tribex-ai-state', function () {
     });
 
     var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
-    expect(thread.artifacts).toEqual([]);
+    expect(thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          chatOutputKey: expect.stringContaining('tool-push-1'),
+          contentType: 'rich_content',
+          data: expect.objectContaining({
+            title: 'Runtime Architecture',
+          }),
+        }),
+      ]),
+    );
     expect(thread.activityItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'tool-push-1',
-          inlineDisplay: true,
+          inlineDisplay: false,
           resultData: expect.objectContaining({
             title: 'Runtime Architecture',
           }),
@@ -2830,7 +2872,7 @@ describe('tribex-ai-state', function () {
     );
   });
 
-  it('does not open an artifact tab for failed runtime rich_content activity', async function () {
+  it('does not open an chatOutput tab for failed runtime rich_content activity', async function () {
     var runtimeHandler = null;
     window.__renderers = {
       rich_content: vi.fn(),
@@ -3914,15 +3956,24 @@ describe('tribex-ai-state', function () {
         expect.objectContaining({
           id: 'tool-smoke-1',
           resultContentType: 'rich_content',
-          inlineDisplay: true,
+          inlineDisplay: false,
         }),
       ]),
     );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contentType: 'rich_content',
+          data: expect.objectContaining({
+            title: 'Smoke Test Passed',
+          }),
+        }),
+      ]),
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('keeps structured_data push_content results inline without syncing the thread drawer', async function () {
+  it('stores structured_data push_content results as chatOutputs without syncing the thread drawer', async function () {
     var streamHandler = null;
     var fetchMock = vi.fn(function () {
       return Promise.resolve({ ok: true });
@@ -4016,7 +4067,7 @@ describe('tribex-ai-state', function () {
     await window.__tribexAiState.refreshNavigator(true);
     window.__tribexAiState.openThread('thread-1', { connectStream: false });
     window.__companionUtils.openSession.mockClear();
-    window.__companionUtils.syncThreadArtifactDrawer.mockClear();
+    window.__companionUtils.syncThreadChatOutputDrawer.mockClear();
 
     streamHandler({
       threadId: 'thread-1',
@@ -4049,7 +4100,7 @@ describe('tribex-ai-state', function () {
       expect.arrayContaining([
         expect.objectContaining({
           resultContentType: 'structured_data',
-          inlineDisplay: true,
+          inlineDisplay: false,
           resultData: expect.objectContaining({
             title: 'Expense Review',
             tables: expect.any(Array),
@@ -4057,12 +4108,21 @@ describe('tribex-ai-state', function () {
         }),
       ]),
     );
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual([]);
-    expect(window.__companionUtils.syncThreadArtifactDrawer).not.toHaveBeenCalled();
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contentType: 'structured_data',
+          data: expect.objectContaining({
+            title: 'Expense Review',
+          }),
+        }),
+      ]),
+    );
+    expect(window.__companionUtils.syncThreadChatOutputDrawer).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('keeps review-mode structured_data artifacts reopenable from companion replay events', async function () {
+  it('keeps review-mode structured_data inline from companion replay events', async function () {
     var streamHandler = null;
     window.__renderers = {
       structured_data: vi.fn(),
@@ -4185,22 +4245,32 @@ describe('tribex-ai-state', function () {
     });
 
     expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
-    expect(window.__tribexAiState.getThreadContext('thread-1').thread.artifacts).toEqual(
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.activityItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           sessionId: 'review-session-1',
-          contentType: 'structured_data',
+          resultContentType: 'structured_data',
           reviewRequired: true,
-          reviewSessionId: 'review-session-1',
-          data: expect.objectContaining({
+          displayMode: 'inline_summary',
+          inlineDisplay: false,
+          resultData: expect.objectContaining({
             title: 'Approval Example',
           }),
         }),
       ]),
     );
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contentType: 'structured_data',
+          reviewRequired: true,
+          data: expect.objectContaining({ title: 'Approval Example' }),
+        }),
+      ]),
+    );
   });
 
-  it('reopens review artifacts by focusing the real session instead of creating a synthetic tab', async function () {
+  it('exposes review-mode structured_data as an inline chat output', async function () {
     var streamHandler = null;
     window.__renderers = {
       structured_data: vi.fn(),
@@ -4331,14 +4401,26 @@ describe('tribex-ai-state', function () {
 
     window.__companionUtils.openSession.mockClear();
     window.__companionUtils.selectSession.mockClear();
-    var reviewArtifact = window.__tribexAiState.getThreadContext('thread-1').thread.artifacts[0];
 
-    window.__tribexAiState.openThreadArtifact(
-      'thread-1',
-      reviewArtifact.artifactKey,
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          contentType: 'structured_data',
+          reviewRequired: true,
+        }),
+      ]),
     );
-
-    expect(window.__companionUtils.selectSession).toHaveBeenCalledWith('review-session-1');
+    expect(window.__tribexAiState.getThreadContext('thread-1').thread.activityItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'review-session-1',
+          reviewRequired: true,
+          displayMode: 'inline_summary',
+          inlineDisplay: false,
+        }),
+      ]),
+    );
+    expect(window.__companionUtils.selectSession).not.toHaveBeenCalled();
     expect(window.__companionUtils.openSession).not.toHaveBeenCalled();
   });
 
@@ -5534,11 +5616,23 @@ describe('tribex-ai-state', function () {
     expect(window.__tribexAiState.getSnapshot().workspaceFiles).toEqual([]);
   });
 
-  it('builds text, image, and unsupported workspace file previews', async function () {
+  it('builds text, image, html, json, and unsupported workspace file previews', async function () {
     var detailsById = {
       'file-text': {
         file: { id: 'file-text', relativePath: 'notes/readme.md', contentType: 'text/markdown' },
         download: { url: 'https://worker.example/text' },
+      },
+      'file-html': {
+        file: { id: 'file-html', relativePath: 'pages/index.html', contentType: 'text/html' },
+        download: { url: 'https://worker.example/html' },
+      },
+      'file-json': {
+        file: { id: 'file-json', relativePath: 'data/config.json', contentType: 'application/json' },
+        download: { url: 'https://worker.example/json' },
+      },
+      'file-large-json': {
+        file: { id: 'file-large-json', relativePath: 'data/large.json', contentType: 'application/json' },
+        download: { url: 'https://worker.example/large-json' },
       },
       'file-image': {
         file: { id: 'file-image', relativePath: 'images/chart.png', contentType: 'image/png' },
@@ -5575,6 +5669,9 @@ describe('tribex-ai-state', function () {
         return Promise.resolve({
           files: [
             { id: 'file-text', relativePath: 'notes/readme.md', name: 'readme.md', contentType: 'text/markdown', sizeBytes: 6 },
+            { id: 'file-html', relativePath: 'pages/index.html', name: 'index.html', contentType: 'text/html', sizeBytes: 36 },
+            { id: 'file-json', relativePath: 'data/config.json', name: 'config.json', contentType: 'application/json', sizeBytes: 29 },
+            { id: 'file-large-json', relativePath: 'data/large.json', name: 'large.json', contentType: 'application/json', sizeBytes: 150 * 1024 },
             { id: 'file-image', relativePath: 'images/chart.png', name: 'chart.png', contentType: 'image/png', sizeBytes: 3 },
             { id: 'file-binary', relativePath: 'exports/archive.bin', name: 'archive.bin', contentType: 'application/octet-stream', sizeBytes: 3 },
           ],
@@ -5586,6 +5683,15 @@ describe('tribex-ai-state', function () {
       fetchSignedFileBytes: vi.fn(function (download) {
         if (download.url.indexOf('/text') !== -1) {
           return Promise.resolve({ bytes: new Uint8Array([35, 32, 72, 105, 10, 33]), contentType: 'text/markdown' });
+        }
+        if (download.url.indexOf('/html') !== -1) {
+          return Promise.resolve({ bytes: new TextEncoder().encode('<main><h1>Hello</h1></main>'), contentType: 'text/html' });
+        }
+        if (download.url.indexOf('/large-json') !== -1) {
+          return Promise.resolve({ bytes: new TextEncoder().encode('{"rows":[' + '"x",'.repeat(150 * 1024) + '"end"]}'), contentType: 'application/json' });
+        }
+        if (download.url.indexOf('/json') !== -1) {
+          return Promise.resolve({ bytes: new TextEncoder().encode('{"name":"April","items":[1,2]}'), contentType: 'application/json' });
         }
         if (download.url.indexOf('/image') !== -1) {
           return Promise.resolve({ bytes: new Uint8Array([1, 2, 3]), contentType: 'image/png' });
@@ -5617,6 +5723,31 @@ describe('tribex-ai-state', function () {
       text: '# Hi\n!',
     });
 
+    await window.__tribexAiState.selectWorkspaceFile('file-html');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      status: 'ready',
+      kind: 'html',
+      sourceText: '<main><h1>Hello</h1></main>',
+    });
+
+    await window.__tribexAiState.selectWorkspaceFile('file-json');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      status: 'ready',
+      kind: 'json',
+      jsonDraft: JSON.stringify({ name: 'April', items: [1, 2] }, null, 2),
+      jsonError: null,
+      jsonDirty: false,
+    });
+
+    await window.__tribexAiState.selectWorkspaceFile('file-large-json');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      status: 'ready',
+      kind: 'json',
+      truncated: true,
+      saveError: expect.stringContaining('truncated'),
+    });
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview.sourceText.length).toBe(128 * 1024);
+
     await window.__tribexAiState.selectWorkspaceFile('file-image');
     expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
       status: 'ready',
@@ -5630,7 +5761,133 @@ describe('tribex-ai-state', function () {
     });
   });
 
-  it('does not rerender a focused thread artifact session for background AI state changes', function () {
+  it('formats, resets, saves, validates, and conflict-blocks workspace JSON edits', async function () {
+    var fileRecord = {
+      id: 'file-json',
+      relativePath: 'data/config.json',
+      name: 'config.json',
+      contentType: 'application/json',
+      sizeBytes: 16,
+      checksum: 'checksum-1',
+      lastModifiedAt: '2026-04-16T10:00:00.000Z',
+    };
+    var currentText = '{"name":"April"}';
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchPackages: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      listWorkspaceFiles: vi.fn(function () {
+        return Promise.resolve({ files: [fileRecord] });
+      }),
+      getWorkspaceFile: vi.fn(function () {
+        return Promise.resolve({
+          file: fileRecord,
+          download: { url: 'https://worker.example/json' },
+        });
+      }),
+      fetchSignedFileBytes: vi.fn(function () {
+        return Promise.resolve({
+          bytes: new TextEncoder().encode(currentText),
+          contentType: 'application/json',
+        });
+      }),
+      initWorkspaceFileUpload: vi.fn(function (_workspaceId, fileInfo) {
+        return Promise.resolve({
+          file: Object.assign({}, fileRecord, fileInfo),
+          upload: { url: 'https://worker.example/upload' },
+        });
+      }),
+      uploadWorkspaceFileToSignedUrl: vi.fn(function (_upload, blob) {
+        return blob.text().then(function (text) {
+          currentText = text;
+          fileRecord = Object.assign({}, fileRecord, {
+            sizeBytes: blob.size,
+            checksum: 'checksum-2',
+            lastModifiedAt: '2026-04-16T10:05:00.000Z',
+          });
+          return { ok: true };
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    await window.__tribexAiState.openWorkspaceFileBrowser();
+    await window.__tribexAiState.selectWorkspaceFile('file-json');
+
+    window.__tribexAiState.setWorkspaceJsonDraft('{"name":"May","count":2}');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      jsonDirty: true,
+      jsonError: null,
+    });
+
+    window.__tribexAiState.formatWorkspaceJsonDraft();
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview.jsonDraft).toBe(
+      JSON.stringify({ name: 'May', count: 2 }, null, 2),
+    );
+
+    window.__tribexAiState.resetWorkspaceJsonDraft();
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview).toMatchObject({
+      jsonDraft: JSON.stringify({ name: 'April' }, null, 2),
+      jsonDirty: false,
+    });
+
+    window.__tribexAiState.setWorkspaceJsonDraft('{"name":"May","count":2}');
+    await expect(window.__tribexAiState.saveWorkspaceJsonDraft()).resolves.toBe(true);
+    expect(client.initWorkspaceFileUpload).toHaveBeenCalledWith('workspace-1', expect.objectContaining({
+      relativePath: 'data/config.json',
+      contentType: 'application/json',
+      sizeBytes: expect.any(Number),
+    }));
+    expect(currentText).toBe(JSON.stringify({ name: 'May', count: 2 }, null, 2) + '\n');
+
+    window.__tribexAiState.setWorkspaceJsonDraft('{"name":');
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview.jsonError).toMatch(/JSON|end|expected/i);
+    await expect(window.__tribexAiState.saveWorkspaceJsonDraft()).resolves.toBe(false);
+    expect(client.uploadWorkspaceFileToSignedUrl).toHaveBeenCalledTimes(1);
+
+    window.__tribexAiState.setWorkspaceJsonDraft('{"name":"June"}');
+    fileRecord = Object.assign({}, fileRecord, {
+      checksum: 'checksum-3',
+      lastModifiedAt: '2026-04-16T10:10:00.000Z',
+    });
+    await expect(window.__tribexAiState.saveWorkspaceJsonDraft()).resolves.toBe(false);
+    expect(window.__tribexAiState.getSnapshot().workspaceFileBrowser.preview.saveError).toContain('changed');
+    expect(client.uploadWorkspaceFileToSignedUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not rerender a focused thread chatOutput session for background AI state changes', function () {
     window.__tribexAiClient = {
       listenToStreamEvents: vi.fn(function () {
         return Promise.resolve(function () {});
@@ -5639,7 +5896,7 @@ describe('tribex-ai-state', function () {
     loadState();
     window.__tribexAiState.setActiveSession('session-1', {
       meta: {
-        aiView: 'thread-artifact',
+        aiView: 'thread-chat-output',
         threadId: 'thread-1',
       },
     });
@@ -5866,7 +6123,7 @@ describe('tribex-ai-state', function () {
     expect(snapshot.projectExpansion['project-2']).toBe(true);
   });
 
-  it('keeps thread-scoped rich_content inline when a later runtime update adds a stored session id', async function () {
+  it('keeps thread-scoped rich_content as an chatOutput when a later runtime update adds a stored session id', async function () {
     var runtimeHandler = null;
     window.__renderers = {
       rich_content: vi.fn(),
@@ -6004,12 +6261,12 @@ describe('tribex-ai-state', function () {
     });
 
     var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
-    expect(thread.runs[0].answer.inlineResults).toEqual(
+    expect(thread.runs[0].workSession.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'tool-push-1',
-          artifactKey: expect.stringContaining('tool-push-1'),
-          inlineDisplay: true,
+          chatOutputKey: expect.stringContaining('tool-push-1'),
+          inlineDisplay: false,
           sessionId: 'result-session-1',
           resultData: expect.objectContaining({
             title: 'Architecture Overview',
@@ -6017,13 +6274,22 @@ describe('tribex-ai-state', function () {
         }),
       ]),
     );
-    expect(thread.artifacts).toEqual(
-      [],
+    expect(thread.runs[0].answer.inlineResults).toEqual([]);
+    expect(thread.chatOutputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'result-session-1',
+          contentType: 'rich_content',
+          data: expect.objectContaining({
+            title: 'Architecture Overview',
+          }),
+        }),
+      ]),
     );
     expect(window.__companionUtils.selectSession).not.toHaveBeenCalled();
   });
 
-  it('rebuilds inline runtime results after a cold restart using thread detail plus runtime snapshot', async function () {
+  it('rebuilds runtime chatOutputs after a cold restart using thread detail plus runtime snapshot', async function () {
     vi.useFakeTimers();
     window.__renderers = {
       rich_content: vi.fn(),
@@ -6183,12 +6449,13 @@ describe('tribex-ai-state', function () {
     await vi.runAllTimersAsync();
 
     var firstThread = window.__tribexAiState.getThreadContext('thread-1').thread;
-    expect(firstThread.runs[0].answer.inlineResults).toEqual(
+    expect(firstThread.runs[0].answer.inlineResults).toEqual([]);
+    expect(firstThread.chatOutputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'tool-push-1',
-          inlineDisplay: true,
-          resultData: expect.objectContaining({
+          chatOutputKey: expect.stringContaining('tool-push-1'),
+          contentType: 'rich_content',
+          data: expect.objectContaining({
             title: 'Architecture Overview',
           }),
         }),
@@ -6204,12 +6471,13 @@ describe('tribex-ai-state', function () {
     await vi.runAllTimersAsync();
 
     var rehydratedThread = window.__tribexAiState.getThreadContext('thread-1').thread;
-    expect(rehydratedThread.runs[0].answer.inlineResults).toEqual(
+    expect(rehydratedThread.runs[0].answer.inlineResults).toEqual([]);
+    expect(rehydratedThread.chatOutputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'tool-push-1',
-          inlineDisplay: true,
-          resultData: expect.objectContaining({
+          chatOutputKey: expect.stringContaining('tool-push-1'),
+          contentType: 'rich_content',
+          data: expect.objectContaining({
             title: 'Architecture Overview',
           }),
         }),
@@ -6666,15 +6934,17 @@ describe('tribex-ai-state', function () {
     window.__tribexAiState.openThread('thread-1');
     await vi.runAllTimersAsync();
 
-    var runs = window.__tribexAiState.getThreadContext('thread-1').thread.runs;
+    var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
+    var runs = thread.runs;
     expect(runs).toHaveLength(2);
     expect(runs[0].user.content).toBe('First question');
     expect(runs[0].answer.content).toBe('First answer');
-    expect(runs[0].answer.inlineResults).toEqual(
+    expect(runs[0].answer.inlineResults).toEqual([]);
+    expect(thread.chatOutputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'tool-push-1',
-          inlineDisplay: true,
+          chatOutputKey: expect.stringContaining('tool-push-1'),
+          contentType: 'rich_content',
         }),
       ]),
     );
@@ -6863,16 +7133,18 @@ describe('tribex-ai-state', function () {
     window.__tribexAiState.openThread('thread-1');
     await vi.runAllTimersAsync();
 
-    var runs = window.__tribexAiState.getThreadContext('thread-1').thread.runs;
+    var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
+    var runs = thread.runs;
     expect(runs).toHaveLength(2);
     expect(runs[0].answer.content).toBe('About 700 pounds in a day.');
     expect(runs[1].answer.content).toBe('Here is the diagram and summary.');
-    expect(runs[1].answer.inlineResults).toEqual(
+    expect(runs[1].answer.inlineResults).toEqual([]);
+    expect(thread.chatOutputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'tool-push-1',
-          inlineDisplay: true,
-          resultData: expect.objectContaining({
+          chatOutputKey: expect.stringContaining('tool-push-1'),
+          contentType: 'rich_content',
+          data: expect.objectContaining({
             title: 'Resource Allocation Strategy: Woodchuck Operations',
           }),
         }),

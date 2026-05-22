@@ -1397,8 +1397,8 @@
         projectId: session && session.meta ? session.meta.projectId || null : null,
         threadId: session && session.meta ? session.meta.threadId || null : null,
       };
-      if (window.__companionUtils && typeof window.__companionUtils.setThreadArtifactContext === 'function') {
-        window.__companionUtils.setThreadArtifactContext(
+      if (window.__companionUtils && typeof window.__companionUtils.setThreadChatOutputContext === 'function') {
+        window.__companionUtils.setThreadChatOutputContext(
           sessionId,
           context.activeSession.isThread ? context.activeSession.threadId : null
         );
@@ -1420,38 +1420,38 @@
       api.notify();
     }
 
-    function buildThreadArtifactSessionConfig(threadId, artifact) {
-      if (!threadId || !artifact) return null;
+    function buildThreadChatOutputSessionConfig(threadId, chatOutput) {
+      if (!threadId || !chatOutput) return null;
       var thread = api.getThread(threadId);
       return {
-        sessionKey: artifact.sessionKey || api.buildArtifactSessionKey(threadId, artifact.artifactKey),
-        toolName: artifact.contentType || 'artifact',
-        contentType: artifact.contentType || 'rich_content',
-        data: artifact.data || {},
-        meta: Object.assign({}, artifact.meta || {}, {
-          aiView: 'thread-artifact',
-          headerTitle: (artifact.meta && artifact.meta.headerTitle) || artifact.title || 'Artifact',
+        sessionKey: chatOutput.sessionKey || api.buildChatOutputSessionKey(threadId, chatOutput.chatOutputKey),
+        toolName: chatOutput.contentType || 'chat_output',
+        contentType: chatOutput.contentType || 'rich_content',
+        data: chatOutput.data || {},
+        meta: Object.assign({}, chatOutput.meta || {}, {
+          aiView: 'thread-chat-output',
+          headerTitle: (chatOutput.meta && chatOutput.meta.headerTitle) || chatOutput.title || 'Chat output',
           projectId: thread && thread.projectId ? thread.projectId : null,
           threadId: threadId,
-          artifactKey: artifact.artifactKey,
-          artifactSource: 'tribex-ai-thread-result',
+          chatOutputKey: chatOutput.chatOutputKey,
+          chatOutputSource: 'tribex-ai-thread-result',
         }),
-        toolArgs: artifact.toolArgs || {},
-        reviewRequired: !!artifact.reviewRequired,
+        toolArgs: chatOutput.toolArgs || {},
+        reviewRequired: !!chatOutput.reviewRequired,
       };
     }
 
-    function openThreadArtifact(threadId, artifactKey, options) {
-      if (!threadId || !artifactKey) return null;
+    function openThreadChatOutput(threadId, chatOutputKey, options) {
+      if (!threadId || !chatOutputKey) return null;
       var detail = state.threadDetails[threadId];
       if (!detail) return null;
-      var artifact = api.normalizeArtifactItems(detail).find(function (candidate) {
-        return candidate && candidate.artifactKey === artifactKey;
+      var chatOutput = api.normalizeChatOutputItems(detail).find(function (candidate) {
+        return candidate && candidate.chatOutputKey === chatOutputKey;
       });
-      if (!artifact) return null;
-      var sourceSessionId = artifact.sessionId
-        || artifact.reviewSessionId
-        || (artifact.meta && (artifact.meta.sessionId || artifact.meta.reviewSessionId))
+      if (!chatOutput) return null;
+      var sourceSessionId = chatOutput.sessionId
+        || chatOutput.reviewSessionId
+        || (chatOutput.meta && (chatOutput.meta.sessionId || chatOutput.meta.reviewSessionId))
         || null;
       if (
         sourceSessionId &&
@@ -1467,17 +1467,17 @@
           return sourceSessionId;
         }
       }
-      detail.artifactDrawer = detail.artifactDrawer || {
-        drawerId: 'tribex-ai-thread-artifacts:' + threadId,
-        selectedArtifactKey: null,
+      detail.chatOutputPanel = detail.chatOutputPanel || {
+        drawerId: 'tribex-ai-thread-chat-outputs:' + threadId,
+        selectedChatOutputKey: null,
       };
-      detail.artifactDrawer.selectedArtifactKey = artifactKey;
+      detail.chatOutputPanel.selectedChatOutputKey = chatOutputKey;
       var threadUi = api.ensureThreadUi(threadId);
       if (threadUi) {
-        threadUi.selectedArtifactKey = artifactKey;
+        threadUi.selectedChatOutputKey = chatOutputKey;
       }
 
-      var config = buildThreadArtifactSessionConfig(threadId, artifact);
+      var config = buildThreadChatOutputSessionConfig(threadId, chatOutput);
       var sessionId = config ? openSession(config, {
         autoFocus: !options || options.autoFocus !== false,
       }) : null;
@@ -1487,11 +1487,11 @@
         });
       }
       api.notify();
-      return sessionId || artifactKey;
+      return sessionId || chatOutputKey;
     }
 
-    function selectThreadArtifact(threadId, artifactKey, options) {
-      return openThreadArtifact(threadId, artifactKey, options);
+    function selectThreadChatOutput(threadId, chatOutputKey, options) {
+      return openThreadChatOutput(threadId, chatOutputKey, options);
     }
 
     function onSessionClosed(sessionId, session) {
@@ -1734,11 +1734,21 @@
           expandedFolderPaths: {},
           preview: {
             status: 'idle',
+            kind: 'idle',
             fileId: null,
             contentType: null,
             text: '',
+            sourceText: '',
             objectUrl: null,
             error: null,
+            jsonDraft: '',
+            jsonFormatted: '',
+            jsonError: null,
+            jsonDirty: false,
+            saving: false,
+            saveError: null,
+            loadedSignature: null,
+            truncated: false,
           },
           uploading: false,
           uploadProgress: null,
@@ -1790,11 +1800,21 @@
       }
       state.workspaceFileBrowser.preview = {
         status: 'idle',
+        kind: 'idle',
         fileId: null,
         contentType: null,
         text: '',
+        sourceText: '',
         objectUrl: null,
         error: null,
+        jsonDraft: '',
+        jsonFormatted: '',
+        jsonError: null,
+        jsonDirty: false,
+        saving: false,
+        saveError: null,
+        loadedSignature: null,
+        truncated: false,
       };
     }
 
@@ -1890,10 +1910,117 @@
         /\.(txt|md|markdown|json|csv|tsv|js|ts|tsx|jsx|css|html|xml|yaml|yml|toml|log)$/i.test(path);
     }
 
+    function isPreviewHtmlType(file, contentType) {
+      var type = String(contentType || file && file.contentType || '').toLowerCase();
+      var path = String(file && file.relativePath || '').toLowerCase();
+      return type.indexOf('text/html') === 0 || /\.(html|htm)$/i.test(path);
+    }
+
+    function isPreviewJsonType(file, contentType) {
+      var type = String(contentType || file && file.contentType || '').toLowerCase();
+      var path = String(file && file.relativePath || '').toLowerCase();
+      return type === 'application/json' ||
+        type.indexOf('+json') !== -1 ||
+        /(^|[\/;+.-])json($|[;+-])/.test(type) ||
+        /\.json$/i.test(path);
+    }
+
     function isPreviewImageType(file, contentType) {
       var type = String(contentType || file && file.contentType || '').toLowerCase();
       var path = String(file && file.relativePath || '').toLowerCase();
       return type.indexOf('image/') === 0 || /\.(png|jpe?g|gif|webp|svg)$/i.test(path);
+    }
+
+    function workspaceFileSignature(file) {
+      if (!file) return null;
+      return JSON.stringify({
+        id: file.id || null,
+        relativePath: file.relativePath || null,
+        checksum: file.checksum || file.sha256 || file.contentHash || file.hash || null,
+        etag: file.etag || file.eTag || null,
+        version: file.version || file.versionId || null,
+        sizeBytes: typeof file.sizeBytes === 'number' ? file.sizeBytes : null,
+        lastModifiedAt: file.lastModifiedAt || file.updatedAt || null,
+      });
+    }
+
+    function validateWorkspaceJsonDraft(value) {
+      try {
+        return {
+          parsed: JSON.parse(String(value || '')),
+          error: null,
+        };
+      } catch (error) {
+        return {
+          parsed: null,
+          error: error && error.message ? error.message : 'Invalid JSON.',
+        };
+      }
+    }
+
+    function buildWorkspaceTextPreview(fileId, detailFile, contentType, text, truncated) {
+      var signature = workspaceFileSignature(detailFile);
+      if (isPreviewJsonType(detailFile, contentType)) {
+        var validation = validateWorkspaceJsonDraft(text);
+        var formatted = validation.error ? '' : JSON.stringify(validation.parsed, null, 2);
+        var draft = formatted || text;
+        return {
+          status: 'ready',
+          kind: 'json',
+          fileId: fileId,
+          contentType: contentType,
+          text: draft,
+          sourceText: text,
+          objectUrl: null,
+          error: null,
+          jsonDraft: draft,
+          jsonFormatted: formatted,
+          jsonError: validation.error,
+          jsonDirty: false,
+          saving: false,
+          saveError: truncated ? 'Preview was truncated. Refresh before saving JSON edits.' : null,
+          loadedSignature: signature,
+          truncated: !!truncated,
+        };
+      }
+      if (isPreviewHtmlType(detailFile, contentType)) {
+        return {
+          status: 'ready',
+          kind: 'html',
+          fileId: fileId,
+          contentType: contentType,
+          text: text,
+          sourceText: text,
+          objectUrl: null,
+          error: null,
+          jsonDraft: '',
+          jsonFormatted: '',
+          jsonError: null,
+          jsonDirty: false,
+          saving: false,
+          saveError: null,
+          loadedSignature: signature,
+          truncated: !!truncated,
+        };
+      }
+      return {
+        status: 'ready',
+        kind: 'text',
+        fileId: fileId,
+        contentType: contentType,
+        text: text + (truncated ? '\n\n[Preview truncated]' : ''),
+        sourceText: text,
+        objectUrl: null,
+        error: null,
+        jsonDraft: '',
+        jsonFormatted: '',
+        jsonError: null,
+        jsonDirty: false,
+        saving: false,
+        saveError: null,
+        loadedSignature: signature,
+        truncated: !!truncated,
+      };
     }
 
     function normalizeWorkspaceBrowserPath(path) {
@@ -1991,48 +2118,73 @@
       expandWorkspaceFolderPath(state.workspaceFileBrowser.selectedFolderPath, true);
       state.workspaceFileBrowser.preview = {
         status: 'loading',
+        kind: 'loading',
         fileId: fileId,
         contentType: file && file.contentType ? file.contentType : null,
         text: '',
+        sourceText: '',
         objectUrl: null,
         error: null,
+        jsonDraft: '',
+        jsonFormatted: '',
+        jsonError: null,
+        jsonDirty: false,
+        saving: false,
+        saveError: null,
+        loadedSignature: file ? workspaceFileSignature(file) : null,
+        truncated: false,
       };
       api.notify();
 
       return window.__tribexAiClient.getWorkspaceFile(workspace.id, fileId)
         .then(function (detail) {
-          var detailFile = detail && detail.file ? detail.file : file;
+          var detailFile = Object.assign({}, file || {}, detail && detail.file ? detail.file : {});
           return window.__tribexAiClient.fetchSignedFileBytes(detail && detail.download).then(function (downloaded) {
             if (state.workspaceFileBrowser.selectedFileId !== fileId) return null;
             var contentType = downloaded.contentType || (detailFile && detailFile.contentType) || null;
             if (isPreviewTextType(detailFile, contentType)) {
-              var limit = Math.min(downloaded.bytes.length, 128 * 1024);
-              state.workspaceFileBrowser.preview = {
-                status: 'ready',
-                fileId: fileId,
-                contentType: contentType,
-                text: new TextDecoder('utf-8').decode(downloaded.bytes.slice(0, limit)) + (downloaded.bytes.length > limit ? '\n\n[Preview truncated]' : ''),
-                objectUrl: null,
-                error: null,
-              };
+              var textLimit = Math.min(downloaded.bytes.length, 128 * 1024);
+              var truncated = downloaded.bytes.length > textLimit;
+              var text = new TextDecoder('utf-8').decode(downloaded.bytes.slice(0, textLimit));
+              state.workspaceFileBrowser.preview = buildWorkspaceTextPreview(fileId, detailFile, contentType, text, truncated);
             } else if (isPreviewImageType(detailFile, contentType)) {
               var blob = new Blob([downloaded.bytes], { type: contentType || 'application/octet-stream' });
               state.workspaceFileBrowser.preview = {
                 status: 'ready',
+                kind: 'image',
                 fileId: fileId,
                 contentType: contentType,
                 text: '',
+                sourceText: '',
                 objectUrl: URL.createObjectURL(blob),
                 error: null,
+                jsonDraft: '',
+                jsonFormatted: '',
+                jsonError: null,
+                jsonDirty: false,
+                saving: false,
+                saveError: null,
+                loadedSignature: workspaceFileSignature(detailFile),
+                truncated: false,
               };
             } else {
               state.workspaceFileBrowser.preview = {
                 status: 'unsupported',
+                kind: 'unsupported',
                 fileId: fileId,
                 contentType: contentType,
                 text: '',
+                sourceText: '',
                 objectUrl: null,
                 error: null,
+                jsonDraft: '',
+                jsonFormatted: '',
+                jsonError: null,
+                jsonDirty: false,
+                saving: false,
+                saveError: null,
+                loadedSignature: workspaceFileSignature(detailFile),
+                truncated: false,
               };
             }
             api.notify();
@@ -2043,15 +2195,176 @@
           if (state.workspaceFileBrowser.selectedFileId === fileId) {
             state.workspaceFileBrowser.preview = {
               status: 'error',
+              kind: 'error',
               fileId: fileId,
               contentType: file && file.contentType ? file.contentType : null,
               text: '',
+              sourceText: '',
               objectUrl: null,
               error: error && error.message ? error.message : String(error),
+              jsonDraft: '',
+              jsonFormatted: '',
+              jsonError: null,
+              jsonDirty: false,
+              saving: false,
+              saveError: null,
+              loadedSignature: file ? workspaceFileSignature(file) : null,
+              truncated: false,
             };
             api.notify();
           }
           return null;
+        });
+    }
+
+    function selectedWorkspaceJsonFile(workspace) {
+      if (!workspace) return null;
+      var fileId = state.workspaceFileBrowser.selectedFileId;
+      return findWorkspaceFile(workspace.id, fileId);
+    }
+
+    function setWorkspaceJsonDraft(value) {
+      var preview = state.workspaceFileBrowser.preview || {};
+      if (preview.kind !== 'json') return false;
+      var draft = String(value === undefined || value === null ? '' : value);
+      var validation = validateWorkspaceJsonDraft(draft);
+      var baseline = preview.jsonFormatted || preview.sourceText || preview.text || '';
+      state.workspaceFileBrowser.preview = Object.assign({}, preview, {
+        jsonDraft: draft,
+        jsonError: validation.error,
+        jsonDirty: draft !== baseline,
+        saveError: null,
+      });
+      api.notify();
+      return !validation.error;
+    }
+
+    function formatWorkspaceJsonDraft() {
+      var preview = state.workspaceFileBrowser.preview || {};
+      if (preview.kind !== 'json') return false;
+      var validation = validateWorkspaceJsonDraft(preview.jsonDraft || '');
+      if (validation.error) {
+        state.workspaceFileBrowser.preview = Object.assign({}, preview, {
+          jsonError: validation.error,
+        });
+        api.notify();
+        return false;
+      }
+      var formatted = JSON.stringify(validation.parsed, null, 2);
+      var baseline = preview.jsonFormatted || preview.sourceText || preview.text || '';
+      state.workspaceFileBrowser.preview = Object.assign({}, preview, {
+        text: formatted,
+        jsonDraft: formatted,
+        jsonError: null,
+        jsonDirty: formatted !== baseline,
+        saveError: null,
+      });
+      api.notify();
+      return true;
+    }
+
+    function resetWorkspaceJsonDraft() {
+      var preview = state.workspaceFileBrowser.preview || {};
+      if (preview.kind !== 'json') return false;
+      var baseline = preview.jsonFormatted || preview.sourceText || preview.text || '';
+      var validation = validateWorkspaceJsonDraft(baseline);
+      state.workspaceFileBrowser.preview = Object.assign({}, preview, {
+        jsonDraft: baseline,
+        jsonError: validation.error,
+        jsonDirty: false,
+        saveError: null,
+      });
+      api.notify();
+      return !validation.error;
+    }
+
+    function refreshWorkspaceFileForJsonSave(workspaceId, file) {
+      return window.__tribexAiClient.listWorkspaceFiles(workspaceId).then(function (result) {
+        var files = result && result.files ? result.files : [];
+        setWorkspaceFiles(workspaceId, files);
+        return files.find(function (candidate) {
+          return candidate && file && candidate.id === file.id;
+        }) || files.find(function (candidate) {
+          return candidate && file && candidate.relativePath === file.relativePath;
+        }) || null;
+      });
+    }
+
+    function saveWorkspaceJsonDraft() {
+      var workspace = getActiveWorkspaceForFiles();
+      var preview = state.workspaceFileBrowser.preview || {};
+      var file = selectedWorkspaceJsonFile(workspace);
+      if (!workspace || !file || preview.kind !== 'json') {
+        return Promise.resolve(false);
+      }
+      if (preview.truncated) {
+        state.workspaceFileBrowser.preview = Object.assign({}, preview, {
+          saveError: 'Preview was truncated. Refresh before saving JSON edits.',
+        });
+        api.notify();
+        return Promise.resolve(false);
+      }
+      var validation = validateWorkspaceJsonDraft(preview.jsonDraft || '');
+      if (validation.error) {
+        state.workspaceFileBrowser.preview = Object.assign({}, preview, {
+          jsonError: validation.error,
+          saveError: 'Fix the JSON parse error before saving.',
+        });
+        api.notify();
+        return Promise.resolve(false);
+      }
+
+      state.workspaceFileBrowser.preview = Object.assign({}, preview, {
+        saving: true,
+        saveError: null,
+        jsonError: null,
+      });
+      api.notify();
+
+      return refreshWorkspaceFileForJsonSave(workspace.id, file)
+        .then(function (currentFile) {
+          var currentSignature = workspaceFileSignature(currentFile);
+          if (!currentFile) {
+            throw new Error('File no longer exists. Refresh the file browser before saving.');
+          }
+          if (preview.loadedSignature && currentSignature !== preview.loadedSignature) {
+            throw new Error('File changed since preview load. Refresh before saving.');
+          }
+
+          var nextText = JSON.stringify(validation.parsed, null, 2) + '\n';
+          var blob = new Blob([nextText], { type: 'application/json' });
+          return window.__tribexAiClient.initWorkspaceFileUpload(workspace.id, {
+            relativePath: currentFile.relativePath,
+            contentType: 'application/json',
+            sizeBytes: blob.size,
+            source: 'mcpviews-file-browser-json-editor',
+            metadata: {
+              editedFromFileId: currentFile.id || null,
+              editedFromChecksum: currentFile.checksum || currentFile.sha256 || currentFile.contentHash || null,
+            },
+          }).then(function (init) {
+            return window.__tribexAiClient.uploadWorkspaceFileToSignedUrl(init && init.upload, blob);
+          }).then(function () {
+            return refreshWorkspaceFiles(true);
+          }).then(function () {
+            var refreshed = getWorkspaceFiles(workspace.id).find(function (candidate) {
+              return candidate && candidate.relativePath === currentFile.relativePath;
+            }) || currentFile;
+            if (refreshed && refreshed.id) {
+              return selectWorkspaceFile(refreshed.id).then(function () {
+                return true;
+              });
+            }
+            return true;
+          });
+        })
+        .catch(function (error) {
+          state.workspaceFileBrowser.preview = Object.assign({}, state.workspaceFileBrowser.preview || preview, {
+            saving: false,
+            saveError: error && error.message ? error.message : String(error),
+          });
+          api.notify();
+          return false;
         });
     }
 
@@ -2814,9 +3127,9 @@
     api.submitPrompt = submitPrompt;
     api.interruptThread = interruptThread;
     api.setActiveSession = setActiveSession;
-    api.buildThreadArtifactSessionConfig = buildThreadArtifactSessionConfig;
-    api.openThreadArtifact = openThreadArtifact;
-    api.selectThreadArtifact = selectThreadArtifact;
+    api.buildThreadChatOutputSessionConfig = buildThreadChatOutputSessionConfig;
+    api.openThreadChatOutput = openThreadChatOutput;
+    api.selectThreadChatOutput = selectThreadChatOutput;
     api.onSessionClosed = onSessionClosed;
     api.renameProject = renameProject;
     api.renameThread = renameThread;
@@ -2848,6 +3161,10 @@
     api.selectWorkspaceFile = selectWorkspaceFile;
     api.selectWorkspaceFolder = selectWorkspaceFolder;
     api.toggleWorkspaceFolderExpanded = toggleWorkspaceFolderExpanded;
+    api.setWorkspaceJsonDraft = setWorkspaceJsonDraft;
+    api.formatWorkspaceJsonDraft = formatWorkspaceJsonDraft;
+    api.resetWorkspaceJsonDraft = resetWorkspaceJsonDraft;
+    api.saveWorkspaceJsonDraft = saveWorkspaceJsonDraft;
     api.uploadWorkspaceFiles = uploadWorkspaceFiles;
     api.downloadSelectedWorkspaceEntry = downloadSelectedWorkspaceEntry;
     api.deleteSelectedWorkspaceFile = deleteSelectedWorkspaceFile;

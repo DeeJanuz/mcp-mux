@@ -89,6 +89,7 @@ beforeEach(function () {
   delete window.__tribexAiSkills;
   delete window.__tribexAiState;
   delete window.__tribexAiClient;
+  delete window.__TAURI__;
   window.__companionUtils = {
     renderMarkdown: vi.fn(function (content) {
       var el = document.createElement('div');
@@ -117,10 +118,11 @@ afterEach(function () {
 });
 
 describe('tribex-ai-thread Codex-like surface', function () {
-  it('renders grouped requests and opens artifacts in the right drawer', function () {
+  it('renders grouped requests and previews chat outputs inline', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),
       refreshActiveThread: vi.fn(),
+      openThreadChatOutput: vi.fn(),
       submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
       getThreadContext: vi.fn(function () {
         return {
@@ -155,10 +157,10 @@ describe('tribex-ai-thread Codex-like surface', function () {
                       detail: 'Found activeTurn and pendingThreadIds drift.',
                     },
                     {
-                      id: 'artifact-1',
+                      id: 'chat-output-1',
                       toolName: 'rich_content',
                       resultContentType: 'rich_content',
-                      artifactKey: 'artifact:chat-plan',
+                      chatOutputKey: 'chat-output:chat-plan',
                       title: 'Chat Rewrite Plan',
                       status: 'completed',
                       resultData: { title: 'Codex-like chat plan' },
@@ -192,15 +194,96 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-session-index').textContent).toBe('Request 1');
     expect(document.querySelector('.ai-codex-session').textContent).not.toContain('Session 1');
     expect(document.querySelector('.ai-codex-activity-group-tool').textContent).toContain('Inspect chat state');
-    expect(document.querySelector('.ai-codex-activity-group-artifact').textContent).toContain('Chat Rewrite Plan');
+    expect(document.querySelector('.ai-codex-activity-group-chat_output').textContent).toContain('Chat Rewrite Plan');
     expect(document.querySelector('.ai-codex-activity-group-subagent').open).toBe(true);
     expect(document.querySelector('.ai-codex-answer-copy').textContent).toContain('requests');
 
-    document.querySelector('.ai-codex-artifact-chip').click();
-
-    expect(document.querySelector('.ai-codex-drawer')).not.toBeNull();
-    expect(document.querySelector('.ai-codex-drawer-title').textContent).toContain('Chat Rewrite Plan');
+    expect(document.querySelector('.ai-codex-chat-output-inline-chip').textContent).toContain('Output below');
+    expect(document.querySelector('.ai-codex-chat-output-card').textContent).toContain('Chat Rewrite Plan');
+    expect(window.__tribexAiState.openThreadChatOutput).not.toHaveBeenCalled();
+    expect(document.querySelector('.ai-codex-drawer')).toBeNull();
     expect(window.__renderers.rich_content).toHaveBeenCalled();
+  });
+
+  it('passes review-required chat outputs through the renderer review contract', async function () {
+    window.__TAURI__ = {
+      core: {
+        invoke: vi.fn(function () {
+          return Promise.resolve({});
+        }),
+      },
+    };
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          organization: { name: 'Acme AI Harness' },
+          workspace: { name: 'Dev Deploy' },
+          project: null,
+          thread: baseThread({
+            runs: [
+              {
+                id: 'run-1',
+                user: {
+                  id: 'u1',
+                  role: 'user',
+                  content: 'Review the table.',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                },
+                answer: {
+                  id: 'a1',
+                  role: 'assistant',
+                  content: 'Review is ready below.',
+                  createdAt: '2026-04-24T18:04:12.000Z',
+                },
+                workSession: {
+                  id: 'work-1',
+                  status: 'completed',
+                  items: [
+                    {
+                      id: 'chat-output-1',
+                      toolName: 'structured_data',
+                      resultContentType: 'structured_data',
+                      chatOutputKey: 'chat-output:review',
+                      reviewRequired: true,
+                      reviewSessionId: 'review-session-1',
+                      title: 'Rows to Review',
+                      status: 'completed',
+                      resultData: { title: 'Rows to Review', tables: [] },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+          streamStatus: 'connected',
+          relayStatus: 'online',
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(window.__renderers.structured_data).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ title: 'Rows to Review' }),
+      expect.anything(),
+      expect.objectContaining({ mode: 'inline_summary' }),
+      true,
+      expect.any(Function),
+    );
+
+    document.querySelector('[data-review-decision-submit]').click();
+    await flushPromises();
+    expect(window.__TAURI__.core.invoke).toHaveBeenCalledWith('submit_decision', expect.objectContaining({
+      sessionId: 'review-session-1',
+      decision: 'partial',
+    }));
   });
 
   it('passes assistant markdown with preserved structure to the markdown renderer', function () {

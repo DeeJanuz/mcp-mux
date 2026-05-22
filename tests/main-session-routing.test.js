@@ -216,7 +216,7 @@ describe('main session routing', function () {
     expect(window.__tribexAiState.toggleNavigator).toHaveBeenCalledTimes(1);
   });
 
-  it('opens standalone app sessions for thread-scoped artifact previews', function () {
+  it('opens standalone app sessions for thread-scoped chatOutput previews', function () {
     loadMain();
 
     window.__mainTest.handlePush({
@@ -229,7 +229,7 @@ describe('main session routing', function () {
       },
       meta: {
         threadId: 'thread-1',
-        artifactSource: 'tribex-ai-thread-result',
+        chatOutputSource: 'tribex-ai-thread-result',
         drawerOnly: true,
         headerTitle: 'Final Result',
       },
@@ -249,7 +249,7 @@ describe('main session routing', function () {
       },
       meta: expect.objectContaining({
         threadId: 'thread-1',
-        artifactSource: 'tribex-ai-thread-result',
+        chatOutputSource: 'tribex-ai-thread-result',
       }),
     });
   });

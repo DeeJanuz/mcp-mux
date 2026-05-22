@@ -191,7 +191,7 @@
     {
       "name": "email-deliverability",
       "version": "0.1.1",
-      "description": "Visual email template drafting plus manual artifact-backed campaign launching with deterministic JSON/CSV audience filtering, derived filtered audience artifacts, and platform-owned campaign workflow calls.",
+      "description": "Visual email template drafting plus manual file-backed campaign launching with deterministic JSON/CSV audience filtering, derived filtered audience files, and platform-owned campaign workflow calls.",
       "author": "TribeX AI",
       "homepage": "https://github.com/DeeJanuz/mcpviews-email-deliverability-plugin",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/mcpviews-email-deliverability-plugin/master/manifest.json",
@@ -218,26 +218,26 @@
         "renderer_definitions": [
           {
             "name": "email_template_builder",
-            "description": "Visual email template builder with guided org/workspace discovery, saved template selection, deterministic HTML-to-text preview, block selection in the HTML preview, durable workspace artifact search/load, and TribeX workspace JSON persistence.",
+            "description": "Visual email template builder with guided org/workspace discovery, saved template selection, deterministic HTML-to-text preview, block selection in the HTML preview, durable workspace file search/load, and TribeX workspace JSON persistence.",
             "scope": "universal",
             "tools": [
               "email-template-builder-open"
             ],
-            "data_hint": "{ \"thread_id\"?: \"string\", \"workspace_id\"?: \"string\", \"project_id\"?: \"string\", \"organization_id\"?: \"string\", \"draft\"?: { \"name\"?: \"string\", \"templateKey\"?: \"string\", \"templateName\"?: \"string\", \"fromEmail\"?: \"string\", \"sendingIdentityId\"?: \"string\", \"subjectTemplate\"?: \"string\", \"textTemplate\"?: \"string\", \"htmlTemplate\"?: \"string\", \"htmlTemplateArtifactRef\"?: \"object\", \"campaignPreparePayload\"?: \"object\", \"htmlArtifactPath\"?: \"string\", \"audience\"?: \"array\", \"audienceArtifactRef\"?: \"object\", \"audienceArtifactPath\"?: \"string\", \"audienceArtifactFormat\"?: \"json|csv\", \"testTo\"?: \"string\", \"decidrProjectId\"?: \"string\", \"decidrDecisionIds\"?: \"array\" } }",
-            "rule": "Use `email_template_builder` when the user wants to draft or edit a reusable HTML email template, choose a TribeX organization/workspace, select a saved durable template or create a new one, inspect explicit `{{variable}}` placeholders, preview HTML and derived plain text against a sample row, visually select rendered HTML blocks for persona-mediated edits, save the draft to TribeX AI workspace storage, or inspect advanced artifact/campaign fields only when needed.",
+            "data_hint": "{ \"thread_id\"?: \"string\", \"workspace_id\"?: \"string\", \"project_id\"?: \"string\", \"organization_id\"?: \"string\", \"draft\"?: { \"name\"?: \"string\", \"templateKey\"?: \"string\", \"templateName\"?: \"string\", \"fromEmail\"?: \"string\", \"sendingIdentityId\"?: \"string\", \"subjectTemplate\"?: \"string\", \"textTemplate\"?: \"string\", \"htmlTemplate\"?: \"string\", \"htmlTemplateFileRef\"?: \"object\", \"campaignPreparePayload\"?: \"object\", \"htmlFilePath\"?: \"string\", \"audience\"?: \"array\", \"audienceFileRef\"?: \"object\", \"audienceFilePath\"?: \"string\", \"audienceFileFormat\"?: \"json|csv\", \"testTo\"?: \"string\", \"decidrProjectId\"?: \"string\", \"decidrDecisionIds\"?: \"array\" } }",
+            "rule": "Use `email_template_builder` when the user wants to draft or edit a reusable HTML email template, choose a TribeX organization/workspace, select a saved durable template or create a new one, inspect explicit `{{variable}}` placeholders, preview HTML and derived plain text against a sample row, visually select rendered HTML blocks for persona-mediated edits, save the draft to TribeX AI workspace storage, or inspect advanced file/campaign fields only when needed.",
             "display_mode": "replace",
             "standalone": true,
             "standalone_label": "Email Templates"
           },
           {
             "name": "email_campaign_launcher",
-            "description": "Standalone manual campaign launcher for artifact-backed templates and JSON/CSV audiences, deterministic column filtering, filtered audience artifact creation, and direct platform-owned prepare, preview, test, review, apply, and status workflow calls.",
+            "description": "Standalone manual campaign launcher for file-backed templates and JSON/CSV audiences, deterministic column filtering, filtered audience file creation, and direct platform-owned prepare, preview, test, review, apply, and status workflow calls.",
             "scope": "universal",
             "tools": [
               "email-campaign-launcher-open"
             ],
-            "data_hint": "{ \"thread_id\"?: \"string\", \"workspace_id\"?: \"string\", \"project_id\"?: \"string\", \"organization_id\"?: \"string\", \"draft\"?: { \"name\"?: \"string\", \"subjectTemplate\"?: \"string\", \"textTemplate\"?: \"string\", \"htmlTemplateArtifactRef\"?: \"object\", \"audienceArtifactRef\"?: \"object\", \"audienceFilterSpec\"?: \"object\", \"audienceFilterHash\"?: \"string\", \"audienceFilterCounts\"?: \"object\", \"saveFolder\"?: \"string\", \"saveFileName\"?: \"string\", \"testTo\"?: \"string\" } }",
-            "rule": "Use `email_campaign_launcher` when the user wants to manually trigger an approval-gated bulk email campaign from durable template and audience artifacts, apply deterministic include/exclude filters over JSON paths or CSV headers, optionally save a renamed filtered derived audience artifact, and call the TribeX platform campaign workflow directly without composing a persona prompt.",
+            "data_hint": "{ \"thread_id\"?: \"string\", \"workspace_id\"?: \"string\", \"project_id\"?: \"string\", \"organization_id\"?: \"string\", \"draft\"?: { \"name\"?: \"string\", \"subjectTemplate\"?: \"string\", \"textTemplate\"?: \"string\", \"htmlTemplateFileRef\"?: \"object\", \"audienceFileRef\"?: \"object\", \"audienceFilterSpec\"?: \"object\", \"audienceFilterHash\"?: \"string\", \"audienceFilterCounts\"?: \"object\", \"saveFolder\"?: \"string\", \"saveFileName\"?: \"string\", \"testTo\"?: \"string\" } }",
+            "rule": "Use `email_campaign_launcher` when the user wants to manually trigger an approval-gated bulk email campaign from durable template and audience files, apply deterministic include/exclude filters over JSON paths or CSV headers, optionally save a renamed filtered derived audience file, and call the TribeX platform campaign workflow directly without composing a persona prompt.",
             "display_mode": "replace",
             "standalone": true,
             "standalone_label": "Email Campaigns"
@@ -257,7 +257,7 @@
           }
         ],
         "registry_index": {
-          "summary": "Visual email template drafting plus manual artifact-backed campaign launching with deterministic JSON/CSV audience filtering, derived filtered audience artifacts, and platform-owned campaign workflow calls.",
+          "summary": "Visual email template drafting plus manual file-backed campaign launching with deterministic JSON/CSV audience filtering, derived filtered audience files, and platform-owned campaign workflow calls.",
           "tags": [
             "email",
             "deliverability",
@@ -282,7 +282,7 @@
             },
             {
               "name": "Campaign Launcher",
-              "hint": "Open the manual launcher, select saved template and audience artifacts, apply deterministic JSON/CSV column filters, save a filtered audience artifact, and call platform campaign prepare, preview, test send, review, apply, and status without persona prompts.",
+              "hint": "Open the manual launcher, select saved template and audience files, apply deterministic JSON/CSV column filters, save a filtered audience file, and call platform campaign prepare, preview, test send, review, apply, and status without persona prompts.",
               "tools": [
                 "email-campaign-launcher-open"
               ]
@@ -308,20 +308,20 @@
           "email-template-payload-validate": "Validates explicit `{{variable}}` placeholders against normalized JSON audience rows. Missing variables block persona test prompt generation.",
           "email-template-persona-test-prompt": "Builds a safety-scoped prompt for a TribeX AI persona to call `email_campaign_prepare`, `email_campaign_preview`, and `email_campaign_test_send` for exactly one test recipient.",
           "email-campaign-persona-prompt": "Builds an approval-gated prompt for a TribeX AI persona to call prepare, preview, optional test send, MCPViews review proposal, send apply only after accepted approval, and status.",
-          "email-template-persona-revision-prompt": "Builds a revision prompt for a TribeX AI persona to search for the selected HTML template artifact and update the same workspace path with an expected SHA-256 guard.",
-          "email-template-visual-edit-prompt": "Builds a metadata-only batch visual-edit prompt for the plugin-specific `email-template-visual-editor` persona. The prompt uses selected rendered block metadata and requires same-path, SHA-guarded artifact updates."
+          "email-template-persona-revision-prompt": "Builds a revision prompt for a TribeX AI persona to search for the selected HTML template file and update the same workspace path with an expected SHA-256 guard.",
+          "email-template-visual-edit-prompt": "Builds a metadata-only batch visual-edit prompt for the plugin-specific `email-template-visual-editor` persona. The prompt uses selected rendered block metadata and requires same-path, SHA-guarded file updates."
         },
         "plugin_rules": [
           "The email-deliverability plugin provides MCPViews template-building and manual campaign-launching UI. It does not send production email directly; all prepare, preview, test, review, apply, and status operations remain TribeX platform-owned.",
-          "The campaign builder consumes templates and audiences from workspace artifacts, then creates database-backed drafted campaigns only when Prepare succeeds.",
-          "When a selected HTML template is being revised, pass its workspace path, file id, and SHA to the persona and prefer `email_template_artifact_search` plus `email_template_artifact_update`; do not create a new file for revisions unless the user explicitly asks for a copy.",
-          "Visual edits should use the plugin-specific `email-template-visual-editor` persona and metadata-only rendered block selections. Do not capture screenshots or store image artifacts for visual edits in v1.",
+          "The campaign builder consumes templates and audiences from workspace files, then creates database-backed drafted campaigns only when Prepare succeeds.",
+          "When a selected HTML template is being revised, pass its workspace path, file id, and SHA to the persona and prefer `email_template_search` plus `email_template_update`; do not create a new file for revisions unless the user explicitly asks for a copy.",
+          "Visual edits should use the plugin-specific `email-template-visual-editor` persona and metadata-only rendered block selections. Do not capture screenshots or store image files for visual edits in v1.",
           "On open, the template builder should first guide the user through selecting a TribeX organization/workspace, then choosing a saved template or creating a new draft.",
           "The default template editing view should stay simple: template name, key, subject, HTML source, variables, deterministic plain text preview, large HTML preview, and save. Campaign handoff fields belong behind advanced details or outside the template editor.",
-          "When opened with a workspace id or resolvable thread id, the campaign builder can search durable workspace storage under `email/`, filter by path, and load HTML template or audience artifacts into the UI.",
-          "Template drafts may be saved as portable JSON artifacts in TribeX AI durable workspace storage through `window.__tribexAiClient` when the renderer is opened with a workspace id or resolvable thread id.",
+          "When opened with a workspace id or resolvable thread id, the campaign builder can search durable workspace storage under `email/`, filter by path, and load HTML template or audience files into the UI.",
+          "Template drafts may be saved as portable JSON files in TribeX AI durable workspace storage through `window.__tribexAiClient` when the renderer is opened with a workspace id or resolvable thread id.",
           "The template builder's persona-fed campaign path must continue to use a TribeX AI persona with the platform email_campaign_* tools.",
-          "The manual `email_campaign_launcher` path must use renderer-accessible direct platform calls or a narrow platform broker, never a persona prompt. Prepare uses temporary inline filtered audience rows unless the user explicitly saves a renamed filtered JSON audience artifact under durable workspace storage. Saved artifacts must preserve source artifact refs, hashes, filter specs, filter hashes, and count metadata. Sender configuration is resolved from organization web portal settings rather than manual launcher fields.",
+          "The manual `email_campaign_launcher` path must use renderer-accessible direct platform calls or a narrow platform broker, never a persona prompt. Prepare uses temporary inline filtered audience rows unless the user explicitly saves a renamed filtered JSON audience file under durable workspace storage. Saved files must preserve source file refs, hashes, filter specs, filter hashes, and count metadata. Sender configuration is resolved from organization web portal settings rather than manual launcher fields.",
           "Scheduling from the manual campaign launcher UI is sufficient approval for production send apply; manual users never handle MCPViews review callbacks, approval tokens, object IDs, hashes, or storage paths in the default launcher flow.",
           "The campaign history renderer is read-only and must load campaign analytics from platform-owned database history APIs, including send counts, opens, opt-outs, link clicks, bounces, and send timing metadata."
         ]
@@ -447,7 +447,7 @@
           "The TribeX CRM plugin is a lightweight operational workspace, not a marketing site.",
           "CRM connection details are resolved by MCPViews and the local bridge; the renderer must not expose API, organization, user, or secret fields in the end-user UI.",
           "The local bridge defaults to the deployed CRM service at https://crm.tribexai.com. Override TRIBEX_CRM_API_BASE only for local CRM service development.",
-          "Audience handoff returns inline rows only in v1; durable audience artifacts are deferred until needed.",
+          "Audience handoff returns inline rows only in v1; durable audience files are deferred until needed.",
           "Production CRM persistence remains owned by the `tribex-crm` service; the plugin bridge must not invent a second storage layer."
         ]
       }

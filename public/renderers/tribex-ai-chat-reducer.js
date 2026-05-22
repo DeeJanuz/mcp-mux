@@ -183,7 +183,7 @@
     return normalized === 'rich_content' || normalized === 'structured_data' || normalized === 'universal_graph';
   }
 
-  function hasArtifactMetadata(item) {
+  function hasChatOutputMetadata(item) {
     if (!item || typeof item !== 'object') return false;
     var meta = item.resultMeta || item.meta || {};
     return !!(
@@ -191,24 +191,24 @@
       typeof meta === 'object' &&
       !Array.isArray(meta) &&
       (
-        meta.artifactSource ||
-        meta.artifactId ||
-        meta.artifactKey ||
+        meta.chatOutputSource ||
+        meta.chatOutputId ||
+        meta.chatOutputKey ||
         meta.reviewSessionId
       )
     );
   }
 
-  function isArtifactLike(item) {
+  function isChatOutputLike(item) {
     if (isSubagentToolEvent(item)) return false;
     if (!item) return false;
     if (isRendererContentType(item.resultContentType || item.contentType || item.toolName)) return true;
-    if (item.artifactKey && hasArtifactMetadata(item)) return true;
+    if (item.chatOutputKey && hasChatOutputMetadata(item)) return true;
     return !!(
-      item.artifact &&
-      typeof item.artifact === 'object' &&
-      !Array.isArray(item.artifact) &&
-      isRendererContentType(item.artifact.contentType || item.artifact.content_type)
+      item.chatOutput &&
+      typeof item.chatOutput === 'object' &&
+      !Array.isArray(item.chatOutput) &&
+      isRendererContentType(item.chatOutput.contentType || item.chatOutput.content_type)
     );
   }
 
@@ -244,12 +244,12 @@
       ? 'review'
       : isSubagentLike(item)
         ? 'subagent'
-        : isArtifactLike(item)
-          ? 'artifact'
+        : isChatOutputLike(item)
+          ? 'chat_output'
           : 'tool';
     var contentType = item.resultContentType || item.contentType || item.toolName || null;
     return {
-      id: item.id || item.toolCallId || item.artifactKey || ('activity-' + index),
+      id: item.id || item.toolCallId || item.chatOutputKey || ('activity-' + index),
       kind: kind,
       status: status,
       title: item.title || item.summary || titleCase(item.toolName || kind),
@@ -260,7 +260,7 @@
       createdAt: item.createdAt || item.startedAt || null,
       updatedAt: item.updatedAt || item.completedAt || item.createdAt || null,
       completedAt: item.completedAt || null,
-      artifactKey: item.artifactKey || null,
+      chatOutputKey: item.chatOutputKey || null,
       contentType: contentType,
       resultData: clone(item.resultData || null),
       resultMeta: clone(item.resultMeta || null),
@@ -305,7 +305,7 @@
     var groupsByKind = {
       review: [],
       subagent: [],
-      artifact: [],
+      chat_output: [],
       tool: [],
     };
     asArray(items).forEach(function (item, index) {
@@ -316,7 +316,7 @@
     var groups = [
       { id: 'review', title: 'Reviews', kind: 'review', items: groupsByKind.review },
       { id: 'subagent', title: 'Delegated Work', kind: 'subagent', items: groupsByKind.subagent },
-      { id: 'artifact', title: 'Artifacts', kind: 'artifact', items: groupsByKind.artifact },
+      { id: 'chat_output', title: 'Chat outputs', kind: 'chat_output', items: groupsByKind.chat_output },
       { id: 'tool', title: 'Work Activity', kind: 'tool', items: groupsByKind.tool },
     ].filter(function (group) { return group.items.length > 0; });
     groups.forEach(function (group) {
@@ -437,51 +437,52 @@
     return items;
   }
 
-  function normalizeArtifact(item, index) {
+  function normalizeChatOutput(item, index) {
     if (!item) return null;
-    if (!isArtifactLike(item)) return null;
+    if (!isChatOutputLike(item)) return null;
     var contentType = item.contentType || item.resultContentType || item.toolName || null;
-    var artifactKey = item.artifactKey || item.id || ('artifact-' + index);
-    if (!artifactKey && !item.resultData) return null;
+    var chatOutputKey = item.chatOutputKey || item.id || ('chat-output-' + index);
+    if (!chatOutputKey && !item.resultData) return null;
     return {
-      id: artifactKey,
-      artifactKey: artifactKey,
-      title: item.title || item.summary || titleCase(contentType || 'Artifact'),
+      id: chatOutputKey,
+      chatOutputKey: chatOutputKey,
+      title: item.title || item.summary || titleCase(contentType || 'Chat output'),
       detail: item.detail || '',
       contentType: contentType,
       resultData: clone(item.resultData || item.data || null),
       resultMeta: clone(item.resultMeta || item.meta || null),
       toolArgs: clone(item.toolArgs || null),
       reviewRequired: !!(item.reviewRequired || (item.resultMeta && item.resultMeta.reviewRequired)),
+      reviewSessionId: item.reviewSessionId || item.sessionId || (item.resultMeta && item.resultMeta.reviewSessionId) || null,
       createdAt: item.createdAt || item.updatedAt || null,
       raw: clone(item),
     };
   }
 
-  function collectArtifacts(thread) {
-    var artifacts = [];
-    asArray(thread && thread.artifacts).forEach(function (item, index) {
-      var artifact = normalizeArtifact(item, index);
-      if (artifact) artifacts.push(artifact);
+  function collectChatOutputs(thread) {
+    var chatOutputs = [];
+    asArray(thread && thread.chatOutputs).forEach(function (item, index) {
+      var chatOutput = normalizeChatOutput(item, index);
+      if (chatOutput) chatOutputs.push(chatOutput);
     });
     asArray(thread && thread.activityItems).forEach(function (item, index) {
-      if (!isArtifactLike(item)) return;
-      var artifact = normalizeArtifact(item, artifacts.length + index);
-      if (artifact && !artifacts.some(function (candidate) { return candidate.artifactKey === artifact.artifactKey; })) {
-        artifacts.push(artifact);
+      if (!isChatOutputLike(item)) return;
+      var chatOutput = normalizeChatOutput(item, chatOutputs.length + index);
+      if (chatOutput && !chatOutputs.some(function (candidate) { return candidate.chatOutputKey === chatOutput.chatOutputKey; })) {
+        chatOutputs.push(chatOutput);
       }
     });
     asArray(thread && thread.runs).forEach(function (run) {
       var items = run && run.workSession ? run.workSession.items : [];
       asArray(items).forEach(function (item, index) {
-        if (!isArtifactLike(item)) return;
-        var artifact = normalizeArtifact(item, artifacts.length + index);
-        if (artifact && !artifacts.some(function (candidate) { return candidate.artifactKey === artifact.artifactKey; })) {
-          artifacts.push(artifact);
+        if (!isChatOutputLike(item)) return;
+        var chatOutput = normalizeChatOutput(item, chatOutputs.length + index);
+        if (chatOutput && !chatOutputs.some(function (candidate) { return candidate.chatOutputKey === chatOutput.chatOutputKey; })) {
+          chatOutputs.push(chatOutput);
         }
       });
     });
-    return artifacts;
+    return chatOutputs;
   }
 
   function normalizeMessage(message, index) {
@@ -526,7 +527,7 @@
           user: message,
           answer: null,
           activityGroups: [],
-          artifacts: [],
+          chatOutputs: [],
           createdAt: message.createdAt,
           updatedAt: message.createdAt,
         };
@@ -540,7 +541,7 @@
           user: null,
           answer: null,
           activityGroups: [],
-          artifacts: [],
+          chatOutputs: [],
           createdAt: message.createdAt,
           updatedAt: message.createdAt,
         };
@@ -555,7 +556,7 @@
             user: null,
             answer: null,
             activityGroups: [],
-            artifacts: [],
+            chatOutputs: [],
             createdAt: message.createdAt,
             updatedAt: message.createdAt,
           };
@@ -586,7 +587,7 @@
         user: user,
         answer: answer,
         activityGroups: groupActivity(items),
-        artifacts: asArray(items).map(normalizeArtifact).filter(Boolean),
+        chatOutputs: asArray(items).map(normalizeChatOutput).filter(Boolean),
         createdAt: (user && user.createdAt) || run.startedAt || null,
         updatedAt: (answer && answer.createdAt) || (run.workSession && run.workSession.endedAt) || run.updatedAt || null,
         raw: clone(run),
@@ -766,7 +767,7 @@
       user: user,
       answer: answer,
       activityGroups: workflowGroups,
-      artifacts: [],
+      chatOutputs: [],
       createdAt: activeTurn.startedAt || (user && user.createdAt) || null,
       updatedAt: activeTurn.lastPresenceAt || null,
       active: true,
@@ -790,7 +791,7 @@
       (
         asArray(thread.runs).length ||
         asArray(thread.displayMessages || thread.messages).length ||
-        asArray(thread.artifacts).length
+        asArray(thread.chatOutputs).length
       )
     );
     return hasHistory ? LIFECYCLE.COMPLETE : LIFECYCLE.IDLE;
@@ -810,7 +811,7 @@
     sessions = appendActiveTurnSession(sessions, thread, lifecycle);
     sessions = markQueuedContextSessions(sessions, lifecycle);
     sessions = sessions.map(settleActivityGroupsForSession);
-    var artifacts = collectArtifacts(thread);
+    var chatOutputs = collectChatOutputs(thread);
     var pendingHumanInputs = asArray(thread.pendingHumanInputs);
     var activeOperationId = (thread.activeTurn && thread.activeTurn.operationId)
       || (thread.workflowProjection && thread.workflowProjection.operationId)
@@ -825,7 +826,7 @@
       statusDetail: detailForLifecycle(lifecycle, thread, heartbeat),
       heartbeat: heartbeat,
       sessions: sessions,
-      artifacts: artifacts,
+      chatOutputs: chatOutputs,
       pendingHumanInputs: pendingHumanInputs,
       activePause: clone(thread.activePause || null),
       workflowTimeline: clone(thread.workflowTimeline || (thread.workflowProjection && thread.workflowProjection.timeline) || null),
@@ -841,7 +842,7 @@
           ? thread.runtimeSnapshot.messages.length
           : null,
         displayMessageCount: asArray(thread.displayMessages || thread.messages).length,
-        artifactCount: artifacts.length,
+        chatOutputCount: chatOutputs.length,
         streamStatus: threadContext ? threadContext.streamStatus || null : null,
         relayStatus: threadContext ? threadContext.relayStatus || null : null,
         connection: clone(thread.connection || null),
@@ -876,6 +877,6 @@
     reduceThreadRuntimeState: reduceThreadRuntimeState,
     normalizeActivityItem: normalizeActivityItem,
     groupActivity: groupActivity,
-    collectArtifacts: collectArtifacts,
+    collectChatOutputs: collectChatOutputs,
   };
 })();

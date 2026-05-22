@@ -896,7 +896,7 @@ describe('tribex-ai-state runtime helpers', function () {
       ensureThreadDetailRecord: function () { return parentDetail; },
       getStoredActivityItem: function () { return null; },
       getLatestTurnReference: function () { return {}; },
-      resolveActivityDisplayMode: function () { return 'artifact'; },
+      resolveActivityDisplayMode: function () { return 'chat_output'; },
       getThread: function (threadId) {
         if (threadId === 'thread-parent') return parentDetail;
         return mergedSummaries.find(function (summary) { return summary.id === threadId; }) || null;

@@ -559,7 +559,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
           thread: baseThread({
             uiTranscript: {
               version: 1,
-              lastSequence: 7,
+              lastSequence: 9,
               events: [
                 {
                   id: 'activity-0',
@@ -601,19 +601,28 @@ describe('tribex-ai-thread Codex-like surface', function () {
                 },
                 {
                   id: 'status-2',
-                  kind: 'status',
+                  kind: 'activity',
                   title: 'Completed',
                   createdAt: '2026-04-24T18:02:12.000Z',
                   updatedAt: '2026-04-24T18:02:12.000Z',
                   status: 'completed',
                 },
                 {
-                  id: 'status-3',
-                  kind: 'status',
+                  id: 'activity-3',
+                  kind: 'activity',
                   title: 'Runtime message persisted',
                   detail: 'The assistant response was persisted.',
                   createdAt: '2026-04-24T18:02:16.000Z',
                   updatedAt: '2026-04-24T18:02:16.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'activity-4',
+                  kind: 'activity',
+                  title: 'Runtime message persisted',
+                  detail: 'The assistant response was persisted.',
+                  createdAt: '2026-04-24T18:02:17.000Z',
+                  updatedAt: '2026-04-24T18:02:17.000Z',
                   status: 'completed',
                 },
               ],
@@ -640,6 +649,9 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(Array.from(document.querySelectorAll('.ai-codex-activity-title strong')).map(function (node) {
       return node.textContent;
     })).not.toContain('Completed');
+    expect(Array.from(document.querySelectorAll('.ai-codex-activity-title strong')).map(function (node) {
+      return node.textContent;
+    }).filter(function (title) { return title === 'Runtime message persisted'; })).toHaveLength(1);
   });
 
   it('uses current time for running worked-for trail durations without updatedAt', function () {

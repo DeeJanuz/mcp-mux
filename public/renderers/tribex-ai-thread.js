@@ -1179,26 +1179,25 @@
   }
 
   function isLowSignalTranscriptWorkEvent(event) {
-    if (!event || event.kind !== 'status') return false;
+    if (!event || (event.kind !== 'status' && event.kind !== 'activity')) return false;
     if (event.detail || hasActivityTechnicalPreview(event)) return false;
     var title = normalizeStatus(event.title);
     return title === 'complete' || title === 'completed' || title === 'done';
   }
 
   function visibleTranscriptWorkEvents(events) {
-    var seenStatus = {};
+    var seenEvents = {};
     var visible = [];
     (events || []).forEach(function (event) {
       if (!event || isLowSignalTranscriptWorkEvent(event)) return;
-      if (event.kind === 'status') {
-        var signature = [
-          normalizeStatus(event.title),
-          normalizeStatus(event.status),
-          displayText(event.detail || ''),
-        ].join('|');
-        if (seenStatus[signature]) return;
-        seenStatus[signature] = true;
-      }
+      var signature = [
+        normalizeStatus(event.kind),
+        normalizeStatus(event.title),
+        normalizeStatus(event.status),
+        displayText(event.detail || ''),
+      ].join('|');
+      if (seenEvents[signature]) return;
+      seenEvents[signature] = true;
       visible.push(event);
     });
     return visible.length ? visible : (events || []).slice(-1);

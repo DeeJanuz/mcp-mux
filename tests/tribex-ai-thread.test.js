@@ -361,6 +361,106 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-event-assistant').textContent).toContain('Done.');
   });
 
+  it('renders legacy prompts when canonical transcript hydration omits the request', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 2,
+              events: [
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  title: 'System router classification',
+                  createdAt: '2026-04-24T18:00:05.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'assistant-1',
+                  kind: 'assistant',
+                  content: '{"intentCategory":"COMPANY_RESEARCH_BRIEF"}',
+                  createdAt: '2026-04-24T18:00:12.000Z',
+                  status: 'completed',
+                },
+              ],
+            },
+            messages: [
+              {
+                id: 'user-1',
+                role: 'user',
+                content: 'Create a Deloitte AI posture research presentation.',
+                createdAt: '2026-04-24T18:00:00.000Z',
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-event-request').textContent).toContain('Create a Deloitte AI posture research presentation.');
+    expect(document.querySelector('.ai-codex-event-assistant').textContent).toContain('Intent category');
+  });
+
+  it('renders compact JSON assistant payloads as structured results', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 2,
+              events: [
+                {
+                  id: 'request-1',
+                  kind: 'request',
+                  content: 'Route this research request.',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'assistant-1',
+                  kind: 'assistant',
+                  content: '{"intentCategory":"COMPANY_RESEARCH_BRIEF","targetPersonaKey":"tribex-vc-admin-solo-researcher","confidence":1,"rationale":"This is company research.","fileExpected":true,"filePurpose":"Deloitte AI posture research presentation"}',
+                  createdAt: '2026-04-24T18:00:12.000Z',
+                  status: 'completed',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var structured = document.querySelector('.ai-codex-answer-structured');
+    expect(structured).not.toBeNull();
+    expect(structured.textContent).toContain('Router result');
+    expect(structured.textContent).toContain('Intent category');
+    expect(structured.textContent).toContain('COMPANY_RESEARCH_BRIEF');
+    expect(structured.textContent).toContain('Target persona');
+    expect(structured.textContent).toContain('File expected');
+    expect(structured.textContent).toContain('Yes');
+    expect(document.querySelector('.ai-codex-answer-copy')).toBeNull();
+    expect(structured.textContent).not.toContain('{"intentCategory"');
+  });
+
   it('rerenders canonical transcript activity when only sanitized previews change', function () {
     var redactedInputPreview = '{"query":"old thread state"}';
 
@@ -405,6 +505,142 @@ describe('tribex-ai-thread Codex-like surface', function () {
     var details = document.querySelector('.ai-codex-activity-technical');
     expect(details.textContent).toContain('fresh thread state');
     expect(details.textContent).not.toContain('old thread state');
+  });
+
+  it('groups completed canonical transcript activity into one worked-for trail', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 7,
+              events: [
+                {
+                  id: 'activity-0',
+                  kind: 'activity',
+                  title: 'Planning response',
+                  createdAt: '2026-04-24T17:59:50.000Z',
+                  updatedAt: '2026-04-24T18:00:04.000Z',
+                  status: 'running',
+                },
+                {
+                  id: 'request-1',
+                  kind: 'request',
+                  content: 'Find AI marketing companies.',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  title: 'Preparing context',
+                  createdAt: '2026-04-24T18:00:05.000Z',
+                  updatedAt: '2026-04-24T18:00:30.000Z',
+                  status: 'running',
+                },
+                {
+                  id: 'status-1',
+                  kind: 'status',
+                  title: 'Saving response',
+                  createdAt: '2026-04-24T18:02:00.000Z',
+                  updatedAt: '2026-04-24T18:02:10.000Z',
+                  status: 'pending',
+                },
+                {
+                  id: 'assistant-1',
+                  kind: 'assistant',
+                  content: 'Done.',
+                  createdAt: '2026-04-24T18:02:15.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'status-2',
+                  kind: 'status',
+                  title: 'Completed',
+                  createdAt: '2026-04-24T18:02:12.000Z',
+                  updatedAt: '2026-04-24T18:02:12.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'status-3',
+                  kind: 'status',
+                  title: 'Runtime message persisted',
+                  detail: 'The assistant response was persisted.',
+                  createdAt: '2026-04-24T18:02:16.000Z',
+                  updatedAt: '2026-04-24T18:02:16.000Z',
+                  status: 'completed',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelectorAll('.ai-codex-event-activity')).toHaveLength(1);
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Worked for 2m');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('4 steps');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Planning response');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Preparing context');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Saving response');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Runtime message persisted');
+    expect(document.querySelector('.ai-codex-work-session').textContent).not.toContain('Running');
+    expect(document.querySelector('.ai-codex-work-session').textContent).not.toContain('Pending');
+    expect(Array.from(document.querySelectorAll('.ai-codex-activity-title strong')).map(function (node) {
+      return node.textContent;
+    })).not.toContain('Completed');
+  });
+
+  it('formats escaped canonical tool details as readable structured text', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 1,
+              events: [
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  title: 'Inspecting tool call',
+                  createdAt: '2026-04-24T18:01:00.000Z',
+                  status: 'running',
+                  activity: {
+                    toolName: 'search_codebase',
+                    redactedInputPreview: '{"query":"first\\nsecond","filters":{"snippet":"alpha\\nbeta"}}',
+                  },
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var pre = document.querySelector('.ai-codex-activity-technical pre');
+    expect(pre).not.toBeNull();
+    expect(pre.textContent).toContain('first\nsecond');
+    expect(pre.textContent).toContain('alpha\nbeta');
+    expect(pre.textContent).not.toContain('\\n');
+    expect(pre.textContent).not.toContain('"{\\"query\\"');
   });
 
   it('redacts expandable tool activity details', function () {

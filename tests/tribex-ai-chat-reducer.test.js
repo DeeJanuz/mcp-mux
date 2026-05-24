@@ -200,6 +200,57 @@ describe('tribex-ai-chat-reducer', function () {
     });
   });
 
+  it('backfills legacy user prompts when canonical transcript omits requests', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          lastSequence: 2,
+          events: [
+            {
+              id: 'activity-1',
+              kind: 'activity',
+              title: 'System router classification',
+              createdAt: '2026-04-24T18:00:05.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'assistant-1',
+              kind: 'assistant',
+              content: '{"intentCategory":"COMPANY_RESEARCH_BRIEF"}',
+              createdAt: '2026-04-24T18:00:12.000Z',
+              status: 'completed',
+            },
+          ],
+        },
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Create a Deloitte AI posture research presentation.',
+            createdAt: '2026-04-24T18:00:00.000Z',
+          },
+        ],
+        runs: [],
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.timelineEvents.map(function (event) { return event.id; })).toEqual([
+      'request:user-1',
+      'activity-1',
+      'assistant-1',
+    ]);
+    expect(viewModel.timelineEvents[0]).toMatchObject({
+      kind: 'request',
+      content: 'Create a Deloitte AI posture research presentation.',
+      source: 'legacy',
+    });
+  });
+
   it('derives lifecycle from transcript-only history', function () {
     var runningViewModel = derive({
       thread: {
@@ -638,6 +689,120 @@ describe('tribex-ai-chat-reducer', function () {
 
     expect(viewModel.lifecycle).toBe('complete');
     expect(viewModel.sessions[0].activityGroups[0].items[0].status).toBe('completed');
+  });
+
+  it('settles stale canonical transcript work events when the turn is complete', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          lastSequence: 4,
+          events: [
+            {
+              id: 'request-1',
+              kind: 'request',
+              content: 'Finish the run.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'activity-1',
+              kind: 'activity',
+              title: 'Preparing context',
+              createdAt: '2026-04-24T18:01:00.000Z',
+              status: 'running',
+            },
+            {
+              id: 'status-1',
+              kind: 'status',
+              title: 'Saving response',
+              createdAt: '2026-04-24T18:02:00.000Z',
+              status: 'pending',
+            },
+            {
+              id: 'assistant-1',
+              kind: 'assistant',
+              content: 'Done.',
+              createdAt: '2026-04-24T18:03:00.000Z',
+              status: 'completed',
+            },
+          ],
+        },
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('complete');
+    expect(viewModel.busy).toBe(false);
+    expect(viewModel.timelineEvents.find(function (event) { return event.id === 'activity-1'; }).status).toBe('completed');
+    expect(viewModel.timelineEvents.find(function (event) { return event.id === 'status-1'; }).status).toBe('completed');
+  });
+
+  it('lets a hydrated completed transcript settle stale active and workflow state', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        activeTurn: {
+          turnId: 'turn-1',
+          operationId: 'op-stale',
+          status: 'running',
+          lastPresenceAt: '2026-04-24T18:02:10.000Z',
+          userMessage: {
+            id: 'user-1',
+            role: 'user',
+            content: 'Finish the stale turn.',
+            createdAt: '2026-04-24T18:00:00.000Z',
+          },
+        },
+        workflowProjection: {
+          operationId: 'op-stale',
+          status: 'running',
+          updatedAt: '2026-04-24T18:02:10.000Z',
+        },
+        uiTranscript: {
+          version: 1,
+          lastSequence: 4,
+          events: [
+            {
+              id: 'request-1',
+              kind: 'request',
+              turnId: 'turn-1',
+              content: 'Finish the stale turn.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'activity-1',
+              kind: 'activity',
+              turnId: 'turn-1',
+              title: 'Saving response',
+              createdAt: '2026-04-24T18:01:00.000Z',
+              status: 'running',
+            },
+            {
+              id: 'assistant-1',
+              kind: 'assistant',
+              turnId: 'turn-1',
+              content: 'Done.',
+              createdAt: '2026-04-24T18:02:00.000Z',
+              status: 'completed',
+            },
+          ],
+        },
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('complete');
+    expect(viewModel.statusLabel).toBe('Complete');
+    expect(viewModel.busy).toBe(false);
+    expect(viewModel.composerMode).toBe('prompt');
+    expect(viewModel.timelineEvents.find(function (event) { return event.id === 'activity-1'; }).status).toBe('completed');
   });
 
   it('labels queued context messages as queued sessions', function () {

@@ -179,6 +179,10 @@
     return displayText(item && (item.title || item.summary), titleCase(item && item.kind || 'Work activity'));
   }
 
+  function normalizeStatus(value) {
+    return String(value || '').toLowerCase().replace(/[\s-]+/g, '_');
+  }
+
   function redactTechnicalPreview(value) {
     if (window.__tribexAiUtils && typeof window.__tribexAiUtils.redactTechnicalPreview === 'function') {
       return window.__tribexAiUtils.redactTechnicalPreview(value);
@@ -190,21 +194,73 @@
     }
   }
 
+  function normalizeTechnicalPreviewValue(value) {
+    if (typeof value !== 'string') return value;
+    var text = value.trim();
+    if (!text) return '';
+    if (/^[\[{"]/.test(text)) {
+      try {
+        return JSON.parse(text);
+      } catch (_error) {
+        // Fall through to readable escaped-whitespace handling.
+      }
+    }
+    return value
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '  ');
+  }
+
+  function decodeEscapedPreviewWhitespace(value) {
+    return String(value || '')
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '  ');
+  }
+
+  function formatTechnicalPreview(value) {
+    return decodeEscapedPreviewWhitespace(redactTechnicalPreview(value));
+  }
+
   function buildActivityTechnicalPreview(item) {
     if (!item || item.kind === 'subagent') return '';
     var activity = item.activity && typeof item.activity === 'object' ? item.activity : {};
     var preview = {};
     if (item.toolName || activity.toolName) preview.toolName = item.toolName || activity.toolName;
     if (activity.modelName) preview.modelName = activity.modelName;
-    if (activity.redactedInputPreview) preview.input = activity.redactedInputPreview;
+    if (activity.redactedInputPreview) preview.input = normalizeTechnicalPreviewValue(activity.redactedInputPreview);
     else if (item.toolArgs) preview.input = item.toolArgs;
-    if (activity.redactedOutputPreview) preview.output = activity.redactedOutputPreview;
+    if (activity.redactedOutputPreview) preview.output = normalizeTechnicalPreviewValue(activity.redactedOutputPreview);
     else if (item.resultData) preview.output = item.resultData;
     if (!Object.keys(preview).length && item.raw && window.__MCPVIEWS_DEV__) {
       preview.raw = item.raw;
     }
     if (!Object.keys(preview).length) return '';
-    return redactTechnicalPreview(preview);
+    return formatTechnicalPreview(preview);
+  }
+
+  function hasActivityTechnicalPreview(event) {
+    var activity = event && event.activity && typeof event.activity === 'object' ? event.activity : {};
+    return !!(
+      activity.toolName ||
+      activity.modelName ||
+      activity.redactedInputPreview ||
+      activity.redactedOutputPreview
+    );
+  }
+
+  function transcriptActivityDetail(event, activity) {
+    var detail = event && event.detail ? displayText(event.detail) : '';
+    if (detail) return detail;
+    var title = normalizeStatus(event && event.title);
+    if (activity && activity.modelName) return 'Selected ' + displayText(activity.modelName) + '.';
+    if (title === 'planning_response') return 'Chose the model and response path for this turn.';
+    if (title === 'preparing_context') return 'Prepared workspace, persona, and conversation context.';
+    if (title === 'accepted_by_runtime') return 'Runtime accepted the request for background execution.';
+    if (title === 'saving_response') return 'Persisting the assistant response for this thread.';
+    if (title === 'turn_completed') return 'The assistant turn completed.';
+    if (title === 'runtime_message_persisted') return 'The runtime persisted assistant output for this turn.';
+    return '';
   }
 
   function isSyntheticReviewResumeMessage(message) {
@@ -909,6 +965,76 @@
     return body;
   }
 
+  var STRUCTURED_ANSWER_LABELS = {
+    intentCategory: 'Intent category',
+    targetPersonaKey: 'Target persona',
+    confidence: 'Confidence',
+    rationale: 'Rationale',
+    fileExpected: 'File expected',
+    filePurpose: 'File purpose',
+  };
+
+  function parseStructuredAssistantPayload(content) {
+    var text = String(content || '').trim();
+    if (!text || text[0] !== '{' || text[text.length - 1] !== '}') return null;
+    try {
+      var parsed = JSON.parse(text);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      return parsed;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function structuredAnswerTitle(payload) {
+    if (payload && (payload.intentCategory || payload.targetPersonaKey || payload.rationale)) {
+      return 'Router result';
+    }
+    return 'Structured result';
+  }
+
+  function labelForStructuredAnswerKey(key) {
+    if (STRUCTURED_ANSWER_LABELS[key]) return STRUCTURED_ANSWER_LABELS[key];
+    return titleCase(String(key || '').replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
+  }
+
+  function valueForStructuredAnswer(value) {
+    if (value === true) return 'Yes';
+    if (value === false) return 'No';
+    if (value === null || value === undefined) return 'None';
+    if (typeof value === 'string') return displayText(value);
+    if (typeof value === 'number') return String(value);
+    try {
+      return formatTechnicalPreview(value);
+    } catch (_error) {
+      return displayText(value);
+    }
+  }
+
+  function orderedStructuredAnswerKeys(payload) {
+    var preferred = Object.keys(STRUCTURED_ANSWER_LABELS).filter(function (key) {
+      return Object.prototype.hasOwnProperty.call(payload, key);
+    });
+    var rest = Object.keys(payload).filter(function (key) {
+      return preferred.indexOf(key) < 0;
+    }).sort();
+    return preferred.concat(rest);
+  }
+
+  function renderStructuredAssistantPayload(payload) {
+    var wrap = createEl('div', 'ai-codex-answer-structured');
+    wrap.appendChild(createEl('div', 'ai-codex-answer-structured-title', structuredAnswerTitle(payload)));
+    var list = createEl('dl', 'ai-codex-answer-structured-list');
+    orderedStructuredAnswerKeys(payload).forEach(function (key) {
+      var row = createEl('div', 'ai-codex-answer-structured-row');
+      row.appendChild(createEl('dt', 'ai-codex-answer-structured-key', labelForStructuredAnswerKey(key)));
+      row.appendChild(createEl('dd', 'ai-codex-answer-structured-value', valueForStructuredAnswer(payload[key])));
+      list.appendChild(row);
+    });
+    wrap.appendChild(list);
+    return wrap;
+  }
+
   function renderAnswer(session, state) {
     if (!session.answer || !session.answer.content) return null;
     var answer = createEl('article', 'ai-codex-message ai-codex-message-assistant');
@@ -920,13 +1046,224 @@
     var rawAnswerContent = String(session.answer.content || '');
     var fileRefInfo = extractWorkspaceFileRefsFromText(rawAnswerContent);
     var displayTextWithoutFileRefs = displayMarkdownText(stripWorkspaceFileRefSpans(rawAnswerContent, fileRefInfo.spans));
-    if (displayTextWithoutFileRefs) answer.appendChild(renderMarkdown(displayTextWithoutFileRefs, 'ai-codex-answer-copy', {
+    var structuredPayload = parseStructuredAssistantPayload(stripWorkspaceFileRefSpans(rawAnswerContent, fileRefInfo.spans));
+    if (structuredPayload) {
+      answer.appendChild(renderStructuredAssistantPayload(structuredPayload));
+    } else if (displayTextWithoutFileRefs) answer.appendChild(renderMarkdown(displayTextWithoutFileRefs, 'ai-codex-answer-copy', {
       suppressEntryAnimation: !!session.answer.isStreaming || !!(state && state.hasRenderedThreadContent),
     }));
     if (fileRefInfo.refs.length) {
       answer.appendChild(renderWorkspaceFileRefs(fileRefInfo.refs));
     }
     return answer;
+  }
+
+  function parseTimestamp(value) {
+    if (!value) return null;
+    var parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  function transcriptEventStartTime(event) {
+    return parseTimestamp(event && (event.createdAt || event.updatedAt));
+  }
+
+  function transcriptEventEndTime(event) {
+    return parseTimestamp(event && (event.updatedAt || event.createdAt));
+  }
+
+  function formatDuration(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return '';
+    var seconds = Math.max(1, Math.round(ms / 1000));
+    if (seconds < 60) return seconds + 's';
+    var minutes = Math.round(seconds / 60);
+    if (minutes < 60) return minutes + 'm';
+    var hours = Math.floor(minutes / 60);
+    var remainder = minutes % 60;
+    return remainder ? (hours + 'h ' + remainder + 'm') : (hours + 'h');
+  }
+
+  function statusIsActive(value) {
+    var status = normalizeStatus(value);
+    return status === 'pending' || status === 'queued' || status === 'running' || status === 'in_progress' || status === 'accepted';
+  }
+
+  function displayTranscriptActivityStatus(status, viewModel) {
+    var normalized = normalizeStatus(status);
+    if (viewModel && viewModel.lifecycle === 'complete' && statusIsActive(normalized)) return 'completed';
+    if (normalized === 'complete' || normalized === 'done' || normalized === 'succeeded') return 'completed';
+    if (normalized === 'error') return 'failed';
+    if (normalized === 'waiting_on_review' || normalized === 'needs_approval' || normalized === 'review_needed') return 'waiting_on_user';
+    return normalized || 'completed';
+  }
+
+  function transcriptActivityItem(event, viewModel) {
+    var activity = event && event.activity && typeof event.activity === 'object' ? event.activity : {};
+    return {
+      id: event.id,
+      kind: event.kind === 'status' ? 'status' : 'tool',
+      status: displayTranscriptActivityStatus(event.status, viewModel),
+      title: event.title || activity.toolName || 'Work activity',
+      detail: transcriptActivityDetail(event, activity),
+      toolName: activity.toolName || null,
+      activity: activity || null,
+      createdAt: event.createdAt || null,
+      updatedAt: event.updatedAt || null,
+      raw: event.raw || null,
+    };
+  }
+
+  function workSessionStatus(events, viewModel) {
+    var statuses = (events || []).map(function (event) {
+      return displayTranscriptActivityStatus(event && event.status, viewModel);
+    });
+    if (statuses.indexOf('failed') >= 0) return 'failed';
+    if (statuses.indexOf('waiting_on_user') >= 0) return 'waiting_on_user';
+    if (statuses.some(statusIsActive)) return 'running';
+    return 'completed';
+  }
+
+  function workSessionStatusClass(status) {
+    if (status === 'waiting_on_user') return 'needs-approval';
+    if (status === 'pending' || status === 'queued' || status === 'in_progress' || status === 'accepted') return 'running';
+    return status || 'completed';
+  }
+
+  function workSessionStatusLabel(status) {
+    if (status === 'waiting_on_user') return 'Waiting';
+    if (status === 'completed') return 'Completed';
+    if (status === 'failed') return 'Failed';
+    return 'Running';
+  }
+
+  function workSessionDurationLabel(events, status) {
+    var startedAt = null;
+    var endedAt = null;
+    (events || []).forEach(function (event) {
+      var start = transcriptEventStartTime(event);
+      var end = transcriptEventEndTime(event);
+      if (start !== null && (startedAt === null || start < startedAt)) startedAt = start;
+      if (end !== null && (endedAt === null || end > endedAt)) endedAt = end;
+    });
+    if (status === 'running' && endedAt === null) endedAt = Date.now();
+    var duration = startedAt !== null && endedAt !== null ? formatDuration(endedAt - startedAt) : '';
+    var verb = status === 'running' ? 'Working' : 'Worked';
+    if (status === 'waiting_on_user') verb = 'Waiting';
+    if (status === 'failed') verb = 'Worked';
+    return duration ? (verb + ' for ' + duration) : verb;
+  }
+
+  function isTranscriptWorkEvent(event) {
+    return !!(
+      event &&
+      event.source === 'uiTranscript' &&
+      (event.kind === 'activity' || event.kind === 'status')
+    );
+  }
+
+  function transcriptWorkGroupKey(event) {
+    return event && (event.turnId || event.operationId || 'transcript-work');
+  }
+
+  function isLowSignalTranscriptWorkEvent(event) {
+    if (!event || event.kind !== 'status') return false;
+    if (event.detail || hasActivityTechnicalPreview(event)) return false;
+    var title = normalizeStatus(event.title);
+    return title === 'complete' || title === 'completed' || title === 'done';
+  }
+
+  function visibleTranscriptWorkEvents(events) {
+    var seenStatus = {};
+    var visible = [];
+    (events || []).forEach(function (event) {
+      if (!event || isLowSignalTranscriptWorkEvent(event)) return;
+      if (event.kind === 'status') {
+        var signature = [
+          normalizeStatus(event.title),
+          normalizeStatus(event.status),
+          displayText(event.detail || ''),
+        ].join('|');
+        if (seenStatus[signature]) return;
+        seenStatus[signature] = true;
+      }
+      visible.push(event);
+    });
+    return visible.length ? visible : (events || []).slice(-1);
+  }
+
+  function createTranscriptWorkGroup(events, index, viewModel) {
+    var first = events[0] || {};
+    var last = events[events.length - 1] || {};
+    return {
+      id: 'activity-group:' + (transcriptWorkGroupKey(first) || first.id || index),
+      kind: 'activity_group',
+      source: 'uiTranscript',
+      turnId: first.turnId || null,
+      operationId: first.operationId || null,
+      status: workSessionStatus(events, viewModel),
+      title: 'Work activity',
+      createdAt: first.createdAt || first.updatedAt || null,
+      updatedAt: last.updatedAt || last.createdAt || null,
+      events: events,
+      order: index,
+    };
+  }
+
+  function groupTranscriptWorkEvents(events, viewModel) {
+    var grouped = [];
+    var buckets = {};
+    var bucketOrder = [];
+    var sawConversation = false;
+    function addToBucket(event) {
+      var key = transcriptWorkGroupKey(event);
+      if (!buckets[key]) {
+        buckets[key] = [];
+        bucketOrder.push(key);
+      }
+      buckets[key].push(event);
+    }
+    function appendToExistingCompletedGroup(event) {
+      if (displayTranscriptActivityStatus(event && event.status, viewModel) !== 'completed') return false;
+      var key = transcriptWorkGroupKey(event);
+      for (var index = grouped.length - 1; index >= 0; index -= 1) {
+        var candidate = grouped[index];
+        if (!candidate) continue;
+        if (candidate.kind === 'request' || candidate.kind === 'queued_context') return false;
+        if (candidate.kind !== 'activity_group') continue;
+        if (transcriptWorkGroupKey(candidate) !== key) continue;
+        candidate.events.push(event);
+        candidate.status = workSessionStatus(candidate.events, viewModel);
+        candidate.updatedAt = event.updatedAt || event.createdAt || candidate.updatedAt || null;
+        return true;
+      }
+      return false;
+    }
+    function flushAll() {
+      bucketOrder.forEach(function (key) {
+        var bucket = buckets[key] || [];
+        if (bucket.length) grouped.push(createTranscriptWorkGroup(bucket, grouped.length, viewModel));
+      });
+      buckets = {};
+      bucketOrder = [];
+    }
+    (events || []).forEach(function (event) {
+      if (!isTranscriptWorkEvent(event)) {
+        if (event && event.source === 'uiTranscript' && (event.kind === 'request' || event.kind === 'queued_context')) {
+          if (sawConversation) flushAll();
+          grouped.push(event);
+          sawConversation = true;
+          return;
+        }
+        if (event && event.source === 'uiTranscript' && event.kind === 'assistant') sawConversation = true;
+        flushAll();
+        grouped.push(event);
+        return;
+      }
+      if (appendToExistingCompletedGroup(event)) return;
+      addToBucket(event);
+    });
+    flushAll();
+    return grouped;
   }
 
   function renderActivityItem(item, state) {
@@ -1621,19 +1958,34 @@
     return pending;
   }
 
-  function renderTranscriptActivityEvent(event) {
-    var item = {
-      id: event.id,
-      kind: 'tool',
-      status: event.status || 'running',
-      title: event.title || (event.activity && event.activity.toolName) || 'Work activity',
-      detail: event.detail || '',
-      toolName: event.activity && event.activity.toolName || null,
-      activity: event.activity || null,
-    };
+  function renderTranscriptActivityGroupEvent(event, state, viewModel) {
+    var events = event.events && event.events.length ? event.events : [event];
+    var visibleEvents = visibleTranscriptWorkEvents(events);
+    var status = event.status || workSessionStatus(events, viewModel);
+    var statusClass = workSessionStatusClass(status);
+    var items = visibleEvents.map(function (entry) {
+      return transcriptActivityItem(entry, viewModel);
+    });
     var wrap = createEl('section', 'ai-codex-session ai-codex-timeline-event ai-codex-event-activity');
     var body = createEl('div', 'ai-codex-session-body');
-    body.appendChild(renderActivityItem(item, {}));
+    var key = event.id || ('activity-group:' + (event.turnId || event.operationId || events[0].id));
+    var details = createEl('details', cx('ai-codex-work-session', 'ai-work-session', 'ai-codex-work-session-' + statusClass));
+    details.open = state.expandedGroups[key] === true ||
+      (state.expandedGroups[key] !== false && status === 'running');
+    details.addEventListener('toggle', function () {
+      state.expandedGroups[key] = details.open;
+    });
+    var summary = createEl('summary', 'ai-codex-work-session-summary ai-work-session-summary');
+    summary.appendChild(createEl('span', 'ai-work-session-status ai-work-session-status-' + statusClass, workSessionStatusLabel(status)));
+    summary.appendChild(createEl('span', 'ai-work-session-label', workSessionDurationLabel(events, status)));
+    summary.appendChild(createEl('span', 'ai-work-session-count', items.length === 1 ? '1 step' : (items.length + ' steps')));
+    details.appendChild(summary);
+    var list = createEl('div', 'ai-codex-work-session-body ai-work-session-body ai-codex-activity-list');
+    items.forEach(function (item) {
+      list.appendChild(renderActivityItem(item, state));
+    });
+    details.appendChild(list);
+    body.appendChild(details);
     wrap.appendChild(body);
     return wrap;
   }
@@ -1673,11 +2025,12 @@
 
   function renderTimelineEvent(event, index, state, viewModel) {
     if (!event) return null;
+    if (event.kind === 'activity_group') return renderTranscriptActivityGroupEvent(event, state, viewModel);
     if (event.source === 'uiTranscript') {
       if (event.kind === 'request' || event.kind === 'queued_context' || event.kind === 'assistant') {
         return renderTranscriptMessageEvent(event, state);
       }
-      if (event.kind === 'activity') return renderTranscriptActivityEvent(event);
+      if (event.kind === 'activity' || event.kind === 'status') return renderTranscriptActivityGroupEvent(event, state, viewModel);
       if (event.kind === 'artifact' && event.renderer) {
         return renderChatOutputRow({
           id: event.id,
@@ -1729,7 +2082,7 @@
     clearElement(timeline);
     renderRecovery(timeline, state, threadContext, viewModel);
     var hasBlockers = (viewModel.pendingHumanInputs || []).length || viewModel.activePause;
-    var timelineEvents = viewModel.timelineEvents || [];
+    var timelineEvents = groupTranscriptWorkEvents(viewModel.timelineEvents || [], viewModel);
     if (!timelineEvents.length) {
       var empty = createEl('section', 'ai-codex-empty');
       empty.appendChild(createEl('h2', '', 'Start a request'));

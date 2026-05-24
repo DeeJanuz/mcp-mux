@@ -6992,6 +6992,52 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   padding-left: 20px;
 }
 
+.ai-codex-answer-structured {
+  display: grid;
+  gap: 8px;
+  max-width: 760px;
+  padding: 10px 0;
+  color: var(--text-primary);
+}
+
+.ai-codex-answer-structured-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-codex-answer-structured-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.ai-codex-answer-structured-row {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.28fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.ai-codex-answer-structured-key,
+.ai-codex-answer-structured-value {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ai-codex-answer-structured-key {
+  color: var(--text-tertiary);
+  font-weight: 700;
+}
+
+.ai-codex-answer-structured-value {
+  color: var(--text-primary);
+}
+
 .ai-codex-user-copy-skill {
   white-space: pre-wrap;
 }
@@ -7018,6 +7064,66 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
 }
 
 .ai-codex-event-activity .ai-codex-activity-groups {
+  border-top: 0;
+}
+
+.ai-codex-work-session {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.ai-codex-work-session-summary {
+  padding: 7px 0;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.ai-codex-work-session .ai-work-session-status {
+  min-width: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border-default);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  background: var(--ai-codex-surface-subtle);
+  color: var(--text-secondary);
+}
+
+.ai-codex-work-session .ai-work-session-status-completed {
+  color: #15803d;
+}
+
+.ai-codex-work-session .ai-work-session-status-running {
+  color: var(--accent-primary);
+}
+
+.ai-codex-work-session .ai-work-session-status-failed {
+  color: #dc2626;
+}
+
+.ai-codex-work-session .ai-work-session-status-needs-approval {
+  color: #b7791f;
+}
+
+.ai-codex-work-session .ai-work-session-label {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-codex-work-session .ai-work-session-count {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ai-codex-work-session-body {
   border-top: 0;
 }
 

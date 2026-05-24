@@ -358,6 +358,29 @@
     });
   }
 
+  function settleTimelineEventsForLifecycle(events, lifecycle) {
+    if (lifecycle !== LIFECYCLE.COMPLETE) return events;
+    return asArray(events).map(function (event) {
+      if (!event) return event;
+      var next = event;
+      if (event.kind === 'activity' || event.kind === 'status') {
+        var status = settleStatusForLifecycle(event.status, lifecycle);
+        if (status !== event.status) {
+          next = Object.assign({}, next, { status: status });
+        }
+      }
+      if (next.session && Array.isArray(next.session.activityGroups)) {
+        var settledSession = settleActivityGroupsForSession(Object.assign({}, next.session, {
+          lifecycle: next.session.lifecycle || lifecycle,
+        }));
+        if (settledSession !== next.session) {
+          next = Object.assign({}, next, { session: settledSession });
+        }
+      }
+      return next;
+    });
+  }
+
   function markQueuedContextSessions(sessions, lifecycle) {
     return sessions.map(function (session, index) {
       var userStatus = String((session && session.user && (session.user.status || session.user.lifecycle || session.user.state)) || '').toLowerCase();
@@ -610,6 +633,7 @@
   function shouldMergeLegacyTimelineEvent(event) {
     if (!event) return false;
     if (event.session && event.session.active) return true;
+    if (event.kind === 'request' || event.kind === 'queued_context') return true;
     return event.kind === 'artifact' || event.kind === 'review' || event.kind === 'pause';
   }
 
@@ -921,6 +945,67 @@
     return null;
   }
 
+  function latestCompletedAssistantTime(thread) {
+    var latest = null;
+    function remember(value) {
+      var parsed = parseTime(value);
+      if (parsed !== null && (latest === null || parsed > latest)) latest = parsed;
+    }
+    asArray(thread && thread.uiTranscript && thread.uiTranscript.events).forEach(function (event) {
+      if (!event || normalizeStatus(event.kind) !== 'assistant') return;
+      var status = normalizeTranscriptStatus(event.status);
+      if (status === 'running' || status === 'pending' || status === 'waiting_on_user' || status === 'failed') return;
+      if (!event.content && !event.title) return;
+      remember(event.createdAt || event.updatedAt);
+    });
+    asArray(thread && (thread.displayMessages || thread.messages)).forEach(function (message) {
+      if (!message || message.role !== 'assistant' || message.isStreaming) return;
+      if (!pickContent(message)) return;
+      remember(message.createdAt);
+    });
+    var activeTurn = thread && thread.activeTurn;
+    if (activeTurn && activeTurn.assistantMessage && !activeTurn.assistantMessage.isStreaming && pickContent(activeTurn.assistantMessage)) {
+      remember(activeTurn.assistantMessage.createdAt || activeTurn.lastPresenceAt || activeTurn.updatedAt);
+    }
+    return latest;
+  }
+
+  function latestUserRequestTime(thread) {
+    var latest = null;
+    function remember(value) {
+      var parsed = parseTime(value);
+      if (parsed !== null && (latest === null || parsed > latest)) latest = parsed;
+    }
+    asArray(thread && thread.uiTranscript && thread.uiTranscript.events).forEach(function (event) {
+      if (!event) return;
+      var kind = normalizeStatus(event.kind);
+      if (kind !== 'request' && kind !== 'queued_context') return;
+      remember(event.createdAt || event.updatedAt);
+    });
+    asArray(thread && (thread.displayMessages || thread.messages)).forEach(function (message) {
+      if (!message || message.role !== 'user') return;
+      remember(message.createdAt);
+    });
+    var activeTurn = thread && thread.activeTurn;
+    if (activeTurn && activeTurn.userMessage) {
+      remember(activeTurn.userMessage.createdAt || activeTurn.startedAt || activeTurn.createdAt);
+    }
+    return latest;
+  }
+
+  function hasHydratedCompletedTurn(thread) {
+    var completedAt = latestCompletedAssistantTime(thread);
+    if (completedAt === null) return false;
+    var latestRequestAt = latestUserRequestTime(thread);
+    if (latestRequestAt !== null && completedAt < latestRequestAt) return false;
+    var activeTurn = thread && thread.activeTurn;
+    if (activeTurn && activeTurn.userMessage && !activeTurn.assistantMessage) {
+      var activeRequestAt = parseTime(activeTurn.userMessage.createdAt || activeTurn.startedAt || activeTurn.createdAt);
+      if (activeRequestAt === null || activeRequestAt > completedAt) return false;
+    }
+    return true;
+  }
+
   function latestHeartbeat(thread, lifecycle) {
     var activeTurn = thread && thread.activeTurn;
     var projection = thread && thread.workflowProjection;
@@ -1053,6 +1138,8 @@
     if (threadContext && threadContext.error) return LIFECYCLE.FAILED;
     var pauseStatus = statusFromPause(thread && thread.activePause, thread && thread.pendingHumanInputs);
     if (pauseStatus) return pauseStatus;
+    var hydratedComplete = hasHydratedCompletedTurn(thread);
+    if (hydratedComplete) return LIFECYCLE.COMPLETE;
     var activeStatus = statusFromActiveTurn(thread && thread.activeTurn);
     if (activeStatus && activeStatus !== LIFECYCLE.COMPLETE) return activeStatus;
     if (activeStatus === LIFECYCLE.COMPLETE) return LIFECYCLE.COMPLETE;
@@ -1093,7 +1180,10 @@
     var activePause = clone(thread.activePause || null);
     var uiTranscriptEvents = buildTimelineEventsFromUiTranscript(thread);
     var legacyTimelineEvents = buildTimelineEventsFromLegacy(thread, sessions, chatOutputs, pendingHumanInputs, activePause, lifecycle);
-    var timelineEvents = mergeTimelineEvents(uiTranscriptEvents, legacyTimelineEvents);
+    var timelineEvents = settleTimelineEventsForLifecycle(
+      mergeTimelineEvents(uiTranscriptEvents, legacyTimelineEvents),
+      lifecycle
+    );
     var activeOperationId = (thread.activeTurn && thread.activeTurn.operationId)
       || (thread.workflowProjection && thread.workflowProjection.operationId)
       || null;

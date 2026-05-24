@@ -1016,7 +1016,8 @@
 
   function appendActiveTurnSession(sessions, thread, lifecycle) {
     var activeTurn = thread && thread.activeTurn;
-    if (!isRenderableActiveTurn(activeTurn) || lifecycle === LIFECYCLE.COMPLETE) return sessions;
+    if (!isRenderableActiveTurn(activeTurn)) return sessions;
+    if (lifecycle === LIFECYCLE.COMPLETE && !(activeTurn.userMessage || activeTurn.assistantMessage)) return sessions;
     var user = activeTurn.userMessage ? normalizeMessage(activeTurn.userMessage, sessions.length) : null;
     var answer = activeTurn.assistantMessage ? normalizeMessage(activeTurn.assistantMessage, sessions.length) : null;
     var id = activeTurn.turnId || (user && user.id) || 'active-session';

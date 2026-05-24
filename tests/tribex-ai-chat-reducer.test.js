@@ -67,7 +67,8 @@ describe('tribex-ai-chat-reducer', function () {
 
   it('merges canonical transcript events with an optimistic active turn', function () {
     var activeTurnAt = new Date().toISOString();
-    var viewModel = derive({
+    function deriveWithActiveTurn(activeTurn) {
+      return derive({
       thread: {
         id: 'thread-1',
         uiTranscript: {
@@ -90,7 +91,7 @@ describe('tribex-ai-chat-reducer', function () {
             },
           ],
         },
-        activeTurn: {
+        activeTurn: Object.assign({
           turnId: 'turn-local',
           operationId: 'op-local',
           status: 'running',
@@ -101,13 +102,25 @@ describe('tribex-ai-chat-reducer', function () {
             content: 'New optimistic prompt.',
             createdAt: activeTurnAt,
           },
-        },
+        }, activeTurn || {}),
         messages: [],
         runs: [],
       },
       loading: false,
       pending: false,
       error: null,
+    });
+    }
+
+    var viewModel = deriveWithActiveTurn();
+    var finalizedViewModel = deriveWithActiveTurn({
+      status: 'finalized',
+      assistantMessage: {
+        id: 'assistant-local',
+        role: 'assistant',
+        content: 'New optimistic answer.',
+        createdAt: activeTurnAt,
+      },
     });
 
     expect(viewModel.lifecycle).toBe('running');
@@ -120,6 +133,16 @@ describe('tribex-ai-chat-reducer', function () {
     expect(viewModel.timelineEvents.find(function (event) {
       return event.id === 'request:user-local';
     }).content).toBe('New optimistic prompt.');
+    expect(finalizedViewModel.lifecycle).toBe('complete');
+    expect(finalizedViewModel.timelineEvents.map(function (event) { return event.id; })).toEqual([
+      'canonical-request',
+      'canonical-answer',
+      'request:user-local',
+      'assistant:assistant-local',
+    ]);
+    expect(finalizedViewModel.timelineEvents.find(function (event) {
+      return event.id === 'assistant:assistant-local';
+    }).content).toBe('New optimistic answer.');
   });
 
   it('keeps legacy chat outputs visible when canonical transcript is present', function () {

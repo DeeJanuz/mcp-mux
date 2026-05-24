@@ -138,6 +138,59 @@
     return sanitizeDisplayText(value, { preserveLineBreaks: true });
   }
 
+  function redactTechnicalPreview(value, options) {
+    options = options || {};
+    var maxLength = typeof options.maxLength === 'number' && options.maxLength > 0
+      ? options.maxLength
+      : 1800;
+
+    function redactValue(key, entry) {
+      var normalizedKey = String(key || '').toLowerCase();
+      if (
+        normalizedKey.indexOf('token') >= 0 ||
+        normalizedKey.indexOf('secret') >= 0 ||
+        normalizedKey.indexOf('authorization') >= 0 ||
+        normalizedKey.indexOf('password') >= 0 ||
+        normalizedKey.indexOf('apikey') >= 0 ||
+        normalizedKey.indexOf('api_key') >= 0 ||
+        normalizedKey.indexOf('email') >= 0
+      ) {
+        return '[redacted]';
+      }
+      if (Array.isArray(entry)) {
+        return entry.map(function (item) { return redactValue('', item); });
+      }
+      if (entry && typeof entry === 'object') {
+        return Object.keys(entry).reduce(function (safe, nestedKey) {
+          safe[nestedKey] = redactValue(nestedKey, entry[nestedKey]);
+          return safe;
+        }, {});
+      }
+      if (typeof entry === 'string') {
+        return entry
+          .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+          .replace(/\b(?:Bearer|Token)\s+[A-Za-z0-9._~+/=-]{12,}\b/gi, '[redacted]')
+          .replace(/\bcm[a-z0-9]{12,}\b/g, '[id]')
+          .replace(/\b[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\b/gi, '[id]');
+      }
+      return entry;
+    }
+
+    var redacted = redactValue('', value);
+    var text = typeof redacted === 'string'
+      ? redacted
+      : JSON.stringify(redacted, null, 2);
+    text = String(text || '')
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
+      .replace(/\b(?:Bearer|Token)\s+[A-Za-z0-9._~+/=-]{12,}\b/gi, '[redacted]')
+      .replace(/\bcm[a-z0-9]{12,}\b/g, '[id]')
+      .replace(/\b[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\b/gi, '[id]');
+    if (text.length > maxLength) {
+      text = text.slice(0, Math.max(0, maxLength - 16)).trimEnd() + '\n[truncated]';
+    }
+    return text;
+  }
+
   function formatThreadTitleForDisplay(value, fallback) {
     var raw = String(value || '').trim();
     var defaultTitle = fallback || 'Thread';
@@ -308,6 +361,7 @@
     matchesSearch: matchesSearch,
     sanitizeDisplayText: sanitizeDisplayText,
     sanitizeMarkdownDisplayText: sanitizeMarkdownDisplayText,
+    redactTechnicalPreview: redactTechnicalPreview,
     sortProjects: sortProjects,
     sortThreads: sortThreads,
     titleCase: titleCase,

@@ -5777,6 +5777,65 @@ describe('tribex-ai-state', function () {
     });
   });
 
+  it('does not fall back to the active workspace for explicit unknown file-ref workspaces', async function () {
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchPackages: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([]);
+      }),
+      listWorkspaceFiles: vi.fn(function () {
+        return Promise.resolve({
+          files: [{ id: 'file-json', relativePath: 'data/config.json', name: 'config.json' }],
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    await expect(window.__tribexAiState.openWorkspaceFileRef({
+      workspaceId: 'workspace-missing',
+      relativePath: 'data/config.json',
+    })).resolves.toBeNull();
+
+    var snapshot = window.__tribexAiState.getSnapshot();
+    expect(client.listWorkspaceFiles).not.toHaveBeenCalled();
+    expect(snapshot.workspaceFileBrowser).toMatchObject({
+      activeWorkspaceId: null,
+      selectedFileId: null,
+      error: 'Workspace not found for this file reference.',
+    });
+  });
+
   it('formats, resets, saves, validates, and conflict-blocks workspace JSON edits', async function () {
     var fileRecord = {
       id: 'file-json',
@@ -7523,6 +7582,139 @@ describe('tribex-ai-state', function () {
 
     expect(window.__tribexAiState.getThread('thread-1')).toMatchObject({
       lastActivityAt: '2026-04-17T22:18:22.000Z',
+    });
+  });
+
+  it('preserves runtime-session uiTranscript during active thread hydration', async function () {
+    vi.useFakeTimers();
+
+    var client = {
+      getConfig: vi.fn(function () {
+        return Promise.resolve({ configured: true });
+      }),
+      fetchSession: vi.fn(function () {
+        return Promise.resolve({ user: { id: 'user-1' } });
+      }),
+      fetchOrganizations: vi.fn(function () {
+        return Promise.resolve([{ id: 'org-1', name: 'Org 1' }]);
+      }),
+      fetchWorkspaces: vi.fn(function () {
+        return Promise.resolve([{ id: 'workspace-1', organizationId: 'org-1', name: 'Workspace 1', packageKey: 'generic' }]);
+      }),
+      fetchProjects: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'project-1',
+          organizationId: 'org-1',
+          workspaceId: 'workspace-1',
+          name: 'General',
+          workspaceName: 'Workspace 1',
+        }]);
+      }),
+      fetchThreads: vi.fn(function () {
+        return Promise.resolve([{
+          id: 'thread-1',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          title: 'Canonical Thread',
+        }]);
+      }),
+      fetchThread: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          title: 'Canonical Thread',
+          projectId: 'project-1',
+          workspaceId: 'workspace-1',
+          messages: [],
+        });
+      }),
+      listenToStreamEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopRelayEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToDesktopPresenceEvents: vi.fn(function () {
+        return Promise.resolve(function () {});
+      }),
+      listenToRuntimeEvents: vi.fn(function () {
+        return function () {};
+      }),
+      registerDesktopRelay: vi.fn(function () {
+        return Promise.resolve({
+          relaySession: { id: 'relay-session-1' },
+          relayDeviceId: 'device-1',
+        });
+      }),
+      startDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopRelayStream: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      startDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      stopDesktopPresenceHeartbeat: vi.fn(function () {
+        return Promise.resolve();
+      }),
+      syncThreadRuntime: vi.fn(function () {
+        return Promise.resolve({
+          id: 'thread-1',
+          messagesSource: 'runtime',
+          runtimeMessages: [],
+          uiTranscript: {
+            version: 1,
+            lastSequence: 22,
+            events: [
+              {
+                id: 'ui-runtime-request-1',
+                kind: 'request',
+                content: 'Use the canonical transcript.',
+                createdAt: '2026-04-17T22:18:21.000Z',
+              },
+              {
+                id: 'ui-runtime-activity-1',
+                kind: 'activity',
+                title: 'Searching code',
+                status: 'running',
+                createdAt: '2026-04-17T22:18:22.000Z',
+                activity: {
+                  toolName: 'search_codebase',
+                  redactedInputPreview: '{"query":"thread"}',
+                },
+              },
+            ],
+          },
+          preview: 'Use the canonical transcript.',
+          lastActivityAt: '2026-04-17T22:18:22.000Z',
+        });
+      }),
+      normalizeThreadDetail: function (value) { return value; },
+      normalizeMessage: function (value) { return value; },
+    };
+
+    window.__tribexAiClient = client;
+    loadState();
+
+    await window.__tribexAiState.refreshNavigator(true);
+    window.__tribexAiState.openThread('thread-1');
+    await vi.runAllTimersAsync();
+
+    var thread = window.__tribexAiState.getThreadContext('thread-1').thread;
+    expect(thread.uiTranscript).toMatchObject({
+      version: 1,
+      lastSequence: 22,
+      events: [
+        expect.objectContaining({ id: 'ui-runtime-request-1' }),
+        expect.objectContaining({ id: 'ui-runtime-activity-1' }),
+      ],
+    });
+    expect(thread.runtimeSnapshot.uiTranscript).toMatchObject({
+      lastSequence: 22,
+      events: [
+        expect.objectContaining({ id: 'ui-runtime-request-1' }),
+        expect.objectContaining({ id: 'ui-runtime-activity-1' }),
+      ],
     });
   });
 

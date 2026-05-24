@@ -144,7 +144,7 @@
         },
       };
 
-      window.__renderers.structured_data = function (container, data, _meta, _toolArgs, _reviewRequired, onDecision) {
+      window.__renderers.structured_data = function (container, data, meta, _toolArgs, _reviewRequired, onDecision) {
         reviewRenderCount += 1;
         var panel = document.createElement('div');
         panel.className = 'debug-review-panel';
@@ -155,17 +155,29 @@
         input.value = data && data.value ? data.value : 'Original review value';
         label.appendChild(input);
         panel.appendChild(label);
+        function submitDecision() {
+          if (typeof onDecision === 'function') {
+            return onDecision({ decision: 'approved', modifications: { value: input.value } });
+          }
+          return null;
+        }
+        if (meta && meta.externalDecisionSubmit) {
+          container.appendChild(panel);
+          return {
+            providesDecisionSubmit: true,
+            submitDecision: submitDecision,
+          };
+        }
         var button = document.createElement('button');
         button.type = 'button';
         button.className = 'ai-primary-btn debug-review-submit';
         button.textContent = 'Submit review';
         button.addEventListener('click', function () {
-          if (typeof onDecision === 'function') {
-            onDecision({ decision: 'approved', modifications: { value: input.value } });
-          }
+          submitDecision();
         });
         panel.appendChild(button);
         container.appendChild(panel);
+        return undefined;
       };
 
       window.__tribexAiClient = {

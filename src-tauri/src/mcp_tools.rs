@@ -6,6 +6,7 @@ use tokio::sync::Mutex as TokioMutex;
 
 use crate::http_server::AsyncAppState;
 use crate::plugin::PluginRegistry;
+use crate::state::{CURRENT_PERSONA_STUDIO_PLUGIN, LEGACY_PERSONA_STUDIO_PLUGIN};
 
 mod builtin_registry;
 mod discovery;
@@ -14,7 +15,7 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "14"; // Bump when built-in rules change
+const RULES_VERSION: &str = "15"; // Bump when built-in rules change
 const RULES_REFRESH_INSTRUCTION: &str = "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules.";
 
 /// Return all tool definitions (built-in + plugin tools)
@@ -2671,7 +2672,7 @@ pub(crate) fn setup_instructions(agent_type: &str) -> String {
 
 // ─── Renderer definitions ───
 
-const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded read-only universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions, embedded table changes, or read-only graph context for a review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For batch MCP actions (2+ mutations), structured_data with push_review is mandatory — see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical chart/graph packs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views when the main output is visual analysis rather than prose. Call the direct universal_graph tool when available, or push_content with tool_name universal_graph for compatibility.\n\nFor any review payload sent through push_review, visible titles, labels, table cells, and details must identify the document or entity being changed by human-readable name, title, path, or display label. Do not use an opaque backend ID as the only visible target; keep IDs only in stable row ids, citation metadata, or execution bookkeeping.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main output is a visual analysis. Use rich_content with empty ```universal_graph:<graph-id> fences when graphs need prose, suggestions, citations, or review context.";
+const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded read-only universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions, embedded table changes, or read-only graph context for a review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For high-impact or bulk MCP mutations, structured_data with push_review can give the user row-level approval — see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical chart/graph packs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views when the main output is visual analysis rather than prose. Call the direct universal_graph tool when available, or push_content with tool_name universal_graph for compatibility.\n\nFor any review payload sent through push_review, visible titles, labels, table cells, and details must identify the document or entity being changed by human-readable name, title, path, or display label. Do not use an opaque backend ID as the only visible target; keep IDs only in stable row ids, citation metadata, or execution bookkeeping.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main output is a visual analysis. Use rich_content with empty ```universal_graph:<graph-id> fences when graphs need prose, suggestions, citations, or review context.";
 
 const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call rich_content, structured_data, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
 
@@ -2819,15 +2820,23 @@ Reference plugin entities with `[label](cite:plugin:SOURCE:TYPE:ID)` links. Clic
 }
 ```"#;
 
-const BULK_ACTION_REVIEW_RULE: &str = r#"When an agent plans 2 or more MCP tool calls that create, update, or delete external resources (mutations), it MUST present the planned actions to the user for review before executing any of them.
+const BULK_ACTION_REVIEW_RULE: &str = r#"Use `push_review` for MCP mutations only when review adds meaningful safety or control. Do not interrupt the user with a review for every small, clearly requested write.
 
 ## Trigger
 
-Any time the agent intends to make 2+ MCP tool calls that mutate external state (create, update, delete operations on files, database records, API resources, etc.).
+Present a structured review before MCP mutations when any of these apply:
+- **Bulk change**: 3 or more create, update, or delete tool calls are planned for external resources.
+- **Destructive or hard-to-undo change**: delete, archive, merge, publish, send, apply, billing/payment, permission, credential, production-data, or cross-organization changes.
+- **Ambiguous or user-editable batch**: the user should be able to accept/reject individual rows, adjust values, or confirm targets before execution.
+- **High blast radius**: the change affects multiple named entities, customer-visible state, governance records, external communications, or long-lived files/documents.
+
+Do not trigger a review for read-only discovery, search, list, get, preview, validation, formatting, test runs, or other non-mutating actions.
 
 ## Mandate
 
-Present all planned actions as `structured_data` via `push_review` before executing any mutation.
+When the trigger applies, present all planned actions as `structured_data` via `push_review` before executing the reviewed mutations.
+
+For one or two low-risk MCP mutations that are explicitly requested, clearly named, and easy to undo, proceed directly and summarize what changed afterward. If the risk is unclear, ask a brief chat clarification before opening a review.
 
 ## Table structure
 
@@ -2848,15 +2857,15 @@ Mark each row's `change` field to visually distinguish operations:
 
 ## Workflow
 
-1. **Gather**: Collect all planned mutations before executing any
+1. **Gather**: Collect the high-impact, destructive, ambiguous, or bulk mutations before executing them
 2. **Present**: Send them via `push_review` as a structured_data table — this returns immediately with a `session_id`
 3. **Wait**: Call `await_review(session_id)` to wait for the user's decisions (accept/reject per row, possible cell edits). If it returns `pending` before the user decides, call `await_review` again with the same `session_id` — the session persists on the server
 4. **Execute**: Only execute rows the user accepted, respecting any user edits to cell values
 5. **Report**: Summarize what was executed and what was skipped
 
-## Single-action exception
+## Minor-action exception
 
-If only 1 mutation is planned, `push_review` is not required — proceed directly.
+If only 1 or 2 low-risk mutations are planned and the user already named the target and desired change, `push_review` is not required — proceed directly and summarize afterward.
 
 ## Formatting
 
@@ -3043,7 +3052,7 @@ push_review response contains user decisions:
 }
 ```
 
-**Bulk MCP actions**: When an agent plans 2+ MCP tool calls that mutate external resources, it MUST present them via push_review before executing. push_review returns a session_id; call await_review(session_id) to wait until the user decides. See the bulk_action_review rule for the full workflow and table structure.
+**Bulk MCP actions**: Use push_review before MCP mutations when the batch is high-impact, destructive, ambiguous, or includes 3+ external-resource mutations. For one or two clearly requested low-risk mutations, proceed directly and summarize afterward. push_review returns a session_id; call await_review(session_id) to wait until the user decides. See the bulk_action_review rule for the full workflow and table structure.
 
 ## Data shape reference
 
@@ -3258,8 +3267,16 @@ fn synthesize_renderer_defs(
 pub fn available_renderers(state: &std::sync::Arc<crate::state::AppState>) -> Vec<RendererDef> {
     let mut renderers = builtin_renderer_definitions();
     let registry = state.plugin_registry.lock().unwrap();
+    let current_persona_studio_installed = registry
+        .manifests
+        .iter()
+        .any(|manifest| manifest.name == CURRENT_PERSONA_STUDIO_PLUGIN);
 
     for (idx, manifest) in registry.manifests.iter().enumerate() {
+        if current_persona_studio_installed && manifest.name == LEGACY_PERSONA_STUDIO_PLUGIN {
+            continue;
+        }
+
         // 1. Add explicit renderer definitions (plugin-provided, rich metadata)
         renderers.extend(manifest.renderer_definitions.clone());
 
@@ -3313,6 +3330,7 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::test_app_state;
     use mcpviews_shared::{PluginManifest, PluginMcpConfig, PluginAuth};
 
     fn make_manifest(
@@ -3334,6 +3352,58 @@ mod tests {
             prompt_definitions: vec![],
             plugin_rules: vec![],
         }
+    }
+
+    fn persona_lab_renderer(description: &str) -> RendererDef {
+        RendererDef {
+            name: "persona_lab".to_string(),
+            description: description.to_string(),
+            scope: "universal".to_string(),
+            tools: vec![],
+            data_hint: Some("{}".to_string()),
+            rule: None,
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
+            standalone: true,
+            standalone_label: Some("Persona Studio".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_available_renderers_prefers_current_persona_studio() {
+        let (state, _dir) = test_app_state();
+        state
+            .install_plugin_from_manifest(
+                make_manifest(
+                    LEGACY_PERSONA_STUDIO_PLUGIN,
+                    vec![persona_lab_renderer("Legacy Persona Studio")],
+                    std::collections::HashMap::new(),
+                    None,
+                ),
+                false,
+            )
+            .unwrap();
+        state
+            .install_plugin_from_manifest(
+                make_manifest(
+                    CURRENT_PERSONA_STUDIO_PLUGIN,
+                    vec![persona_lab_renderer("Current Persona Studio")],
+                    std::collections::HashMap::new(),
+                    None,
+                ),
+                false,
+            )
+            .unwrap();
+
+        let renderers = available_renderers(&state);
+        let persona_renderers = renderers
+            .iter()
+            .filter(|renderer| renderer.name == "persona_lab")
+            .collect::<Vec<_>>();
+
+        assert_eq!(persona_renderers.len(), 1);
+        assert_eq!(persona_renderers[0].description, "Current Persona Studio");
     }
 
     // ─── collect_rules tests ───
@@ -3871,9 +3941,9 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "14");
+        assert_eq!(RULES_VERSION, "15");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 14"));
+        assert!(instructions.contains("mcpviews-rules-version: 15"));
         assert!(instructions.contains("Add or update the MCPViews section in `AGENTS.md`"));
         assert!(instructions.contains("missing from the persisted rules"));
     }
@@ -3904,6 +3974,10 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Do NOT put an opaque backend ID"));
+        assert!(bulk_action_review["rule"]
+            .as_str()
+            .unwrap()
+            .contains("Do not interrupt the user with a review for every small"));
         assert!(structured_data["rule"]
             .as_str()
             .unwrap()

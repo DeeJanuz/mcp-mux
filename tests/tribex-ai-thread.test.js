@@ -190,18 +190,19 @@ describe('tribex-ai-thread Codex-like surface', function () {
 
     expect(document.querySelector('.ai-codex-thread')).not.toBeNull();
     expect(document.querySelector('.ai-codex-title').textContent).toContain('New Chat 3');
-    expect(document.querySelector('.ai-codex-session').textContent).toContain('Rewrite the chat surface.');
-    expect(document.querySelector('.ai-codex-session-index').textContent).toBe('Request 1');
-    expect(document.querySelector('.ai-codex-session').textContent).not.toContain('Session 1');
+    expect(document.querySelector('.ai-codex-event-request').textContent).toContain('Rewrite the chat surface.');
+    expect(document.querySelector('.ai-codex-event-assistant').textContent).toContain('requests');
+    expect(document.querySelector('.ai-codex-event-request').textContent).not.toContain('Session 1');
     expect(document.querySelector('.ai-codex-activity-group-tool').textContent).toContain('Inspect chat state');
     expect(document.querySelector('.ai-codex-activity-group-chat_output').textContent).toContain('Chat Rewrite Plan');
     expect(document.querySelector('.ai-codex-activity-group-subagent').open).toBe(true);
     expect(document.querySelector('.ai-codex-answer-copy').textContent).toContain('requests');
 
-    expect(document.querySelector('.ai-codex-chat-output-inline-chip').textContent).toContain('Output below');
-    expect(document.querySelector('.ai-codex-chat-output-card').textContent).toContain('Chat Rewrite Plan');
+    expect(document.querySelector('.ai-codex-artifact-row').textContent).toContain('Chat Rewrite Plan');
     expect(window.__tribexAiState.openThreadChatOutput).not.toHaveBeenCalled();
     expect(document.querySelector('.ai-codex-drawer')).toBeNull();
+    document.querySelector('.ai-codex-artifact-row').click();
+    expect(document.querySelector('.ai-codex-drawer').textContent).toContain('Chat Rewrite Plan');
     expect(window.__renderers.rich_content).toHaveBeenCalled();
   });
 
@@ -269,11 +270,13 @@ describe('tribex-ai-thread Codex-like surface', function () {
 
     renderThread('thread-1');
 
+    document.querySelector('.ai-codex-artifact-row').click();
+
     expect(window.__renderers.structured_data).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ title: 'Rows to Review' }),
       expect.anything(),
-      expect.objectContaining({ mode: 'inline_summary' }),
+      expect.objectContaining({ mode: 'drawer' }),
       true,
       expect.any(Function),
     );
@@ -284,6 +287,175 @@ describe('tribex-ai-thread Codex-like surface', function () {
       sessionId: 'review-session-1',
       decision: 'partial',
     }));
+  });
+
+  it('prefers uiTranscript events and renders them as a continuous transcript', function () {
+    var viewModel = window.__tribexAiChatReducer.deriveThreadViewModel({
+      thread: baseThread({
+        uiTranscript: {
+          version: 1,
+          lastSequence: 4,
+          events: [
+            {
+              id: 'assistant-1',
+              kind: 'assistant',
+              content: 'Done.',
+              createdAt: '2026-04-24T18:02:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'request-1',
+              kind: 'request',
+              content: 'Use the canonical transcript.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'activity-1',
+              kind: 'activity',
+              title: 'Searching code',
+              createdAt: '2026-04-24T18:01:00.000Z',
+              status: 'running',
+              activity: {
+                toolName: 'search_codebase',
+                redactedInputPreview: '{"query":"chat"}',
+              },
+            },
+          ],
+        },
+      }),
+    });
+
+    expect(viewModel.timelineEvents.map(function (event) { return event.id; })).toEqual([
+      'request-1',
+      'activity-1',
+      'assistant-1',
+    ]);
+
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 4,
+              events: viewModel.timelineEvents,
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(Array.from(document.querySelectorAll('.ai-codex-timeline-event')).map(function (node) {
+      return node.getAttribute('class');
+    }).join('\n')).toContain('ai-codex-event-request');
+    expect(document.querySelector('.ai-codex-event-activity').textContent).toContain('Searching code');
+    expect(document.querySelector('.ai-codex-event-assistant').textContent).toContain('Done.');
+  });
+
+  it('rerenders canonical transcript activity when only sanitized previews change', function () {
+    var redactedInputPreview = '{"query":"old thread state"}';
+
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 4,
+              events: [
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  title: 'Searching code',
+                  createdAt: '2026-04-24T18:01:00.000Z',
+                  status: 'running',
+                  activity: {
+                    toolName: 'search_codebase',
+                    redactedInputPreview: redactedInputPreview,
+                  },
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+    expect(document.querySelector('.ai-codex-activity-technical').textContent).toContain('old thread state');
+
+    redactedInputPreview = '{"query":"fresh thread state"}';
+    renderThread('thread-1');
+
+    var details = document.querySelector('.ai-codex-activity-technical');
+    expect(details.textContent).toContain('fresh thread state');
+    expect(details.textContent).not.toContain('old thread state');
+  });
+
+  it('redacts expandable tool activity details', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Search private context.' },
+                workSession: {
+                  status: 'running',
+                  items: [
+                    {
+                      id: 'tool-1',
+                      toolName: 'mail_lookup',
+                      title: 'Search mailbox',
+                      status: 'running',
+                      toolArgs: {
+                        emailAddress: 'daenon@example.com',
+                        authorization: 'Bearer abcdefghijklmnop',
+                        accountId: 'cmabcdefghijklmnop',
+                      },
+                      resultData: {
+                        threadId: '123e4567-e89b-12d3-a456-426614174000',
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var details = document.querySelector('.ai-codex-activity-technical');
+    expect(details).not.toBeNull();
+    expect(details.textContent).toContain('[redacted]');
+    expect(details.textContent).not.toContain('daenon@example.com');
+    expect(details.textContent).not.toContain('abcdefghijklmnop');
+    expect(details.textContent).not.toContain('123e4567-e89b-12d3-a456-426614174000');
   });
 
   it('passes assistant markdown with preserved structure to the markdown renderer', function () {
@@ -380,6 +552,48 @@ describe('tribex-ai-thread Codex-like surface', function () {
       relativePath: 'ui-validation/sample.json',
       title: 'JSON Preview Check',
     }));
+  });
+
+  it('sanitizes visible assistant file-ref labels before rendering cards', function () {
+    var rawFileId = 'cmworkspacefileref12345';
+    var answer = [
+      'Done.',
+      '',
+      '```json',
+      '{"fileRefs":[{"fileId":"' + rawFileId + '","title":"Internal ' + rawFileId + '","purpose":"Inspect accountId=' + rawFileId + '"}]}',
+      '```',
+    ].join('\n');
+
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      openWorkspaceFileRef: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'u1', role: 'user', content: 'Create a file.' },
+                answer: { id: 'a1', role: 'assistant', content: answer },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var cardText = document.querySelector('.ai-codex-workspace-file-ref').textContent;
+    expect(cardText).toContain('Internal item');
+    expect(cardText).toContain('Inspect account');
+    expect(cardText).not.toContain(rawFileId);
+    expect(cardText).not.toContain('accountId=');
   });
 
   it('extracts nested inline and snake_case file refs without hanging the thread render', function () {
@@ -1487,6 +1701,9 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(stylesCode).toContain('grid-template-rows: auto minmax(0, 1fr) auto auto');
     expect(stylesCode).toContain('.ai-codex-session {');
     expect(stylesCode).toContain('max-width: none');
+    expect(stylesCode).toContain('.ai-codex-timeline-event');
+    expect(stylesCode).toContain('.ai-codex-artifact-row');
+    expect(stylesCode).toContain('.ai-codex-activity-technical');
     expect(stylesCode).toContain('.ai-codex-header-actions');
     expect(stylesCode).toContain('flex-wrap: nowrap');
     expect(stylesCode).toContain('.ai-codex-thread {');
@@ -2251,7 +2468,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
     flushNextFrame();
 
     expect(nextTimeline.scrollTop).toBe(300);
-    expect(nextTimeline.getAttribute('data-scroll-mode')).toBe('reading_history');
+    expect(nextTimeline.getAttribute('data-scroll-mode')).toBe('action_waiting');
     expect(document.querySelector('.ai-codex-action-dock').textContent).toContain('Approve new action');
 
     Array.from(document.querySelectorAll('.ai-codex-action-dock button')).find(function (button) {
@@ -2389,7 +2606,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
     var editor = document.querySelector('.review-editor');
     editor.value = 'user-edited value';
 
-    var refreshButton = Array.from(document.querySelectorAll('.ai-codex-review-card .ai-codex-blocker-actions button')).find(function (button) {
+    var refreshButton = Array.from(document.querySelectorAll('.ai-codex-action-dock button')).find(function (button) {
       return button.textContent === 'Refresh';
     });
     refreshButton.click();
@@ -2437,7 +2654,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-status').textContent).toContain('Waiting on you');
     expect(document.querySelector('.ai-codex-pause-card').textContent).toContain('Ready to continue');
 
-    var buttons = Array.from(document.querySelectorAll('.ai-codex-pause-card button'));
+    var buttons = Array.from(document.querySelectorAll('.ai-codex-action-dock button'));
     buttons.find(function (button) { return button.textContent === 'Check status'; }).click();
     buttons.find(function (button) { return button.textContent === 'Continue'; }).click();
 

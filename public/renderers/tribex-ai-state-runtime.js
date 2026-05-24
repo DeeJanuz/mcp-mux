@@ -666,6 +666,16 @@
       if ((detail.workflowProjection || detail.workflow_projection) && typeof api.applyWorkflowProjection === 'function') {
         api.applyWorkflowProjection(merged, detail.workflowProjection || detail.workflow_projection);
       }
+      if (detail.uiTranscript && Array.isArray(detail.uiTranscript.events)) {
+        var transcriptLastSequence = Number(detail.uiTranscript.lastSequence);
+        merged.uiTranscript = {
+          version: Number(detail.uiTranscript.version || 1),
+          lastSequence: detail.uiTranscript.lastSequence == null || !Number.isFinite(transcriptLastSequence)
+            ? null
+            : transcriptLastSequence,
+          events: detail.uiTranscript.events.slice(),
+        };
+      }
 
       if (detail.messagesSource === 'runtime') {
         merged.runtimeSnapshot = {
@@ -678,6 +688,7 @@
           preview: detail.preview || '',
           messageActivityAt: conversationActivityAt || detail.messageActivityAt || detail.lastActivityAt || null,
           lastActivityAt: detail.lastActivityAt || null,
+          uiTranscript: merged.uiTranscript || null,
         };
         if (
           merged.activeTurn &&

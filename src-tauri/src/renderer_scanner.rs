@@ -1,6 +1,8 @@
 use mcpviews_shared::plugins_dir;
 use serde::Serialize;
 
+use crate::state::{CURRENT_PERSONA_STUDIO_PLUGIN, LEGACY_PERSONA_STUDIO_PLUGIN};
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RendererInfo {
     pub plugin_name: String,
@@ -18,6 +20,10 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
     }
 
     let mut renderers = Vec::new();
+    let current_persona_studio_installed = dir
+        .join(CURRENT_PERSONA_STUDIO_PLUGIN)
+        .join("manifest.json")
+        .exists();
 
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -29,6 +35,9 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                 Ok(name) => name,
                 Err(_) => continue,
             };
+            if current_persona_studio_installed && plugin_name == LEGACY_PERSONA_STUDIO_PLUGIN {
+                continue;
+            }
 
             let renderers_dir = path.join("renderers");
             if !renderers_dir.is_dir() {

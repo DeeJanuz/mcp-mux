@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Built-in MCPViews review guidance now asks agents to reserve `push_review` for destructive, high-impact, ambiguous, or 3+ mutation batches instead of interrupting for every small external write.
+
 ### Fixed
 - TribeX AI thread answers now render durable `fileRefs` as clickable Workspace files links that open the referenced file in the workspace file browser instead of showing raw JSON.
 

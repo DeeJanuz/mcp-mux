@@ -485,6 +485,200 @@
     return chatOutputs;
   }
 
+  function normalizeTranscriptStatus(value) {
+    var status = normalizeStatus(value);
+    if (
+      status === 'pending' ||
+      status === 'running' ||
+      status === 'completed' ||
+      status === 'failed' ||
+      status === 'waiting_on_user'
+    ) {
+      return status;
+    }
+    if (status === 'complete' || status === 'done' || status === 'succeeded') return 'completed';
+    if (status === 'error') return 'failed';
+    if (status === 'needs_approval' || status === 'review_needed' || status === 'blocked') return 'waiting_on_user';
+    return status || null;
+  }
+
+  function timelineEventTime(event) {
+    var candidates = event ? [event.createdAt, event.updatedAt] : [];
+    for (var i = 0; i < candidates.length; i += 1) {
+      var parsed = parseTime(candidates[i]);
+      if (parsed !== null) return parsed;
+    }
+    return null;
+  }
+
+  function compareTimelineEvents(a, b) {
+    var aTime = timelineEventTime(a);
+    var bTime = timelineEventTime(b);
+    if (aTime !== null && bTime !== null && aTime !== bTime) return aTime - bTime;
+    if (aTime !== null && bTime === null) return -1;
+    if (aTime === null && bTime !== null) return 1;
+    var aOrder = typeof a.order === 'number' && Number.isFinite(a.order) ? a.order : 0;
+    var bOrder = typeof b.order === 'number' && Number.isFinite(b.order) ? b.order : 0;
+    return aOrder - bOrder;
+  }
+
+  function normalizeUiTranscriptEvent(event, index) {
+    if (!event || typeof event !== 'object') return null;
+    var kind = normalizeStatus(event.kind || 'status');
+    if (kind === 'queued_context') kind = 'queued_context';
+    var allowed = {
+      request: true,
+      assistant: true,
+      activity: true,
+      review: true,
+      pause: true,
+      artifact: true,
+      decision: true,
+      queued_context: true,
+      status: true,
+    };
+    if (!allowed[kind]) kind = 'status';
+    return {
+      id: event.id || ('ui-transcript-' + index),
+      kind: kind,
+      turnId: event.turnId || null,
+      operationId: event.operationId || null,
+      status: normalizeTranscriptStatus(event.status),
+      title: event.title || null,
+      detail: event.detail || null,
+      content: event.content || null,
+      createdAt: event.createdAt || event.updatedAt || null,
+      updatedAt: event.updatedAt || null,
+      renderer: event.renderer || null,
+      rendererPayload: clone(event.rendererPayload || null),
+      activity: clone(event.activity || null),
+      action: clone(event.action || null),
+      order: index,
+      source: 'uiTranscript',
+      raw: clone(event),
+    };
+  }
+
+  function buildTimelineEventsFromUiTranscript(thread) {
+    var transcript = thread && thread.uiTranscript;
+    var events = asArray(transcript && transcript.events).map(normalizeUiTranscriptEvent).filter(Boolean);
+    if (!events.length) return null;
+    events.sort(compareTimelineEvents);
+    return events;
+  }
+
+  function buildTimelineEventsFromLegacy(thread, sessions, chatOutputs, pendingHumanInputs, activePause, lifecycle) {
+    var events = [];
+    var order = 0;
+    asArray(sessions).forEach(function (session, index) {
+      var base = {
+        session: session,
+        lifecycle: session.lifecycle || lifecycle,
+        turnId: session.id || null,
+      };
+      if (session.user && session.user.content) {
+        events.push(Object.assign({}, base, {
+          id: 'request:' + (session.user.id || session.id || index),
+          kind: session.user.queued || session.lifecycle === LIFECYCLE.QUEUED ? 'queued_context' : 'request',
+          title: session.user.queued || session.lifecycle === LIFECYCLE.QUEUED ? 'Queued context' : 'Request',
+          content: session.user.content,
+          createdAt: session.user.createdAt || session.createdAt || null,
+          order: order += 1,
+          source: 'legacy',
+        }));
+      }
+      if (asArray(session.activityGroups).length) {
+        events.push(Object.assign({}, base, {
+          id: 'activity:' + (session.id || index),
+          kind: 'activity',
+          title: 'Work activity',
+          createdAt: session.createdAt || (session.user && session.user.createdAt) || null,
+          updatedAt: session.updatedAt || null,
+          order: order += 1,
+          source: 'legacy',
+        }));
+      }
+      if (session.answer && session.answer.content) {
+        events.push(Object.assign({}, base, {
+          id: 'assistant:' + (session.answer.id || session.id || index),
+          kind: 'assistant',
+          title: 'Assistant',
+          content: session.answer.content,
+          createdAt: session.answer.createdAt || session.updatedAt || null,
+          order: order += 1,
+          source: 'legacy',
+        }));
+      } else if (session.lifecycle !== LIFECYCLE.COMPLETE && !(session.user && session.user.queued)) {
+        events.push(Object.assign({}, base, {
+          id: 'status:' + (session.id || index),
+          kind: 'status',
+          title: session.lifecycle === LIFECYCLE.QUEUED ? 'Queued follow-up' : null,
+          createdAt: session.updatedAt || session.createdAt || null,
+          order: order += 1,
+          source: 'legacy',
+        }));
+      }
+    });
+    asArray(chatOutputs).forEach(function (chatOutput, index) {
+      events.push({
+        id: 'artifact:' + (chatOutput.chatOutputKey || chatOutput.id || index),
+        kind: 'artifact',
+        title: chatOutput.title || 'Chat output',
+        detail: chatOutput.detail || null,
+        createdAt: chatOutput.createdAt || null,
+        renderer: chatOutput.contentType || null,
+        rendererPayload: {
+          data: chatOutput.resultData || chatOutput.data || {},
+          meta: chatOutput.resultMeta || chatOutput.meta || {},
+          toolArgs: chatOutput.toolArgs || {},
+        },
+        chatOutput: chatOutput,
+        order: order += 1,
+        source: 'legacy',
+      });
+    });
+    asArray(pendingHumanInputs).forEach(function (input, index) {
+      events.push({
+        id: 'review:' + (input.id || index),
+        kind: 'review',
+        status: 'waiting_on_user',
+        title: input.title || 'Review required',
+        detail: input.detail || input.description || null,
+        createdAt: input.createdAt || input.updatedAt || null,
+        renderer: input.renderer || null,
+        rendererPayload: clone(input.rendererPayload || null),
+        action: {
+          inputId: input.id || null,
+          pauseId: input.threadPauseId || null,
+          submitMode: 'dock',
+        },
+        input: input,
+        order: order += 1,
+        source: 'legacy',
+      });
+    });
+    if (activePause) {
+      events.push({
+        id: 'pause:' + (activePause.id || order),
+        kind: 'pause',
+        status: normalizeTranscriptStatus(activePause.status) || 'waiting_on_user',
+        title: activePause.title || 'Action required',
+        detail: activePause.detail || activePause.progressSummary || null,
+        createdAt: activePause.createdAt || activePause.updatedAt || null,
+        updatedAt: activePause.updatedAt || null,
+        action: {
+          pauseId: activePause.id || null,
+          submitMode: 'dock',
+        },
+        pause: activePause,
+        order: order += 1,
+        source: 'legacy',
+      });
+    }
+    events.sort(compareTimelineEvents);
+    return events;
+  }
+
   function normalizeMessage(message, index) {
     if (!message) return null;
     var status = normalizeStatus(message.status || message.lifecycle || message.state || '');
@@ -813,6 +1007,9 @@
     sessions = sessions.map(settleActivityGroupsForSession);
     var chatOutputs = collectChatOutputs(thread);
     var pendingHumanInputs = asArray(thread.pendingHumanInputs);
+    var activePause = clone(thread.activePause || null);
+    var timelineEvents = buildTimelineEventsFromUiTranscript(thread)
+      || buildTimelineEventsFromLegacy(thread, sessions, chatOutputs, pendingHumanInputs, activePause, lifecycle);
     var activeOperationId = (thread.activeTurn && thread.activeTurn.operationId)
       || (thread.workflowProjection && thread.workflowProjection.operationId)
       || null;
@@ -827,8 +1024,9 @@
       heartbeat: heartbeat,
       sessions: sessions,
       chatOutputs: chatOutputs,
+      timelineEvents: timelineEvents,
       pendingHumanInputs: pendingHumanInputs,
-      activePause: clone(thread.activePause || null),
+      activePause: activePause,
       workflowTimeline: clone(thread.workflowTimeline || (thread.workflowProjection && thread.workflowProjection.timeline) || null),
       activeOperationId: activeOperationId,
       diagnostics: {
@@ -878,5 +1076,6 @@
     normalizeActivityItem: normalizeActivityItem,
     groupActivity: groupActivity,
     collectChatOutputs: collectChatOutputs,
+    buildTimelineEventsFromLegacy: buildTimelineEventsFromLegacy,
   };
 })();

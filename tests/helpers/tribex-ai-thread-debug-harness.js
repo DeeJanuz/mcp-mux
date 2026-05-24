@@ -70,27 +70,38 @@ export function createThreadDebugHarness(options) {
     rich_content: vi.fn(function (container, data) {
       container.textContent = data && data.title ? data.title : 'Rich content preview';
     }),
-    structured_data: vi.fn(function (container, data, _meta, _toolArgs, _reviewRequired, onDecision) {
+    structured_data: vi.fn(function (container, data, meta, _toolArgs, _reviewRequired, onDecision) {
       structuredRenderCalls += 1;
       var input = document.createElement('input');
       input.className = 'debug-review-editor';
       input.value = data && data.value ? data.value : '';
       container.appendChild(input);
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'debug-review-submit';
-      button.textContent = 'Submit review';
-      button.addEventListener('click', function () {
+      function submitDecision() {
         if (typeof onDecision === 'function') {
-          onDecision({
+          return onDecision({
             decision: 'approved',
             modifications: {
               value: input.value,
             },
           });
         }
+        return null;
+      }
+      if (meta && meta.externalDecisionSubmit) {
+        return {
+          providesDecisionSubmit: true,
+          submitDecision: submitDecision,
+        };
+      }
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'debug-review-submit';
+      button.textContent = 'Submit review';
+      button.addEventListener('click', function () {
+        submitDecision();
       });
       container.appendChild(button);
+      return undefined;
     }),
   };
 

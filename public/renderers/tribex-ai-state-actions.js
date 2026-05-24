@@ -1881,9 +1881,14 @@
 
     function openWorkspaceFileRef(ref) {
       var targetWorkspaceId = ref && (ref.workspaceId || ref.workspace_id);
-      var workspace = targetWorkspaceId && api.getWorkspace(targetWorkspaceId)
+      var workspace = targetWorkspaceId
         ? api.getWorkspace(targetWorkspaceId)
         : getActiveWorkspaceForFiles();
+      if (targetWorkspaceId && !workspace) {
+        state.workspaceFileBrowser.error = 'Workspace not found for this file reference.';
+        api.notify();
+        return Promise.resolve(null);
+      }
       if (!workspace) {
         state.workspaceFileBrowser.error = 'No workspace is selected.';
         api.notify();

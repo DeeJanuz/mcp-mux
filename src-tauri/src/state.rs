@@ -19,6 +19,9 @@ use crate::plugin::PluginRegistry;
 use crate::review::ReviewState;
 use crate::session::SessionStore;
 
+pub(crate) const LEGACY_PERSONA_STUDIO_PLUGIN: &str = "tribe-x-ai-plugin";
+pub(crate) const CURRENT_PERSONA_STUDIO_PLUGIN: &str = "tribe-x-persona-studio";
+
 pub struct AppState {
     pub sessions: Mutex<SessionStore>,
     pub datasets: Mutex<DatasetStore>,
@@ -49,6 +52,7 @@ impl AppState {
 
     /// Create an AppState with a custom PluginStore and auth dir (useful for tests).
     pub fn new_with_store_and_auth_dir(store: PluginStore, auth_dir: PathBuf) -> Self {
+        retire_legacy_persona_studio_plugin(&store);
         let registry = PluginRegistry::load_plugins_with_store(store.clone());
         let first_party_ai_cookie_store =
             load_first_party_ai_cookie_store(&auth_dir.join("first_party_ai.cookies.json"));
@@ -215,6 +219,7 @@ impl AppState {
     /// to all connected MCP SSE sessions.
     pub fn reload_plugins(&self) {
         let store = self.plugin_store.clone();
+        retire_legacy_persona_studio_plugin(&store);
         let new_registry = PluginRegistry::load_plugins_with_store(store);
         {
             let mut registry = self.plugin_registry.lock().unwrap();
@@ -232,7 +237,36 @@ impl AppState {
         resource_dir: &std::path::Path,
     ) -> Result<Vec<String>, String> {
         let bundle_root = resource_dir.join("bundled-plugins").join("mac-dev");
-        ensure_bundled_plugin_dirs(&self.plugin_store, &bundle_root)
+        let mut installed = ensure_bundled_plugin_dirs(&self.plugin_store, &bundle_root)?;
+        if retire_legacy_persona_studio_plugin(&self.plugin_store) {
+            installed.push(format!("retired:{}", LEGACY_PERSONA_STUDIO_PLUGIN));
+        }
+        Ok(installed)
+    }
+}
+
+fn retire_legacy_persona_studio_plugin(store: &PluginStore) -> bool {
+    if !store.exists(CURRENT_PERSONA_STUDIO_PLUGIN) || !store.exists(LEGACY_PERSONA_STUDIO_PLUGIN) {
+        return false;
+    }
+
+    match store.remove(LEGACY_PERSONA_STUDIO_PLUGIN) {
+        Ok(()) => {
+            eprintln!(
+                "[mcpviews] Retired legacy Persona Studio plugin '{}' in favor of '{}'",
+                LEGACY_PERSONA_STUDIO_PLUGIN,
+                CURRENT_PERSONA_STUDIO_PLUGIN,
+            );
+            true
+        }
+        Err(error) => {
+            eprintln!(
+                "[mcpviews] Failed to retire legacy Persona Studio plugin '{}': {}",
+                LEGACY_PERSONA_STUDIO_PLUGIN,
+                error,
+            );
+            false
+        }
     }
 }
 
@@ -513,6 +547,34 @@ mod tests {
         let manifest = store.load("tribex_ai").unwrap();
         assert_eq!(manifest.name, "tribex_ai");
         assert_eq!(manifest.version, "0.2.0");
+    }
+
+    #[test]
+    fn test_retire_legacy_persona_studio_plugin_when_current_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().to_path_buf());
+        store
+            .save(&test_manifest(LEGACY_PERSONA_STUDIO_PLUGIN))
+            .unwrap();
+        store
+            .save(&test_manifest(CURRENT_PERSONA_STUDIO_PLUGIN))
+            .unwrap();
+
+        assert!(retire_legacy_persona_studio_plugin(&store));
+        assert!(!store.exists(LEGACY_PERSONA_STUDIO_PLUGIN));
+        assert!(store.exists(CURRENT_PERSONA_STUDIO_PLUGIN));
+    }
+
+    #[test]
+    fn test_retire_legacy_persona_studio_plugin_keeps_legacy_without_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().to_path_buf());
+        store
+            .save(&test_manifest(LEGACY_PERSONA_STUDIO_PLUGIN))
+            .unwrap();
+
+        assert!(!retire_legacy_persona_studio_plugin(&store));
+        assert!(store.exists(LEGACY_PERSONA_STUDIO_PLUGIN));
     }
 
     #[test]

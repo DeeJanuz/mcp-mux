@@ -1849,6 +1849,112 @@ describe('tribex-ai-client', function () {
     expect(FakeAgentClient.instances).toHaveLength(0);
   });
 
+  it('uses runtime-session uiTranscript bootstrap without opening a websocket', async function () {
+    var runtimeEnvelope = createRuntimeSessionEnvelope('thread-123');
+    runtimeEnvelope.uiTranscript = {
+      version: 1,
+      lastSequence: 12,
+      events: [
+        {
+          id: 'ui-assistant-1',
+          kind: 'assistant',
+          content: 'Q2 pipeline risk moved to onboarding.',
+          createdAt: '2026-04-16T00:00:02.000Z',
+        },
+        {
+          id: 'ui-request-1',
+          kind: 'request',
+          content: 'What changed in Q2?',
+          createdAt: '2026-04-16T00:00:00.000Z',
+        },
+        {
+          id: 'ui-activity-1',
+          kind: 'activity',
+          title: 'Checking risk register',
+          createdAt: '2026-04-16T00:00:01.000Z',
+        },
+      ],
+    };
+    var FakeAgentClient = createAgentClientCtor();
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'first_party_ai_request' && args.path === '/threads/thread-123/runtime-session') {
+        return Promise.resolve(runtimeEnvelope);
+      }
+      return Promise.reject(new Error('Unexpected call: ' + command + ' ' + JSON.stringify(args || {})));
+    });
+
+    globalThis.window = globalThis.window || {};
+    globalThis.window.__TAURI__ = {
+      core: {
+        invoke: invoke,
+      },
+    };
+    globalThis.window.__tribexAiAgentClientCtor = FakeAgentClient;
+
+    await expect(window.__tribexAiClient.syncThreadRuntime('thread-123', {
+      forceRefresh: true,
+    })).resolves.toMatchObject({
+      id: 'thread-123',
+      messagesSource: 'runtime',
+      messages: [],
+      uiTranscript: {
+        version: 1,
+        lastSequence: 12,
+        events: [
+          expect.objectContaining({ id: 'ui-request-1', kind: 'request' }),
+          expect.objectContaining({ id: 'ui-activity-1', kind: 'activity' }),
+          expect.objectContaining({ id: 'ui-assistant-1', kind: 'assistant' }),
+        ],
+      },
+      preview: 'Q2 pipeline risk moved to onboarding.',
+      lastActivityAt: '2026-04-16T00:00:02.000Z',
+    });
+    expect(FakeAgentClient.instances).toHaveLength(0);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('normalizes uiTranscript from thread detail hydration', function () {
+    var detail = window.__tribexAiClient.normalizeThreadDetail({
+      thread: {
+        id: 'thread-ui-detail',
+        title: 'UI Transcript Detail',
+      },
+      project: {
+        id: 'project-1',
+        workspaceId: 'workspace-1',
+        organizationId: 'org-1',
+      },
+      messages: [],
+      uiTranscript: {
+        version: 1,
+        lastSequence: 3,
+        events: [
+          {
+            id: 'assistant-detail-1',
+            kind: 'assistant',
+            content: 'Hydrated answer.',
+            createdAt: '2026-04-16T00:00:03.000Z',
+          },
+          {
+            id: 'request-detail-1',
+            kind: 'request',
+            content: 'Hydrate from detail.',
+            createdAt: '2026-04-16T00:00:01.000Z',
+          },
+        ],
+      },
+    });
+
+    expect(detail.uiTranscript).toMatchObject({
+      version: 1,
+      lastSequence: 3,
+      events: [
+        expect.objectContaining({ id: 'request-detail-1' }),
+        expect.objectContaining({ id: 'assistant-detail-1' }),
+      ],
+    });
+  });
+
   it('does not let an empty live sync override a non-empty runtime-session transcript bootstrap', async function () {
     var runtimeEnvelope = createRuntimeSessionEnvelope('thread-123');
     runtimeEnvelope.runtimeMessages = {

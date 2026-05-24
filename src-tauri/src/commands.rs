@@ -10,7 +10,7 @@ use crate::renderer_scanner::RendererInfo;
 use crate::http_server::AsyncAppState;
 use crate::review::ReviewDecision;
 use crate::session::{sanitize_renderer_meta, PreviewSession};
-use crate::state::AppState;
+use crate::state::{AppState, CURRENT_PERSONA_STUDIO_PLUGIN, LEGACY_PERSONA_STUDIO_PLUGIN};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -971,9 +971,22 @@ pub async fn save_binary_file(
 #[tauri::command]
 pub fn get_standalone_renderers(state: State<'_, Arc<AppState>>) -> Vec<serde_json::Value> {
     let registry = state.plugin_registry.lock().unwrap();
+    collect_standalone_renderers(&registry.manifests)
+}
+
+pub fn collect_standalone_renderers(
+    manifests: &[mcpviews_shared::PluginManifest],
+) -> Vec<serde_json::Value> {
+    let current_persona_studio_installed = manifests
+        .iter()
+        .any(|manifest| manifest.name == CURRENT_PERSONA_STUDIO_PLUGIN);
     let mut results = Vec::new();
 
-    for manifest in registry.manifests.iter() {
+    for manifest in manifests {
+        if current_persona_studio_installed && manifest.name == LEGACY_PERSONA_STUDIO_PLUGIN {
+            continue;
+        }
+
         let standalone_renderers: Vec<serde_json::Value> = manifest
             .renderer_definitions
             .iter()
@@ -1261,6 +1274,44 @@ mod tests {
         let cached = state.latest_registry.lock().unwrap();
         let plugins = registry.list_plugins_with_updates(&cached);
         assert!(plugins.is_empty());
+    }
+
+    #[test]
+    fn test_collect_standalone_renderers_suppresses_legacy_persona_studio() {
+        let mut legacy = test_manifest(LEGACY_PERSONA_STUDIO_PLUGIN);
+        legacy.renderer_definitions.push(mcpviews_shared::RendererDef {
+            name: "persona_lab".to_string(),
+            description: "Legacy Persona Studio".to_string(),
+            scope: "universal".to_string(),
+            tools: vec![],
+            data_hint: None,
+            rule: None,
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
+            standalone: true,
+            standalone_label: Some("Persona Studio Legacy".to_string()),
+        });
+        let mut current = test_manifest(CURRENT_PERSONA_STUDIO_PLUGIN);
+        current.renderer_definitions.push(mcpviews_shared::RendererDef {
+            name: "persona_lab".to_string(),
+            description: "Persona Studio".to_string(),
+            scope: "universal".to_string(),
+            tools: vec![],
+            data_hint: None,
+            rule: None,
+            display_mode: None,
+            invoke_schema: None,
+            url_patterns: vec![],
+            standalone: true,
+            standalone_label: Some("Persona Studio".to_string()),
+        });
+
+        let results = collect_standalone_renderers(&[legacy, current]);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["plugin"], CURRENT_PERSONA_STUDIO_PLUGIN);
+        assert_eq!(results[0]["renderers"][0]["name"], "persona_lab");
     }
 
     #[tokio::test]

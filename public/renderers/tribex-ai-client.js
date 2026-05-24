@@ -39,6 +39,26 @@
     return [];
   }
 
+  function transcriptEventTimestamp(event) {
+    if (!event || typeof event !== 'object') return null;
+    var candidates = [event.updatedAt, event.createdAt, event.timestamp];
+    for (var index = 0; index < candidates.length; index += 1) {
+      if (!candidates[index]) continue;
+      var parsed = Date.parse(candidates[index]);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    return null;
+  }
+
+  function compareTranscriptEvents(left, right) {
+    var leftTime = transcriptEventTimestamp(left);
+    var rightTime = transcriptEventTimestamp(right);
+    if (leftTime !== null && rightTime !== null && leftTime !== rightTime) return leftTime - rightTime;
+    if (leftTime !== null && rightTime === null) return -1;
+    if (leftTime === null && rightTime !== null) return 1;
+    return String(left && left.id || '').localeCompare(String(right && right.id || ''));
+  }
+
   function stringifyContent(value) {
     if (value === null || value === undefined) return '';
     if (typeof value === 'string') return value;
@@ -928,6 +948,7 @@
       }),
       messageActivityAt: messageActivityAt,
       lastActivityAt: messageActivityAt,
+      uiTranscript: normalizeUiTranscript(raw.uiTranscript || thread.uiTranscript),
       messages: messages.map(function (message, index) {
         return normalizeMessage(message, index);
       }),
@@ -1327,12 +1348,56 @@
     };
   }
 
-  function normalizeRuntimeTranscript(threadId, runtimeMessages) {
+  function normalizeUiTranscript(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    var events = extractArray(raw, ['events']);
+    if (!events.length) return null;
+    return {
+      version: Number(raw.version || 1),
+      lastSequence: raw.lastSequence == null || !Number.isFinite(Number(raw.lastSequence))
+        ? null
+        : Number(raw.lastSequence),
+      events: events.map(function (event) {
+        return event && typeof event === 'object' ? Object.assign({}, event) : null;
+      }).filter(Boolean).sort(compareTranscriptEvents),
+    };
+  }
+
+  function uiTranscriptPreview(uiTranscript) {
+    var events = uiTranscript && uiTranscript.events ? uiTranscript.events : [];
+    for (var index = events.length - 1; index >= 0; index -= 1) {
+      var event = events[index];
+      if (!event || typeof event !== 'object') continue;
+      if (event.content) return String(event.content);
+      if (event.detail) return String(event.detail);
+      if (event.title) return String(event.title);
+    }
+    return '';
+  }
+
+  function uiTranscriptActivityAt(uiTranscript) {
+    var events = uiTranscript && uiTranscript.events ? uiTranscript.events : [];
+    for (var index = events.length - 1; index >= 0; index -= 1) {
+      var event = events[index];
+      if (!event || typeof event !== 'object') continue;
+      if (event.updatedAt) return event.updatedAt;
+      if (event.createdAt) return event.createdAt;
+    }
+    return null;
+  }
+
+  function hasUiTranscriptEvents(uiTranscript) {
+    return !!(uiTranscript && Array.isArray(uiTranscript.events) && uiTranscript.events.length);
+  }
+
+  function normalizeRuntimeTranscript(threadId, runtimeMessages, uiTranscript) {
     var rawMessages = extractArray(runtimeMessages, ['messages']);
     var messages = rawMessages.map(function (message, index) {
       return normalizeRuntimeUiMessage(message, index);
     }).filter(Boolean);
     var latest = messages.length ? messages[messages.length - 1] : null;
+    var transcriptPreview = uiTranscriptPreview(uiTranscript);
+    var transcriptActivityAt = uiTranscriptActivityAt(uiTranscript);
 
     return {
       id: threadId,
@@ -1340,9 +1405,10 @@
       rawRuntimeMessages: rawMessages,
       runtimeMessages: messages,
       messages: messages,
-      preview: latest && latest.content ? latest.content : '',
-      messageActivityAt: latest && latest.createdAt ? latest.createdAt : null,
-      lastActivityAt: latest && latest.createdAt ? latest.createdAt : null,
+      uiTranscript: uiTranscript || null,
+      preview: latest && latest.content ? latest.content : transcriptPreview,
+      messageActivityAt: latest && latest.createdAt ? latest.createdAt : transcriptActivityAt,
+      lastActivityAt: latest && latest.createdAt ? latest.createdAt : transcriptActivityAt,
     };
   }
 
@@ -1385,6 +1451,7 @@
       packageManifest: raw.packageManifest || null,
       runtimeSession: raw.runtimeSession || null,
       runtimeMessages: raw.runtimeMessages || null,
+      uiTranscript: normalizeUiTranscript(raw.uiTranscript || (raw.thread && raw.thread.uiTranscript)),
       companionSession: raw.companionSession || null,
       relay: normalizeRuntimeRelay(raw.relay),
     };
@@ -1497,8 +1564,8 @@
 
   function syncThreadRuntime(threadId, options) {
     return ensureRuntimeSession(threadId, options).then(function (envelope) {
-      var bootstrapTranscript = normalizeRuntimeTranscript(threadId, envelope.runtimeMessages);
-      if (bootstrapTranscript.rawRuntimeMessages.length) {
+      var bootstrapTranscript = normalizeRuntimeTranscript(threadId, envelope.runtimeMessages, envelope.uiTranscript);
+      if (bootstrapTranscript.rawRuntimeMessages.length || hasUiTranscriptEvents(envelope.uiTranscript)) {
         return bootstrapTranscript;
       }
 
@@ -1507,17 +1574,17 @@
           threadId: threadId,
           connection: preparedEnvelope.runtimeSession && preparedEnvelope.runtimeSession.connection,
         }).then(function (messages) {
-          var liveTranscript = normalizeRuntimeTranscript(threadId, messages);
+          var liveTranscript = normalizeRuntimeTranscript(threadId, messages, envelope.uiTranscript);
           if (
             !liveTranscript.rawRuntimeMessages.length &&
-            bootstrapTranscript.rawRuntimeMessages.length
+            (bootstrapTranscript.rawRuntimeMessages.length || hasUiTranscriptEvents(bootstrapTranscript.uiTranscript))
           ) {
             return bootstrapTranscript;
           }
           return liveTranscript;
         });
       }).catch(function (error) {
-        if (bootstrapTranscript.rawRuntimeMessages.length) {
+        if (bootstrapTranscript.rawRuntimeMessages.length || hasUiTranscriptEvents(bootstrapTranscript.uiTranscript)) {
           return bootstrapTranscript;
         }
         throw error;

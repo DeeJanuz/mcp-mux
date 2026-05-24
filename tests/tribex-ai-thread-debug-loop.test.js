@@ -81,7 +81,7 @@ describe('tribex-ai-thread automated UI debug loop', function () {
         },
       };
     });
-    expect(harness.getRoot()).not.toBe(initialRoot);
+    expect(harness.getRoot()).toBe(initialRoot);
     expect(document.querySelector('.ai-codex-activity-group-subagent').textContent).toContain('Run delegated inbox scanners');
     expect(document.querySelector('.ai-codex-activity-group-review').textContent).toContain('Prepare archive review payload');
 
@@ -124,7 +124,7 @@ describe('tribex-ai-thread automated UI debug loop', function () {
     expect(harness.getRoot()).toBe(rootAfterReview);
     expect(harness.structuredRenderCalls).toBe(structuredRenderCallsAfterReview);
 
-    document.querySelector('.debug-review-submit').click();
+    document.querySelector('.ai-codex-action-dock [data-review-input-submit="true"]').click();
     await Promise.resolve();
     await Promise.resolve();
 

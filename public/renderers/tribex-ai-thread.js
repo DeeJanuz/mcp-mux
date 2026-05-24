@@ -1190,11 +1190,16 @@
     var visible = [];
     (events || []).forEach(function (event) {
       if (!event || isLowSignalTranscriptWorkEvent(event)) return;
+      var activity = event.activity && typeof event.activity === 'object' ? event.activity : {};
       var signature = [
         normalizeStatus(event.kind),
         normalizeStatus(event.title),
         normalizeStatus(event.status),
         displayText(event.detail || ''),
+        displayText(activity.toolName || ''),
+        displayText(activity.modelName || ''),
+        displayText(activity.redactedInputPreview || ''),
+        displayText(activity.redactedOutputPreview || ''),
       ].join('|');
       if (seenEvents[signature]) return;
       seenEvents[signature] = true;

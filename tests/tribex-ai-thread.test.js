@@ -696,6 +696,59 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Working for 10s');
   });
 
+  it('keeps same-title tool activities when sanitized previews differ', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 2,
+              events: [
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  operationId: 'op-tools',
+                  title: 'Tool call',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'search_codebase',
+                    redactedInputPreview: '{"query":"Deloitte AI"}',
+                  },
+                },
+                {
+                  id: 'activity-2',
+                  kind: 'activity',
+                  operationId: 'op-tools',
+                  title: 'Tool call',
+                  createdAt: '2026-04-24T18:00:01.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'search_codebase',
+                    redactedInputPreview: '{"query":"Deloitte cloud"}',
+                  },
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('2 steps');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Deloitte AI');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Deloitte cloud');
+  });
+
   it('formats escaped canonical tool details as readable structured text', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),

@@ -567,6 +567,67 @@
     return events;
   }
 
+  function timelineEventKeys(event) {
+    var keys = [];
+    if (!event) return keys;
+    if (event.id) {
+      keys.push('id:' + event.id);
+      if (event.kind === 'artifact') keys.push('artifact:' + String(event.id).replace(/^artifact:/, ''));
+    }
+    if (event.operationId && event.kind) keys.push('operation:' + event.kind + ':' + event.operationId);
+    if (event.turnId && event.kind) keys.push('turn:' + event.kind + ':' + event.turnId);
+    if (event.action && event.action.inputId) keys.push('input:' + event.action.inputId);
+    if (event.action && event.action.pauseId && event.kind) {
+      keys.push('pause:' + event.kind + ':' + event.action.pauseId);
+    }
+    if (event.kind === 'artifact' && event.chatOutput) {
+      var chatOutputKey = event.chatOutput.chatOutputKey || event.chatOutput.id || null;
+      if (chatOutputKey) keys.push('artifact:' + chatOutputKey);
+    }
+    if ((event.kind === 'request' || event.kind === 'assistant') && event.content) {
+      keys.push('message:' + event.kind + ':' + (event.createdAt || '') + ':' + event.content);
+    }
+    if (event.kind === 'artifact') {
+      keys.push('artifact-signature:' + [
+        event.title || '',
+        event.renderer || '',
+        event.createdAt || '',
+      ].join('|'));
+    }
+    return keys;
+  }
+
+  function rememberTimelineEvent(seen, event) {
+    timelineEventKeys(event).forEach(function (key) {
+      seen[key] = true;
+    });
+  }
+
+  function hasTimelineEvent(seen, event) {
+    return timelineEventKeys(event).some(function (key) { return !!seen[key]; });
+  }
+
+  function shouldMergeLegacyTimelineEvent(event) {
+    if (!event) return false;
+    if (event.session && event.session.active) return true;
+    return event.kind === 'artifact' || event.kind === 'review' || event.kind === 'pause';
+  }
+
+  function mergeTimelineEvents(uiTranscriptEvents, legacyEvents) {
+    var canonical = asArray(uiTranscriptEvents);
+    if (!canonical.length) return asArray(legacyEvents);
+    var seen = {};
+    var merged = canonical.slice();
+    canonical.forEach(function (event) { rememberTimelineEvent(seen, event); });
+    asArray(legacyEvents).forEach(function (event) {
+      if (!shouldMergeLegacyTimelineEvent(event) || hasTimelineEvent(seen, event)) return;
+      merged.push(event);
+      rememberTimelineEvent(seen, event);
+    });
+    merged.sort(compareTimelineEvents);
+    return merged;
+  }
+
   function buildTimelineEventsFromLegacy(thread, sessions, chatOutputs, pendingHumanInputs, activePause, lifecycle) {
     var events = [];
     var order = 0;
@@ -842,6 +903,24 @@
     return null;
   }
 
+  function statusFromUiTranscript(thread) {
+    var events = buildTimelineEventsFromUiTranscript(thread);
+    if (!events || !events.length) return null;
+    var latest = null;
+    events.forEach(function (event) {
+      if (event && event.status) latest = event;
+    });
+    if (!latest) return LIFECYCLE.COMPLETE;
+    if (latest.status === 'failed') return LIFECYCLE.FAILED;
+    if (latest.status === 'running') return LIFECYCLE.RUNNING;
+    if (latest.status === 'pending') return LIFECYCLE.QUEUED;
+    if (latest.status === 'waiting_on_user') {
+      return latest.kind === 'review' ? LIFECYCLE.WAITING_ON_REVIEW : LIFECYCLE.WAITING_ON_USER;
+    }
+    if (latest.status === 'completed') return LIFECYCLE.COMPLETE;
+    return null;
+  }
+
   function latestHeartbeat(thread, lifecycle) {
     var activeTurn = thread && thread.activeTurn;
     var projection = thread && thread.workflowProjection;
@@ -978,6 +1057,8 @@
     if (activeStatus === LIFECYCLE.COMPLETE) return LIFECYCLE.COMPLETE;
     var workflowStatus = statusFromWorkflow(thread && thread.workflowProjection);
     if (workflowStatus && workflowStatus !== LIFECYCLE.COMPLETE) return workflowStatus;
+    var transcriptStatus = statusFromUiTranscript(thread);
+    if (transcriptStatus && transcriptStatus !== LIFECYCLE.COMPLETE) return transcriptStatus;
     if (threadContext && threadContext.pending) return LIFECYCLE.RECOVERING;
     if (threadContext && threadContext.loading) return LIFECYCLE.QUEUED;
     var hasHistory = !!(
@@ -985,10 +1066,11 @@
       (
         asArray(thread.runs).length ||
         asArray(thread.displayMessages || thread.messages).length ||
+        asArray(thread.uiTranscript && thread.uiTranscript.events).length ||
         asArray(thread.chatOutputs).length
       )
     );
-    return hasHistory ? LIFECYCLE.COMPLETE : LIFECYCLE.IDLE;
+    return hasHistory ? (transcriptStatus || LIFECYCLE.COMPLETE) : LIFECYCLE.IDLE;
   }
 
   function deriveThreadViewModel(threadContext) {
@@ -1008,8 +1090,9 @@
     var chatOutputs = collectChatOutputs(thread);
     var pendingHumanInputs = asArray(thread.pendingHumanInputs);
     var activePause = clone(thread.activePause || null);
-    var timelineEvents = buildTimelineEventsFromUiTranscript(thread)
-      || buildTimelineEventsFromLegacy(thread, sessions, chatOutputs, pendingHumanInputs, activePause, lifecycle);
+    var uiTranscriptEvents = buildTimelineEventsFromUiTranscript(thread);
+    var legacyTimelineEvents = buildTimelineEventsFromLegacy(thread, sessions, chatOutputs, pendingHumanInputs, activePause, lifecycle);
+    var timelineEvents = mergeTimelineEvents(uiTranscriptEvents, legacyTimelineEvents);
     var activeOperationId = (thread.activeTurn && thread.activeTurn.operationId)
       || (thread.workflowProjection && thread.workflowProjection.operationId)
       || null;

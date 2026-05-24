@@ -65,6 +65,172 @@ describe('tribex-ai-chat-reducer', function () {
     expect(viewModel.sessions[0].user.content).toBe('Rewrite the AI chat.');
   });
 
+  it('merges canonical transcript events with an optimistic active turn', function () {
+    var activeTurnAt = new Date().toISOString();
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          lastSequence: 4,
+          events: [
+            {
+              id: 'canonical-request',
+              kind: 'request',
+              content: 'Existing canonical request.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'canonical-answer',
+              kind: 'assistant',
+              content: 'Existing canonical answer.',
+              createdAt: '2026-04-24T18:01:00.000Z',
+              status: 'completed',
+            },
+          ],
+        },
+        activeTurn: {
+          turnId: 'turn-local',
+          operationId: 'op-local',
+          status: 'running',
+          lastPresenceAt: activeTurnAt,
+          userMessage: {
+            id: 'user-local',
+            role: 'user',
+            content: 'New optimistic prompt.',
+            createdAt: activeTurnAt,
+          },
+        },
+        messages: [],
+        runs: [],
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('running');
+    expect(viewModel.timelineEvents.map(function (event) { return event.id; })).toEqual([
+      'canonical-request',
+      'canonical-answer',
+      'request:user-local',
+      'status:turn-local',
+    ]);
+    expect(viewModel.timelineEvents.find(function (event) {
+      return event.id === 'request:user-local';
+    }).content).toBe('New optimistic prompt.');
+  });
+
+  it('keeps legacy chat outputs visible when canonical transcript is present', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          lastSequence: 2,
+          events: [
+            {
+              id: 'canonical-request',
+              kind: 'request',
+              content: 'Show an artifact.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'canonical-answer',
+              kind: 'assistant',
+              content: 'Here is the artifact.',
+              createdAt: '2026-04-24T18:01:00.000Z',
+              status: 'completed',
+            },
+          ],
+        },
+        chatOutputs: [
+          {
+            id: 'chat-output-local',
+            chatOutputKey: 'chat-output-local',
+            title: 'Rows to review',
+            contentType: 'structured_data',
+            resultData: { title: 'Rows to review' },
+            createdAt: '2026-04-24T18:02:00.000Z',
+          },
+        ],
+        messages: [],
+        runs: [],
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('complete');
+    expect(viewModel.timelineEvents.map(function (event) { return event.id; })).toEqual([
+      'canonical-request',
+      'canonical-answer',
+      'artifact:chat-output-local',
+    ]);
+    expect(viewModel.timelineEvents[2]).toMatchObject({
+      kind: 'artifact',
+      renderer: 'structured_data',
+      source: 'legacy',
+    });
+  });
+
+  it('derives lifecycle from transcript-only history', function () {
+    var runningViewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          events: [
+            {
+              id: 'activity-running',
+              kind: 'activity',
+              title: 'Searching',
+              status: 'running',
+              createdAt: '2026-04-24T18:00:00.000Z',
+            },
+          ],
+        },
+        messages: [],
+        runs: [],
+        chatOutputs: [],
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+    var completeViewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          events: [
+            {
+              id: 'assistant-complete',
+              kind: 'assistant',
+              content: 'Done.',
+              status: 'completed',
+              createdAt: '2026-04-24T18:01:00.000Z',
+            },
+          ],
+        },
+        messages: [],
+        runs: [],
+        chatOutputs: [],
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(runningViewModel.lifecycle).toBe('running');
+    expect(runningViewModel.statusLabel).toBe('Working');
+    expect(completeViewModel.lifecycle).toBe('complete');
+    expect(completeViewModel.statusLabel).toBe('Complete');
+  });
+
   it('lets pending review inputs dominate active runtime state', function () {
     var viewModel = derive({
       thread: {

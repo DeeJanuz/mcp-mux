@@ -980,17 +980,29 @@
     try {
       var parsed = JSON.parse(text);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      if (!isRouterStructuredAssistantPayload(parsed)) return null;
       return parsed;
     } catch (_error) {
       return null;
     }
   }
 
+  function isRouterStructuredAssistantPayload(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    if (typeof payload.intentCategory !== 'string' || !payload.intentCategory.trim()) return false;
+    return [
+      'targetPersonaKey',
+      'confidence',
+      'rationale',
+      'fileExpected',
+      'filePurpose',
+    ].some(function (key) {
+      return Object.prototype.hasOwnProperty.call(payload, key);
+    });
+  }
+
   function structuredAnswerTitle(payload) {
-    if (payload && (payload.intentCategory || payload.targetPersonaKey || payload.rationale)) {
-      return 'Router result';
-    }
-    return 'Structured result';
+    return 'Router result';
   }
 
   function labelForStructuredAnswerKey(key) {
@@ -1069,6 +1081,7 @@
   }
 
   function transcriptEventEndTime(event) {
+    if (statusIsActive(event && event.status)) return parseTimestamp(event && event.updatedAt);
     return parseTimestamp(event && (event.updatedAt || event.createdAt));
   }
 
@@ -1145,7 +1158,7 @@
       if (start !== null && (startedAt === null || start < startedAt)) startedAt = start;
       if (end !== null && (endedAt === null || end > endedAt)) endedAt = end;
     });
-    if (status === 'running' && endedAt === null) endedAt = Date.now();
+    if (status === 'running') endedAt = Date.now();
     var duration = startedAt !== null && endedAt !== null ? formatDuration(endedAt - startedAt) : '';
     var verb = status === 'running' ? 'Working' : 'Worked';
     if (status === 'waiting_on_user') verb = 'Waiting';

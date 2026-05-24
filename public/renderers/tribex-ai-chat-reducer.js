@@ -970,6 +970,78 @@
     return latest;
   }
 
+  function latestActiveTurnTime(activeTurn) {
+    var latest = null;
+    [
+      activeTurn && activeTurn.startedAt,
+      activeTurn && activeTurn.createdAt,
+      activeTurn && activeTurn.updatedAt,
+      activeTurn && activeTurn.lastPresenceAt,
+      activeTurn && activeTurn.userMessage && activeTurn.userMessage.createdAt,
+      activeTurn && activeTurn.assistantMessage && activeTurn.assistantMessage.createdAt,
+    ].forEach(function (value) {
+      var parsed = parseTime(value);
+      if (parsed !== null && (latest === null || parsed > latest)) latest = parsed;
+    });
+    return latest;
+  }
+
+  function latestWorkflowProjectionTime(projection) {
+    var latest = null;
+    [
+      projection && projection.startedAt,
+      projection && projection.createdAt,
+      projection && projection.updatedAt,
+      projection && projection.heartbeatAt,
+      projection && projection.lastEventAt,
+    ].forEach(function (value) {
+      var parsed = parseTime(value);
+      if (parsed !== null && (latest === null || parsed > latest)) latest = parsed;
+    });
+    return latest;
+  }
+
+  function hasCompletedAssistantForActiveTurn(thread, activeTurn) {
+    if (!activeTurn) return false;
+    var turnId = activeTurn.turnId || null;
+    var operationId = activeTurn.operationId || null;
+    if (!turnId && !operationId) return false;
+    return asArray(thread && thread.uiTranscript && thread.uiTranscript.events).some(function (event) {
+      if (!event || normalizeStatus(event.kind) !== 'assistant') return false;
+      var status = normalizeTranscriptStatus(event.status);
+      if (status === 'running' || status === 'pending' || status === 'waiting_on_user' || status === 'failed') return false;
+      return !!(
+        (turnId && event.turnId === turnId) ||
+        (operationId && event.operationId === operationId)
+      );
+    });
+  }
+
+  function hasUnsettledActiveWorkAfterCompletion(thread, completedAt) {
+    var activeTurn = thread && thread.activeTurn;
+    var activeStatus = statusFromActiveTurn(activeTurn);
+    var activeTurnSettled = hasCompletedAssistantForActiveTurn(thread, activeTurn);
+    if (activeStatus && activeStatus !== LIFECYCLE.COMPLETE && !activeTurnSettled) {
+      var activeAt = latestActiveTurnTime(activeTurn);
+      if (activeAt === null || activeAt > completedAt) return true;
+    }
+    var workflowStatus = statusFromWorkflow(thread && thread.workflowProjection);
+    if (workflowStatus && workflowStatus !== LIFECYCLE.COMPLETE) {
+      if (
+        activeTurnSettled &&
+        activeTurn &&
+        thread.workflowProjection &&
+        activeTurn.operationId &&
+        thread.workflowProjection.operationId === activeTurn.operationId
+      ) {
+        return false;
+      }
+      var workflowAt = latestWorkflowProjectionTime(thread.workflowProjection);
+      if (workflowAt === null || workflowAt > completedAt) return true;
+    }
+    return false;
+  }
+
   function latestUserRequestTime(thread) {
     var latest = null;
     function remember(value) {
@@ -996,6 +1068,7 @@
   function hasHydratedCompletedTurn(thread) {
     var completedAt = latestCompletedAssistantTime(thread);
     if (completedAt === null) return false;
+    if (hasUnsettledActiveWorkAfterCompletion(thread, completedAt)) return false;
     var latestRequestAt = latestUserRequestTime(thread);
     if (latestRequestAt !== null && completedAt < latestRequestAt) return false;
     var activeTurn = thread && thread.activeTurn;

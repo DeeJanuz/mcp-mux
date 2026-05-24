@@ -383,7 +383,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
                 {
                   id: 'assistant-1',
                   kind: 'assistant',
-                  content: '{"intentCategory":"COMPANY_RESEARCH_BRIEF"}',
+                  content: '{"intentCategory":"COMPANY_RESEARCH_BRIEF","targetPersonaKey":"tribex-vc-admin-solo-researcher"}',
                   createdAt: '2026-04-24T18:00:12.000Z',
                   status: 'completed',
                 },
@@ -459,6 +459,48 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(structured.textContent).toContain('Yes');
     expect(document.querySelector('.ai-codex-answer-copy')).toBeNull();
     expect(structured.textContent).not.toContain('{"intentCategory"');
+  });
+
+  it('keeps generic JSON assistant answers as raw answer text', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 2,
+              events: [
+                {
+                  id: 'request-1',
+                  kind: 'request',
+                  content: 'Return exact JSON.',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'assistant-1',
+                  kind: 'assistant',
+                  content: '{"company":"Deloitte","score":0.82}',
+                  createdAt: '2026-04-24T18:00:12.000Z',
+                  status: 'completed',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-answer-structured')).toBeNull();
+    expect(document.querySelector('.ai-codex-answer-copy').textContent).toContain('{"company":"Deloitte","score":0.82}');
   });
 
   it('rerenders canonical transcript activity when only sanitized previews change', function () {
@@ -598,6 +640,48 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(Array.from(document.querySelectorAll('.ai-codex-activity-title strong')).map(function (node) {
       return node.textContent;
     })).not.toContain('Completed');
+  });
+
+  it('uses current time for running worked-for trail durations without updatedAt', function () {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-24T18:00:10.000Z'));
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            activeTurn: {
+              operationId: 'op-running',
+              status: 'running',
+              lastPresenceAt: '2026-04-24T18:00:09.000Z',
+            },
+            uiTranscript: {
+              version: 1,
+              lastSequence: 1,
+              events: [
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  operationId: 'op-running',
+                  title: 'Preparing context',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'running',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Working for 10s');
   });
 
   it('formats escaped canonical tool details as readable structured text', function () {

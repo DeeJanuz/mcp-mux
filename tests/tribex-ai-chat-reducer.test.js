@@ -805,6 +805,53 @@ describe('tribex-ai-chat-reducer', function () {
     expect(viewModel.timelineEvents.find(function (event) { return event.id === 'activity-1'; }).status).toBe('completed');
   });
 
+  it('does not let completed transcript history hide a new operation-only active turn', function () {
+    var activeAt = new Date().toISOString();
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        activeTurn: {
+          operationId: 'op-new',
+          status: 'running',
+          lastPresenceAt: activeAt,
+        },
+        workflowProjection: {
+          operationId: 'op-new',
+          status: 'running',
+          updatedAt: activeAt,
+        },
+        uiTranscript: {
+          version: 1,
+          lastSequence: 3,
+          events: [
+            {
+              id: 'request-old',
+              kind: 'request',
+              content: 'Previous request.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'assistant-old',
+              kind: 'assistant',
+              content: 'Previous answer.',
+              createdAt: '2026-04-24T18:02:00.000Z',
+              status: 'completed',
+            },
+          ],
+        },
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.lifecycle).toBe('running');
+    expect(viewModel.busy).toBe(true);
+    expect(viewModel.composerMode).toBe('context');
+    expect(viewModel.activeOperationId).toBe('op-new');
+  });
+
   it('labels queued context messages as queued sessions', function () {
     var viewModel = derive({
       thread: {

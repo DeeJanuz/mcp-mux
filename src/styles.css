@@ -7127,6 +7127,16 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   border-top: 0;
 }
 
+.ai-codex-work-session-empty {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: 4px 0 10px;
+}
+
+.ai-codex-work-session-empty p {
+  margin: 0;
+}
+
 .ai-codex-activity-group {
   border-bottom: 1px solid var(--border-default);
   background: var(--ai-codex-surface);
@@ -7196,6 +7206,68 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.ai-codex-payload-preview {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-codex-payload-summary {
+  margin: 0;
+}
+
+.ai-codex-payload-file-list {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-codex-payload-file {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--ai-codex-surface-inset);
+}
+
+.ai-codex-payload-field {
+  display: grid;
+  grid-template-columns: minmax(52px, max-content) minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ai-codex-payload-label {
+  color: var(--text-tertiary);
+  font-weight: 650;
+}
+
+.ai-codex-payload-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ai-codex-payload-more {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ai-codex-payload-json {
+  max-width: 100%;
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--ai-codex-surface-inset);
+  padding: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

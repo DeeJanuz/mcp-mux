@@ -514,6 +514,42 @@ describe('tribex-ai-chat-reducer', function () {
     })).toEqual([]);
   });
 
+  it('filters completed work activity to tool calls and thinking summaries', function () {
+    var groups = window.__tribexAiChatReducer.groupActivity([
+      {
+        id: 'model-1',
+        title: 'Selected model',
+        detail: 'Selected google/gemini-3-flash-preview',
+        status: 'completed',
+      },
+      {
+        id: 'context-1',
+        title: 'Preparing context',
+        detail: 'Prepared workspace, persona, and conversation context.',
+        status: 'completed',
+      },
+      {
+        id: 'thinking-1',
+        title: 'Thinking',
+        detail: 'Reasoning about candidate fit.',
+        status: 'completed',
+      },
+      {
+        id: 'tool-1',
+        title: 'Sandbox Fs List',
+        toolName: 'sandbox_fs_list',
+        detail: '{"summary":"Listed workspace files."}',
+        status: 'completed',
+      },
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].kind).toBe('tool');
+    expect(groups[0].items.map(function (item) { return item.id; })).toEqual(['thinking-1', 'tool-1']);
+    expect(groups[0].items.map(function (item) { return item.title; })).not.toContain('Selected model');
+    expect(groups[0].items.map(function (item) { return item.title; })).not.toContain('Preparing context');
+  });
+
   it('uses activity timestamps to order groups and items from first to last action', function () {
     var groups = window.__tribexAiChatReducer.groupActivity([
       { id: 'review-1', toolName: 'approval_gate', status: 'needs_approval', createdAt: '2026-04-24T18:04:00.000Z' },
@@ -803,6 +839,142 @@ describe('tribex-ai-chat-reducer', function () {
     expect(viewModel.busy).toBe(false);
     expect(viewModel.composerMode).toBe('prompt');
     expect(viewModel.timelineEvents.find(function (event) { return event.id === 'activity-1'; }).status).toBe('completed');
+  });
+
+  it('lets completed transcript hydration override stale connection-close errors', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          lastSequence: 3,
+          events: [
+            {
+              id: 'request-1',
+              kind: 'request',
+              content: 'Finish despite a closed runtime stream.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'assistant-1',
+              kind: 'assistant',
+              content: 'Done.',
+              createdAt: '2026-04-24T18:02:00.000Z',
+              status: 'completed',
+            },
+          ],
+        },
+      },
+      loading: false,
+      pending: false,
+      error: 'Connection closed',
+    });
+
+    expect(viewModel.lifecycle).toBe('complete');
+    expect(viewModel.statusLabel).toBe('Complete');
+    expect(viewModel.busy).toBe(false);
+  });
+
+  it('backfills legacy assistant messages when canonical hydration is incomplete', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          lastSequence: 2,
+          events: [
+            {
+              id: 'request-1',
+              kind: 'request',
+              content: 'Find AI automotive companies.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'activity-1',
+              kind: 'activity',
+              title: 'Web Search',
+              operationId: 'op-1',
+              createdAt: '2026-04-24T18:00:10.000Z',
+              status: 'completed',
+              activity: {
+                toolName: 'web_search',
+                redactedInputPreview: '{"query":"AI automotive companies"}',
+              },
+            },
+          ],
+        },
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Find AI automotive companies.',
+            createdAt: '2026-04-24T18:00:00.000Z',
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'I found eight candidates.',
+            createdAt: '2026-04-24T18:01:00.000Z',
+          },
+        ],
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.timelineEvents.map(function (event) { return event.kind + ':' + event.content; })).toContain('assistant:I found eight candidates.');
+  });
+
+  it('does not duplicate legacy messages that are already present in canonical hydration', function () {
+    var viewModel = derive({
+      thread: {
+        id: 'thread-1',
+        uiTranscript: {
+          version: 1,
+          lastSequence: 2,
+          events: [
+            {
+              id: 'message:user-1',
+              kind: 'request',
+              content: 'Find AI automotive companies.',
+              createdAt: '2026-04-24T18:00:00.000Z',
+              status: 'completed',
+            },
+            {
+              id: 'message:assistant-1',
+              kind: 'assistant',
+              content: 'I found eight candidates.',
+              createdAt: '2026-04-24T18:01:00.000Z',
+              status: 'completed',
+            },
+          ],
+        },
+        messages: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'Find AI automotive companies.',
+            createdAt: '2026-04-24T18:00:00.000Z',
+          },
+          {
+            id: 'assistant-1',
+            role: 'assistant',
+            content: 'I found eight candidates.',
+            createdAt: '2026-04-24T18:01:00.000Z',
+          },
+        ],
+      },
+      loading: false,
+      pending: false,
+      error: null,
+    });
+
+    expect(viewModel.timelineEvents.filter(function (event) {
+      return event.kind === 'assistant' && event.content === 'I found eight candidates.';
+    })).toHaveLength(1);
   });
 
   it('does not let completed transcript history hide a new operation-only active turn', function () {

@@ -195,12 +195,28 @@
   }
 
   function normalizeTechnicalPreviewValue(value) {
+    if (Array.isArray(value)) {
+      return value.map(function (item) {
+        return normalizeTechnicalPreviewValue(item);
+      });
+    }
+    if (value && typeof value === 'object') {
+      var normalized = {};
+      Object.keys(value).forEach(function (key) {
+        normalized[key] = normalizeTechnicalPreviewValue(value[key]);
+      });
+      return normalized;
+    }
     if (typeof value !== 'string') return value;
     var text = value.trim();
     if (!text) return '';
     if (/^[\[{"]/.test(text)) {
       try {
-        return JSON.parse(text);
+        var parsed = JSON.parse(text);
+        if (typeof parsed === 'string' && /^[\[{]/.test(parsed.trim())) {
+          return normalizeTechnicalPreviewValue(parsed);
+        }
+        return parsed;
       } catch (_error) {
         // Fall through to readable escaped-whitespace handling.
       }
@@ -219,7 +235,62 @@
   }
 
   function formatTechnicalPreview(value) {
-    return decodeEscapedPreviewWhitespace(redactTechnicalPreview(value));
+    return decodeEscapedPreviewWhitespace(redactTechnicalPreview(normalizeTechnicalPreviewValue(value)));
+  }
+
+  function parseActivityPayloadText(value) {
+    if (typeof value !== 'string') return null;
+    var text = value.trim();
+    if (!text || (text[0] !== '{' && text[0] !== '[')) return null;
+    try {
+      return JSON.parse(text);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function appendPayloadField(parent, label, value) {
+    if (value === null || value === undefined || value === '') return;
+    var row = createEl('div', 'ai-codex-payload-field');
+    row.appendChild(createEl('span', 'ai-codex-payload-label', label));
+    row.appendChild(createEl('span', 'ai-codex-payload-value', displayText(value)));
+    parent.appendChild(row);
+  }
+
+  function renderFilePayloadList(files) {
+    var list = createEl('div', 'ai-codex-payload-file-list');
+    files.slice(0, 8).forEach(function (file) {
+      if (!file || typeof file !== 'object') return;
+      var row = createEl('div', 'ai-codex-payload-file');
+      row.appendChild(createEl('strong', '', displayText(file.name || file.relativePath || file.path || 'File')));
+      appendPayloadField(row, 'Path', file.relativePath || file.path || file.objectKey || '');
+      appendPayloadField(row, 'Size', file.sizeBytes || file.size ? String(file.sizeBytes || file.size) + ' bytes' : '');
+      if (file.updatedAt) appendPayloadField(row, 'Updated', formatTime(file.updatedAt));
+      list.appendChild(row);
+    });
+    if (files.length > 8) {
+      list.appendChild(createEl('div', 'ai-codex-payload-more', '+' + String(files.length - 8) + ' more'));
+    }
+    return list;
+  }
+
+  function renderActivityDetail(item) {
+    var rawDetail = item && item.detail ? String(item.detail) : '';
+    var payload = parseActivityPayloadText(rawDetail);
+    if (!payload || typeof payload !== 'object') {
+      return rawDetail ? createEl('p', 'ai-codex-activity-detail', displayText(rawDetail)) : null;
+    }
+    var wrap = createEl('div', 'ai-codex-activity-detail ai-codex-payload-preview');
+    if (!Array.isArray(payload) && payload.summary) {
+      wrap.appendChild(createEl('p', 'ai-codex-payload-summary', displayText(payload.summary)));
+    }
+    if (!Array.isArray(payload) && Array.isArray(payload.files)) {
+      wrap.appendChild(renderFilePayloadList(payload.files));
+      return wrap;
+    }
+    var pre = createEl('pre', 'ai-codex-payload-json', formatTechnicalPreview(payload));
+    wrap.appendChild(pre);
+    return wrap;
   }
 
   function buildActivityTechnicalPreview(item) {
@@ -249,6 +320,22 @@
     );
   }
 
+  function hasStructuredTranscriptPayload(event) {
+    if (!event) return false;
+    if (event.renderer) return true;
+    if (event.rendererPayload !== null && event.rendererPayload !== undefined) return true;
+    if (parseActivityPayloadText(event.detail || '')) return true;
+    return false;
+  }
+
+  function hasNamedTranscriptToolDetail(event) {
+    if (!event || event.kind !== 'activity') return false;
+    if (!event.detail && !event.content) return false;
+    var title = normalizeStatus(event.title);
+    if (!title || title === 'activity' || title === 'status' || title === 'work_activity' || title === 'tool_call') return false;
+    return true;
+  }
+
   function transcriptActivityDetail(event, activity) {
     var detail = event && event.detail ? displayText(event.detail) : '';
     if (detail) return detail;
@@ -256,11 +343,23 @@
     if (activity && activity.modelName) return 'Selected ' + displayText(activity.modelName) + '.';
     if (title === 'planning_response') return 'Chose the model and response path for this turn.';
     if (title === 'preparing_context') return 'Prepared workspace, persona, and conversation context.';
-    if (title === 'accepted_by_runtime') return 'Runtime accepted the request for background execution.';
-    if (title === 'saving_response') return 'Persisting the assistant response for this thread.';
-    if (title === 'turn_completed') return 'The assistant turn completed.';
-    if (title === 'runtime_message_persisted') return 'The runtime persisted assistant output for this turn.';
     return '';
+  }
+
+  function transcriptActivityTitle(event, activity) {
+    var title = normalizeStatus(event && event.title);
+    if (
+      title === 'planning_response' &&
+      (
+        (activity && activity.modelName) ||
+        /^selected\s+/i.test(String(event && event.detail || ''))
+      )
+    ) {
+      return 'Selected model';
+    }
+    if (event && event.title) return event.title;
+    if (activity && activity.toolName) return activity.toolName;
+    return event.title || (activity && activity.modelName ? 'Selected model' : 'Work activity');
   }
 
   function isSyntheticReviewResumeMessage(message) {
@@ -693,17 +792,18 @@
   }
 
   function renderRecovery(root, state, threadContext, viewModel) {
+    var showThreadError = !!(threadContext.error && viewModel.lifecycle !== 'complete');
     if (
       viewModel.lifecycle !== 'recovering' &&
       !(viewModel.heartbeat && viewModel.heartbeat.stale) &&
-      !threadContext.error
+      !showThreadError
     ) {
       return;
     }
     var banner = createEl('section', 'ai-codex-recovery');
     var copy = createEl('div', 'ai-codex-recovery-copy');
-    copy.appendChild(createEl('strong', '', threadContext.error ? 'This run needs attention' : viewModel.statusLabel));
-    copy.appendChild(createEl('p', '', threadContext.error || viewModel.statusDetail || 'The frontend is checking the runtime and control plane for the latest state.'));
+    copy.appendChild(createEl('strong', '', showThreadError ? 'This run needs attention' : viewModel.statusLabel));
+    copy.appendChild(createEl('p', '', (showThreadError ? threadContext.error : '') || viewModel.statusDetail || 'The frontend is checking the runtime and control plane for the latest state.'));
     banner.appendChild(copy);
     var actions = createEl('div', 'ai-codex-recovery-actions');
     actions.appendChild(createButton('ai-secondary-btn', 'Refresh thread', function () {
@@ -1116,7 +1216,7 @@
       id: event.id,
       kind: event.kind === 'status' ? 'status' : 'tool',
       status: displayTranscriptActivityStatus(event.status, viewModel),
-      title: event.title || activity.toolName || 'Work activity',
+      title: transcriptActivityTitle(event, activity),
       detail: transcriptActivityDetail(event, activity),
       toolName: activity.toolName || null,
       activity: activity || null,
@@ -1175,21 +1275,63 @@
   }
 
   function transcriptWorkGroupKey(event) {
-    return event && (event.turnId || event.operationId || 'transcript-work');
+    return event && (event.turnId || event.operationId || null);
   }
 
   function isLowSignalTranscriptWorkEvent(event) {
     if (!event || (event.kind !== 'status' && event.kind !== 'activity')) return false;
-    if (event.detail || hasActivityTechnicalPreview(event)) return false;
     var title = normalizeStatus(event.title);
+    if (
+      title === 'accepted_by_runtime' ||
+      title === 'runtime_accepted_user_message' ||
+      title === 'turn_queued' ||
+      title === 'planning_response' ||
+      title === 'selected_model' ||
+      title === 'model_selected' ||
+      title === 'loading_context' ||
+      title === 'preparing_context' ||
+      title === 'saving_response' ||
+      title === 'turn_completed' ||
+      title === 'runtime_message_persisted'
+    ) {
+      return true;
+    }
+    if (event.detail) return false;
     return title === 'complete' || title === 'completed' || title === 'done';
+  }
+
+  function isThinkingTranscriptWorkEvent(event) {
+    if (!event) return false;
+    var text = [
+      event.title,
+      event.detail,
+      event.content,
+    ].map(function (value) {
+      return String(value || '').toLowerCase();
+    }).join(' ');
+    return (
+      text.indexOf('thinking') >= 0 ||
+      text.indexOf('reasoning') >= 0 ||
+      text.indexOf('internal thought') >= 0 ||
+      text.indexOf('thought summary') >= 0
+    );
+  }
+
+  function isVisibleTranscriptWorkEvent(event) {
+    if (!event || isLowSignalTranscriptWorkEvent(event)) return false;
+    var activity = event.activity && typeof event.activity === 'object' ? event.activity : {};
+    if (activity.toolName) return true;
+    if (hasStructuredTranscriptPayload(event)) return true;
+    if (activity.redactedInputPreview || activity.redactedOutputPreview) return true;
+    if (hasNamedTranscriptToolDetail(event)) return true;
+    return isThinkingTranscriptWorkEvent(event);
   }
 
   function visibleTranscriptWorkEvents(events) {
     var seenEvents = {};
     var visible = [];
     (events || []).forEach(function (event) {
-      if (!event || isLowSignalTranscriptWorkEvent(event)) return;
+      if (!isVisibleTranscriptWorkEvent(event)) return;
       var activity = event.activity && typeof event.activity === 'object' ? event.activity : {};
       var signature = [
         normalizeStatus(event.kind),
@@ -1205,14 +1347,15 @@
       seenEvents[signature] = true;
       visible.push(event);
     });
-    return visible.length ? visible : (events || []).slice(-1);
+    return visible;
   }
 
   function createTranscriptWorkGroup(events, index, viewModel) {
     var first = events[0] || {};
     var last = events[events.length - 1] || {};
+    var stableKey = transcriptWorkGroupKey(first) || first.id || ('segment-' + index);
     return {
-      id: 'activity-group:' + (transcriptWorkGroupKey(first) || first.id || index),
+      id: 'activity-group:' + stableKey,
       kind: 'activity_group',
       source: 'uiTranscript',
       turnId: first.turnId || null,
@@ -1231,8 +1374,13 @@
     var buckets = {};
     var bucketOrder = [];
     var sawConversation = false;
+    var anonymousBucketKey = null;
     function addToBucket(event) {
       var key = transcriptWorkGroupKey(event);
+      if (!key) {
+        if (!anonymousBucketKey) anonymousBucketKey = 'anonymous:' + bucketOrder.length + ':' + (event.id || event.createdAt || 'work');
+        key = anonymousBucketKey;
+      }
       if (!buckets[key]) {
         buckets[key] = [];
         bucketOrder.push(key);
@@ -1258,10 +1406,14 @@
     function flushAll() {
       bucketOrder.forEach(function (key) {
         var bucket = buckets[key] || [];
-        if (bucket.length) grouped.push(createTranscriptWorkGroup(bucket, grouped.length, viewModel));
+        if (!bucket.length) return;
+        var status = workSessionStatus(bucket, viewModel);
+        if (status === 'completed' && !visibleTranscriptWorkEvents(bucket).length) return;
+        grouped.push(createTranscriptWorkGroup(bucket, grouped.length, viewModel));
       });
       buckets = {};
       bucketOrder = [];
+      anonymousBucketKey = null;
     }
     (events || []).forEach(function (event) {
       if (!isTranscriptWorkEvent(event)) {
@@ -1292,7 +1444,8 @@
     title.appendChild(createEl('strong', '', displayActivityTitle(item)));
     title.appendChild(createEl('span', 'ai-codex-activity-status', titleCase(item.status)));
     copy.appendChild(title);
-    if (item.detail) copy.appendChild(createEl('p', 'ai-codex-activity-detail', displayText(item.detail)));
+    var detail = renderActivityDetail(item);
+    if (detail) copy.appendChild(detail);
     if (item.childThreadId) {
       copy.appendChild(createEl('div', 'ai-codex-activity-detail', 'Delegated thread'));
     }
@@ -1995,13 +2148,21 @@
     var summary = createEl('summary', 'ai-codex-work-session-summary ai-work-session-summary');
     summary.appendChild(createEl('span', 'ai-work-session-status ai-work-session-status-' + statusClass, workSessionStatusLabel(status)));
     summary.appendChild(createEl('span', 'ai-work-session-label', workSessionDurationLabel(events, status)));
-    summary.appendChild(createEl('span', 'ai-work-session-count', items.length === 1 ? '1 step' : (items.length + ' steps')));
+    if (items.length) {
+      summary.appendChild(createEl('span', 'ai-work-session-count', items.length === 1 ? '1 step' : (items.length + ' steps')));
+    }
     details.appendChild(summary);
-    var list = createEl('div', 'ai-codex-work-session-body ai-work-session-body ai-codex-activity-list');
-    items.forEach(function (item) {
-      list.appendChild(renderActivityItem(item, state));
-    });
-    details.appendChild(list);
+    if (items.length) {
+      var list = createEl('div', 'ai-codex-work-session-body ai-work-session-body ai-codex-activity-list');
+      items.forEach(function (item) {
+        list.appendChild(renderActivityItem(item, state));
+      });
+      details.appendChild(list);
+    } else {
+      var empty = createEl('div', 'ai-codex-work-session-body ai-work-session-body ai-codex-work-session-empty');
+      empty.appendChild(createEl('p', '', 'No tool calls or thinking details were saved for this turn.'));
+      details.appendChild(empty);
+    }
     body.appendChild(details);
     wrap.appendChild(body);
     return wrap;

@@ -301,6 +301,73 @@
     return compareActivityItems(firstA, firstB);
   }
 
+  function isLifecycleScaffoldActivityItem(item) {
+    if (!item) return false;
+    var title = normalizeStatus(item.title);
+    return (
+      title === 'accepted_by_runtime' ||
+      title === 'runtime_accepted_user_message' ||
+      title === 'turn_queued' ||
+      title === 'queued' ||
+      title === 'selected_model' ||
+      title === 'model_selected' ||
+      title === 'planning_response' ||
+      title === 'loading_context' ||
+      title === 'preparing_context' ||
+      title === 'saving_response' ||
+      title === 'turn_completed' ||
+      title === 'runtime_message_persisted' ||
+      title === 'complete' ||
+      title === 'completed' ||
+      title === 'done'
+    );
+  }
+
+  function isThinkingActivityItem(item) {
+    if (!item) return false;
+    var text = [
+      item.title,
+      item.detail,
+      item.summary,
+    ].map(function (value) {
+      return String(value || '').toLowerCase();
+    }).join(' ');
+    return (
+      text.indexOf('thinking') >= 0 ||
+      text.indexOf('reasoning') >= 0 ||
+      text.indexOf('internal thought') >= 0 ||
+      text.indexOf('thought summary') >= 0
+    );
+  }
+
+  function isStructuredActivityPayload(value) {
+    if (!value) return false;
+    if (typeof value === 'object') return true;
+    if (typeof value !== 'string') return false;
+    var trimmed = value.trim();
+    return (
+      (trimmed.charAt(0) === '{' && trimmed.charAt(trimmed.length - 1) === '}') ||
+      (trimmed.charAt(0) === '[' && trimmed.charAt(trimmed.length - 1) === ']')
+    );
+  }
+
+  function isDisplayableActivityItem(item) {
+    if (!item) return false;
+    if (item.kind === 'review' || item.kind === 'subagent' || item.kind === 'chat_output') return true;
+    if (isLifecycleScaffoldActivityItem(item)) return false;
+    if (item.toolName) return true;
+    if (
+      isStructuredActivityPayload(item.detail) ||
+      isStructuredActivityPayload(item.resultData) ||
+      isStructuredActivityPayload(item.toolArgs) ||
+      isStructuredActivityPayload(item.raw && item.raw.rawInput) ||
+      isStructuredActivityPayload(item.raw && item.raw.rawOutput)
+    ) {
+      return true;
+    }
+    return isThinkingActivityItem(item);
+  }
+
   function groupActivity(items) {
     var groupsByKind = {
       review: [],
@@ -311,6 +378,7 @@
     asArray(items).forEach(function (item, index) {
       var normalized = normalizeActivityItem(item, index);
       if (!normalized) return;
+      if (!isDisplayableActivityItem(normalized)) return;
       groupsByKind[normalized.kind].push(normalized);
     });
     var groups = [
@@ -594,7 +662,10 @@
     var keys = [];
     if (!event) return keys;
     if (event.id) {
-      keys.push('id:' + event.id);
+      var id = String(event.id);
+      keys.push('id:' + id);
+      var messageId = id.match(/^(message|request|assistant):(.+)$/);
+      if (messageId && messageId[2]) keys.push('message-id:' + messageId[2]);
       if (event.kind === 'artifact') keys.push('artifact:' + String(event.id).replace(/^artifact:/, ''));
     }
     if (event.operationId && event.kind) keys.push('operation:' + event.kind + ':' + event.operationId);
@@ -633,7 +704,7 @@
   function shouldMergeLegacyTimelineEvent(event) {
     if (!event) return false;
     if (event.session && event.session.active) return true;
-    if (event.kind === 'request' || event.kind === 'queued_context') return true;
+    if (event.kind === 'request' || event.kind === 'queued_context' || event.kind === 'assistant') return true;
     return event.kind === 'artifact' || event.kind === 'review' || event.kind === 'pause';
   }
 
@@ -1208,11 +1279,11 @@
 
   function deriveLifecycle(threadContext) {
     var thread = threadContext && threadContext.thread ? threadContext.thread : null;
-    if (threadContext && threadContext.error) return LIFECYCLE.FAILED;
     var pauseStatus = statusFromPause(thread && thread.activePause, thread && thread.pendingHumanInputs);
     if (pauseStatus) return pauseStatus;
     var hydratedComplete = hasHydratedCompletedTurn(thread);
     if (hydratedComplete) return LIFECYCLE.COMPLETE;
+    if (threadContext && threadContext.error) return LIFECYCLE.FAILED;
     var activeStatus = statusFromActiveTurn(thread && thread.activeTurn);
     if (activeStatus && activeStatus !== LIFECYCLE.COMPLETE) return activeStatus;
     if (activeStatus === LIFECYCLE.COMPLETE) return LIFECYCLE.COMPLETE;
@@ -1322,6 +1393,7 @@
     reduceThreadRuntimeState: reduceThreadRuntimeState,
     normalizeActivityItem: normalizeActivityItem,
     groupActivity: groupActivity,
+    isDisplayableActivityItem: isDisplayableActivityItem,
     collectChatOutputs: collectChatOutputs,
     buildTimelineEventsFromLegacy: buildTimelineEventsFromLegacy,
   };

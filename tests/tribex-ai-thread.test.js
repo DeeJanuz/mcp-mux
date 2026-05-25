@@ -549,7 +549,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(details.textContent).not.toContain('old thread state');
   });
 
-  it('groups completed canonical transcript activity into one worked-for trail', function () {
+  it('hides completed canonical lifecycle-only activity trails', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),
       refreshActiveThread: vi.fn(),
@@ -565,6 +565,7 @@ describe('tribex-ai-thread Codex-like surface', function () {
                   id: 'activity-0',
                   kind: 'activity',
                   title: 'Planning response',
+                  detail: 'Selected google/gemini-3-flash-preview',
                   createdAt: '2026-04-24T17:59:50.000Z',
                   updatedAt: '2026-04-24T18:00:04.000Z',
                   status: 'running',
@@ -637,21 +638,85 @@ describe('tribex-ai-thread Codex-like surface', function () {
 
     renderThread('thread-1');
 
-    expect(document.querySelectorAll('.ai-codex-event-activity')).toHaveLength(1);
-    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Worked for 2m');
-    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('4 steps');
-    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Planning response');
-    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Preparing context');
-    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Saving response');
-    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Runtime message persisted');
-    expect(document.querySelector('.ai-codex-work-session').textContent).not.toContain('Running');
-    expect(document.querySelector('.ai-codex-work-session').textContent).not.toContain('Pending');
-    expect(Array.from(document.querySelectorAll('.ai-codex-activity-title strong')).map(function (node) {
-      return node.textContent;
-    })).not.toContain('Completed');
-    expect(Array.from(document.querySelectorAll('.ai-codex-activity-title strong')).map(function (node) {
-      return node.textContent;
-    }).filter(function (title) { return title === 'Runtime message persisted'; })).toHaveLength(1);
+    expect(document.querySelectorAll('.ai-codex-event-activity')).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('Selected model');
+    expect(document.body.textContent).not.toContain('Planning response');
+    expect(document.body.textContent).not.toContain('Preparing context');
+    expect(document.body.textContent).not.toContain('Saving response');
+    expect(document.body.textContent).not.toContain('Runtime message persisted');
+    expect(document.body.textContent).not.toContain('Turn completed');
+  });
+
+  it('shows only tool calls and thinking summaries in completed transcript work trails', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 4,
+              events: [
+                {
+                  id: 'activity-context',
+                  kind: 'activity',
+                  title: 'Preparing context',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'activity-model',
+                  kind: 'activity',
+                  title: 'Selected model',
+                  detail: 'Selected google/gemini-3-flash-preview',
+                  createdAt: '2026-04-24T18:00:01.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'activity-thinking',
+                  kind: 'activity',
+                  title: 'Thinking',
+                  detail: 'Reasoning about candidate fit.',
+                  createdAt: '2026-04-24T18:00:05.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'activity-tool',
+                  kind: 'activity',
+                  title: 'Sandbox Fs List',
+                  createdAt: '2026-04-24T18:00:10.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'sandbox_fs_list',
+                    redactedInputPreview: '{"path":"gtm/vc-admin"}',
+                  },
+                },
+                {
+                  id: 'assistant-1',
+                  kind: 'assistant',
+                  content: 'Done.',
+                  createdAt: '2026-04-24T18:00:20.000Z',
+                  status: 'completed',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('2 steps');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Thinking');
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Sandbox Fs List');
+    expect(document.querySelector('.ai-codex-work-session').textContent).not.toContain('Preparing context');
+    expect(document.querySelector('.ai-codex-work-session').textContent).not.toContain('Selected model');
   });
 
   it('uses current time for running worked-for trail durations without updatedAt', function () {
@@ -749,6 +814,147 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Deloitte cloud');
   });
 
+  it('shows completed canonical tool payloads even when toolName is omitted', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 3,
+              events: [
+                {
+                  id: 'model-1',
+                  kind: 'activity',
+                  operationId: 'op-tools',
+                  title: 'Selected model',
+                  detail: 'Selected google/gemini-3-flash-preview',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  operationId: 'op-tools',
+                  title: 'Sandbox Fs List',
+                  detail: '{"summary":"Listed files in gtm/vc-admin.","files":[{"name":"vc-candidates.json","relativePath":"gtm/vc-admin/vc-candidates.json"}]}',
+                  createdAt: '2026-04-24T18:00:01.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'assistant-1',
+                  kind: 'assistant',
+                  content: 'Done.',
+                  createdAt: '2026-04-24T18:00:10.000Z',
+                  status: 'completed',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var details = document.querySelector('.ai-codex-work-session');
+    expect(details.textContent).toContain('1 step');
+    expect(details.textContent).toContain('Sandbox Fs List');
+    expect(details.textContent).toContain('Listed files in gtm/vc-admin.');
+    expect(details.textContent).not.toContain('Selected model');
+    expect(details.open).toBe(false);
+    details.open = true;
+    expect(document.querySelector('.ai-codex-work-session-body')).not.toBeNull();
+  });
+
+  it('keeps anonymous work sessions separated across multiple canonical turns', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 6,
+              events: [
+                {
+                  id: 'request-1',
+                  kind: 'request',
+                  content: 'Find AI marketing companies.',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  title: 'Web Search',
+                  createdAt: '2026-04-24T18:00:10.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'web_search',
+                    redactedInputPreview: '{"query":"AI marketing companies"}',
+                  },
+                },
+                {
+                  id: 'assistant-1',
+                  kind: 'assistant',
+                  content: 'Added marketing candidates.',
+                  createdAt: '2026-04-24T18:01:00.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'request-2',
+                  kind: 'request',
+                  content: 'Now find AI automotive companies.',
+                  createdAt: '2026-04-24T18:02:00.000Z',
+                  status: 'completed',
+                },
+                {
+                  id: 'activity-2',
+                  kind: 'activity',
+                  title: 'Sandbox Fs Write',
+                  createdAt: '2026-04-24T18:02:15.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'sandbox_fs_write',
+                    redactedInputPreview: '{"path":"gtm/vc-admin/vc-candidates.json"}',
+                  },
+                },
+                {
+                  id: 'assistant-2',
+                  kind: 'assistant',
+                  content: 'Added automotive candidates.',
+                  createdAt: '2026-04-24T18:03:00.000Z',
+                  status: 'completed',
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var sessions = Array.from(document.querySelectorAll('.ai-codex-work-session'));
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0].textContent).toContain('AI marketing companies');
+    expect(sessions[0].textContent).not.toContain('vc-candidates.json');
+    expect(sessions[1].textContent).toContain('vc-candidates.json');
+    expect(document.body.textContent).toContain('Added automotive candidates.');
+  });
+
   it('formats escaped canonical tool details as readable structured text', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),
@@ -790,6 +996,154 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(pre.textContent).toContain('alpha\nbeta');
     expect(pre.textContent).not.toContain('\\n');
     expect(pre.textContent).not.toContain('"{\\"query\\"');
+  });
+
+  it('formats double-encoded canonical tool output previews as structured JSON', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 1,
+              events: [
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  title: 'Web Search',
+                  createdAt: '2026-04-24T18:01:00.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'web_search',
+                    redactedInputPreview: '{"query":"AI automotive"}',
+                    redactedOutputPreview: JSON.stringify(JSON.stringify({
+                      ok: true,
+                      results: [{ title: 'Result A', content: 'first\\nsecond' }],
+                    })),
+                  },
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var pre = document.querySelector('.ai-codex-activity-technical pre');
+    expect(pre).not.toBeNull();
+    expect(pre.textContent).toContain('"ok": true');
+    expect(pre.textContent).toContain('"results": [');
+    expect(pre.textContent).toContain('Result A');
+    expect(pre.textContent).not.toContain('"{\\"ok\\"');
+  });
+
+  it('formats nested JSON-string tool output previews as structured JSON', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 1,
+              events: [
+                {
+                  id: 'activity-1',
+                  kind: 'activity',
+                  title: 'Web Search',
+                  createdAt: '2026-04-24T18:01:00.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'web_search',
+                    redactedInputPreview: '{"query":"AI automotive"}',
+                    redactedOutputPreview: JSON.stringify({
+                      ok: true,
+                      output: JSON.stringify({
+                        ok: true,
+                        results: [{ title: 'Result B', content: 'alpha\\nbeta' }],
+                      }),
+                    }),
+                  },
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    var pre = document.querySelector('.ai-codex-activity-technical pre');
+    expect(pre).not.toBeNull();
+    expect(pre.textContent).toContain('"output": {');
+    expect(pre.textContent).toContain('Result B');
+    expect(pre.textContent).not.toContain('"output": "{');
+    expect(pre.textContent).not.toContain('\\"results\\"');
+  });
+
+  it('renders JSON activity payload details as structured readable blocks', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            runs: [
+              {
+                id: 'run-1',
+                user: { id: 'user-1', role: 'user', content: 'List workspace files.' },
+                workSession: {
+                  status: 'running',
+                  items: [
+                    {
+                      id: 'tool-1',
+                      title: 'Sandbox Fs List',
+                      status: 'completed',
+                      detail: JSON.stringify({
+                        summary: 'Listed files in gtm/vc-admin.',
+                        files: [
+                          {
+                            name: 'vc-candidates.json',
+                            relativePath: 'gtm/vc-admin/vc-candidates.json',
+                            sizeBytes: 30317,
+                            updatedAt: '2026-05-24T15:49:36.131Z',
+                          },
+                        ],
+                      }),
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-payload-summary').textContent).toContain('Listed files');
+    expect(document.querySelector('.ai-codex-payload-file').textContent).toContain('vc-candidates.json');
+    expect(document.querySelector('.ai-codex-payload-file').textContent).toContain('gtm/vc-admin/vc-candidates.json');
+    expect(document.querySelector('.ai-codex-activity-detail').textContent).not.toContain('{"summary"');
   });
 
   it('redacts expandable tool activity details', function () {

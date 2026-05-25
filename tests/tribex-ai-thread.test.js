@@ -814,6 +814,62 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(document.querySelector('.ai-codex-work-session').textContent).toContain('Deloitte cloud');
   });
 
+  it('keeps repeated identical persisted tool activities as separate steps', function () {
+    window.__tribexAiState = {
+      subscribe: vi.fn(function () { return vi.fn(); }),
+      refreshActiveThread: vi.fn(),
+      submitPrompt: vi.fn(function () { return Promise.resolve(true); }),
+      getThreadContext: vi.fn(function () {
+        return {
+          thread: baseThread({
+            uiTranscript: {
+              version: 1,
+              lastSequence: 2,
+              events: [
+                {
+                  id: 'activity-repeat-1',
+                  kind: 'activity',
+                  operationId: 'op-tools',
+                  title: 'Web Search',
+                  createdAt: '2026-04-24T18:00:00.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'web_search',
+                    redactedInputPreview: '{"query":"AI automotive"}',
+                    redactedOutputPreview: '{"results":[{"title":"Same"}]}',
+                  },
+                },
+                {
+                  id: 'activity-repeat-2',
+                  kind: 'activity',
+                  operationId: 'op-tools',
+                  title: 'Web Search',
+                  createdAt: '2026-04-24T18:00:01.000Z',
+                  status: 'completed',
+                  activity: {
+                    toolName: 'web_search',
+                    redactedInputPreview: '{"query":"AI automotive"}',
+                    redactedOutputPreview: '{"results":[{"title":"Same"}]}',
+                  },
+                },
+              ],
+            },
+          }),
+          loading: false,
+          pending: false,
+          error: null,
+        };
+      }),
+    };
+
+    renderThread('thread-1');
+
+    expect(document.querySelector('.ai-codex-work-session').textContent).toContain('2 steps');
+    expect(Array.from(document.querySelectorAll('.ai-codex-activity-title strong')).map(function (node) {
+      return node.textContent;
+    }).filter(function (title) { return title === 'Web Search'; })).toHaveLength(2);
+  });
+
   it('shows completed canonical tool payloads even when toolName is omitted', function () {
     window.__tribexAiState = {
       subscribe: vi.fn(function () { return vi.fn(); }),

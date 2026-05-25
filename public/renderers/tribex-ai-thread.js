@@ -1334,6 +1334,7 @@
       if (!isVisibleTranscriptWorkEvent(event)) return;
       var activity = event.activity && typeof event.activity === 'object' ? event.activity : {};
       var signature = [
+        displayText(event.id || ''),
         normalizeStatus(event.kind),
         normalizeStatus(event.title),
         normalizeStatus(event.status),

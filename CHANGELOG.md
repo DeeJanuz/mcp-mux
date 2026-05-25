@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-25
+
 ### Changed
 - Built-in MCPViews review guidance now asks agents to reserve `push_review` for destructive, high-impact, ambiguous, or 3+ mutation batches instead of interrupting for every small external write.
 

@@ -1,6 +1,6 @@
 # Plugin Development Guide
 
-This guide walks you through creating a plugin for MCPViews, from a minimal manifest to a full plugin with custom renderers, authentication, and registry publishing.
+This guide walks you through creating a plugin for MCPViews, from a minimal manifest to a full plugin with custom renderers, authentication, registry publishing, and portable agent rules or MCP skills.
 
 ## Architecture Overview
 
@@ -466,7 +466,7 @@ sequenceDiagram
 
 MCPViews uses a two-tier lazy-loading approach for plugin documentation, reducing session-start token usage:
 
-1. **`init_session`** — Returns only built-in (universal) rules and a compact `plugin_registry` index. Each plugin entry lists its name, summary, tags, tool groups (with tool names and short hints), and renderer names. Agents use this index to identify which plugin provides the tools they need.
+1. **`init_session`** — Returns only built-in (universal) rules and a compact `plugin_registry` index. Each plugin entry lists its name, summary, tags, tool groups (with tool names and short hints), renderer names, prompt breadcrumbs, and high-level plugin rules. Agents use this index to identify which plugin provides the tools, renderers, rules, or skills they need.
 
 2. **`get_plugin_docs`** — Agents call this to fetch detailed rules for a specific plugin on-demand. Supports filtering by tool group name, individual tool name, or renderer name, so agents can request only the docs they need.
 
@@ -475,6 +475,167 @@ The plugin registry index is either read from the manifest's `registry_index` fi
 Under the hood, MCPViews automatically discovers plugin renderers by reading the `renderers` map and enriching entries with tool metadata from the MCP tool cache. This gives agents the renderer names and tool associations with zero plugin effort.
 
 However, **auto-discovery cannot infer payload shapes**. The tool cache contains tool *input* schemas (what you send to the tool), not renderer *data* schemas (what the renderer expects to display). Without `renderer_definitions` entries that include `data_hint`, agents will know a renderer *exists* but won't know how to construct the `data` payload when calling `push_content`. Auto-discovery covers the "what" (renderer names + tool mappings); `renderer_definitions` covers the "how" (payload shapes + behavioral guidance).
+
+## Rules and MCP Skills Through Breadcrumbs
+
+MCPViews plugins can also act as portable rules and skills repositories. A plugin does not need renderers or a domain API to be useful: it can publish compact breadcrumbs at session start, then expose full rules, runbooks, and skill instructions through MCP prompts that agents fetch only when the current task needs them.
+
+This pattern is useful when you want the same team workflows to work across Codex, Claude Code, Cursor, Windsurf, and other MCP-capable harnesses without copying large instruction files into every agent configuration.
+
+### Why Use Breadcrumbs for Rules and Skills
+
+Traditional agent rules are usually loaded up front from files like `AGENTS.md`, `.cursor/rules`, Claude rules, local skill directories, or project workflow docs. That works, but it means every session pays context for instructions that may be irrelevant.
+
+With MCPViews, `init_session` returns a compact plugin breadcrumb catalog:
+
+- plugin name, summary, and tags
+- tool group names and short hints
+- renderer names
+- prompt names, descriptions, and arguments
+- high-level `plugin_rules`
+
+The agent uses those breadcrumbs as a routing map. If the task matches a breadcrumb, it calls `get_plugin_prompt`, `prompts/get`, or `get_plugin_docs` to fetch the full instructions for that task. If the task does not match, the full rule or skill stays out of context.
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant MCPViews
+    participant Plugin as Rules Plugin
+
+    Agent->>MCPViews: init_session
+    MCPViews-->>Agent: Compact plugin breadcrumbs
+    Agent->>Agent: Match task to prompt or rule summary
+    Agent->>MCPViews: get_plugin_prompt(plugin, prompt)
+    MCPViews->>Plugin: Read prompt markdown
+    Plugin-->>MCPViews: Full workflow or skill
+    MCPViews-->>Agent: Task-specific instructions
+    Agent->>Agent: Apply only for this run
+```
+
+### Rules-Only Plugin Structure
+
+Use a rules-only plugin when you want shared operating procedures, review workflows, implementation skills, governance policies, or customer-specific runbooks, but you do not need a custom renderer.
+
+```
+team-workflows/
+  manifest.json
+  prompts/
+    frontend-review.md
+    release-governance.md
+    billing-safety.md
+    incident-response.md
+```
+
+There is no `renderers/` directory in this example. The plugin exists to advertise when specialized instructions are available and to serve those instructions on demand.
+
+```json
+{
+  "name": "team-workflows",
+  "version": "1.0.0",
+  "renderers": {},
+  "registry_index": {
+    "summary": "Shared team rules, MCP skills, review workflows, and release runbooks.",
+    "tags": ["rules", "skills", "workflows", "team-standards"],
+    "tool_groups": [],
+    "renderer_names": []
+  },
+  "plugin_rules": [
+    "Use this plugin when the task mentions frontend review, release governance, billing safety, incident response, or team workflow standards.",
+    "Fetch the specific prompt with get_plugin_prompt before applying a workflow. Do not load every workflow up front."
+  ],
+  "prompt_definitions": [
+    {
+      "name": "frontend-review",
+      "description": "MCP skill for frontend quality review, responsive checks, accessibility checks, and visual verification.",
+      "source": "prompts/frontend-review.md",
+      "arguments": [
+        {
+          "name": "target_url",
+          "description": "Local or deployed URL to review",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "release-governance",
+      "description": "Release workflow covering branch state, tests, changelog notes, review gates, and rollout risk.",
+      "source": "prompts/release-governance.md",
+      "arguments": []
+    }
+  ]
+}
+```
+
+### Prompt Files as MCP Skills
+
+Treat each prompt file as a portable MCP skill: a self-contained set of instructions that tells an agent when it applies, what context to gather, which tools to prefer, how to verify the result, and how to report back.
+
+```markdown
+# Frontend Review Skill
+
+Use this skill when the user asks for frontend QA, visual review, responsive review,
+or a pre-ship UI check.
+
+Target URL: `{{target_url}}`
+
+## Workflow
+
+1. Open the page at desktop and mobile widths.
+2. Check text overflow, tap targets, contrast, loading states, and empty states.
+3. Verify primary interactions and capture any reproducible failures.
+4. Report findings with severity, evidence, and the smallest scoped fix.
+
+## Output
+
+Lead with actionable issues. If no issues are found, state the remaining test gaps.
+```
+
+Agents discover this skill from the `prompt_definitions` breadcrumb in `init_session`, then fetch the full markdown only when a relevant task appears:
+
+```json
+{
+  "plugin": "team-workflows",
+  "prompt": "frontend-review",
+  "arguments": {
+    "target_url": "http://localhost:3000"
+  }
+}
+```
+
+### What to Put in Each Layer
+
+| Layer | Purpose | Keep It Compact? |
+|-------|---------|------------------|
+| `registry_index.summary` | One-line description that helps the agent decide whether the plugin is relevant. | Yes |
+| `registry_index.tags` | Searchable concepts such as `rules`, `skills`, `release`, `frontend`, or `billing`. | Yes |
+| `plugin_rules` | Always-visible routing rules and safety constraints for the plugin. | Yes |
+| `prompt_definitions[].description` | Breadcrumb for a specific skill or workflow, including when to fetch it. | Yes |
+| `prompts/*.md` | Full task instructions, examples, checklists, verification steps, and output format. | No, but keep it task-focused |
+| `tool_rules` | Behavioral instructions for a specific MCP tool. | Yes |
+| `renderer_definitions[].rule` | Behavioral instructions for a renderer or display workflow. | Yes |
+
+The important boundary is that breadcrumbs should help the agent choose, not perform. Put the full procedure in the prompt file so the agent only loads it when the current task calls for it.
+
+### Combining Rules, Tools, and Renderers
+
+Rules repository plugins can start without tools or renderers, then grow into richer workflows:
+
+- Add MCP tools when a skill needs live data, search, validation, or external mutations.
+- Add `tool_rules` when a tool has non-obvious safety, ordering, or formatting requirements.
+- Add renderers when the workflow benefits from a visual review surface, dashboard, graph, or approval table.
+- Add `renderer_definitions` when agents need to construct `push_content` or `push_review` payloads for those renderers.
+
+For example, a release-governance skill might begin as one prompt. Later it could add a `collect_release_state` MCP tool, a `release_risk_report` renderer, and a `tool_rules.collect_release_state` entry that tells agents to run it before asking for approval.
+
+### Best Practices
+
+- Write breadcrumb descriptions in trigger language: "Use when the task mentions..." or "Fetch before..."
+- Keep `plugin_rules` small and stable; put long checklists in prompt markdown.
+- Make each prompt self-contained enough to work across agent harnesses.
+- Include verification and output expectations in every skill prompt.
+- Use arguments for task-specific inputs such as `target_url`, `project_path`, `ticket_id`, or `environment`.
+- Version and distribute the plugin like code so rule updates happen in one place.
+- Do not use breadcrumbs as hidden policy. If a rule must govern behavior, make the routing condition clear in `plugin_rules` or the prompt description.
 
 ### registry_index (Optional)
 
@@ -688,7 +849,7 @@ Per-tool behavioral rules (tool names are auto-prefixed):
 
 ### plugin_rules
 
-High-level behavioral rules for the plugin that agents see every session. Unlike `tool_rules` (which are per-tool and only returned when that tool's docs are requested), `plugin_rules` are always included in `init_session`, `mcpviews_setup`, and `get_plugin_docs` responses regardless of any tool/renderer filters.
+High-level behavioral rules for the plugin that agents can see every session as compact breadcrumbs. Unlike `tool_rules` (which are per-tool and only returned when that tool's docs are requested), `plugin_rules` are included in the `init_session` `plugin_registry` entry and are returned as full rules by `mcpviews_setup` and `get_plugin_docs` regardless of any tool/renderer filters.
 
 ```json
 {
@@ -699,7 +860,7 @@ High-level behavioral rules for the plugin that agents see every session. Unlike
 }
 ```
 
-Each rule is a plain string. Rules are returned in the `rules` array with `"category": "plugin"` and `"source": "<plugin-name>"`. They also appear in the `plugin_registry` compact index returned by `init_session`, so agents can see them without calling `get_plugin_docs`.
+Each rule is a plain string. In `mcpviews_setup` and `get_plugin_docs`, plugin rules are returned in the `rules` array with `"category": "plugin"` and `"source": "<plugin-name>"`. They also appear in the `plugin_registry` compact index returned by `init_session`, so agents can see routing guidance without calling `get_plugin_docs`.
 
 Use `plugin_rules` for cross-cutting behavioral guidance that applies to the plugin as a whole. Use `tool_rules` for tool-specific instructions.
 

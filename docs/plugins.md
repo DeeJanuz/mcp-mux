@@ -14,6 +14,7 @@ A plugin manifest is a JSON file with the following structure:
 {
   "name": "my-plugin",
   "version": "1.0.0",
+  "frame_origins": ["https://app.example.com"],
   "renderers": {
     "tool_name": "renderer_name"
   },
@@ -35,6 +36,7 @@ A plugin manifest is a JSON file with the following structure:
 | `name` | string | Yes | Unique identifier for the plugin. Used as the filename in `~/.mcpviews/plugins/<name>.json`. |
 | `version` | string | Yes | Semantic version of the plugin. |
 | `renderers` | object | No | Map of MCP tool names to frontend renderer names. When a tool result arrives, MCPViews uses this mapping to select the correct renderer. If a tool is not listed, the default `rich_content` renderer is used. |
+| `frame_origins` | string[] | No | HTTP(S) origins that plugin renderer iframes may embed. MCPViews normalizes each entry to `scheme://host[:port]` and appends it to the webview CSP `frame-src` directive. Use this only for trusted app origins that the renderer intentionally frames. |
 | `renderer_definitions` | RendererDef[] | **Recommended** | Structured renderer definitions with payload schemas for agent discovery. Each entry defines a renderer's name, description, scope, associated tools, data schema hint, and optional behavioral rule. Without these, agents can discover renderer names (via auto-discovery from the `renderers` map) but won't know how to construct payloads. See [Agent Discovery](#agent-discovery) below. |
 | `tool_rules` | object | No | Map of tool names to behavioral rule strings. These rules are returned by the `get_plugin_docs` and `mcpviews_setup` MCP tools so agents can persist them for guided tool usage. Tool names are automatically prefixed with the plugin's `tool_prefix`. |
 | `no_auto_push` | string[] | No | **Deprecated.** Previously controlled which tools skipped auto-push. Auto-push has been removed entirely -- pushes now only happen via explicit `push_content`/`push_review` calls. Field is still accepted for backward compatibility but has no effect. |

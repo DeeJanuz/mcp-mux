@@ -169,6 +169,22 @@ impl AppState {
         origins.into_iter().collect()
     }
 
+    /// Returns deduplicated HTTP(S) origins from plugin-declared frame allowlists.
+    pub fn plugin_frame_origins(&self) -> Vec<String> {
+        let registry = self.plugin_registry.lock().unwrap();
+        let mut origins = std::collections::HashSet::new();
+        for manifest in &registry.manifests {
+            for frame_origin in &manifest.frame_origins {
+                if let Ok(url) = url::Url::parse(frame_origin) {
+                    if matches!(url.scheme(), "http" | "https") && !url.authority().is_empty() {
+                        origins.insert(format!("{}://{}", url.scheme(), url.authority()));
+                    }
+                }
+            }
+        }
+        origins.into_iter().collect()
+    }
+
     /// Install or update a plugin from a registry entry.
     /// Downloads the ZIP package if a download URL is present (checking entry-level
     /// download_url first, then manifest-level), otherwise falls back to manifest-only.
@@ -509,6 +525,22 @@ mod tests {
         let origins = state.plugin_csp_origins();
         assert_eq!(origins.len(), 1);
         assert!(origins.contains(&"https://api.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_plugin_frame_origins_from_manifest() {
+        let (state, _dir) = test_app_state();
+        let mut manifest = test_manifest("frame-plugin");
+        manifest.frame_origins = vec![
+            "https://app.example.com/some/path".to_string(),
+            "http://localhost:3000".to_string(),
+            "javascript:alert(1)".to_string(),
+        ];
+        state.install_plugin_from_manifest(manifest, false).unwrap();
+        let origins = state.plugin_frame_origins();
+        assert_eq!(origins.len(), 2);
+        assert!(origins.contains(&"https://app.example.com".to_string()));
+        assert!(origins.contains(&"http://localhost:3000".to_string()));
     }
 
     #[test]

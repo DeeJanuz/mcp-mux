@@ -391,7 +391,10 @@
         window.__mcpviews_plugins[renderer.plugin_name] = Object.assign(
           {},
           window.__mcpviews_plugins[renderer.plugin_name] || {},
-          { mcp_url: renderer.mcp_url || null },
+          {
+            mcp_url: renderer.mcp_url || null,
+            frame_origins: renderer.frame_origins || [],
+          },
         );
       });
 

@@ -40,19 +40,27 @@ use tauri_plugin_autostart::MacosLauncher;
 // and Linux, but at `https://plugin.localhost/...` on Windows. CSP must whitelist
 // both forms so the same renderer fetches succeed cross-platform.
 // See https://github.com/orgs/tauri-apps/discussions/5597
-const BASE_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net plugin://localhost https://plugin.localhost; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com plugin://localhost https://plugin.localhost; font-src 'self' https://fonts.gstatic.com plugin://localhost https://plugin.localhost; connect-src 'self' http://localhost:4200; img-src 'self' data: blob: plugin://localhost https://plugin.localhost";
+const BASE_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net plugin://localhost https://plugin.localhost; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com plugin://localhost https://plugin.localhost; font-src 'self' https://fonts.gstatic.com plugin://localhost https://plugin.localhost; connect-src 'self' http://localhost:4200; img-src 'self' data: blob: plugin://localhost https://plugin.localhost; frame-src 'self'";
 const DEFAULT_HTTP_PORT: u16 = 4200;
 const DEV_HTTP_PORT_ENV: &str = "MCPVIEWS_DEV_HTTP_PORT";
 
-fn build_csp(extra_origins: &[String]) -> String {
-    if extra_origins.is_empty() {
-        return BASE_CSP.to_string();
+fn build_csp(connect_origins: &[String], frame_origins: &[String]) -> String {
+    let mut csp = BASE_CSP.to_string();
+    if !connect_origins.is_empty() {
+        let suffix = connect_origins.join(" ");
+        csp = csp.replace(
+            "connect-src 'self' http://localhost:4200",
+            &format!("connect-src 'self' http://localhost:4200 {}", suffix),
+        );
     }
-    let suffix = extra_origins.join(" ");
-    BASE_CSP.replace(
-        "connect-src 'self' http://localhost:4200",
-        &format!("connect-src 'self' http://localhost:4200 {}", suffix),
-    )
+    if !frame_origins.is_empty() {
+        let suffix = frame_origins.join(" ");
+        csp = csp.replace(
+            "frame-src 'self'",
+            &format!("frame-src 'self' {}", suffix),
+        );
+    }
+    csp
 }
 
 fn insert_csp_origin(origins: &mut BTreeSet<String>, value: &str) {
@@ -128,7 +136,8 @@ fn csp_request_hook(state: Arc<AppState>) -> impl Fn(tauri::http::Request<Vec<u8
         let mut origins: BTreeSet<String> = state.plugin_csp_origins().into_iter().collect();
         origins.extend(first_party_ai_csp_origins());
         let origins = origins.into_iter().collect::<Vec<_>>();
-        let csp = build_csp(&origins);
+        let frame_origins = state.plugin_frame_origins();
+        let csp = build_csp(&origins, &frame_origins);
         resp.headers_mut().insert(
             "content-security-policy",
             csp.parse().unwrap(),
@@ -419,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_build_csp_no_extras() {
-        let csp = build_csp(&[]);
+        let csp = build_csp(&[], &[]);
         assert_eq!(csp, BASE_CSP);
     }
 
@@ -429,14 +438,22 @@ mod tests {
             "https://api.example.com".to_string(),
             "https://other.io".to_string(),
         ];
-        let csp = build_csp(&origins);
+        let csp = build_csp(&origins, &[]);
         assert!(csp.contains("connect-src 'self' http://localhost:4200 https://api.example.com https://other.io"));
+    }
+
+    #[test]
+    fn test_build_csp_with_frame_origins() {
+        let origins = vec!["https://app.example.com".to_string()];
+        let csp = build_csp(&[], &origins);
+        assert!(csp.contains("frame-src 'self' https://app.example.com"));
+        assert!(csp.contains("connect-src 'self' http://localhost:4200"));
     }
 
     #[test]
     fn test_build_csp_preserves_other_directives() {
         let origins = vec!["https://api.example.com".to_string()];
-        let csp = build_csp(&origins);
+        let csp = build_csp(&origins, &[]);
         assert!(csp.contains("default-src 'self'"));
         assert!(csp.contains("script-src 'self' 'unsafe-inline' 'unsafe-eval'"));
         assert!(csp.contains("font-src 'self' https://fonts.gstatic.com"));

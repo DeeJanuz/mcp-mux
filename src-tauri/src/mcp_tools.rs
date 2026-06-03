@@ -3343,6 +3343,7 @@ mod tests {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             renderers: std::collections::HashMap::new(),
+            frame_origins: vec![],
             mcp,
             renderer_definitions: renderer_defs,
             tool_rules,
@@ -3688,6 +3689,7 @@ mod tests {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             renderers,
+            frame_origins: vec![],
             mcp: Some(PluginMcpConfig {
                 url: "http://localhost:8080".into(),
                 auth: None,

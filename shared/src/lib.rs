@@ -94,6 +94,10 @@ pub struct PluginManifest {
     pub version: String,
     #[serde(default)]
     pub renderers: HashMap<String, String>,
+    /// Origins that plugin renderer iframes are allowed to embed. These are
+    /// appended to the MCPViews webview CSP `frame-src` directive.
+    #[serde(default)]
+    pub frame_origins: Vec<String>,
     pub mcp: Option<PluginMcpConfig>,
     #[serde(default)]
     pub renderer_definitions: Vec<RendererDef>,
@@ -764,12 +768,30 @@ mod tests {
     }
 
     #[test]
+    fn test_plugin_manifest_with_frame_origins() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0",
+            "frame_origins": ["https://app.example.com", "http://localhost:3000"]
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            manifest.frame_origins,
+            vec![
+                "https://app.example.com".to_string(),
+                "http://localhost:3000".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn test_plugin_manifest_without_renderer_definitions() {
         let json = r#"{
             "name": "legacy-plugin",
             "version": "0.5.0"
         }"#;
         let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.frame_origins.is_empty());
         assert!(manifest.renderer_definitions.is_empty());
         assert!(manifest.renderers.is_empty());
         assert!(manifest.mcp.is_none());

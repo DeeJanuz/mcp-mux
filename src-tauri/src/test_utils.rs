@@ -9,6 +9,7 @@ pub fn test_manifest(name: &str) -> mcpviews_shared::PluginManifest {
         name: name.to_string(),
         version: "1.0.0".to_string(),
         renderers: std::collections::HashMap::new(),
+        frame_origins: vec![],
         mcp: None,
         renderer_definitions: vec![],
         tool_rules: std::collections::HashMap::new(),

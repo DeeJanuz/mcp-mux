@@ -9,6 +9,7 @@ pub struct RendererInfo {
     pub file_name: String,
     pub url: String,
     pub mcp_url: Option<String>,
+    pub frame_origins: Vec<String>,
 }
 
 /// Scan all installed plugin directories for renderer JS files.
@@ -44,8 +45,8 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                 continue;
             }
 
-            // Read MCP URL from manifest
-            let mcp_url = read_mcp_url(&path.join("manifest.json"));
+            // Read renderer-relevant plugin config from manifest.
+            let renderer_config = read_renderer_config(&path.join("manifest.json"));
 
             if let Ok(renderer_entries) = std::fs::read_dir(&renderers_dir) {
                 for renderer_entry in renderer_entries.flatten() {
@@ -77,7 +78,8 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                             plugin_name: plugin_name.clone(),
                             file_name: file_name.clone(),
                             url,
-                            mcp_url: mcp_url.clone(),
+                            mcp_url: renderer_config.mcp_url.clone(),
+                            frame_origins: renderer_config.frame_origins.clone(),
                         });
                     }
                 }
@@ -88,8 +90,38 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
     renderers
 }
 
-fn read_mcp_url(manifest_path: &std::path::Path) -> Option<String> {
-    let data = std::fs::read_to_string(manifest_path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&data).ok()?;
-    value.get("mcp")?.get("url")?.as_str().map(|s| s.to_string())
+#[derive(Default)]
+struct RendererConfig {
+    mcp_url: Option<String>,
+    frame_origins: Vec<String>,
+}
+
+fn read_renderer_config(manifest_path: &std::path::Path) -> RendererConfig {
+    let data = match std::fs::read_to_string(manifest_path) {
+        Ok(data) => data,
+        Err(_) => return RendererConfig::default(),
+    };
+    let value: serde_json::Value = match serde_json::from_str(&data) {
+        Ok(value) => value,
+        Err(_) => return RendererConfig::default(),
+    };
+    let mcp_url = value.get("mcp")
+        .and_then(|mcp| mcp.get("url"))
+        .and_then(|url| url.as_str())
+        .map(|url| url.to_string());
+    let frame_origins = value
+        .get("frame_origins")
+        .and_then(|origins| origins.as_array())
+        .map(|origins| {
+            origins
+                .iter()
+                .filter_map(|origin| origin.as_str().map(|origin| origin.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    RendererConfig {
+        mcp_url,
+        frame_origins,
+    }
 }

@@ -202,11 +202,12 @@ function createDevDmg() {
   const dmgDir = join(releaseBundleRoot, 'dmg');
   const versionedDmgPath = join(dmgDir, `${productName}_${version}_${arch}.dmg`);
   const stableDmgPath = join(dmgDir, 'DecidR-MCPViews-macOS.dmg');
-  const tempRoot = mkdtempSync(join(tmpdir(), 'mcpviews-dmg-stage-'));
 
   if (!existsSync(appPath)) {
     throw new Error(`Expected app bundle was not built: ${appPath}`);
   }
+
+  const tempRoot = mkdtempSync(join(tmpdir(), 'mcpviews-dmg-stage-'));
 
   try {
     mkdirSync(dmgDir, { recursive: true });

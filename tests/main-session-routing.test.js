@@ -8,7 +8,7 @@ var mainCode = readFileSync(join(__dirnameResolved, '../public/main.js'), 'utf8'
 
 function loadMain() {
   var instrumented = mainCode.replace(
-    /  renderEmpty\(\);\n  initAiButton\(\);\n  initUpdateBanner\(\);\n  initAppsButton\(\);\n  initTauri\(\);\n\}\)\(\);/,
+    /  renderEmpty\(\);\n  initAiButton\(\);\n  initUpdateBanner\(\);\n  initAppsButton\(\);\n  startAppUpdateChecks\(\);\n  initTauri\(\);\n\}\)\(\);/,
     [
       '  window.__mainTest = {',
       '    handlePush: handlePush,',
@@ -22,6 +22,7 @@ function loadMain() {
       '  initAiButton();',
       '  initUpdateBanner();',
       '  initAppsButton();',
+      '  startAppUpdateChecks();',
       '  initTauri();',
       '})();',
     ].join('\n'),
@@ -72,6 +73,7 @@ beforeEach(function () {
     '<button id="ai-shell-toggle-button"></button>',
     '<button id="ai-home-button"></button>',
     '<div id="update-banner" class="update-banner hidden">',
+    '<strong id="update-banner-title"></strong>',
     '<span id="update-banner-message"></span>',
     '<button id="update-changelog-button"></button>',
     '<button id="update-install-button"></button>',
@@ -92,6 +94,7 @@ beforeEach(function () {
   installLocalStorage();
   if (localStorage && typeof localStorage.removeItem === 'function') {
     localStorage.removeItem('mcpviews-dismissed-update-version');
+    localStorage.removeItem('mcpviews-dismissed-update-check-failure');
     localStorage.removeItem('decidr-onboarding:completed-org-id');
   }
   window.__renderers = {
@@ -177,6 +180,11 @@ describe('main session routing', function () {
 
     await window.__mainTest.checkForAppUpdate();
     expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(true);
+
+    update.version = '0.2.5-rc.13';
+    await window.__mainTest.checkForAppUpdate();
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('update-banner-message').textContent).toContain('0.2.5-rc.13');
   });
 
   it('installs the pending update from the signed release manifest', async function () {
@@ -244,6 +252,116 @@ describe('main session routing', function () {
     expect(document.getElementById('update-banner-message').textContent).toContain('simulated');
     expect(document.getElementById('update-install-button').disabled).toBe(false);
     expect(document.getElementById('update-install-button').textContent).toBe('Install and re-launch');
+  });
+
+  it('opens the manual installer download when signed in-app install is unavailable', async function () {
+    var update = {
+      version: '0.2.7',
+      currentVersion: '0.2.6',
+      title: 'MCPViews 0.2.7',
+      releasePageUrl: 'https://github.com/DeeJanuz/mcpviews/releases/tag/v0.2.7',
+      updateJsonUrl: 'https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.7/latest.json',
+      manualDownloadUrl: 'https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.7/MCPViews_0.2.7_aarch64.dmg',
+      manualDownloadLabel: 'Download macOS installer',
+      installUnavailableReason: 'MCPViews updater public key is not configured.',
+      canInstall: false,
+    };
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') return Promise.resolve(update);
+      if (command === 'open_external_url') return Promise.resolve();
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('update-banner').classList.contains('update-banner-manual')).toBe(true);
+    expect(document.getElementById('update-banner-message').textContent).toContain('cannot install signed updates in-app');
+    expect(document.getElementById('update-install-button').textContent).toBe('Download macOS installer');
+
+    document.getElementById('update-install-button').click();
+    await flushPromises();
+
+    expect(invoke).toHaveBeenCalledWith('open_external_url', {
+      url: update.manualDownloadUrl,
+    });
+  });
+
+  it('shows a visible update-check failure and retries successfully', async function () {
+    var update = {
+      version: '0.2.7',
+      currentVersion: '0.2.6',
+      title: 'MCPViews 0.2.7',
+      releasePageUrl: 'https://github.com/DeeJanuz/mcpviews/releases/tag/v0.2.7',
+      updateJsonUrl: 'https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.7/latest.json',
+      canInstall: true,
+    };
+    var failuresRemaining = 1;
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') {
+        if (failuresRemaining > 0) {
+          failuresRemaining -= 1;
+          return Promise.reject(new Error('GitHub releases check returned HTTP 403'));
+        }
+        return Promise.resolve(update);
+      }
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('update-banner').classList.contains('update-banner-warning')).toBe(true);
+    expect(document.getElementById('update-banner-title').textContent).toContain('Could not check');
+    expect(document.getElementById('update-install-button').textContent).toBe('Try again');
+
+    document.getElementById('update-install-button').click();
+    await flushPromises();
+
+    expect(document.getElementById('update-banner').classList.contains('update-banner-warning')).toBe(false);
+    expect(document.getElementById('update-banner-message').textContent).toContain('0.2.7');
+    expect(document.getElementById('update-install-button').textContent).toBe('Install and re-launch');
+  });
+
+  it('throttles dismissed update-check failures', async function () {
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') {
+        return Promise.reject(new Error('GitHub releases check returned HTTP 500'));
+      }
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(false);
+    document.getElementById('update-dismiss-button').click();
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(true);
+
+    await window.__mainTest.checkForAppUpdate();
+    await flushPromises();
+
+    expect(document.getElementById('update-banner').classList.contains('hidden')).toBe(true);
   });
 
   it('hides AI workspace entrypoints when no hosted AI provider is configured', async function () {

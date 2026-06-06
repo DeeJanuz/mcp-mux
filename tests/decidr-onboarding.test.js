@@ -25,6 +25,12 @@ function textButton(label) {
   });
 }
 
+function inputByPlaceholder(placeholder) {
+  return Array.from(document.querySelectorAll('input')).find(function (input) {
+    return input.placeholder === placeholder;
+  });
+}
+
 function installLocalStorage() {
   var values = {};
   var storage = {
@@ -51,6 +57,32 @@ function installLocalStorage() {
   });
 }
 
+function baseInvoke(overrides) {
+  return vi.fn(function (command, args) {
+    if (command === 'get_standalone_renderers') {
+      return Promise.resolve([
+        { plugin: 'decidr', renderers: [] },
+        { plugin: 'ludflow', renderers: [] },
+      ]);
+    }
+    if (command === 'list_local_mcp_tools') return Promise.resolve([]);
+    if (command === 'send_plugin_email_code') return Promise.resolve({ status: true });
+    if (command === 'list_plugin_orgs' && args.pluginName === 'decidr') return Promise.resolve(['org_123']);
+    if (command === 'list_plugin_orgs' && args.pluginName === 'ludflow') return Promise.resolve(['org_123']);
+    if (overrides && overrides[command]) return overrides[command](args);
+    return Promise.resolve(null);
+  });
+}
+
+async function enterEmailAndCode() {
+  inputByPlaceholder('Email address').value = 'daenon@example.com';
+  textButton('Send code').click();
+  await flushPromises();
+  inputByPlaceholder('000000').value = '123456';
+  textButton('Verify code').click();
+  await flushPromises();
+}
+
 beforeEach(function () {
   document.body.innerHTML = '<div id="root"></div>';
   installLocalStorage();
@@ -61,27 +93,39 @@ beforeEach(function () {
 });
 
 describe('decidr onboarding renderer', function () {
-  it('authenticates DecidR and Ludflow to the same selected organization', async function () {
-    var invoke = vi.fn(function (command, args) {
-      if (command === 'get_standalone_renderers') {
-        return Promise.resolve([
-          { plugin: 'decidr', renderers: [] },
-          { plugin: 'ludflow', renderers: [] },
-        ]);
-      }
-      if (command === 'list_local_mcp_tools') return Promise.resolve([]);
-      if (command === 'start_plugin_auth') return Promise.resolve('ok');
-      if (command === 'call_local_mcp_tool' && args.name === 'decidr__list_organizations') {
-        return Promise.resolve({
-          content: [{
-            type: 'text',
-            text: JSON.stringify({ data: [{ id: 'org_123', name: 'Northstar' }] }),
-          }],
+  it('uses email-code auth and lets an existing user select the default organization', async function () {
+    var verifyCount = 0;
+    var invoke = baseInvoke({
+      verify_plugin_email_code: function (args) {
+        verifyCount += 1;
+        if (verifyCount === 1) {
+          expect(args).toEqual({
+            pluginName: 'decidr',
+            email: 'daenon@example.com',
+            code: '123456',
+            storePluginNames: ['decidr', 'ludflow'],
+          });
+          return Promise.resolve({
+            status: true,
+            user_exists: true,
+            requires_organization_selection: true,
+            organizations: [{ id: 'org_123', name: 'Northstar' }],
+          });
+        }
+        expect(args).toEqual({
+          pluginName: 'decidr',
+          email: 'daenon@example.com',
+          code: '123456',
+          storePluginNames: ['decidr', 'ludflow'],
+          organizationId: 'org_123',
         });
-      }
-      if (command === 'list_plugin_orgs' && args.pluginName === 'decidr') return Promise.resolve(['org_123']);
-      if (command === 'list_plugin_orgs' && args.pluginName === 'ludflow') return Promise.resolve(['org_123']);
-      return Promise.resolve(null);
+        return Promise.resolve({
+          status: true,
+          user_exists: true,
+          organization_id: 'org_123',
+          access_token: 'lf_mcp_oauth_token',
+        });
+      },
     });
     window.__TAURI__ = { core: { invoke } };
     window.__companionUtils = { openSession: vi.fn() };
@@ -90,25 +134,18 @@ describe('decidr onboarding renderer', function () {
     window.__renderers.decidr_onboarding(document.getElementById('root'), {});
     await flushPromises();
 
-    textButton('Sign in to DecidR').click();
-    await flushPromises();
-    textButton('Use organization').click();
+    await enterEmailAndCode();
+    textButton('Use as default').click();
     await flushPromises();
 
-    expect(invoke).toHaveBeenCalledWith('start_plugin_auth', {
+    expect(invoke).toHaveBeenCalledWith('send_plugin_email_code', {
       pluginName: 'decidr',
-      orgId: null,
+      email: 'daenon@example.com',
     });
-    expect(invoke).toHaveBeenCalledWith('start_plugin_auth', {
-      pluginName: 'decidr',
-      orgId: 'org_123',
-    });
-    expect(invoke).toHaveBeenCalledWith('start_plugin_auth', {
-      pluginName: 'ludflow',
-      orgId: 'org_123',
-    });
+    expect(invoke).not.toHaveBeenCalledWith('start_plugin_auth', expect.anything());
     expect(localStorage.getItem('decidr-onboarding:completed-org-id')).toBe('org_123');
-    expect(document.body.textContent).toContain('DecidR and Ludflow are connected.');
+    expect(document.body.textContent).toContain('DecidR is ready.');
+    expect(document.body.textContent).not.toContain('Ludflow');
 
     textButton('Open DecidR').click();
     expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -117,27 +154,33 @@ describe('decidr onboarding renderer', function () {
     }));
   });
 
-  it('creates a new organization before shared plugin authentication', async function () {
-    var invoke = vi.fn(function (command, args) {
-      if (command === 'get_standalone_renderers') {
-        return Promise.resolve([
-          { plugin: 'decidr', renderers: [] },
-          { plugin: 'ludflow', renderers: [] },
-        ]);
-      }
-      if (command === 'list_local_mcp_tools') return Promise.resolve([]);
-      if (command === 'start_plugin_auth') return Promise.resolve('ok');
-      if (command === 'call_local_mcp_tool' && args.name === 'decidr__list_organizations') {
-        return Promise.resolve({ content: [{ type: 'text', text: JSON.stringify({ data: [] }) }] });
-      }
-      if (command === 'call_local_mcp_tool' && args.name === 'decidr__create_organization') {
-        return Promise.resolve({
-          content: [{ type: 'text', text: JSON.stringify({ data: { id: 'org_new', name: args.arguments.name } }) }],
+  it('asks a new user to name an organization before completing setup', async function () {
+    var verifyCount = 0;
+    var invoke = baseInvoke({
+      verify_plugin_email_code: function (args) {
+        verifyCount += 1;
+        if (verifyCount === 1) {
+          return Promise.resolve({
+            status: true,
+            user_exists: false,
+            requires_organization: true,
+          });
+        }
+        expect(args).toEqual({
+          pluginName: 'decidr',
+          email: 'daenon@example.com',
+          code: '123456',
+          storePluginNames: ['decidr', 'ludflow'],
+          organizationName: 'Acme Decisions',
         });
-      }
-      if (command === 'list_plugin_orgs' && args.pluginName === 'decidr') return Promise.resolve(['org_new']);
-      if (command === 'list_plugin_orgs' && args.pluginName === 'ludflow') return Promise.resolve(['org_new']);
-      return Promise.resolve(null);
+        return Promise.resolve({
+          status: true,
+          user_exists: false,
+          organization_id: 'org_123',
+          access_token: 'lf_mcp_oauth_token',
+          organizations: [{ id: 'org_123', name: 'Acme Decisions' }],
+        });
+      },
     });
     window.__TAURI__ = { core: { invoke } };
 
@@ -145,28 +188,18 @@ describe('decidr onboarding renderer', function () {
     window.__renderers.decidr_onboarding(document.getElementById('root'), {});
     await flushPromises();
 
-    textButton('Sign in to DecidR').click();
-    await flushPromises();
-    document.querySelector('input').value = 'New Shared Org';
+    await enterEmailAndCode();
+    expect(document.body.textContent).toContain('Name your organization');
+    inputByPlaceholder('Organization name').value = 'Acme Decisions';
     textButton('Create organization').click();
     await flushPromises();
 
-    expect(invoke).toHaveBeenCalledWith('call_local_mcp_tool', {
-      name: 'decidr__create_organization',
-      arguments: { name: 'New Shared Org' },
-    });
-    expect(invoke).toHaveBeenCalledWith('start_plugin_auth', {
-      pluginName: 'decidr',
-      orgId: 'org_new',
-    });
-    expect(invoke).toHaveBeenCalledWith('start_plugin_auth', {
-      pluginName: 'ludflow',
-      orgId: 'org_new',
-    });
-    expect(localStorage.getItem('decidr-onboarding:completed-org-id')).toBe('org_new');
+    expect(localStorage.getItem('decidr-onboarding:completed-org-id')).toBe('org_123');
+    expect(document.body.textContent).toContain('DecidR is ready.');
+    expect(document.body.textContent).not.toContain('Ludflow');
   });
 
-  it('shows a retry state when bundled plugins are missing', async function () {
+  it('shows a retry state when package components are missing without naming internal dependencies', async function () {
     var invoke = vi.fn(function (command) {
       if (command === 'get_standalone_renderers') return Promise.resolve([{ plugin: 'decidr', renderers: [] }]);
       if (command === 'list_local_mcp_tools') return Promise.resolve([]);
@@ -178,7 +211,8 @@ describe('decidr onboarding renderer', function () {
     window.__renderers.decidr_onboarding(document.getElementById('root'), {});
     await flushPromises();
 
-    expect(document.body.textContent).toContain('Missing bundled plugins: ludflow.');
-    expect(textButton('Retry plugin check')).toBeTruthy();
+    expect(document.body.textContent).toContain('One or more DecidR package components are missing.');
+    expect(document.body.textContent).not.toContain('Ludflow');
+    expect(textButton('Retry component check')).toBeTruthy();
   });
 });

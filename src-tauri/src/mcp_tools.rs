@@ -100,7 +100,9 @@ pub async fn call_tool(
                 }
                 Err(ref e) if e.contains("HTTP 401") => {
                     if let Some(ref oauth) = info.oauth_info {
-                        if let Some(new_header) = crate::plugin::try_refresh_oauth(oauth, &client).await {
+                        if let Some(new_header) =
+                            crate::plugin::try_refresh_oauth(oauth, &client).await
+                        {
                             let mut retry = plugin_proxy::proxy_plugin_tool_call(
                                 &client,
                                 &info.mcp_url,
@@ -110,7 +112,10 @@ pub async fn call_tool(
                             )
                             .await?;
                             if info.unprefixed_name == "list_organizations" {
-                                plugin_proxy::enrich_list_organizations(&mut retry, &info.plugin_name);
+                                plugin_proxy::enrich_list_organizations(
+                                    &mut retry,
+                                    &info.plugin_name,
+                                );
                             }
                             return Ok(retry);
                         }
@@ -449,7 +454,10 @@ fn validate_rich_content_payload(data: &Value) -> Result<(), String> {
         validate_rich_content_body(body, &table_ids, &graph_ids)?;
     }
 
-    if let Some(template) = object.get("instructionTemplate").or_else(|| object.get("instruction_template")) {
+    if let Some(template) = object
+        .get("instructionTemplate")
+        .or_else(|| object.get("instruction_template"))
+    {
         validate_instruction_template(template, "rich_content.data.instructionTemplate")?;
     }
 
@@ -464,7 +472,10 @@ fn validate_structured_data_payload(data: &Value) -> Result<(), String> {
         .get("tables")
         .ok_or("structured_data.data.tables is required.".to_string())?;
     validate_tables_value(tables, "structured_data.data.tables")?;
-    if let Some(template) = object.get("instructionTemplate").or_else(|| object.get("instruction_template")) {
+    if let Some(template) = object
+        .get("instructionTemplate")
+        .or_else(|| object.get("instruction_template"))
+    {
         validate_instruction_template(template, "structured_data.data.instructionTemplate")?;
     }
     Ok(())
@@ -478,7 +489,10 @@ fn validate_universal_graph_payload(data: &Value) -> Result<(), String> {
         .get("graphs")
         .ok_or("universal_graph.data.graphs is required.".to_string())?;
     validate_graphs_value(graphs, "universal_graph.data.graphs")?;
-    if let Some(template) = object.get("instructionTemplate").or_else(|| object.get("instruction_template")) {
+    if let Some(template) = object
+        .get("instructionTemplate")
+        .or_else(|| object.get("instruction_template"))
+    {
         validate_instruction_template(template, "universal_graph.data.instructionTemplate")?;
     }
     Ok(())
@@ -509,9 +523,15 @@ fn validate_data_ref(value: &Value, context: &str) -> Result<(), String> {
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or(format!("{} requires query_token from register_dataset.", context))?;
+        .ok_or(format!(
+            "{} requires query_token from register_dataset.",
+            context
+        ))?;
 
-    if let Some(source_id) = data_ref.get("source_id").or_else(|| data_ref.get("sourceId")) {
+    if let Some(source_id) = data_ref
+        .get("source_id")
+        .or_else(|| data_ref.get("sourceId"))
+    {
         source_id
             .as_str()
             .map(str::trim)
@@ -525,7 +545,10 @@ fn validate_data_ref(value: &Value, context: &str) -> Result<(), String> {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or(format!("{}.recipe must be a non-empty string.", context))?;
-        if !DATA_REF_RECIPES.iter().any(|candidate| candidate == &recipe) {
+        if !DATA_REF_RECIPES
+            .iter()
+            .any(|candidate| candidate == &recipe)
+        {
             return Err(format!(
                 "{}.recipe `{}` is not supported. Supported recipes: {}.",
                 context,
@@ -536,9 +559,10 @@ fn validate_data_ref(value: &Value, context: &str) -> Result<(), String> {
     }
 
     if let Some(params) = data_ref.get("params") {
-        params
-            .as_object()
-            .ok_or(format!("{}.params must be an object when provided.", context))?;
+        params.as_object().ok_or(format!(
+            "{}.params must be an object when provided.",
+            context
+        ))?;
     }
 
     Ok(())
@@ -555,9 +579,10 @@ fn validate_instruction_template(value: &Value, context: &str) -> Result<(), Str
         .filter(|value| !value.is_empty())
         .ok_or(format!("{}.id must be a non-empty string.", context))?;
     if let Some(variables) = template.get("variables") {
-        variables
-            .as_object()
-            .ok_or(format!("{}.variables must be an object when provided.", context))?;
+        variables.as_object().ok_or(format!(
+            "{}.variables must be an object when provided.",
+            context
+        ))?;
     }
     Ok(())
 }
@@ -582,7 +607,10 @@ fn validate_tables_value(tables: &Value, context: &str) -> Result<Vec<String>, S
             .to_string();
 
         if table_ids.iter().any(|existing| existing == &table_id) {
-            return Err(format!("{} contains duplicate table id `{}`.", context, table_id));
+            return Err(format!(
+                "{} contains duplicate table id `{}`.",
+                context, table_id
+            ));
         }
 
         if let Some(data_ref) = table.get("dataRef").or_else(|| table.get("data_ref")) {
@@ -630,7 +658,10 @@ fn validate_table_columns(columns: &[Value], context: &str) -> Result<(), String
             .and_then(|value| value.as_str())
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or(format!("{}.name must be a non-empty string.", column_context))?;
+            .ok_or(format!(
+                "{}.name must be a non-empty string.",
+                column_context
+            ))?;
     }
     Ok(())
 }
@@ -644,7 +675,8 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
     }
 
     let mut graph_ids = Vec::new();
-    let mut graph_columns_by_id: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut graph_columns_by_id: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for (graph_index, graph) in graphs.iter().enumerate() {
         let graph_context = format!("{}[{}]", context, graph_index);
         let graph = graph
@@ -659,7 +691,10 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
             .to_string();
 
         if graph_ids.iter().any(|existing| existing == &graph_id) {
-            return Err(format!("{} contains duplicate graph id `{}`.", context, graph_id));
+            return Err(format!(
+                "{} contains duplicate graph id `{}`.",
+                context, graph_id
+            ));
         }
         if let Some(data_ref) = graph.get("dataRef").or_else(|| graph.get("data_ref")) {
             validate_data_ref(data_ref, &format!("{}.dataRef", graph_context))?;
@@ -695,8 +730,14 @@ fn validate_graphs_value(graphs: &Value, context: &str) -> Result<Vec<String>, S
             .and_then(|value| value.as_str())
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or(format!("{}.type must be a non-empty string.", graph_context))?;
-        if !UNIVERSAL_GRAPH_TYPES.iter().any(|candidate| candidate == &graph_type) {
+            .ok_or(format!(
+                "{}.type must be a non-empty string.",
+                graph_context
+            ))?;
+        if !UNIVERSAL_GRAPH_TYPES
+            .iter()
+            .any(|candidate| candidate == &graph_type)
+        {
             return Err(format!(
                 "{}.type `{}` is not supported. Supported universal_graph types: {}.",
                 graph_context,
@@ -776,7 +817,10 @@ fn validate_graph_role(role: Option<&Value>, context: &str) -> Result<(), String
         .map(str::trim)
         .ok_or(format!("{} must be either primary or drilldown.", context))?;
     if !matches!(role, "primary" | "drilldown") {
-        return Err(format!("{} `{}` is not supported. Use primary or drilldown.", context, role));
+        return Err(format!(
+            "{} `{}` is not supported. Use primary or drilldown.",
+            context, role
+        ));
     }
     Ok(())
 }
@@ -791,10 +835,10 @@ fn validate_graph_options(options: Option<&Value>, context: &str) -> Result<(), 
 
     for key in ["xScale", "yScale"] {
         if let Some(value) = options.get(key) {
-            let scale = value
-                .as_str()
-                .map(str::trim)
-                .ok_or(format!("{}.{} must be one of auto, category, linear, or time.", context, key))?;
+            let scale = value.as_str().map(str::trim).ok_or(format!(
+                "{}.{} must be one of auto, category, linear, or time.",
+                context, key
+            ))?;
             if !matches!(scale, "auto" | "category" | "linear" | "time") {
                 return Err(format!(
                     "{}.{} `{}` is not supported. Use auto, category, linear, or time.",
@@ -806,10 +850,16 @@ fn validate_graph_options(options: Option<&Value>, context: &str) -> Result<(), 
 
     if let Some(value) = options.get("maxVisibleItems") {
         let Some(max_visible) = value.as_u64() else {
-            return Err(format!("{}.maxVisibleItems must be a positive integer.", context));
+            return Err(format!(
+                "{}.maxVisibleItems must be a positive integer.",
+                context
+            ));
         };
         if max_visible == 0 {
-            return Err(format!("{}.maxVisibleItems must be greater than 0.", context));
+            return Err(format!(
+                "{}.maxVisibleItems must be greater than 0.",
+                context
+            ));
         }
     }
 
@@ -835,10 +885,10 @@ fn validate_graph_options(options: Option<&Value>, context: &str) -> Result<(), 
     }
 
     if let Some(value) = options.get("otherBucket") {
-        let mode = value
-            .as_str()
-            .map(str::trim)
-            .ok_or(format!("{}.otherBucket must be one of separate, inline, or hidden.", context))?;
+        let mode = value.as_str().map(str::trim).ok_or(format!(
+            "{}.otherBucket must be one of separate, inline, or hidden.",
+            context
+        ))?;
         if !matches!(mode, "separate" | "inline" | "hidden") {
             return Err(format!(
                 "{}.otherBucket `{}` is not supported. Use separate, inline, or hidden.",
@@ -880,16 +930,20 @@ fn validate_graph_axes(axes: Option<&Value>, context: &str) -> Result<(), String
         if value.as_str().is_some() {
             continue;
         }
-        let axis = value
-            .as_object()
-            .ok_or(format!("{}.{} must be a string label or an object.", context, key))?;
+        let axis = value.as_object().ok_or(format!(
+            "{}.{} must be a string label or an object.",
+            context, key
+        ))?;
         for field in ["label", "description"] {
             if let Some(value) = axis.get(field) {
                 value
                     .as_str()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .ok_or(format!("{}.{}.{} must be a non-empty string.", context, key, field))?;
+                    .ok_or(format!(
+                        "{}.{}.{} must be a non-empty string.",
+                        context, key, field
+                    ))?;
             }
         }
     }
@@ -919,10 +973,16 @@ fn validate_graph_interactions(
     if let Some(hover) = interactions.get("hover") {
         if let Some(value) = hover.as_str().map(str::trim) {
             if !matches!(value, "auto" | "none") {
-                return Err(format!("{}.hover `{}` is not supported. Use auto or none.", context, value));
+                return Err(format!(
+                    "{}.hover `{}` is not supported. Use auto or none.",
+                    context, value
+                ));
             }
         } else if !hover.is_object() && !hover.is_boolean() {
-            return Err(format!("{}.hover must be auto, none, a boolean, or an object.", context));
+            return Err(format!(
+                "{}.hover must be auto, none, a boolean, or an object.",
+                context
+            ));
         }
     }
 
@@ -942,7 +1002,12 @@ fn validate_graph_interactions(
     }
 
     if let Some(metric_controls) = interactions.get("metricControls") {
-        validate_graph_metric_controls(metric_controls, data, column_ids, &format!("{}.metricControls", context))?;
+        validate_graph_metric_controls(
+            metric_controls,
+            data,
+            column_ids,
+            &format!("{}.metricControls", context),
+        )?;
     }
 
     Ok(())
@@ -963,10 +1028,16 @@ fn validate_data_ref_graph_interactions(
     if let Some(hover) = interactions.get("hover") {
         if let Some(value) = hover.as_str().map(str::trim) {
             if !matches!(value, "auto" | "none") {
-                return Err(format!("{}.hover `{}` is not supported. Use auto or none.", context, value));
+                return Err(format!(
+                    "{}.hover `{}` is not supported. Use auto or none.",
+                    context, value
+                ));
             }
         } else if !hover.is_object() && !hover.is_boolean() {
-            return Err(format!("{}.hover must be auto, none, a boolean, or an object.", context));
+            return Err(format!(
+                "{}.hover must be auto, none, a boolean, or an object.",
+                context
+            ));
         }
     }
 
@@ -975,22 +1046,32 @@ fn validate_data_ref_graph_interactions(
             .as_array()
             .ok_or(format!("{}.drilldowns must be an array.", context))?;
         for (index, drilldown) in drilldowns.iter().enumerate() {
-            let drilldown = drilldown
-                .as_object()
-                .ok_or(format!("{}.drilldowns[{}] must be an object.", context, index))?;
+            let drilldown = drilldown.as_object().ok_or(format!(
+                "{}.drilldowns[{}] must be an object.",
+                context, index
+            ))?;
             drilldown
                 .get("id")
                 .and_then(|value| value.as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .ok_or(format!("{}.drilldowns[{}].id must be a non-empty string.", context, index))?;
+                .ok_or(format!(
+                    "{}.drilldowns[{}].id must be a non-empty string.",
+                    context, index
+                ))?;
             let target_graph_id = drilldown
                 .get("targetGraphId")
                 .and_then(|value| value.as_str())
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-                .ok_or(format!("{}.drilldowns[{}].targetGraphId must be a non-empty string.", context, index))?;
-            if !graph_ids.iter().any(|candidate| candidate == target_graph_id) {
+                .ok_or(format!(
+                    "{}.drilldowns[{}].targetGraphId must be a non-empty string.",
+                    context, index
+                ))?;
+            if !graph_ids
+                .iter()
+                .any(|candidate| candidate == target_graph_id)
+            {
                 return Err(format!(
                     "{}.drilldowns[{}].targetGraphId references missing graph `{}`.",
                     context, index, target_graph_id
@@ -999,14 +1080,21 @@ fn validate_data_ref_graph_interactions(
             drilldown
                 .get("match")
                 .and_then(|value| value.as_object())
-                .ok_or(format!("{}.drilldowns[{}].match must be an object.", context, index))?;
+                .ok_or(format!(
+                    "{}.drilldowns[{}].match must be an object.",
+                    context, index
+                ))?;
         }
     }
 
     Ok(())
 }
 
-fn validate_graph_details(details: &Value, column_ids: &[String], context: &str) -> Result<(), String> {
+fn validate_graph_details(
+    details: &Value,
+    column_ids: &[String],
+    context: &str,
+) -> Result<(), String> {
     let details = details
         .as_object()
         .ok_or(format!("{} must be an object when provided.", context))?;
@@ -1015,9 +1103,15 @@ fn validate_graph_details(details: &Value, column_ids: &[String], context: &str)
             .as_str()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or(format!("{}.titleField must be a non-empty string.", context))?;
+            .ok_or(format!(
+                "{}.titleField must be a non-empty string.",
+                context
+            ))?;
         if !column_ids.iter().any(|candidate| candidate == field) {
-            return Err(format!("{}.titleField references missing data column `{}`.", context, field));
+            return Err(format!(
+                "{}.titleField references missing data column `{}`.",
+                context, field
+            ));
         }
     }
     if let Some(fields) = details.get("fields") {
@@ -1033,13 +1127,22 @@ fn validate_graph_details(details: &Value, column_ids: &[String], context: &str)
                     .and_then(|object| object.get("field"))
                     .and_then(|value| value.as_str())
                     .map(str::trim)
-                    .ok_or(format!("{}.fields[{}] must be a string or object with field.", context, index))?
+                    .ok_or(format!(
+                        "{}.fields[{}] must be a string or object with field.",
+                        context, index
+                    ))?
             };
             if field_name.is_empty() {
-                return Err(format!("{}.fields[{}] must reference a non-empty field.", context, index));
+                return Err(format!(
+                    "{}.fields[{}] must reference a non-empty field.",
+                    context, index
+                ));
             }
             if !column_ids.iter().any(|candidate| candidate == field_name) {
-                return Err(format!("{}.fields[{}] references missing data column `{}`.", context, index, field_name));
+                return Err(format!(
+                    "{}.fields[{}] references missing data column `{}`.",
+                    context, index, field_name
+                ));
             }
         }
     }
@@ -1067,17 +1170,29 @@ fn validate_graph_drilldown(
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or(format!("{}.targetGraphId must be a non-empty string.", context))?;
-    if !graph_ids.iter().any(|candidate| candidate == target_graph_id) {
-        return Err(format!("{}.targetGraphId references missing graph `{}`.", context, target_graph_id));
+        .ok_or(format!(
+            "{}.targetGraphId must be a non-empty string.",
+            context
+        ))?;
+    if !graph_ids
+        .iter()
+        .any(|candidate| candidate == target_graph_id)
+    {
+        return Err(format!(
+            "{}.targetGraphId references missing graph `{}`.",
+            context, target_graph_id
+        ));
     }
     if let Some(trigger) = drilldown.get("trigger") {
-        let trigger = trigger
-            .as_str()
-            .map(str::trim)
-            .ok_or(format!("{}.trigger must be one of mark, node, link, or legend.", context))?;
+        let trigger = trigger.as_str().map(str::trim).ok_or(format!(
+            "{}.trigger must be one of mark, node, link, or legend.",
+            context
+        ))?;
         if !matches!(trigger, "mark" | "node" | "link" | "legend") {
-            return Err(format!("{}.trigger `{}` is not supported. Use mark, node, link, or legend.", context, trigger));
+            return Err(format!(
+                "{}.trigger `{}` is not supported. Use mark, node, link, or legend.",
+                context, trigger
+            ));
         }
     }
     let match_object = drilldown
@@ -1089,19 +1204,39 @@ fn validate_graph_drilldown(
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or(format!("{}.match.source must be a non-empty string.", context))?;
-    if !matches!(source, "node.label" | "link.source" | "link.target") && !column_ids.iter().any(|candidate| candidate == source) {
-        return Err(format!("{}.match.source references missing data column or unsupported token `{}`.", context, source));
+        .ok_or(format!(
+            "{}.match.source must be a non-empty string.",
+            context
+        ))?;
+    if !matches!(source, "node.label" | "link.source" | "link.target")
+        && !column_ids.iter().any(|candidate| candidate == source)
+    {
+        return Err(format!(
+            "{}.match.source references missing data column or unsupported token `{}`.",
+            context, source
+        ));
     }
     let target_field = match_object
         .get("targetField")
         .and_then(|value| value.as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or(format!("{}.match.targetField must be a non-empty string.", context))?;
-    let target_columns = graph_columns_by_id.get(target_graph_id).cloned().unwrap_or_default();
-    if !target_columns.iter().any(|candidate| candidate == target_field) {
-        return Err(format!("{}.match.targetField references missing target graph column `{}`.", context, target_field));
+        .ok_or(format!(
+            "{}.match.targetField must be a non-empty string.",
+            context
+        ))?;
+    let target_columns = graph_columns_by_id
+        .get(target_graph_id)
+        .cloned()
+        .unwrap_or_default();
+    if !target_columns
+        .iter()
+        .any(|candidate| candidate == target_field)
+    {
+        return Err(format!(
+            "{}.match.targetField references missing target graph column `{}`.",
+            context, target_field
+        ));
     }
     Ok(())
 }
@@ -1126,16 +1261,20 @@ fn validate_graph_metric_controls(
         } else {
             context.to_string()
         };
-        let control = control
-            .as_object()
-            .ok_or(format!("{} must be an object, array of objects, or true.", control_context))?;
+        let control = control.as_object().ok_or(format!(
+            "{} must be an object, array of objects, or true.",
+            control_context
+        ))?;
         if let Some(target) = control.get("target") {
             let target = target
                 .as_str()
                 .map(str::trim)
                 .ok_or(format!("{}.target must be y or value.", control_context))?;
             if !matches!(target, "y" | "value") {
-                return Err(format!("{}.target `{}` is not supported. Use y or value.", control_context, target));
+                return Err(format!(
+                    "{}.target `{}` is not supported. Use y or value.",
+                    control_context, target
+                ));
             }
         }
         if let Some(fields) = control.get("fields") {
@@ -1143,19 +1282,31 @@ fn validate_graph_metric_controls(
                 .as_array()
                 .ok_or(format!("{}.fields must be an array.", control_context))?;
             if fields.is_empty() {
-                return Err(format!("{}.fields must include at least one field.", control_context));
+                return Err(format!(
+                    "{}.fields must include at least one field.",
+                    control_context
+                ));
             }
             for (field_index, field) in fields.iter().enumerate() {
                 let field = field
                     .as_str()
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .ok_or(format!("{}.fields[{}] must be a non-empty string.", control_context, field_index))?;
+                    .ok_or(format!(
+                        "{}.fields[{}] must be a non-empty string.",
+                        control_context, field_index
+                    ))?;
                 if !column_ids.iter().any(|candidate| candidate == field) {
-                    return Err(format!("{}.fields[{}] references missing data column `{}`.", control_context, field_index, field));
+                    return Err(format!(
+                        "{}.fields[{}] references missing data column `{}`.",
+                        control_context, field_index, field
+                    ));
                 }
                 if !is_numeric_graph_column(data, field) {
-                    return Err(format!("{}.fields[{}] `{}` must reference a numeric field.", control_context, field_index, field));
+                    return Err(format!(
+                        "{}.fields[{}] `{}` must reference a numeric field.",
+                        control_context, field_index, field
+                    ));
                 }
             }
         }
@@ -1197,16 +1348,33 @@ fn validate_graph_required_row_values(
     match graph_type {
         "line" | "area" | "bar" | "stacked_bar" | "grouped_bar" | "combo" => {
             extend_encoding_fields(&mut numeric_fields, encoding, "y");
-            maybe_require_axis_field(&mut numeric_fields, &mut time_fields, encoding, options, &column_types, "x", false);
+            maybe_require_axis_field(
+                &mut numeric_fields,
+                &mut time_fields,
+                encoding,
+                options,
+                &column_types,
+                "x",
+                false,
+            );
         }
         "scatter" | "bubble" => {
             extend_encoding_fields(&mut numeric_fields, encoding, "y");
-            maybe_require_axis_field(&mut numeric_fields, &mut time_fields, encoding, options, &column_types, "x", true);
+            maybe_require_axis_field(
+                &mut numeric_fields,
+                &mut time_fields,
+                encoding,
+                options,
+                &column_types,
+                "x",
+                true,
+            );
             extend_optional_numeric_field(&mut numeric_fields, encoding, "size");
         }
         "histogram" | "boxplot" => extend_encoding_fields(&mut numeric_fields, encoding, "value"),
         "heatmap" | "matrix" => extend_encoding_fields(&mut numeric_fields, encoding, "value"),
-        "pie" | "donut" | "funnel" | "gauge" | "radar" | "waterfall" | "tree" | "treemap" | "sunburst" | "sankey" => {
+        "pie" | "donut" | "funnel" | "gauge" | "radar" | "waterfall" | "tree" | "treemap"
+        | "sunburst" | "sankey" => {
             extend_encoding_fields(&mut numeric_fields, encoding, "value");
         }
         "candlestick" => {
@@ -1214,7 +1382,15 @@ fn validate_graph_required_row_values(
             extend_encoding_fields(&mut numeric_fields, encoding, "high");
             extend_encoding_fields(&mut numeric_fields, encoding, "low");
             extend_encoding_fields(&mut numeric_fields, encoding, "close");
-            maybe_require_axis_field(&mut numeric_fields, &mut time_fields, encoding, options, &column_types, "x", true);
+            maybe_require_axis_field(
+                &mut numeric_fields,
+                &mut time_fields,
+                encoding,
+                options,
+                &column_types,
+                "x",
+                true,
+            );
         }
         "timeline" | "gantt" => {
             extend_encoding_fields(&mut time_fields, encoding, "start");
@@ -1223,7 +1399,8 @@ fn validate_graph_required_row_values(
         _ => {}
     }
     match graph_type {
-        "pie" | "donut" | "funnel" | "gauge" | "radar" | "waterfall" | "treemap" | "sunburst" | "tree" => {
+        "pie" | "donut" | "funnel" | "gauge" | "radar" | "waterfall" | "treemap" | "sunburst"
+        | "tree" => {
             extend_encoding_fields(&mut text_fields, encoding, "label");
         }
         "timeline" | "gantt" => extend_encoding_fields(&mut text_fields, encoding, "label"),
@@ -1306,7 +1483,9 @@ fn validate_graph_required_row_values(
     Ok(())
 }
 
-fn graph_column_types(data: &serde_json::Map<String, Value>) -> std::collections::HashMap<String, String> {
+fn graph_column_types(
+    data: &serde_json::Map<String, Value>,
+) -> std::collections::HashMap<String, String> {
     data.get("columns")
         .and_then(|value| value.as_array())
         .map(|columns| {
@@ -1328,7 +1507,11 @@ fn graph_column_types(data: &serde_json::Map<String, Value>) -> std::collections
         .unwrap_or_default()
 }
 
-fn extend_encoding_fields(fields: &mut Vec<String>, encoding: &serde_json::Map<String, Value>, key: &str) {
+fn extend_encoding_fields(
+    fields: &mut Vec<String>,
+    encoding: &serde_json::Map<String, Value>,
+    key: &str,
+) {
     if let Some(value) = encoding.get(key) {
         match value {
             Value::String(field) => fields.push(field.trim().to_string()),
@@ -1344,7 +1527,11 @@ fn extend_encoding_fields(fields: &mut Vec<String>, encoding: &serde_json::Map<S
     }
 }
 
-fn extend_optional_numeric_field(fields: &mut Vec<String>, encoding: &serde_json::Map<String, Value>, key: &str) {
+fn extend_optional_numeric_field(
+    fields: &mut Vec<String>,
+    encoding: &serde_json::Map<String, Value>,
+    key: &str,
+) {
     if encoding.contains_key(key) {
         extend_encoding_fields(fields, encoding, key);
     }
@@ -1437,7 +1624,10 @@ fn validate_graph_columns(
         .and_then(|value| value.as_array())
         .ok_or(format!("{}.columns must be an array.", context))?;
     if columns.is_empty() {
-        return Err(format!("{}.columns must contain at least one column.", context));
+        return Err(format!(
+            "{}.columns must contain at least one column.",
+            context
+        ));
     }
 
     let mut column_ids = Vec::new();
@@ -1455,7 +1645,10 @@ fn validate_graph_columns(
             .to_string();
 
         if column_ids.iter().any(|existing| existing == &column_id) {
-            return Err(format!("{}.columns contains duplicate column id `{}`.", context, column_id));
+            return Err(format!(
+                "{}.columns contains duplicate column id `{}`.",
+                context, column_id
+            ));
         }
 
         column_ids.push(column_id);
@@ -1470,8 +1663,10 @@ fn validate_graph_rows(data: &serde_json::Map<String, Value>, context: &str) -> 
         .and_then(|value| value.as_array())
         .ok_or(format!("{}.rows must be an array.", context))?;
     for (row_index, row) in rows.iter().enumerate() {
-        row.as_object()
-            .ok_or(format!("{}.rows[{}] must be an object.", context, row_index))?;
+        row.as_object().ok_or(format!(
+            "{}.rows[{}] must be an object.",
+            context, row_index
+        ))?;
     }
     Ok(())
 }
@@ -1507,7 +1702,11 @@ fn validate_graph_required_encodings(
 }
 
 fn validate_graph_encoding_value_shape(value: &Value, context: &str) -> Result<(), String> {
-    if value.as_str().map(str::trim).is_some_and(|text| !text.is_empty()) {
+    if value
+        .as_str()
+        .map(str::trim)
+        .is_some_and(|text| !text.is_empty())
+    {
         return Ok(());
     }
     if let Some(values) = value.as_array() {
@@ -1518,11 +1717,17 @@ fn validate_graph_encoding_value_shape(value: &Value, context: &str) -> Result<(
             item.as_str()
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
-                .ok_or(format!("{}[{}] must be a non-empty string.", context, index))?;
+                .ok_or(format!(
+                    "{}[{}] must be a non-empty string.",
+                    context, index
+                ))?;
         }
         return Ok(());
     }
-    Err(format!("{} must be a non-empty string or array of strings.", context))
+    Err(format!(
+        "{} must be a non-empty string or array of strings.",
+        context
+    ))
 }
 
 fn validate_graph_encoding_references(
@@ -1542,7 +1747,11 @@ fn validate_graph_encoding_reference_value(
     column_ids: &[String],
     context: &str,
 ) -> Result<(), String> {
-    if let Some(column_id) = value.as_str().map(str::trim).filter(|text| !text.is_empty()) {
+    if let Some(column_id) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
         if !column_ids.iter().any(|candidate| candidate == column_id) {
             return Err(format!(
                 "{}.{} references missing data column `{}`.",
@@ -1558,7 +1767,10 @@ fn validate_graph_encoding_reference_value(
                 .as_str()
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
-                .ok_or(format!("{}.{}[{}] must be a non-empty string.", context, key, index))?;
+                .ok_or(format!(
+                    "{}.{}[{}] must be a non-empty string.",
+                    context, key, index
+                ))?;
             if !column_ids.iter().any(|candidate| candidate == column_id) {
                 return Err(format!(
                     "{}.{}[{}] references missing data column `{}`.",
@@ -1584,15 +1796,17 @@ fn validate_table_rows(rows: &[Value], context: &str) -> Result<(), String> {
             .ok_or(format!("{}.id must be a non-empty string.", row_context))?;
 
         if let Some(cells) = row.get("cells") {
-            cells
-                .as_object()
-                .ok_or(format!("{}.cells must be an object when provided.", row_context))?;
+            cells.as_object().ok_or(format!(
+                "{}.cells must be an object when provided.",
+                row_context
+            ))?;
         }
 
         if let Some(children) = row.get("children") {
-            let children = children
-                .as_array()
-                .ok_or(format!("{}.children must be an array when provided.", row_context))?;
+            let children = children.as_array().ok_or(format!(
+                "{}.children must be an array when provided.",
+                row_context
+            ))?;
             validate_table_rows(children, &format!("{}.children", row_context))?;
         }
     }
@@ -1803,10 +2017,7 @@ struct PushParams {
     warnings: Vec<String>,
 }
 
-fn attach_backend_callback_meta(
-    meta: Option<Value>,
-    callback: Option<Value>,
-) -> Option<Value> {
+fn attach_backend_callback_meta(meta: Option<Value>, callback: Option<Value>) -> Option<Value> {
     let Some(callback) = callback else {
         return meta;
     };
@@ -1894,7 +2105,11 @@ pub(crate) fn collect_rules(
     for renderer in all_renderers {
         if let Some(rule) = &renderer.rule {
             // Renderer has an explicit rule
-            let source = if renderer.scope == "universal" { "built-in" } else { "plugin" };
+            let source = if renderer.scope == "universal" {
+                "built-in"
+            } else {
+                "plugin"
+            };
             rules.push(serde_json::json!({
                 "name": format!("{}_usage", renderer.name),
                 "category": "renderer",
@@ -1961,6 +2176,27 @@ pub(crate) fn collect_rules(
     rules
 }
 
+pub(crate) fn collect_setup_questions(
+    manifests: &[mcpviews_shared::PluginManifest],
+) -> Vec<Value> {
+    let mut seen_plugins: HashSet<&str> = HashSet::new();
+
+    manifests
+        .iter()
+        .filter_map(|manifest| {
+            if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty()
+            {
+                return None;
+            }
+
+            Some(serde_json::json!({
+                "plugin": manifest.name,
+                "questions": manifest.setup_questions,
+            }))
+        })
+        .collect()
+}
+
 /// Collect only built-in (universal) rules — renderer_selection + universal renderer rules.
 pub(crate) fn collect_builtin_rules(all_renderers: &[RendererDef]) -> Vec<Value> {
     let mut rules: Vec<Value> = Vec::new();
@@ -2025,7 +2261,8 @@ pub(crate) fn collect_plugin_rules(
         .unwrap_or("");
 
     // Determine which renderers are associated with filtered tools
-    let mut relevant_renderers: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut relevant_renderers: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     if let Some(tools) = tool_filter {
         for tool_name in tools {
             if let Some(renderer_name) = manifest.renderers.get(tool_name) {
@@ -2114,34 +2351,17 @@ pub(crate) fn collect_plugin_rules(
     rules
 }
 
-pub(crate) fn collect_setup_questions(
-    manifests: &[mcpviews_shared::PluginManifest],
-) -> Vec<Value> {
-    let mut seen_plugins: HashSet<&str> = HashSet::new();
-
-    manifests
-        .iter()
-        .filter_map(|manifest| {
-            if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty()
-            {
-                return None;
-            }
-
-            Some(serde_json::json!({
-                "plugin": manifest.name,
-                "questions": manifest.setup_questions,
-            }))
-        })
-        .collect()
-}
-
 /// Collect auth status for each plugin that has MCP + auth configured.
 pub(crate) fn collect_plugin_auth_status(
     manifests: &[mcpviews_shared::PluginManifest],
 ) -> Vec<Value> {
     let mut plugin_status: Vec<Value> = Vec::new();
+    let mut seen_plugins: HashSet<&str> = HashSet::new();
 
     for manifest in manifests {
+        if !seen_plugins.insert(manifest.name.as_str()) {
+            continue;
+        }
         if let Some(mcp) = &manifest.mcp {
             if let Some(auth) = &mcp.auth {
                 let is_configured = auth.is_configured(&manifest.name);
@@ -2152,10 +2372,7 @@ pub(crate) fn collect_plugin_auth_status(
                 });
 
                 if !is_configured {
-                    if let mcpviews_shared::PluginAuth::OAuth {
-                        auth_url, ..
-                    } = auth
-                    {
+                    if let mcpviews_shared::PluginAuth::OAuth { auth_url, .. } = auth {
                         status_entry.as_object_mut().unwrap().insert(
                             "auth_url".to_string(),
                             serde_json::Value::String(auth_url.clone()),
@@ -2205,10 +2422,7 @@ fn extract_tool_summaries(tools: &[Value]) -> Vec<Value> {
         .iter()
         .filter_map(|t| {
             let name = t.get("name")?.as_str()?;
-            let description = t
-                .get("description")
-                .and_then(|d| d.as_str())
-                .unwrap_or("");
+            let description = t.get("description").and_then(|d| d.as_str()).unwrap_or("");
             Some(serde_json::json!({
                 "name": name,
                 "description": description,
@@ -2258,7 +2472,13 @@ fn title_case_words(value: &str) -> String {
 fn capability_key(value: &str) -> String {
     value
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .split('-')
         .filter(|part| !part.is_empty())
@@ -2363,10 +2583,9 @@ fn build_plugin_hosted_connectors(
         .iter()
         .enumerate()
         .filter_map(|(idx, manifest)| {
-            let index = manifest
-                .registry_index
-                .clone()
-                .unwrap_or_else(|| auto_derive_registry_index(manifest, tool_cache.plugin_tools(idx)));
+            let index = manifest.registry_index.clone().unwrap_or_else(|| {
+                auto_derive_registry_index(manifest, tool_cache.plugin_tools(idx))
+            });
             let prefix = manifest
                 .mcp
                 .as_ref()
@@ -2469,7 +2688,8 @@ fn auto_derive_registry_index(
     let mut ungrouped_tools: Vec<&str> = Vec::new();
 
     // Track which tools are mapped to renderers
-    let mapped_tools: std::collections::HashSet<&str> = manifest.renderers.keys().map(|s| s.as_str()).collect();
+    let mapped_tools: std::collections::HashSet<&str> =
+        manifest.renderers.keys().map(|s| s.as_str()).collect();
 
     for (tool_name, renderer_name) in &manifest.renderers {
         renderer_tools
@@ -2500,12 +2720,17 @@ fn auto_derive_registry_index(
         // Get a hint from the first tool's description
         let hint = if let Some(tools) = cached_tools {
             let prefixed = format!("{}{}", prefix, tool_names[0]);
-            tools.iter()
+            tools
+                .iter()
                 .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(&prefixed))
                 .and_then(|t| t.get("description").and_then(|d| d.as_str()))
                 .map(|d| {
                     let truncated: String = d.chars().take(80).collect();
-                    if d.len() > 80 { format!("{}...", truncated) } else { truncated }
+                    if d.len() > 80 {
+                        format!("{}...", truncated)
+                    } else {
+                        truncated
+                    }
                 })
                 .unwrap_or_else(|| format!("Tools for {}", renderer_name))
         } else {
@@ -2556,33 +2781,42 @@ fn build_plugin_registry(
     manifests: &[mcpviews_shared::PluginManifest],
     tool_cache: &crate::tool_cache::ToolCache,
 ) -> Vec<Value> {
-    manifests.iter().enumerate().map(|(idx, manifest)| {
-        let index = match &manifest.registry_index {
-            Some(ri) => ri.clone(),
-            None => {
-                let cached_tools = tool_cache.plugin_tools(idx);
-                auto_derive_registry_index(manifest, cached_tools)
+    let mut seen_plugins: HashSet<&str> = HashSet::new();
+    manifests
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, manifest)| {
+            if !seen_plugins.insert(manifest.name.as_str()) {
+                return None;
             }
-        };
 
-        serde_json::json!({
-            "name": manifest.name,
-            "summary": index.summary,
-            "tags": index.tags,
-            "tool_groups": index.tool_groups.iter().map(|g| serde_json::json!({
-                "name": g.name,
-                "hint": g.hint,
-                "tools": g.tools,
-            })).collect::<Vec<Value>>(),
-            "renderers": index.renderer_names,
-            "prompts": manifest.prompt_definitions.iter().map(|p| serde_json::json!({
-                "name": p.name,
-                "description": p.description,
-                "arguments": p.arguments,
-            })).collect::<Vec<Value>>(),
-            "plugin_rules": manifest.plugin_rules,
+            let index = match &manifest.registry_index {
+                Some(ri) => ri.clone(),
+                None => {
+                    let cached_tools = tool_cache.plugin_tools(idx);
+                    auto_derive_registry_index(manifest, cached_tools)
+                }
+            };
+
+            Some(serde_json::json!({
+                "name": manifest.name,
+                "summary": index.summary,
+                "tags": index.tags,
+                "tool_groups": index.tool_groups.iter().map(|g| serde_json::json!({
+                    "name": g.name,
+                    "hint": g.hint,
+                    "tools": g.tools,
+                })).collect::<Vec<Value>>(),
+                "renderers": index.renderer_names,
+                "prompts": manifest.prompt_definitions.iter().map(|p| serde_json::json!({
+                    "name": p.name,
+                    "description": p.description,
+                    "arguments": p.arguments,
+                })).collect::<Vec<Value>>(),
+                "plugin_rules": manifest.plugin_rules,
+            }))
         })
-    }).collect()
+        .collect()
 }
 
 /// Collect plugin updates by comparing installed versions against registry versions.
@@ -2661,23 +2895,38 @@ fn collect_org_tokens(manifests: &[mcpviews_shared::PluginManifest]) -> Value {
             if let Some(mcpviews_shared::PluginAuth::OAuth { .. }) = &mcp.auth {
                 let orgs = mcpviews_shared::token_store::list_orgs(&auth_dir, &manifest.name);
                 if !orgs.is_empty() {
-                    let org_entries: Vec<Value> = orgs.iter().map(|org_id| {
-                        let token = mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(
-                            &auth_dir, &manifest.name, org_id
-                        );
-                        let status = match token {
-                            Some(t) => if t.is_expired() { "expired" } else { "valid" },
-                            None => "missing",
-                        };
-                        serde_json::json!({
-                            "org_id": org_id,
-                            "status": status
+                    let org_entries: Vec<Value> = orgs
+                        .iter()
+                        .map(|org_id| {
+                            let token =
+                                mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(
+                                    &auth_dir,
+                                    &manifest.name,
+                                    org_id,
+                                );
+                            let status = match token {
+                                Some(t) => {
+                                    if t.is_expired() {
+                                        "expired"
+                                    } else {
+                                        "valid"
+                                    }
+                                }
+                                None => "missing",
+                            };
+                            serde_json::json!({
+                                "org_id": org_id,
+                                "status": status
+                            })
                         })
-                    }).collect();
+                        .collect();
 
-                    result.insert(manifest.name.clone(), serde_json::json!({
-                        "orgs": org_entries
-                    }));
+                    result.insert(
+                        manifest.name.clone(),
+                        serde_json::json!({
+                            "orgs": org_entries
+                        }),
+                    );
                 }
             }
         }
@@ -3332,12 +3581,20 @@ pub fn available_renderers(state: &std::sync::Arc<crate::state::AppState>) -> Ve
 // ─── Tool definitions ───
 
 fn build_data_description(renderers: &[RendererDef], prefix: &str) -> String {
-    let hints = renderers.iter()
+    let hints = renderers
+        .iter()
         .filter(|r| r.scope == "universal")
-        .filter_map(|r| r.data_hint.as_ref().map(|h| format!("For {}: {}", r.name, h)))
+        .filter_map(|r| {
+            r.data_hint
+                .as_ref()
+                .map(|h| format!("For {}: {}", r.name, h))
+        })
         .collect::<Vec<_>>()
         .join(". ");
-    format!("{} {} For plugin renderer data shapes, call get_plugin_docs.", prefix, hints)
+    format!(
+        "{} {} For plugin renderer data shapes, call get_plugin_docs.",
+        prefix, hints
+    )
 }
 
 fn renderer_description(renderers: &[RendererDef], name: &str, fallback: &str) -> String {
@@ -3368,7 +3625,7 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
 mod tests {
     use super::*;
     use crate::test_utils::test_app_state;
-    use mcpviews_shared::{PluginManifest, PluginMcpConfig, PluginAuth};
+    use mcpviews_shared::{PluginAuth, PluginManifest, PluginMcpConfig};
 
     fn make_manifest(
         name: &str,
@@ -3445,13 +3702,43 @@ mod tests {
         assert_eq!(persona_renderers[0].description, "Current Persona Studio");
     }
 
+    #[test]
+    fn test_build_plugin_registry_dedupes_duplicate_plugin_manifests() {
+        let mut first = make_manifest("ludflow", vec![], std::collections::HashMap::new(), None);
+        first.registry_index = Some(mcpviews_shared::PluginRegistryIndex {
+            summary: "Ludflow first".to_string(),
+            tags: vec!["docs".to_string()],
+            tool_groups: vec![],
+            renderer_names: vec!["ludflow_app".to_string()],
+        });
+
+        let mut duplicate =
+            make_manifest("ludflow", vec![], std::collections::HashMap::new(), None);
+        duplicate.registry_index = Some(mcpviews_shared::PluginRegistryIndex {
+            summary: "Ludflow duplicate".to_string(),
+            tags: vec!["duplicate".to_string()],
+            tool_groups: vec![],
+            renderer_names: vec!["ludflow_app".to_string()],
+        });
+
+        let registry =
+            build_plugin_registry(&[first, duplicate], &crate::tool_cache::ToolCache::new(2));
+
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry[0]["name"], "ludflow");
+        assert_eq!(registry[0]["summary"], "Ludflow first");
+    }
+
     // ─── collect_rules tests ───
 
     #[test]
     fn test_collect_rules_includes_renderer_selection() {
         let rules = collect_rules(&[], &[]);
         assert_eq!(rules.len(), 2);
-        let sel = rules.iter().find(|r| r["name"] == "renderer_selection").expect("renderer_selection rule should exist");
+        let sel = rules
+            .iter()
+            .find(|r| r["name"] == "renderer_selection")
+            .expect("renderer_selection rule should exist");
         assert_eq!(sel["category"], "system");
     }
 
@@ -3472,17 +3759,26 @@ mod tests {
         }];
         let rules = collect_rules(&renderers, &[]);
         assert_eq!(rules.len(), 3);
-        let sel = rules.iter().find(|r| r["name"] == "renderer_selection").expect("renderer_selection rule should exist");
+        let sel = rules
+            .iter()
+            .find(|r| r["name"] == "renderer_selection")
+            .expect("renderer_selection rule should exist");
         assert_eq!(sel["category"], "system");
 
-        let rc = rules.iter().find(|r| r["name"] == "rich_content_usage").expect("rich_content_usage rule should exist");
+        let rc = rules
+            .iter()
+            .find(|r| r["name"] == "rich_content_usage")
+            .expect("rich_content_usage rule should exist");
         assert_eq!(rc["category"], "renderer");
         assert_eq!(rc["source"], "built-in");
         assert_eq!(rc["renderer"], "rich_content");
         assert_eq!(rc["rule"], "Always use rich_content for plans.");
         assert_eq!(rc["description"], "Universal markdown display");
         assert_eq!(rc["scope"], "universal");
-        assert_eq!(rc["data_hint"], r#"{ "title": "heading", "body": "markdown" }"#);
+        assert_eq!(
+            rc["data_hint"],
+            r#"{ "title": "heading", "body": "markdown" }"#
+        );
     }
 
     #[test]
@@ -3503,7 +3799,10 @@ mod tests {
         let rules = collect_rules(&renderers, &[]);
         // Only the renderer_selection + bulk_action_review rules, no renderer-specific rule
         assert_eq!(rules.len(), 2);
-        let sel = rules.iter().find(|r| r["name"] == "renderer_selection").expect("renderer_selection rule should exist");
+        let sel = rules
+            .iter()
+            .find(|r| r["name"] == "renderer_selection")
+            .expect("renderer_selection rule should exist");
         assert_eq!(sel["category"], "system");
     }
 
@@ -3524,7 +3823,10 @@ mod tests {
         }];
         let rules = collect_rules(&renderers, &[]);
         assert_eq!(rules.len(), 3);
-        let cv = rules.iter().find(|r| r["renderer"] == "custom_view").expect("custom_view rule should exist");
+        let cv = rules
+            .iter()
+            .find(|r| r["renderer"] == "custom_view")
+            .expect("custom_view rule should exist");
         assert_eq!(cv["source"], "plugin");
         assert_eq!(cv["description"], "Custom");
         assert_eq!(cv["scope"], "tool");
@@ -3547,7 +3849,10 @@ mod tests {
         }];
         let rules = collect_rules(&renderers, &[]);
         assert_eq!(rules.len(), 3);
-        let sr = rules.iter().find(|r| r["renderer"] == "search_results").expect("search_results rule should exist");
+        let sr = rules
+            .iter()
+            .find(|r| r["renderer"] == "search_results")
+            .expect("search_results rule should exist");
         assert_eq!(sr["category"], "renderer");
         assert_eq!(sr["source"], "plugin");
         assert_eq!(sr["tools"][0], "search_codebase");
@@ -3572,7 +3877,10 @@ mod tests {
         );
         let rules = collect_rules(&[], &[manifest]);
         assert_eq!(rules.len(), 3);
-        let tr = rules.iter().find(|r| r["name"] == "sp__search_usage").expect("sp__search_usage rule should exist");
+        let tr = rules
+            .iter()
+            .find(|r| r["name"] == "sp__search_usage")
+            .expect("sp__search_usage rule should exist");
         assert_eq!(tr["category"], "tool");
         assert_eq!(tr["tool"], "sp__search");
         assert_eq!(tr["source"], "search-plugin");
@@ -3594,7 +3902,10 @@ mod tests {
         );
         let rules = collect_rules(&[], &[manifest]);
         assert_eq!(rules.len(), 3);
-        let tr = rules.iter().find(|r| r["tool"] == "do_thing").expect("do_thing rule should exist");
+        let tr = rules
+            .iter()
+            .find(|r| r["tool"] == "do_thing")
+            .expect("do_thing rule should exist");
         assert_eq!(tr["name"], "do_thing_usage");
     }
 
@@ -3673,7 +3984,34 @@ mod tests {
         // OAuth with no stored token => not configured
         assert_eq!(status[0]["auth_configured"], false);
         assert_eq!(status[0]["auth_url"], "https://example.com/auth");
-        assert!(status[0]["message"].as_str().unwrap().contains("requires re-authentication"));
+        assert!(status[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("requires re-authentication"));
+    }
+
+    #[test]
+    fn test_collect_plugin_auth_status_dedupes_duplicate_plugin_manifests() {
+        let manifest = make_manifest(
+            "ludflow",
+            vec![],
+            std::collections::HashMap::new(),
+            Some(PluginMcpConfig {
+                url: "http://localhost:8080".into(),
+                auth: Some(PluginAuth::OAuth {
+                    client_id: Some("client123".into()),
+                    auth_url: "https://example.com/auth".into(),
+                    token_url: "https://example.com/token".into(),
+                    scopes: vec![],
+                }),
+                tool_prefix: "lf".into(),
+            }),
+        );
+
+        let status = collect_plugin_auth_status(&[manifest.clone(), manifest]);
+
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0]["plugin"], "ludflow");
     }
 
     #[test]
@@ -3790,12 +4128,10 @@ mod tests {
         renderers_map.insert("search_codebase".to_string(), "search_results".to_string());
         let manifest = make_manifest_with_renderers("ludflow", renderers_map, "ludflow__");
 
-        let cached_tools = vec![
-            serde_json::json!({
-                "name": "ludflow__search_codebase",
-                "description": "Search the codebase for matching code"
-            }),
-        ];
+        let cached_tools = vec![serde_json::json!({
+            "name": "ludflow__search_codebase",
+            "description": "Search the codebase for matching code"
+        })];
 
         let known = std::collections::HashSet::new();
         let result = synthesize_renderer_defs(&manifest, Some(&cached_tools), &known);
@@ -3817,12 +4153,10 @@ mod tests {
         renderers_map.insert("search_codebase".to_string(), "search_results".to_string());
         let manifest = make_manifest_with_renderers("ludflow", renderers_map, "ludflow__");
 
-        let cached_tools = vec![
-            serde_json::json!({
-                "name": "ludflow__search_codebase",
-                "description": "Search the codebase"
-            }),
-        ];
+        let cached_tools = vec![serde_json::json!({
+            "name": "ludflow__search_codebase",
+            "description": "Search the codebase"
+        })];
 
         let mut known = std::collections::HashSet::new();
         known.insert("search_results");
@@ -3918,7 +4252,10 @@ mod tests {
         let summaries = extract_tool_summaries(&tools);
         assert_eq!(summaries.len(), 2);
         assert_eq!(summaries[0]["name"], "rich_content");
-        assert_eq!(summaries[0]["description"], "Display rich markdown content in the MCPViews window.");
+        assert_eq!(
+            summaries[0]["description"],
+            "Display rich markdown content in the MCPViews window."
+        );
         // Should NOT include inputSchema
         assert!(summaries[0].get("inputSchema").is_none());
         assert_eq!(summaries[1]["name"], "push_review");
@@ -3928,13 +4265,31 @@ mod tests {
     fn test_builtin_tool_definitions_include_direct_renderer_tools() {
         let renderers = builtin_renderer_definitions();
         let tools = builtin_tool_definitions(&renderers);
-        let rich_content = tools.iter().find(|t| t["name"] == "rich_content").expect("rich_content tool should exist");
-        let structured_data = tools.iter().find(|t| t["name"] == "structured_data").expect("structured_data tool should exist");
-        let universal_graph = tools.iter().find(|t| t["name"] == "universal_graph").expect("universal_graph tool should exist");
+        let rich_content = tools
+            .iter()
+            .find(|t| t["name"] == "rich_content")
+            .expect("rich_content tool should exist");
+        let structured_data = tools
+            .iter()
+            .find(|t| t["name"] == "structured_data")
+            .expect("structured_data tool should exist");
+        let universal_graph = tools
+            .iter()
+            .find(|t| t["name"] == "universal_graph")
+            .expect("universal_graph tool should exist");
         assert_eq!(rich_content["inputSchema"]["type"], "object");
-        assert_eq!(structured_data["inputSchema"]["required"], serde_json::json!(["tables"]));
-        assert_eq!(universal_graph["inputSchema"]["required"], serde_json::json!(["graphs"]));
-        assert!(tools.iter().any(|tool| tool["name"] == "push_content"), "push_content compatibility alias should remain available locally");
+        assert_eq!(
+            structured_data["inputSchema"]["required"],
+            serde_json::json!(["tables"])
+        );
+        assert_eq!(
+            universal_graph["inputSchema"]["required"],
+            serde_json::json!(["graphs"])
+        );
+        assert!(
+            tools.iter().any(|tool| tool["name"] == "push_content"),
+            "push_content compatibility alias should remain available locally"
+        );
     }
 
     #[test]
@@ -3965,7 +4320,8 @@ mod tests {
             serde_json::json!({ "name": "universal_graph" }),
             serde_json::json!({ "name": "push_review" }),
             serde_json::json!({ "name": "describe_connector" }),
-        ]).expect("core connector should exist");
+        ])
+        .expect("core connector should exist");
 
         let presentation_tools = connector["toolGroups"][0]["tools"]
             .as_array()
@@ -3989,7 +4345,10 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(|value| value.as_str()))
             .collect::<Vec<_>>();
 
-        assert_eq!(direct_names, vec!["rich_content", "structured_data", "universal_graph"]);
+        assert_eq!(
+            direct_names,
+            vec!["rich_content", "structured_data", "universal_graph"]
+        );
 
         let registry_tools = builtin_registry::builtin_tool_definitions(&renderers);
         for name in direct_names {
@@ -4120,7 +4479,8 @@ mod tests {
     #[test]
     fn test_build_core_hosted_connector_uses_registry_group_metadata() {
         let renderers = builtin_renderer_definitions();
-        let available_tools = extract_tool_summaries(&builtin_registry::builtin_tool_definitions(&renderers));
+        let available_tools =
+            extract_tool_summaries(&builtin_registry::builtin_tool_definitions(&renderers));
         let connector =
             build_core_hosted_connector(&available_tools).expect("core connector should exist");
 
@@ -4152,7 +4512,9 @@ mod tests {
     #[test]
     fn test_core_hosted_connector_exposes_graph_breadcrumb_capabilities() {
         let renderers = builtin_renderer_definitions();
-        let available_tools = extract_tool_summaries_with_schema(&builtin_registry::builtin_tool_definitions(&renderers));
+        let available_tools = extract_tool_summaries_with_schema(
+            &builtin_registry::builtin_tool_definitions(&renderers),
+        );
         let connector =
             build_core_hosted_connector(&available_tools).expect("core connector should exist");
 
@@ -4172,7 +4534,10 @@ mod tests {
             .iter()
             .find(|group| group["name"] == "Presentation")
             .expect("Presentation group should exist");
-        assert!(presentation["hint"].as_str().unwrap().contains("graph packs"));
+        assert!(presentation["hint"]
+            .as_str()
+            .unwrap()
+            .contains("graph packs"));
 
         let tool_names = presentation["tools"]
             .as_array()
@@ -4201,9 +4566,7 @@ mod tests {
 
     #[test]
     fn test_extract_tool_summaries_handles_missing_description() {
-        let tools = vec![
-            serde_json::json!({ "name": "no_desc_tool" }),
-        ];
+        let tools = vec![serde_json::json!({ "name": "no_desc_tool" })];
         let summaries = extract_tool_summaries(&tools);
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0]["name"], "no_desc_tool");
@@ -4239,7 +4602,9 @@ mod tests {
         let (state, _dir) = crate::test_utils::test_app_state();
         let manifest_v1 = crate::test_utils::test_manifest("upsert-plugin");
 
-        state.install_plugin_from_manifest(manifest_v1, false).unwrap();
+        state
+            .install_plugin_from_manifest(manifest_v1, false)
+            .unwrap();
         {
             let registry = state.plugin_registry.lock().unwrap();
             assert_eq!(registry.manifests.len(), 1);
@@ -4247,7 +4612,9 @@ mod tests {
 
         let mut manifest_v2 = crate::test_utils::test_manifest("upsert-plugin");
         manifest_v2.version = "2.0.0".to_string();
-        state.install_plugin_from_manifest(manifest_v2, false).unwrap();
+        state
+            .install_plugin_from_manifest(manifest_v2, false)
+            .unwrap();
 
         let registry = state.plugin_registry.lock().unwrap();
         assert_eq!(registry.manifests.len(), 1);
@@ -4264,7 +4631,10 @@ mod tests {
             .and_then(|v| v.as_str())
             .ok_or("Missing required parameter: manifest_json");
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Missing required parameter: manifest_json");
+        assert_eq!(
+            result.unwrap_err(),
+            "Missing required parameter: manifest_json"
+        );
     }
 
     // ─── schema description tests ───
@@ -4272,7 +4642,8 @@ mod tests {
     #[test]
     fn test_install_plugin_schema_download_url_description() {
         let tools = builtin_tool_definitions(&[]);
-        let install_tool = tools.iter()
+        let install_tool = tools
+            .iter()
             .find(|t| t["name"] == "mcpviews_install_plugin")
             .expect("mcpviews_install_plugin tool should exist");
         let desc = install_tool["inputSchema"]["properties"]["download_url"]["description"]
@@ -4341,8 +4712,8 @@ mod tests {
                 display_mode: None,
                 invoke_schema: None,
                 url_patterns: vec![],
-            standalone: false,
-            standalone_label: None,
+                standalone: false,
+                standalone_label: None,
             },
             RendererDef {
                 name: "search_results".into(),
@@ -4354,8 +4725,8 @@ mod tests {
                 display_mode: None,
                 invoke_schema: None,
                 url_patterns: vec![],
-            standalone: false,
-            standalone_label: None,
+                standalone: false,
+                standalone_label: None,
             },
         ];
         let rules = collect_builtin_rules(&renderers);
@@ -4383,7 +4754,10 @@ mod tests {
             standalone_label: None,
         }];
         let mut tool_rules = std::collections::HashMap::new();
-        tool_rules.insert("search_codebase".to_string(), "Use search for queries.".to_string());
+        tool_rules.insert(
+            "search_codebase".to_string(),
+            "Use search for queries.".to_string(),
+        );
         let manifest = make_manifest(
             "test-plugin",
             vec![],
@@ -4412,8 +4786,8 @@ mod tests {
                 display_mode: None,
                 invoke_schema: None,
                 url_patterns: vec![],
-            standalone: false,
-            standalone_label: None,
+                standalone: false,
+                standalone_label: None,
             },
             RendererDef {
                 name: "code_units".into(),
@@ -4425,11 +4799,16 @@ mod tests {
                 display_mode: None,
                 invoke_schema: None,
                 url_patterns: vec![],
-            standalone: false,
-            standalone_label: None,
+                standalone: false,
+                standalone_label: None,
             },
         ];
-        let manifest = make_manifest("test-plugin", vec![], std::collections::HashMap::new(), None);
+        let manifest = make_manifest(
+            "test-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
         let renderer_filter = vec!["search_results".to_string()];
         let rules = collect_plugin_rules(&renderers, &manifest, None, Some(&renderer_filter));
         assert_eq!(rules.len(), 1);
@@ -4451,7 +4830,12 @@ mod tests {
             standalone: false,
             standalone_label: None,
         }];
-        let manifest = make_manifest("test-plugin", vec![], std::collections::HashMap::new(), None);
+        let manifest = make_manifest(
+            "test-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
         let rules = collect_plugin_rules(&renderers, &manifest, None, None);
         assert!(rules.is_empty());
     }
@@ -4481,7 +4865,11 @@ mod tests {
             "description": "Search the codebase for matching code snippets"
         })];
         let index = auto_derive_registry_index(&manifest, Some(&cached_tools));
-        let group = index.tool_groups.iter().find(|g| g.tools.contains(&"search_codebase".to_string())).unwrap();
+        let group = index
+            .tool_groups
+            .iter()
+            .find(|g| g.tools.contains(&"search_codebase".to_string()))
+            .unwrap();
         assert!(group.hint.contains("Search the codebase"));
     }
 
@@ -4500,8 +4888,8 @@ mod tests {
                 display_mode: None,
                 invoke_schema: None,
                 url_patterns: vec![],
-            standalone: false,
-            standalone_label: None,
+                standalone: false,
+                standalone_label: None,
             },
             RendererDef {
                 name: "search_results".into(),
@@ -4513,8 +4901,8 @@ mod tests {
                 display_mode: None,
                 invoke_schema: None,
                 url_patterns: vec![],
-            standalone: false,
-            standalone_label: None,
+                standalone: false,
+                standalone_label: None,
             },
         ];
         let desc = build_data_description(&renderers, "Payload.");
@@ -4527,7 +4915,12 @@ mod tests {
 
     #[test]
     fn test_collect_plugin_updates_no_updates() {
-        let manifest = make_manifest("test-plugin", vec![], std::collections::HashMap::new(), None);
+        let manifest = make_manifest(
+            "test-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
         let entry = mcpviews_shared::RegistryEntry {
             name: "test-plugin".to_string(),
             version: "1.0.0".to_string(),
@@ -4545,7 +4938,12 @@ mod tests {
 
     #[test]
     fn test_collect_plugin_updates_has_update() {
-        let manifest = make_manifest("test-plugin", vec![], std::collections::HashMap::new(), None);
+        let manifest = make_manifest(
+            "test-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
         let mut entry_manifest = manifest.clone();
         entry_manifest.version = "2.0.0".to_string();
         let entry = mcpviews_shared::RegistryEntry {
@@ -4568,7 +4966,12 @@ mod tests {
 
     #[test]
     fn test_collect_plugin_updates_older_registry_ignored() {
-        let mut manifest = make_manifest("test-plugin", vec![], std::collections::HashMap::new(), None);
+        let mut manifest = make_manifest(
+            "test-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
         manifest.version = "3.0.0".to_string();
         let entry = mcpviews_shared::RegistryEntry {
             name: "test-plugin".to_string(),
@@ -4576,7 +4979,12 @@ mod tests {
             description: "Test".to_string(),
             author: None,
             homepage: None,
-            manifest: make_manifest("test-plugin", vec![], std::collections::HashMap::new(), None),
+            manifest: make_manifest(
+                "test-plugin",
+                vec![],
+                std::collections::HashMap::new(),
+                None,
+            ),
             tags: vec![],
             download_url: None,
             manifest_url: None,
@@ -4587,7 +4995,12 @@ mod tests {
 
     #[test]
     fn test_collect_plugin_updates_no_matching_entry() {
-        let manifest = make_manifest("test-plugin", vec![], std::collections::HashMap::new(), None);
+        let manifest = make_manifest(
+            "test-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
         let updates = collect_plugin_updates(&[manifest], &[]);
         assert!(updates.is_empty());
     }
@@ -4599,7 +5012,10 @@ mod tests {
         let renderers = builtin_renderer_definitions();
         let tools = builtin_tool_definitions(&renderers);
         let update_tool = tools.iter().find(|t| t["name"] == "update_plugins");
-        assert!(update_tool.is_some(), "update_plugins tool should be defined");
+        assert!(
+            update_tool.is_some(),
+            "update_plugins tool should be defined"
+        );
         let schema = &update_tool.unwrap()["inputSchema"];
         assert!(schema["properties"]["plugin_name"].is_object());
     }
@@ -4819,11 +5235,16 @@ mod tests {
     fn test_evaluate_update_preferences_always_auto_updates() {
         let dir = tempfile::tempdir().unwrap();
         let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
-        store.save_preferences("auto-plugin", &mcpviews_shared::PluginPreferences {
-            update_policy: "always".to_string(),
-            update_policy_version: None,
-            update_policy_source: "chat".to_string(),
-        }).unwrap();
+        store
+            .save_preferences(
+                "auto-plugin",
+                &mcpviews_shared::PluginPreferences {
+                    update_policy: "always".to_string(),
+                    update_policy_version: None,
+                    update_policy_source: "chat".to_string(),
+                },
+            )
+            .unwrap();
         let updates = vec![serde_json::json!({
             "name": "auto-plugin",
             "installed_version": "1.0.0",
@@ -4840,11 +5261,16 @@ mod tests {
     fn test_evaluate_update_preferences_skip_matching_version() {
         let dir = tempfile::tempdir().unwrap();
         let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
-        store.save_preferences("skip-plugin", &mcpviews_shared::PluginPreferences {
-            update_policy: "skip".to_string(),
-            update_policy_version: Some("2.0.0".to_string()),
-            update_policy_source: "chat".to_string(),
-        }).unwrap();
+        store
+            .save_preferences(
+                "skip-plugin",
+                &mcpviews_shared::PluginPreferences {
+                    update_policy: "skip".to_string(),
+                    update_policy_version: Some("2.0.0".to_string()),
+                    update_policy_source: "chat".to_string(),
+                },
+            )
+            .unwrap();
         let updates = vec![serde_json::json!({
             "name": "skip-plugin",
             "installed_version": "1.0.0",
@@ -4860,11 +5286,16 @@ mod tests {
     fn test_evaluate_update_preferences_skip_different_version_reasks() {
         let dir = tempfile::tempdir().unwrap();
         let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
-        store.save_preferences("skip-plugin", &mcpviews_shared::PluginPreferences {
-            update_policy: "skip".to_string(),
-            update_policy_version: Some("2.0.0".to_string()),
-            update_policy_source: "chat".to_string(),
-        }).unwrap();
+        store
+            .save_preferences(
+                "skip-plugin",
+                &mcpviews_shared::PluginPreferences {
+                    update_policy: "skip".to_string(),
+                    update_policy_version: Some("2.0.0".to_string()),
+                    update_policy_source: "chat".to_string(),
+                },
+            )
+            .unwrap();
         let updates = vec![serde_json::json!({
             "name": "skip-plugin",
             "installed_version": "1.0.0",
@@ -4882,16 +5313,26 @@ mod tests {
     fn test_evaluate_update_preferences_mixed_policies() {
         let dir = tempfile::tempdir().unwrap();
         let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
-        store.save_preferences("always-plugin", &mcpviews_shared::PluginPreferences {
-            update_policy: "always".to_string(),
-            update_policy_version: None,
-            update_policy_source: "chat".to_string(),
-        }).unwrap();
-        store.save_preferences("skip-plugin", &mcpviews_shared::PluginPreferences {
-            update_policy: "skip".to_string(),
-            update_policy_version: Some("2.0.0".to_string()),
-            update_policy_source: "chat".to_string(),
-        }).unwrap();
+        store
+            .save_preferences(
+                "always-plugin",
+                &mcpviews_shared::PluginPreferences {
+                    update_policy: "always".to_string(),
+                    update_policy_version: None,
+                    update_policy_source: "chat".to_string(),
+                },
+            )
+            .unwrap();
+        store
+            .save_preferences(
+                "skip-plugin",
+                &mcpviews_shared::PluginPreferences {
+                    update_policy: "skip".to_string(),
+                    update_policy_version: Some("2.0.0".to_string()),
+                    update_policy_source: "chat".to_string(),
+                },
+            )
+            .unwrap();
         // "ask-plugin" has no saved preferences => default "ask"
         let updates = vec![
             serde_json::json!({"name": "always-plugin", "installed_version": "1.0.0", "available_version": "2.0.0"}),
@@ -5828,7 +6269,10 @@ mod tests {
         });
 
         let params = extract_push_params(&args, false).unwrap();
-        assert_eq!(params.data["tables"][0]["dataRef"]["dataset_id"], "dataset-1");
+        assert_eq!(
+            params.data["tables"][0]["dataRef"]["dataset_id"],
+            "dataset-1"
+        );
     }
 
     #[test]

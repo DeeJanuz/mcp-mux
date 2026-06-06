@@ -4,8 +4,8 @@
 mod app_update;
 mod auth;
 mod commands;
-mod desktop_relay;
 mod datasets;
+mod desktop_relay;
 mod first_party_ai;
 mod http_server;
 mod installer;
@@ -15,24 +15,24 @@ mod mcp_registry_tools;
 mod mcp_session;
 mod mcp_tools;
 mod plugin;
+mod plugin_email_auth;
 mod registry;
 mod renderer_scanner;
-mod tool_cache;
 mod review;
 mod session;
 mod state;
 #[cfg(test)]
 mod test_utils;
+mod tool_cache;
 
+use state::AppState;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use state::AppState;
 use tauri::{
     image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    Listener,
-    Manager,
+    Listener, Manager,
 };
 use tauri_plugin_autostart::MacosLauncher;
 
@@ -55,10 +55,7 @@ fn build_csp(connect_origins: &[String], frame_origins: &[String]) -> String {
     }
     if !frame_origins.is_empty() {
         let suffix = frame_origins.join(" ");
-        csp = csp.replace(
-            "frame-src 'self'",
-            &format!("frame-src 'self' {}", suffix),
-        );
+        csp = csp.replace("frame-src 'self'", &format!("frame-src 'self' {}", suffix));
     }
     csp
 }
@@ -131,17 +128,22 @@ fn http_bind_address() -> String {
     format!("0.0.0.0:{port}")
 }
 
-fn csp_request_hook(state: Arc<AppState>) -> impl Fn(tauri::http::Request<Vec<u8>>, &mut tauri::http::Response<std::borrow::Cow<'static, [u8]>>) + Send + Sync + 'static {
+fn csp_request_hook(
+    state: Arc<AppState>,
+) -> impl Fn(
+    tauri::http::Request<Vec<u8>>,
+    &mut tauri::http::Response<std::borrow::Cow<'static, [u8]>>,
+) + Send
+       + Sync
+       + 'static {
     move |_req, resp| {
         let mut origins: BTreeSet<String> = state.plugin_csp_origins().into_iter().collect();
         origins.extend(first_party_ai_csp_origins());
         let origins = origins.into_iter().collect::<Vec<_>>();
         let frame_origins = state.plugin_frame_origins();
         let csp = build_csp(&origins, &frame_origins);
-        resp.headers_mut().insert(
-            "content-security-policy",
-            csp.parse().unwrap(),
-        );
+        resp.headers_mut()
+            .insert("content-security-policy", csp.parse().unwrap());
     }
 }
 
@@ -221,12 +223,10 @@ fn main() {
                         .body(contents)
                         .unwrap()
                 }
-                Err(_) => {
-                    tauri::http::Response::builder()
-                        .status(404)
-                        .body(b"Not found".to_vec())
-                        .unwrap()
-                }
+                Err(_) => tauri::http::Response::builder()
+                    .status(404)
+                    .body(b"Not found".to_vec())
+                    .unwrap(),
             }
         })
         .manage(app_state.clone())
@@ -238,6 +238,10 @@ fn main() {
             commands::check_app_update,
             commands::install_app_update,
             commands::open_external_url,
+            commands::open_native_app_view,
+            commands::mount_native_app_panel,
+            commands::update_native_app_panel_bounds,
+            commands::close_native_app_panel,
             commands::list_plugins,
             commands::install_plugin,
             commands::uninstall_plugin,
@@ -246,6 +250,8 @@ fn main() {
             commands::install_plugin_from_zip,
             commands::fetch_registry,
             commands::start_plugin_auth,
+            commands::send_plugin_email_code,
+            commands::verify_plugin_email_code,
             commands::get_plugin_auth_header,
             commands::store_plugin_token,
             commands::get_first_party_ai_config,
@@ -281,6 +287,9 @@ fn main() {
             commands::remove_registry_source,
             commands::toggle_registry_source,
             commands::update_plugin,
+            commands::check_plugin_prerelease,
+            commands::install_plugin_prerelease,
+            commands::rollback_plugin_to_stable,
             commands::reinstall_plugin,
             commands::clear_plugin_auth,
             commands::save_file,
@@ -306,19 +315,24 @@ fn main() {
             installer::cleanup_legacy_windows_setup_script(app.handle());
 
             match app.path().resource_dir() {
-                Ok(resource_dir) => match app_state.ensure_resource_bundled_plugins(&resource_dir) {
-                    Ok(installed) if !installed.is_empty() => {
-                        eprintln!(
-                            "[mcpviews] Installed bundled resource plugins: {}",
-                            installed.join(", ")
-                        );
-                        app_state.reload_plugins();
+                Ok(resource_dir) => {
+                    match app_state.ensure_resource_bundled_plugins(&resource_dir) {
+                        Ok(installed) if !installed.is_empty() => {
+                            eprintln!(
+                                "[mcpviews] Installed bundled resource plugins: {}",
+                                installed.join(", ")
+                            );
+                            app_state.reload_plugins();
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            eprintln!(
+                                "[mcpviews] Failed to install bundled resource plugins: {}",
+                                error
+                            );
+                        }
                     }
-                    Ok(_) => {}
-                    Err(error) => {
-                        eprintln!("[mcpviews] Failed to install bundled resource plugins: {}", error);
-                    }
-                },
+                }
                 Err(error) => {
                     eprintln!("[mcpviews] Failed to resolve resource directory: {}", error);
                 }
@@ -329,15 +343,16 @@ fn main() {
             let bind_address = http_bind_address();
             let std_listener = std::net::TcpListener::bind(&bind_address)
                 .map_err(|e| format!("Failed to bind to {bind_address}: {e}"))?;
-            std_listener.set_nonblocking(true)
+            std_listener
+                .set_nonblocking(true)
                 .map_err(|e| format!("Failed to set non-blocking: {e}"))?;
 
             // Spawn the axum HTTP server on a dedicated thread with its own tokio runtime
             std::thread::Builder::new()
                 .name("http-server".into())
                 .spawn(move || {
-                    let rt = tokio::runtime::Runtime::new()
-                        .expect("Failed to create tokio runtime");
+                    let rt =
+                        tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
                     rt.block_on(async move {
                         http_server::start_http_server(state, handle, std_listener).await;
                     });
@@ -345,14 +360,18 @@ fn main() {
                 .expect("Failed to spawn HTTP thread");
 
             // Create main window programmatically with dynamic CSP
-            tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
-                .title("MCPViews")
-                .inner_size(1200.0, 800.0)
-                .resizable(true)
-                .theme(Some(tauri::Theme::Light))
-                .use_https_scheme(true)
-                .on_web_resource_request(csp_request_hook(app_state.clone()))
-                .build()?;
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("MCPViews")
+            .inner_size(1200.0, 800.0)
+            .resizable(true)
+            .theme(Some(tauri::Theme::Light))
+            .use_https_scheme(true)
+            .on_web_resource_request(csp_request_hook(app_state.clone()))
+            .build()?;
 
             // Listen for reload_renderers to refresh main window CSP
             let reload_handle = app.handle().clone();
@@ -370,15 +389,13 @@ fn main() {
             let tray_menu_builder = MenuBuilder::new(app)
                 .item(&show_item)
                 .item(&manage_plugins_item);
-            let tray_menu = tray_menu_builder
-                .separator()
-                .item(&quit_item)
-                .build()?;
+            let tray_menu = tray_menu_builder.separator().item(&quit_item).build()?;
 
             // Create tray icon
-            let icon = app.default_window_icon().cloned().unwrap_or_else(|| {
-                Image::new_owned(vec![99; 16 * 16 * 4], 16, 16)
-            });
+            let icon = app
+                .default_window_icon()
+                .cloned()
+                .unwrap_or_else(|| Image::new_owned(vec![99; 16 * 16 * 4], 16, 16));
 
             let _tray = TrayIconBuilder::new()
                 .icon(icon)
@@ -439,7 +456,9 @@ mod tests {
             "https://other.io".to_string(),
         ];
         let csp = build_csp(&origins, &[]);
-        assert!(csp.contains("connect-src 'self' http://localhost:4200 https://api.example.com https://other.io"));
+        assert!(csp.contains(
+            "connect-src 'self' http://localhost:4200 https://api.example.com https://other.io"
+        ));
     }
 
     #[test]

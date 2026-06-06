@@ -516,6 +516,7 @@ body {
   align-items: center;
   gap: 6px;
   position: relative;
+  z-index: calc(var(--z-dropdown) + 1);
 }
 
 #main-header .title {
@@ -677,6 +678,14 @@ body {
   flex-shrink: 0;
 }
 
+.update-banner-manual {
+  background: color-mix(in srgb, var(--color-warning-bg) 58%, var(--bg-surface) 42%);
+}
+
+.update-banner-warning {
+  background: color-mix(in srgb, var(--color-error-bg) 48%, var(--bg-surface) 52%);
+}
+
 .update-banner.hidden {
   display: none;
 }
@@ -789,6 +798,8 @@ body {
 
 /* === Apps Button & Dropdown === */
 #apps-button {
+  position: relative;
+  z-index: calc(var(--z-dropdown) + 2);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(8px);
@@ -823,7 +834,7 @@ body {
   border-radius: 12px;
   box-shadow: var(--glass-shadow-elevated);
   padding: 8px 0;
-  z-index: var(--z-dropdown);
+  z-index: calc(var(--z-dropdown) + 3);
   overflow: hidden;
 }
 

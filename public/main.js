@@ -21,6 +21,7 @@
   const aiShellToggleButton = document.getElementById('ai-shell-toggle-button');
   const aiHomeButton = document.getElementById('ai-home-button');
   const updateBanner = document.getElementById('update-banner');
+  const updateBannerTitle = document.getElementById('update-banner-title');
   const updateBannerMessage = document.getElementById('update-banner-message');
   const updateInstallButton = document.getElementById('update-install-button');
   const updateChangelogButton = document.getElementById('update-changelog-button');
@@ -29,8 +30,14 @@
   let aiWorkspaceAvailable = false;
   let aiWorkspaceConfig = null;
   let pendingAppUpdate = null;
+  let pendingAppUpdateAction = null;
   let appUpdateCheckTimer = null;
   let dismissedAppUpdateVersionFallback = '';
+  let dismissedAppUpdateFailureFallback = null;
+
+  const UPDATE_DISMISSED_VERSION_KEY = 'mcpviews-dismissed-update-version';
+  const UPDATE_DISMISSED_FAILURE_KEY = 'mcpviews-dismissed-update-check-failure';
+  const UPDATE_FAILURE_DISMISS_MS = 4 * 60 * 60 * 1000;
   const DECIDR_ONBOARDING_RENDERER = 'decidr_onboarding';
   const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:completed-org-id';
 
@@ -40,9 +47,144 @@
   /** @type {Map<string, {deadline: number, intervalId: number}>} Countdown timers per review session */
   const countdownTimers = new Map();
 
+  let nativeAppOverlayActive = false;
+  const nativeAppPanels = new Map();
+
   // --- Heartbeat ---
   let heartbeatInterval = null;
   let lastActivity = Date.now();
+
+  function nativeAppBounds(bounds) {
+    bounds = bounds || {};
+    return {
+      x: Number.isFinite(bounds.x) ? bounds.x : 0,
+      y: Number.isFinite(bounds.y) ? bounds.y : 0,
+      width: Number.isFinite(bounds.width) ? bounds.width : 1,
+      height: Number.isFinite(bounds.height) ? bounds.height : 1,
+      visible: bounds.visible !== false,
+    };
+  }
+
+  function nativeAppBoundsForOverlay(bounds) {
+    var normalized = nativeAppBounds(bounds);
+    if (nativeAppOverlayActive) normalized.visible = false;
+    return normalized;
+  }
+
+  function rememberNativeAppPanel(label, bounds) {
+    if (!label) return;
+    nativeAppPanels.set(label, { bounds: nativeAppBounds(bounds) });
+  }
+
+  function forgetNativeAppPanel(label) {
+    if (!label) return;
+    nativeAppPanels.delete(label);
+  }
+
+  function applyNativeAppOverlayBounds() {
+    if (!window.__TAURI__ || !window.__TAURI__.core || nativeAppPanels.size === 0) {
+      return Promise.resolve();
+    }
+    var updates = [];
+    nativeAppPanels.forEach(function (record, label) {
+      updates.push(window.__TAURI__.core.invoke('update_native_app_panel_bounds', {
+        label: label,
+        bounds: nativeAppBoundsForOverlay(record.bounds),
+      }).catch(function (error) {
+        console.warn('Failed to update native app panel overlay bounds:', error);
+      }));
+    });
+    return Promise.all(updates);
+  }
+
+  function openNativeAppView(options) {
+    options = options || {};
+    if (!window.__TAURI__ || !window.__TAURI__.core) {
+      return Promise.reject(new Error('Native app views are only available in MCPViews desktop.'));
+    }
+    return window.__TAURI__.core.invoke('open_native_app_view', {
+      pluginName: options.pluginName || options.plugin_name || '',
+      url: options.url || '',
+      title: options.title || null,
+      label: options.label || null,
+    });
+  }
+
+  function mountNativeAppView(options) {
+    options = options || {};
+    if (!window.__TAURI__ || !window.__TAURI__.core) {
+      return Promise.reject(new Error('Native app panels are only available in MCPViews desktop.'));
+    }
+    var requestedBounds = nativeAppBounds(options.bounds);
+    return window.__TAURI__.core.invoke('mount_native_app_panel', {
+      pluginName: options.pluginName || options.plugin_name || '',
+      url: options.url || '',
+      title: options.title || null,
+      label: options.label || null,
+      bounds: nativeAppBoundsForOverlay(requestedBounds),
+    }).then(function (result) {
+      rememberNativeAppPanel(result && result.label ? result.label : options.label, requestedBounds);
+      return result;
+    });
+  }
+
+  function updateNativeAppViewBounds(options) {
+    options = options || {};
+    if (!window.__TAURI__ || !window.__TAURI__.core) {
+      return Promise.reject(new Error('Native app panels are only available in MCPViews desktop.'));
+    }
+    var label = options.label || '';
+    var requestedBounds = nativeAppBounds(options.bounds);
+    rememberNativeAppPanel(label, requestedBounds);
+    return window.__TAURI__.core.invoke('update_native_app_panel_bounds', {
+      label: label,
+      bounds: nativeAppBoundsForOverlay(requestedBounds),
+    });
+  }
+
+  function closeNativeAppView(options) {
+    options = options || {};
+    if (!window.__TAURI__ || !window.__TAURI__.core) {
+      return Promise.reject(new Error('Native app panels are only available in MCPViews desktop.'));
+    }
+    var label = options.label || '';
+    forgetNativeAppPanel(label);
+    return window.__TAURI__.core.invoke('close_native_app_panel', {
+      label: label,
+    });
+  }
+
+  function emitSessionVisibilityChanged(detail) {
+    try {
+      window.dispatchEvent(new CustomEvent('mcpviews:session-visibility-changed', {
+        detail: Object.assign({ activeSessionId: activeSessionId }, detail || {}),
+      }));
+    } catch (_error) {}
+  }
+
+  function setNativeAppOverlayActive(active, reason) {
+    var next = !!active;
+    var changed = nativeAppOverlayActive !== next;
+    nativeAppOverlayActive = next;
+    document.body.classList.toggle('native-app-overlay-active', next);
+    if (changed) {
+      try {
+        window.dispatchEvent(new CustomEvent('mcpviews:native-app-overlay-changed', {
+          detail: { active: next, reason: reason || null },
+        }));
+      } catch (_error) {}
+    }
+    return applyNativeAppOverlayBounds();
+  }
+
+  window.__mcpviewsHost = window.__mcpviewsHost || {};
+  window.__mcpviewsHost.openNativeAppView = openNativeAppView;
+  window.__mcpviewsHost.mountNativeAppView = mountNativeAppView;
+  window.__mcpviewsHost.updateNativeAppViewBounds = updateNativeAppViewBounds;
+  window.__mcpviewsHost.closeNativeAppView = closeNativeAppView;
+  window.__mcpviewsHost.isNativeAppOverlayActive = function () {
+    return nativeAppOverlayActive;
+  };
 
   function isAiWorkspaceConfigured(config) {
     return !!(config && config.configured === true);
@@ -218,6 +360,7 @@
 
   function removeSession(sessionId) {
     var removedSession = sessions.get(sessionId) || null;
+    emitSessionVisibilityChanged({ sessionId: sessionId, active: false, removed: true });
     // Close drawers and citation panel scoped to this session
     var utils = window.__companionUtils;
     if (utils) {
@@ -331,6 +474,7 @@
 
     const { listen } = window.__TAURI__.event;
     const { invoke } = window.__TAURI__.core;
+    startAppUpdateChecks();
 
     // Listen for push events from Rust backend
     await listen('push_preview', function (event) {
@@ -377,10 +521,6 @@
 
     connectionDot.classList.add('connected');
     connectionText.textContent = 'Ready';
-    checkForAppUpdate();
-    if (!appUpdateCheckTimer) {
-      appUpdateCheckTimer = window.setInterval(checkForAppUpdate, 4 * 60 * 60 * 1000);
-    }
   }
 
   async function loadPluginRenderers() {
@@ -668,6 +808,11 @@
     }
     renderTabBar();
     renderContent(sessionId);
+    emitSessionVisibilityChanged({
+      sessionId: sessionId,
+      previousSessionId: previousSessionId || null,
+      active: true,
+    });
   }
 
   function refreshCurrentSession() {
@@ -681,10 +826,12 @@
     // Remove cached container to force re-render
     var cached = contentCache.get(activeSessionId);
     if (cached && cached.parentNode) {
+      emitSessionVisibilityChanged({ sessionId: activeSessionId, active: false, refreshing: true });
       cached.parentNode.removeChild(cached);
     }
     contentCache.delete(activeSessionId);
     renderContent(activeSessionId);
+    emitSessionVisibilityChanged({ sessionId: activeSessionId, active: true, refreshed: true });
   }
 
   function syncSessionBusyIndicator(container, session) {
@@ -827,6 +974,7 @@
   }
 
   function renderEmpty() {
+    emitSessionVisibilityChanged({ sessionId: null, active: false, empty: true });
     if (window.__tribexAiShell && typeof window.__tribexAiShell.setActiveSession === 'function') {
       window.__tribexAiShell.setActiveSession(null, null);
     }
@@ -893,6 +1041,13 @@
   };
   window.__companionUtils.updateSessionMetadata = updateSessionMetadata;
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
+  window.__companionUtils.openNativeAppView = openNativeAppView;
+  window.__companionUtils.mountNativeAppView = mountNativeAppView;
+  window.__companionUtils.updateNativeAppViewBounds = updateNativeAppViewBounds;
+  window.__companionUtils.closeNativeAppView = closeNativeAppView;
+  window.__companionUtils.isNativeAppOverlayActive = function () {
+    return nativeAppOverlayActive;
+  };
   window.__companionUtils.refreshAiWorkspaceAvailability = refreshAiWorkspaceAvailability;
   window.__companionUtils.getAiWorkspaceAvailability = function () {
     return {
@@ -1049,7 +1204,7 @@
 
   function dismissedUpdateVersion() {
     try {
-      return localStorage.getItem('mcpviews-dismissed-update-version') ||
+      return localStorage.getItem(UPDATE_DISMISSED_VERSION_KEY) ||
         dismissedAppUpdateVersionFallback;
     } catch (err) {
       return dismissedAppUpdateVersionFallback;
@@ -1059,23 +1214,91 @@
   function setDismissedUpdateVersion(version) {
     dismissedAppUpdateVersionFallback = version || '';
     try {
-      localStorage.setItem('mcpviews-dismissed-update-version', version || '');
+      localStorage.setItem(UPDATE_DISMISSED_VERSION_KEY, version || '');
     } catch (err) {}
+  }
+
+  function dismissedUpdateFailure() {
+    try {
+      var raw = localStorage.getItem(UPDATE_DISMISSED_FAILURE_KEY);
+      if (!raw) return dismissedAppUpdateFailureFallback;
+      return JSON.parse(raw);
+    } catch (err) {
+      return dismissedAppUpdateFailureFallback;
+    }
+  }
+
+  function setDismissedUpdateFailure(message) {
+    var record = {
+      message: message || '',
+      dismissedAt: Date.now(),
+    };
+    dismissedAppUpdateFailureFallback = record;
+    try {
+      localStorage.setItem(UPDATE_DISMISSED_FAILURE_KEY, JSON.stringify(record));
+    } catch (err) {}
+  }
+
+  function clearDismissedUpdateFailure() {
+    dismissedAppUpdateFailureFallback = null;
+    try {
+      localStorage.removeItem(UPDATE_DISMISSED_FAILURE_KEY);
+    } catch (err) {}
+  }
+
+  function shouldSuppressUpdateFailure(message) {
+    var record = dismissedUpdateFailure();
+    if (!record || record.message !== message || !Number.isFinite(record.dismissedAt)) {
+      return false;
+    }
+    return Date.now() - record.dismissedAt < UPDATE_FAILURE_DISMISS_MS;
   }
 
   function hideUpdateBanner() {
     if (!updateBanner) return;
     updateBanner.classList.add('hidden');
+    updateBanner.classList.remove('update-banner-manual');
+    updateBanner.classList.remove('update-banner-warning');
+    pendingAppUpdateAction = null;
   }
 
-  function updateInstallButtonState(update, isInstalling) {
+  function updateActionFor(update) {
+    if (!update) return null;
+    if (update.kind === 'failure') return 'retry';
+    if (update.canInstall && update.updateJsonUrl) return 'install';
+    if (update.manualDownloadUrl) return 'manual';
+    if (update.releasePageUrl) return 'release';
+    return null;
+  }
+
+  function updateInstallButtonState(update, isWorking) {
     if (!updateInstallButton) return;
-    var canInstall = !!(update && update.canInstall && update.updateJsonUrl);
-    updateInstallButton.disabled = isInstalling || !canInstall;
-    updateInstallButton.textContent = isInstalling ? 'Installing...' : 'Install and re-launch';
-    updateInstallButton.title = canInstall
-      ? 'Install this MCPViews update and restart the app'
-      : 'This release is missing a signed updater manifest or the updater public key is not configured';
+    var action = updateActionFor(update);
+    pendingAppUpdateAction = action;
+    updateInstallButton.disabled = isWorking || !action;
+    if (isWorking) {
+      updateInstallButton.textContent = action === 'retry' ? 'Checking...' : 'Installing...';
+    } else if (action === 'manual') {
+      updateInstallButton.textContent = update.manualDownloadLabel || 'Download update';
+    } else if (action === 'release') {
+      updateInstallButton.textContent = 'Open release page';
+    } else if (action === 'retry') {
+      updateInstallButton.textContent = 'Try again';
+    } else {
+      updateInstallButton.textContent = 'Install and re-launch';
+    }
+    updateInstallButton.title = {
+      install: 'Install this MCPViews update and restart the app',
+      manual: 'Download this MCPViews installer in your browser',
+      release: 'Open the MCPViews release page in your browser',
+      retry: 'Check GitHub releases for MCPViews updates again',
+    }[action] || 'No update action is available';
+  }
+
+  function updateChangelogButtonState(update) {
+    if (!updateChangelogButton) return;
+    var hasReleasePage = !!(update && update.releasePageUrl && update.kind !== 'failure');
+    updateChangelogButton.hidden = !hasReleasePage;
   }
 
   function showUpdateBanner(update) {
@@ -1086,10 +1309,52 @@
     }
 
     pendingAppUpdate = update;
+    updateBanner.classList.remove('update-banner-warning');
+    updateBanner.classList.toggle('update-banner-manual', !(update.canInstall && update.updateJsonUrl));
+    if (updateBannerTitle) {
+      updateBannerTitle.textContent = 'MCPViews update available';
+    }
     if (updateBannerMessage) {
-      updateBannerMessage.textContent = 'Version ' + update.version + ' is ready from GitHub releases.';
+      if (update.canInstall && update.updateJsonUrl) {
+        updateBannerMessage.textContent = 'Version ' + update.version + ' is ready from GitHub releases.';
+        updateBannerMessage.title = '';
+      } else {
+        updateBannerMessage.textContent = 'Version ' + update.version + ' is available, but this MCPViews build cannot install signed updates in-app. Download once to restore future self-updates.';
+        updateBannerMessage.title = update.installUnavailableReason || '';
+      }
     }
     updateInstallButtonState(update, false);
+    updateChangelogButtonState(update);
+    updateBanner.classList.remove('hidden');
+  }
+
+  function normalizeUpdateErrorMessage(err) {
+    var text = String(err && err.message ? err.message : err || 'Unknown update check error');
+    return text.trim() || 'Unknown update check error';
+  }
+
+  function showUpdateCheckFailure(err) {
+    if (!updateBanner) return;
+    var errorMessage = normalizeUpdateErrorMessage(err);
+    if (shouldSuppressUpdateFailure(errorMessage)) {
+      return;
+    }
+
+    pendingAppUpdate = {
+      kind: 'failure',
+      errorMessage: errorMessage,
+    };
+    updateBanner.classList.remove('update-banner-manual');
+    updateBanner.classList.add('update-banner-warning');
+    if (updateBannerTitle) {
+      updateBannerTitle.textContent = 'Could not check for MCPViews updates';
+    }
+    if (updateBannerMessage) {
+      updateBannerMessage.textContent = 'MCPViews could not reach GitHub releases. Try again when your connection is available.';
+      updateBannerMessage.title = errorMessage;
+    }
+    updateInstallButtonState(pendingAppUpdate, false);
+    updateChangelogButtonState(pendingAppUpdate);
     updateBanner.classList.remove('hidden');
   }
 
@@ -1097,6 +1362,7 @@
     if (!window.__TAURI__ || !window.__TAURI__.core) return Promise.resolve(null);
     return window.__TAURI__.core.invoke('check_app_update')
       .then(function (update) {
+        clearDismissedUpdateFailure();
         if (update) {
           showUpdateBanner(update);
         } else {
@@ -1107,12 +1373,41 @@
       })
       .catch(function (err) {
         console.warn('[updates] Failed to check for MCPViews updates:', err);
+        showUpdateCheckFailure(err);
         return null;
       });
   }
 
+  function openExternalUpdateUrl(url) {
+    if (!url || !window.__TAURI__ || !window.__TAURI__.core) {
+      return Promise.resolve();
+    }
+    return window.__TAURI__.core.invoke('open_external_url', {
+      url: url,
+    }).catch(function (err) {
+      console.error('[updates] Failed to open MCPViews update URL:', err);
+    });
+  }
+
   function installPendingAppUpdate() {
-    if (!pendingAppUpdate || !pendingAppUpdate.updateJsonUrl || !window.__TAURI__ || !window.__TAURI__.core) {
+    if (!pendingAppUpdate || !window.__TAURI__ || !window.__TAURI__.core) {
+      return;
+    }
+    if (pendingAppUpdateAction === 'retry') {
+      clearDismissedUpdateFailure();
+      updateInstallButtonState(pendingAppUpdate, true);
+      checkForAppUpdate();
+      return;
+    }
+    if (pendingAppUpdateAction === 'manual') {
+      openExternalUpdateUrl(pendingAppUpdate.manualDownloadUrl);
+      return;
+    }
+    if (pendingAppUpdateAction === 'release') {
+      openExternalUpdateUrl(pendingAppUpdate.releasePageUrl);
+      return;
+    }
+    if (!pendingAppUpdate.updateJsonUrl) {
       return;
     }
     updateInstallButtonState(pendingAppUpdate, true);
@@ -1138,11 +1433,7 @@
     if (!pendingAppUpdate || !pendingAppUpdate.releasePageUrl || !window.__TAURI__ || !window.__TAURI__.core) {
       return;
     }
-    window.__TAURI__.core.invoke('open_external_url', {
-      url: pendingAppUpdate.releasePageUrl,
-    }).catch(function (err) {
-      console.error('[updates] Failed to open MCPViews release page:', err);
-    });
+    openExternalUpdateUrl(pendingAppUpdate.releasePageUrl);
   }
 
   function initUpdateBanner() {
@@ -1157,10 +1448,20 @@
       updateDismissButton.addEventListener('click', function () {
         if (pendingAppUpdate && pendingAppUpdate.version) {
           setDismissedUpdateVersion(pendingAppUpdate.version);
+        } else if (pendingAppUpdate && pendingAppUpdate.kind === 'failure') {
+          setDismissedUpdateFailure(pendingAppUpdate.errorMessage || '');
         }
         hideUpdateBanner();
       });
     }
+  }
+
+  function startAppUpdateChecks() {
+    if (!window.__TAURI__ || !window.__TAURI__.core || appUpdateCheckTimer) {
+      return;
+    }
+    checkForAppUpdate();
+    appUpdateCheckTimer = window.setInterval(checkForAppUpdate, 4 * 60 * 60 * 1000);
   }
 
   // --- Apps Button ---
@@ -1169,20 +1470,47 @@
     var appsBtn = document.getElementById('apps-button');
     var dropdown = document.getElementById('apps-dropdown');
     if (!appsBtn || !dropdown) return;
+    var dropdownGeneration = 0;
+
+    function closeDropdown() {
+      dropdownGeneration += 1;
+      dropdown.classList.add('hidden');
+      setNativeAppOverlayActive(false, 'apps-dropdown');
+    }
+
+    function openDropdown() {
+      var generation = ++dropdownGeneration;
+      populateAppsDropdown(dropdown);
+      Promise.resolve(setNativeAppOverlayActive(true, 'apps-dropdown')).then(function () {
+        if (generation === dropdownGeneration) {
+          dropdown.classList.remove('hidden');
+        }
+      }).catch(function (error) {
+        console.warn('Failed to prepare native app overlay before opening apps dropdown:', error);
+        if (generation === dropdownGeneration) {
+          dropdown.classList.remove('hidden');
+        }
+      });
+    }
 
     appsBtn.addEventListener('click', function(e) {
       e.stopPropagation();
       if (dropdown.classList.contains('hidden')) {
-        populateAppsDropdown(dropdown);
-        dropdown.classList.remove('hidden');
+        openDropdown();
       } else {
-        dropdown.classList.add('hidden');
+        closeDropdown();
       }
     });
 
     document.addEventListener('click', function(e) {
       if (!dropdown.contains(e.target) && e.target !== appsBtn) {
-        dropdown.classList.add('hidden');
+        closeDropdown();
+      }
+    });
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeDropdown();
       }
     });
   }
@@ -1268,6 +1596,7 @@
             var rendererName = item.getAttribute('data-renderer');
             var rendererLabel = item.textContent.trim();
             dropdown.classList.add('hidden');
+            setNativeAppOverlayActive(false, 'apps-dropdown');
             launchStandalone(rendererName, rendererLabel);
           });
         });
@@ -1323,5 +1652,6 @@
   initAiButton();
   initUpdateBanner();
   initAppsButton();
+  startAppUpdateChecks();
   initTauri();
 })();

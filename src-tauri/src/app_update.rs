@@ -23,6 +23,9 @@ pub struct AppUpdateInfo {
     pub title: String,
     pub release_page_url: String,
     pub update_json_url: Option<String>,
+    pub manual_download_url: Option<String>,
+    pub manual_download_label: Option<String>,
+    pub install_unavailable_reason: Option<String>,
     pub published_at: Option<String>,
     pub body: Option<String>,
     pub can_install: bool,
@@ -51,6 +54,41 @@ struct GitHubRelease {
 struct GitHubReleaseAsset {
     name: String,
     browser_download_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InstallAvailability {
+    can_install: bool,
+    unavailable_reason: Option<String>,
+}
+
+impl InstallAvailability {
+    fn available() -> Self {
+        Self {
+            can_install: true,
+            unavailable_reason: None,
+        }
+    }
+
+    fn unavailable(reason: impl Into<String>) -> Self {
+        Self {
+            can_install: false,
+            unavailable_reason: Some(reason.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManualDownloadPlatform {
+    MacOs,
+    Windows,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ManualDownload {
+    url: String,
+    label: String,
 }
 
 pub async fn check_for_update(
@@ -142,12 +180,34 @@ pub async fn install_and_relaunch(
 }
 
 fn select_update(releases: Vec<GitHubRelease>, current_version: &str) -> Option<AppUpdateInfo> {
+    select_update_with_install_availability(
+        releases,
+        current_version,
+        current_install_availability(),
+        current_manual_download_platform(),
+    )
+}
+
+fn select_update_with_install_availability(
+    releases: Vec<GitHubRelease>,
+    current_version: &str,
+    install_availability: InstallAvailability,
+    platform: ManualDownloadPlatform,
+) -> Option<AppUpdateInfo> {
     let current = parse_version(current_version)?;
 
     releases
         .into_iter()
         .filter(|release| !release.draft && !release.prerelease)
-        .filter_map(|release| update_info_from_release(release, &current, current_version))
+        .filter_map(|release| {
+            update_info_from_release(
+                release,
+                &current,
+                current_version,
+                &install_availability,
+                platform,
+            )
+        })
         .max_by(|left, right| {
             parse_version(&left.version)
                 .cmp(&parse_version(&right.version))
@@ -159,6 +219,8 @@ fn update_info_from_release(
     release: GitHubRelease,
     current: &Version,
     current_version: &str,
+    install_availability: &InstallAvailability,
+    platform: ManualDownloadPlatform,
 ) -> Option<AppUpdateInfo> {
     let version = parse_version(&release.tag_name)?;
     if version <= *current {
@@ -171,6 +233,12 @@ fn update_info_from_release(
         .find(|asset| asset.name == UPDATE_MANIFEST_ASSET)
         .map(|asset| asset.browser_download_url.clone())?;
 
+    let manual_download = if install_availability.can_install {
+        None
+    } else {
+        Some(manual_download_for_release(&release, platform))
+    };
+
     Some(AppUpdateInfo {
         version: version.to_string(),
         current_version: current_version.to_string(),
@@ -179,8 +247,15 @@ fn update_info_from_release(
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| release.tag_name.clone()),
         release_page_url: release.html_url,
-        can_install: has_update_public_key(),
+        can_install: install_availability.can_install,
         update_json_url: Some(update_json_url),
+        manual_download_url: manual_download
+            .as_ref()
+            .map(|download| download.url.clone()),
+        manual_download_label: manual_download
+            .as_ref()
+            .map(|download| download.label.clone()),
+        install_unavailable_reason: install_availability.unavailable_reason.clone(),
         published_at: release.published_at,
         body: release.body,
     })
@@ -191,8 +266,62 @@ fn parse_version(value: &str) -> Option<Version> {
     Version::parse(normalized).ok()
 }
 
-fn has_update_public_key() -> bool {
-    update_public_key().is_ok()
+fn current_install_availability() -> InstallAvailability {
+    match update_public_key() {
+        Ok(_) => InstallAvailability::available(),
+        Err(reason) => InstallAvailability::unavailable(reason),
+    }
+}
+
+fn current_manual_download_platform() -> ManualDownloadPlatform {
+    #[cfg(target_os = "macos")]
+    {
+        return ManualDownloadPlatform::MacOs;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return ManualDownloadPlatform::Windows;
+    }
+
+    #[allow(unreachable_code)]
+    ManualDownloadPlatform::Other
+}
+
+fn manual_download_for_release(
+    release: &GitHubRelease,
+    platform: ManualDownloadPlatform,
+) -> ManualDownload {
+    let asset = match platform {
+        ManualDownloadPlatform::MacOs => release
+            .assets
+            .iter()
+            .find(|asset| asset.name.ends_with(".dmg"))
+            .map(|asset| ManualDownload {
+                url: asset.browser_download_url.clone(),
+                label: "Download macOS installer".to_string(),
+            }),
+        ManualDownloadPlatform::Windows => release
+            .assets
+            .iter()
+            .find(|asset| asset.name.ends_with(".exe"))
+            .or_else(|| {
+                release
+                    .assets
+                    .iter()
+                    .find(|asset| asset.name.ends_with(".msi"))
+            })
+            .map(|asset| ManualDownload {
+                url: asset.browser_download_url.clone(),
+                label: "Download Windows installer".to_string(),
+            }),
+        ManualDownloadPlatform::Other => None,
+    };
+
+    asset.unwrap_or_else(|| ManualDownload {
+        url: release.html_url.clone(),
+        label: "Open release page".to_string(),
+    })
 }
 
 fn dev_update_enabled() -> bool {
@@ -224,6 +353,9 @@ fn dev_update_info(current_version: &str) -> AppUpdateInfo {
         title: "MCPViews development update".to_string(),
         release_page_url: "https://github.com/DeeJanuz/mcpviews/releases".to_string(),
         update_json_url: Some(DEV_UPDATE_MANIFEST_URL.to_string()),
+        manual_download_url: None,
+        manual_download_label: None,
+        install_unavailable_reason: None,
         published_at: None,
         body: Some("Development-only mock update generated by MCPVIEWS_DEV_UPDATE.".to_string()),
         can_install: true,
@@ -374,6 +506,107 @@ mod tests {
             selected.update_json_url.as_deref(),
             Some("https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.5/latest.json")
         );
+    }
+
+    #[test]
+    fn includes_macos_manual_download_when_install_key_is_missing() {
+        let selected = select_update_with_install_availability(
+            vec![release(
+                "v0.2.7",
+                false,
+                vec![
+                    "latest.json",
+                    "MCPViews.app.tar.gz",
+                    "MCPViews_0.2.7_aarch64.dmg",
+                ],
+            )],
+            "0.2.6",
+            InstallAvailability::unavailable("missing updater key"),
+            ManualDownloadPlatform::MacOs,
+        )
+        .expect("expected an update");
+
+        assert!(!selected.can_install);
+        assert_eq!(
+            selected.manual_download_url.as_deref(),
+            Some("https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.7/MCPViews_0.2.7_aarch64.dmg")
+        );
+        assert_eq!(
+            selected.manual_download_label.as_deref(),
+            Some("Download macOS installer")
+        );
+        assert_eq!(
+            selected.install_unavailable_reason.as_deref(),
+            Some("missing updater key")
+        );
+    }
+
+    #[test]
+    fn prefers_windows_exe_manual_download_over_msi() {
+        let selected = select_update_with_install_availability(
+            vec![release(
+                "v0.2.7",
+                false,
+                vec![
+                    "latest.json",
+                    "MCPViews_0.2.7_x64_en-US.msi",
+                    "MCPViews_0.2.7_x64-setup.exe",
+                ],
+            )],
+            "0.2.6",
+            InstallAvailability::unavailable("missing updater key"),
+            ManualDownloadPlatform::Windows,
+        )
+        .expect("expected an update");
+
+        assert_eq!(
+            selected.manual_download_url.as_deref(),
+            Some("https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.7/MCPViews_0.2.7_x64-setup.exe")
+        );
+        assert_eq!(
+            selected.manual_download_label.as_deref(),
+            Some("Download Windows installer")
+        );
+    }
+
+    #[test]
+    fn falls_back_to_release_page_when_platform_installer_is_missing() {
+        let selected = select_update_with_install_availability(
+            vec![release("v0.2.7", false, vec!["latest.json"])],
+            "0.2.6",
+            InstallAvailability::unavailable("missing updater key"),
+            ManualDownloadPlatform::Other,
+        )
+        .expect("expected an update");
+
+        assert_eq!(
+            selected.manual_download_url.as_deref(),
+            Some("https://github.com/DeeJanuz/mcpviews/releases/tag/v0.2.7")
+        );
+        assert_eq!(
+            selected.manual_download_label.as_deref(),
+            Some("Open release page")
+        );
+    }
+
+    #[test]
+    fn installable_updates_do_not_include_manual_fallback_fields() {
+        let selected = select_update_with_install_availability(
+            vec![release(
+                "v0.2.7",
+                false,
+                vec!["latest.json", "MCPViews_0.2.7_aarch64.dmg"],
+            )],
+            "0.2.6",
+            InstallAvailability::available(),
+            ManualDownloadPlatform::MacOs,
+        )
+        .expect("expected an update");
+
+        assert!(selected.can_install);
+        assert!(selected.manual_download_url.is_none());
+        assert!(selected.manual_download_label.is_none());
+        assert!(selected.install_unavailable_reason.is_none());
     }
 
     #[test]

@@ -1,4 +1,6 @@
-use crate::{cache_dir, config_path, PluginManifest, RegistrySource, RemoteRegistry, RegistryEntry};
+use crate::{
+    cache_dir, config_path, PluginManifest, RegistryEntry, RegistrySource, RemoteRegistry,
+};
 
 pub const DEFAULT_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/DeeJanuz/mcpviews/master/registry/registry.json";
@@ -22,19 +24,24 @@ pub async fn fetch_registry(
     client: &reqwest::Client,
     url: &str,
 ) -> Result<Vec<RegistryEntry>, String> {
+    fetch_registry_with_force(client, url, false).await
+}
+
+pub async fn fetch_registry_with_force(
+    client: &reqwest::Client,
+    url: &str,
+    force_refresh: bool,
+) -> Result<Vec<RegistryEntry>, String> {
     // Check cache first
     let cache_path = cache_dir().join("registry.json");
-    if let Ok(metadata) = std::fs::metadata(&cache_path) {
-        if let Ok(modified) = metadata.modified() {
-            if modified
-                .elapsed()
-                .map(|d| d.as_secs())
-                .unwrap_or(u64::MAX)
-                < CACHE_TTL_SECS
-            {
-                if let Ok(content) = std::fs::read_to_string(&cache_path) {
-                    if let Ok(registry) = serde_json::from_str::<RemoteRegistry>(&content) {
-                        return Ok(registry.plugins);
+    if !force_refresh {
+        if let Ok(metadata) = std::fs::metadata(&cache_path) {
+            if let Ok(modified) = metadata.modified() {
+                if modified.elapsed().map(|d| d.as_secs()).unwrap_or(u64::MAX) < CACHE_TTL_SECS {
+                    if let Ok(content) = std::fs::read_to_string(&cache_path) {
+                        if let Ok(registry) = serde_json::from_str::<RemoteRegistry>(&content) {
+                            return Ok(registry.plugins);
+                        }
                     }
                 }
             }
@@ -57,8 +64,8 @@ pub async fn fetch_registry(
         .await
         .map_err(|e| format!("Failed to read registry response: {}", e))?;
 
-    let registry: RemoteRegistry = serde_json::from_str(&body)
-        .map_err(|e| format!("Failed to parse registry: {}", e))?;
+    let registry: RemoteRegistry =
+        serde_json::from_str(&body).map_err(|e| format!("Failed to parse registry: {}", e))?;
 
     // Write to cache
     let _ = std::fs::create_dir_all(cache_dir());
@@ -106,8 +113,8 @@ pub fn save_registry_sources(sources: &[RegistrySource]) -> Result<(), String> {
         serde_json::json!({})
     };
 
-    config["registry_sources"] = serde_json::to_value(sources)
-        .map_err(|e| format!("Failed to serialize sources: {}", e))?;
+    config["registry_sources"] =
+        serde_json::to_value(sources).map_err(|e| format!("Failed to serialize sources: {}", e))?;
 
     // Remove legacy registry_url if present
     if let Some(obj) = config.as_object_mut() {
@@ -129,9 +136,16 @@ pub async fn fetch_all_registries(
     client: &reqwest::Client,
     sources: &[RegistrySource],
 ) -> Result<Vec<RegistryEntry>, String> {
+    fetch_all_registries_with_force(client, sources, false).await
+}
+
+pub async fn fetch_all_registries_with_force(
+    client: &reqwest::Client,
+    sources: &[RegistrySource],
+    force_refresh: bool,
+) -> Result<Vec<RegistryEntry>, String> {
     let mut all_entries: Vec<RegistryEntry> = Vec::new();
-    let mut seen_names: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut seen_names: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut any_success = false;
 
     for source in sources {
@@ -140,7 +154,7 @@ pub async fn fetch_all_registries(
         }
 
         // Use per-source cache file
-        match fetch_registry_with_cache(client, &source.url, &source.name).await {
+        match fetch_registry_with_cache(client, &source.url, &source.name, force_refresh).await {
             Ok(entries) => {
                 any_success = true;
                 for entry in entries {
@@ -166,8 +180,9 @@ pub async fn fetch_all_registries(
         // All remote sources failed — fall back to bundled registry
         eprintln!("[mcpviews] All remote registry sources failed, using bundled registry");
         let bundled = include_str!("bundled_registry.json");
-        let registry: RemoteRegistry = serde_json::from_str(bundled)
-            .expect("bundled_registry.json is compiled-in and must always parse; this is a build-time bug");
+        let registry: RemoteRegistry = serde_json::from_str(bundled).expect(
+            "bundled_registry.json is compiled-in and must always parse; this is a build-time bug",
+        );
         return Ok(registry.plugins);
     }
 
@@ -182,6 +197,7 @@ async fn fetch_registry_with_cache(
     client: &reqwest::Client,
     url: &str,
     source_name: &str,
+    force_refresh: bool,
 ) -> Result<Vec<RegistryEntry>, String> {
     // Per-source cache file based on a simple hash of the URL
     let hash = url
@@ -190,17 +206,14 @@ async fn fetch_registry_with_cache(
     let cache_path = cache_dir().join(format!("registry-{:x}.json", hash));
 
     // Check cache
-    if let Ok(metadata) = std::fs::metadata(&cache_path) {
-        if let Ok(modified) = metadata.modified() {
-            if modified
-                .elapsed()
-                .map(|d| d.as_secs())
-                .unwrap_or(u64::MAX)
-                < CACHE_TTL_SECS
-            {
-                if let Ok(content) = std::fs::read_to_string(&cache_path) {
-                    if let Ok(registry) = serde_json::from_str::<RemoteRegistry>(&content) {
-                        return Ok(registry.plugins);
+    if !force_refresh {
+        if let Ok(metadata) = std::fs::metadata(&cache_path) {
+            if let Ok(modified) = metadata.modified() {
+                if modified.elapsed().map(|d| d.as_secs()).unwrap_or(u64::MAX) < CACHE_TTL_SECS {
+                    if let Ok(content) = std::fs::read_to_string(&cache_path) {
+                        if let Ok(registry) = serde_json::from_str::<RemoteRegistry>(&content) {
+                            return Ok(registry.plugins);
+                        }
                     }
                 }
             }
@@ -214,11 +227,7 @@ async fn fetch_registry_with_cache(
         .await
         .map_err(|e| format!("Failed to fetch '{}': {}", source_name, e))?;
     if !resp.status().is_success() {
-        return Err(format!(
-            "'{}' returned HTTP {}",
-            source_name,
-            resp.status()
-        ));
+        return Err(format!("'{}' returned HTTP {}", source_name, resp.status()));
     }
     let body = resp
         .text()
@@ -268,10 +277,7 @@ pub async fn resolve_manifest_urls(
                         entry
                     }
                     Err(e) => {
-                        eprintln!(
-                            "[mcpviews] Failed to fetch manifest from '{}': {}",
-                            url, e
-                        );
+                        eprintln!("[mcpviews] Failed to fetch manifest from '{}': {}", url, e);
                         entry
                     }
                 }
@@ -368,7 +374,8 @@ mod tests {
     async fn test_resolve_manifest_urls_fetch_failure_falls_back() {
         let client = reqwest::Client::new();
         let mut entry = test_registry_entry("test-plugin");
-        entry.manifest_url = Some("https://invalid.example.com/nonexistent/manifest.json".to_string());
+        entry.manifest_url =
+            Some("https://invalid.example.com/nonexistent/manifest.json".to_string());
 
         let entries = vec![entry];
         let resolved = resolve_manifest_urls(&client, entries).await;

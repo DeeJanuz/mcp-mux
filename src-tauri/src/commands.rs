@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex as TokioMutex;
-use tauri::{Emitter, State};
 
 use mcpviews_shared::{PluginAuth, PluginInfo, PluginManifest, RegistryEntry, RegistrySource};
 
@@ -18,6 +19,60 @@ pub struct SignedFileBytes {
     content_base64: String,
     content_type: Option<String>,
     content_disposition: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct GithubReleaseAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+#[derive(serde::Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    html_url: Option<String>,
+    prerelease: bool,
+    draft: bool,
+    published_at: Option<String>,
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginPrereleaseInfo {
+    name: String,
+    version: String,
+    tag: String,
+    download_url: String,
+    release_url: Option<String>,
+    installed_version: Option<String>,
+    stable_version: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAppViewResult {
+    label: String,
+    url: String,
+    created: bool,
+}
+
+#[derive(serde::Deserialize, Debug, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAppPanelBounds {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    visible: Option<bool>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAppPanelUpdateResult {
+    label: String,
+    updated: bool,
+    visible: bool,
 }
 
 #[tauri::command]
@@ -144,11 +199,8 @@ pub async fn submit_decision(
         suggestion_decisions,
         table_decisions,
     );
-    let backend_callback = resolve_local_review_decision(
-        state.inner(),
-        &session_id,
-        review_decision.clone(),
-    );
+    let backend_callback =
+        resolve_local_review_decision(state.inner(), &session_id, review_decision.clone());
 
     if let Some(callback) = backend_callback {
         post_backend_review_callback(state.http_client.clone(), callback, &review_decision).await?;
@@ -210,8 +262,10 @@ fn open_system_browser(url: &str) -> Result<(), String> {
         .spawn();
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let result: Result<std::process::Child, std::io::Error> =
-        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Unsupported platform"));
+    let result: Result<std::process::Child, std::io::Error> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Unsupported platform",
+    ));
 
     result.map_err(|e| format!("Failed to open browser: {}", e))?;
     Ok(())
@@ -226,6 +280,367 @@ pub fn open_external_url(url: String) -> Result<(), String> {
     }
 }
 
+fn origin_for_url(url: &url::Url) -> Option<String> {
+    if !matches!(url.scheme(), "http" | "https") || url.authority().is_empty() {
+        return None;
+    }
+    Some(format!("{}://{}", url.scheme(), url.authority()))
+}
+
+fn is_url_allowed_for_plugin(url: &url::Url, allowed_origins: &[String]) -> bool {
+    let Some(origin) = origin_for_url(url) else {
+        return false;
+    };
+    allowed_origins
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(&origin))
+}
+
+fn parse_native_app_url(
+    plugin_name: &str,
+    raw_url: &str,
+    allowed_origins: &[String],
+) -> Result<url::Url, String> {
+    let parsed = url::Url::parse(raw_url).map_err(|err| format!("Invalid app URL: {}", err))?;
+    if origin_for_url(&parsed).is_none() {
+        return Err(format!(
+            "Unsupported app URL protocol for plugin '{}': {}",
+            plugin_name,
+            parsed.scheme()
+        ));
+    }
+    if !is_url_allowed_for_plugin(&parsed, allowed_origins) {
+        let origin = origin_for_url(&parsed).unwrap_or_else(|| parsed.as_str().to_string());
+        return Err(format!(
+            "App URL origin '{}' is not declared in frame_origins for plugin '{}'.",
+            origin, plugin_name
+        ));
+    }
+    Ok(parsed)
+}
+
+fn sanitized_window_label_segment(value: &str) -> String {
+    let mut segment = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            segment.push(ch.to_ascii_lowercase());
+        } else if ch == '-' || ch == '_' {
+            segment.push('-');
+        } else if ch.is_ascii_whitespace() || ch == '/' || ch == ':' || ch == '.' {
+            segment.push('-');
+        }
+        if segment.len() >= 48 {
+            break;
+        }
+    }
+    let segment = segment.trim_matches('-').to_string();
+    if segment.is_empty() {
+        "app".to_string()
+    } else {
+        segment
+    }
+}
+
+fn native_app_window_label(plugin_name: &str, label: Option<&str>, fallback: &str) -> String {
+    native_app_label("plugin-app", plugin_name, label, fallback)
+}
+
+fn native_app_panel_label(plugin_name: &str, label: Option<&str>, fallback: &str) -> String {
+    native_app_label("plugin-panel", plugin_name, label, fallback)
+}
+
+fn native_app_label(
+    prefix: &str,
+    plugin_name: &str,
+    label: Option<&str>,
+    fallback: &str,
+) -> String {
+    let label_seed = label
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    plugin_name.hash(&mut hasher);
+    label_seed.hash(&mut hasher);
+    let hash = format!("{:x}", hasher.finish());
+    let hash_suffix = hash.get(0..8).unwrap_or(&hash);
+    format!(
+        "{}-{}-{}-{}",
+        prefix,
+        sanitized_window_label_segment(plugin_name),
+        sanitized_window_label_segment(label_seed),
+        hash_suffix
+    )
+}
+
+fn native_app_window_title(title: Option<&str>, plugin_name: &str) -> String {
+    title
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(96).collect())
+        .unwrap_or_else(|| format!("{} App", plugin_name))
+}
+
+fn sanitize_native_app_panel_bounds(
+    bounds: NativeAppPanelBounds,
+) -> Result<NativeAppPanelBounds, String> {
+    if !bounds.x.is_finite()
+        || !bounds.y.is_finite()
+        || !bounds.width.is_finite()
+        || !bounds.height.is_finite()
+    {
+        return Err("Native app panel bounds must be finite numbers.".to_string());
+    }
+
+    let x = bounds.x.clamp(-10_000.0, 10_000.0);
+    let y = bounds.y.clamp(-10_000.0, 10_000.0);
+    let width = bounds.width.clamp(1.0, 10_000.0);
+    let height = bounds.height.clamp(1.0, 10_000.0);
+
+    Ok(NativeAppPanelBounds {
+        x,
+        y,
+        width,
+        height,
+        visible: bounds.visible,
+    })
+}
+
+fn apply_native_app_panel_bounds<R: tauri::Runtime>(
+    webview: &tauri::Webview<R>,
+    bounds: NativeAppPanelBounds,
+) -> Result<bool, String> {
+    let bounds = sanitize_native_app_panel_bounds(bounds)?;
+    let visible = bounds.visible.unwrap_or(true) && bounds.width >= 2.0 && bounds.height >= 2.0;
+
+    webview
+        .set_position(tauri::LogicalPosition::new(bounds.x, bounds.y))
+        .map_err(|err| format!("Failed to position native app panel: {}", err))?;
+    webview
+        .set_size(tauri::LogicalSize::new(bounds.width, bounds.height))
+        .map_err(|err| format!("Failed to resize native app panel: {}", err))?;
+
+    if visible {
+        webview
+            .show()
+            .map_err(|err| format!("Failed to show native app panel: {}", err))?;
+    } else {
+        webview
+            .hide()
+            .map_err(|err| format!("Failed to hide native app panel: {}", err))?;
+    }
+
+    Ok(visible)
+}
+
+#[tauri::command]
+pub fn open_native_app_view(
+    plugin_name: String,
+    url: String,
+    title: Option<String>,
+    label: Option<String>,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<NativeAppViewResult, String> {
+    let plugin_name = plugin_name.trim();
+    if plugin_name.is_empty() {
+        return Err("Plugin name is required.".to_string());
+    }
+
+    let allowed_origins = state.plugin_frame_origins_for(plugin_name);
+    if allowed_origins.is_empty() {
+        return Err(format!(
+            "Plugin '{}' has no frame_origins app allowlist.",
+            plugin_name
+        ));
+    }
+
+    let parsed = parse_native_app_url(plugin_name, &url, &allowed_origins)?;
+    let window_label = native_app_window_label(plugin_name, label.as_deref(), parsed.as_str());
+    let window_title = native_app_window_title(title.as_deref(), plugin_name);
+
+    if let Some(window) = app_handle.get_webview_window(&window_label) {
+        window
+            .navigate(parsed.clone())
+            .map_err(|err| format!("Failed to navigate native app view: {}", err))?;
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(NativeAppViewResult {
+            label: window_label,
+            url: parsed.to_string(),
+            created: false,
+        });
+    }
+
+    let navigation_allowed_origins = allowed_origins.clone();
+    let navigation_plugin_name = plugin_name.to_string();
+    tauri::WebviewWindowBuilder::new(
+        &app_handle,
+        &window_label,
+        tauri::WebviewUrl::External(parsed.clone()),
+    )
+    .title(window_title)
+    .inner_size(1280.0, 900.0)
+    .resizable(true)
+    .theme(Some(tauri::Theme::Light))
+    .on_navigation(move |navigation_url| {
+        let allowed = is_url_allowed_for_plugin(navigation_url, &navigation_allowed_origins);
+        if !allowed {
+            eprintln!(
+                "[mcpviews] Blocked native plugin app navigation for {}: {}",
+                navigation_plugin_name, navigation_url
+            );
+        }
+        allowed
+    })
+    .build()
+    .map_err(|err| format!("Failed to open native app view: {}", err))?;
+
+    Ok(NativeAppViewResult {
+        label: window_label,
+        url: parsed.to_string(),
+        created: true,
+    })
+}
+
+#[tauri::command]
+pub fn mount_native_app_panel(
+    plugin_name: String,
+    url: String,
+    title: Option<String>,
+    label: Option<String>,
+    bounds: NativeAppPanelBounds,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<NativeAppViewResult, String> {
+    let plugin_name = plugin_name.trim();
+    if plugin_name.is_empty() {
+        return Err("Plugin name is required.".to_string());
+    }
+
+    let allowed_origins = state.plugin_frame_origins_for(plugin_name);
+    if allowed_origins.is_empty() {
+        return Err(format!(
+            "Plugin '{}' has no frame_origins app allowlist.",
+            plugin_name
+        ));
+    }
+
+    let parsed = parse_native_app_url(plugin_name, &url, &allowed_origins)?;
+    let panel_label = native_app_panel_label(plugin_name, label.as_deref(), parsed.as_str());
+
+    if let Some(webview) = app_handle.get_webview(&panel_label) {
+        webview
+            .navigate(parsed.clone())
+            .map_err(|err| format!("Failed to navigate native app panel: {}", err))?;
+        apply_native_app_panel_bounds(&webview, bounds)?;
+        return Ok(NativeAppViewResult {
+            label: panel_label,
+            url: parsed.to_string(),
+            created: false,
+        });
+    }
+
+    let main_window = app_handle
+        .get_webview_window("main")
+        .ok_or_else(|| "Main MCPViews window is not available.".to_string())?;
+
+    let navigation_allowed_origins = allowed_origins.clone();
+    let navigation_plugin_name = plugin_name.to_string();
+    let webview_builder = tauri::webview::WebviewBuilder::new(
+        &panel_label,
+        tauri::WebviewUrl::External(parsed.clone()),
+    )
+    .accept_first_mouse(true)
+    .on_navigation(move |navigation_url| {
+        let allowed = is_url_allowed_for_plugin(navigation_url, &navigation_allowed_origins);
+        if !allowed {
+            eprintln!(
+                "[mcpviews] Blocked native plugin app panel navigation for {}: {}",
+                navigation_plugin_name, navigation_url
+            );
+        }
+        allowed
+    });
+
+    let bounds = sanitize_native_app_panel_bounds(bounds)?;
+    let webview = main_window
+        .as_ref()
+        .window()
+        .add_child(
+            webview_builder,
+            tauri::LogicalPosition::new(bounds.x, bounds.y),
+            tauri::LogicalSize::new(bounds.width, bounds.height),
+        )
+        .map_err(|err| {
+            format!(
+                "Failed to mount native app panel '{}': {}",
+                native_app_window_title(title.as_deref(), plugin_name),
+                err
+            )
+        })?;
+    apply_native_app_panel_bounds(&webview, bounds)?;
+
+    Ok(NativeAppViewResult {
+        label: panel_label,
+        url: parsed.to_string(),
+        created: true,
+    })
+}
+
+#[tauri::command]
+pub fn update_native_app_panel_bounds(
+    label: String,
+    bounds: NativeAppPanelBounds,
+    app_handle: tauri::AppHandle,
+) -> Result<NativeAppPanelUpdateResult, String> {
+    let label = label.trim();
+    if label.is_empty() {
+        return Err("Native app panel label is required.".to_string());
+    }
+    let Some(webview) = app_handle.get_webview(label) else {
+        return Ok(NativeAppPanelUpdateResult {
+            label: label.to_string(),
+            updated: false,
+            visible: false,
+        });
+    };
+
+    let visible = apply_native_app_panel_bounds(&webview, bounds)?;
+    Ok(NativeAppPanelUpdateResult {
+        label: label.to_string(),
+        updated: true,
+        visible,
+    })
+}
+
+#[tauri::command]
+pub fn close_native_app_panel(
+    label: String,
+    app_handle: tauri::AppHandle,
+) -> Result<NativeAppPanelUpdateResult, String> {
+    let label = label.trim();
+    if label.is_empty() {
+        return Err("Native app panel label is required.".to_string());
+    }
+    let Some(webview) = app_handle.get_webview(label) else {
+        return Ok(NativeAppPanelUpdateResult {
+            label: label.to_string(),
+            updated: false,
+            visible: false,
+        });
+    };
+
+    webview
+        .close()
+        .map_err(|err| format!("Failed to close native app panel: {}", err))?;
+    Ok(NativeAppPanelUpdateResult {
+        label: label.to_string(),
+        updated: true,
+        visible: false,
+    })
+}
+
 #[tauri::command]
 pub fn list_plugins(state: State<'_, Arc<AppState>>) -> Vec<PluginInfo> {
     let registry = state.plugin_registry.lock().unwrap();
@@ -238,8 +653,8 @@ pub fn install_plugin(
     manifest_json: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    let manifest: PluginManifest = serde_json::from_str(&manifest_json)
-        .map_err(|e| format!("Invalid manifest: {}", e))?;
+    let manifest: PluginManifest =
+        serde_json::from_str(&manifest_json).map_err(|e| format!("Invalid manifest: {}", e))?;
     let mut registry = state.plugin_registry.lock().unwrap();
     registry.add_plugin(manifest)?;
     drop(registry);
@@ -263,10 +678,10 @@ pub fn install_plugin_from_file(
     path: String,
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
-    let manifest: PluginManifest = serde_json::from_str(&content)
-        .map_err(|e| format!("Invalid manifest: {}", e))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let manifest: PluginManifest =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid manifest: {}", e))?;
     let mut registry = state.plugin_registry.lock().unwrap();
     registry.add_plugin(manifest)?;
     drop(registry);
@@ -277,16 +692,19 @@ pub fn install_plugin_from_file(
 #[tauri::command]
 pub async fn fetch_registry(
     registry_url: Option<String>,
+    force_refresh: Option<bool>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<Vec<RegistryEntry>, String> {
     let client = state.http_client.clone();
+    let force_refresh = force_refresh.unwrap_or(false);
     let entries = if let Some(url) = registry_url {
         // Specific URL provided (e.g. from legacy settings)
-        crate::registry::fetch_registry(&client, &url).await?
+        crate::registry::fetch_registry_with_force(&client, &url, force_refresh).await?
     } else {
         // Use all configured sources
         let sources = mcpviews_shared::registry::get_registry_sources();
-        mcpviews_shared::registry::fetch_all_registries(&client, &sources).await?
+        mcpviews_shared::registry::fetch_all_registries_with_force(&client, &sources, force_refresh)
+            .await?
     };
 
     // Cache the latest registry entries
@@ -386,6 +804,38 @@ pub async fn start_plugin_auth(
 }
 
 #[tauri::command]
+pub async fn send_plugin_email_code(
+    plugin_name: String,
+    email: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::plugin_email_auth::send_email_code(&plugin_name, &email, state.inner()).await
+}
+
+#[tauri::command]
+pub async fn verify_plugin_email_code(
+    plugin_name: String,
+    email: String,
+    code: String,
+    organization_id: Option<String>,
+    organization_name: Option<String>,
+    store_plugin_names: Option<Vec<String>>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    let plugin_names = store_plugin_names.unwrap_or_else(|| vec![plugin_name.clone()]);
+    crate::plugin_email_auth::verify_email_code(
+        &plugin_name,
+        &plugin_names,
+        &email,
+        &code,
+        organization_id.as_deref(),
+        organization_name.as_deref(),
+        state.inner(),
+    )
+    .await
+}
+
+#[tauri::command]
 pub async fn get_plugin_auth_header(
     plugin_name: String,
     org_id: Option<String>,
@@ -429,14 +879,23 @@ pub async fn get_plugin_auth_header(
 }
 
 #[tauri::command]
-pub fn store_plugin_token(plugin_name: String, token: String, org_id: Option<String>) -> Result<(), String> {
+pub fn store_plugin_token(
+    plugin_name: String,
+    token: String,
+    org_id: Option<String>,
+) -> Result<(), String> {
     if let Some(ref oid) = org_id {
         let stored = mcpviews_shared::token_store::StoredToken {
             access_token: token,
             refresh_token: None,
             expires_at: None,
         };
-        mcpviews_shared::token_store::store_token_for_org(&mcpviews_shared::auth_dir(), &plugin_name, oid, &stored)
+        mcpviews_shared::token_store::store_token_for_org(
+            &mcpviews_shared::auth_dir(),
+            &plugin_name,
+            oid,
+            &stored,
+        )
     } else {
         crate::auth::store_api_key(&plugin_name, &token)
     }
@@ -448,8 +907,8 @@ pub async fn install_plugin_from_registry(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let entry: RegistryEntry = serde_json::from_str(&entry_json)
-        .map_err(|e| format!("Invalid registry entry: {}", e))?;
+    let entry: RegistryEntry =
+        serde_json::from_str(&entry_json).map_err(|e| format!("Invalid registry entry: {}", e))?;
 
     state.install_or_update_from_entry(&entry).await?;
 
@@ -532,9 +991,7 @@ pub fn get_first_party_ai_config() -> serde_json::Value {
 }
 
 #[tauri::command]
-pub async fn start_first_party_ai_auth(
-    state: State<'_, Arc<AppState>>,
-) -> Result<String, String> {
+pub async fn start_first_party_ai_auth(state: State<'_, Arc<AppState>>) -> Result<String, String> {
     crate::first_party_ai::start_auth(state.inner()).await
 }
 
@@ -586,9 +1043,7 @@ pub async fn verify_first_party_ai_magic_link(
 }
 
 #[tauri::command]
-pub async fn clear_first_party_ai_auth(
-    state: State<'_, Arc<AppState>>,
-) -> Result<(), String> {
+pub async fn clear_first_party_ai_auth(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     crate::first_party_ai::clear_auth(state.inner()).await
 }
 
@@ -612,7 +1067,8 @@ pub async fn first_party_ai_relay_request(
     relay_token: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<serde_json::Value, String> {
-    crate::desktop_relay::relay_request(state.inner(), &method, &path, body, query, relay_token).await
+    crate::desktop_relay::relay_request(state.inner(), &method, &path, body, query, relay_token)
+        .await
 }
 
 #[tauri::command]
@@ -896,6 +1352,201 @@ pub async fn update_plugin(
 }
 
 #[tauri::command]
+pub async fn check_plugin_prerelease(
+    name: String,
+    state: State<'_, Arc<AppState>>,
+) -> Result<Option<PluginPrereleaseInfo>, String> {
+    let entry = registry_entry_for_plugin(&name, &state)
+        .ok_or_else(|| format!("Plugin '{}' not found in registry", name))?;
+    let Some(repo) = github_repo_slug(&entry) else {
+        return Ok(None);
+    };
+
+    let Some(release) = latest_release_for_repo(&state.http_client, &repo, true).await? else {
+        return Ok(None);
+    };
+    let Some(asset) = release_asset_for_plugin(&release, &entry.name) else {
+        return Ok(None);
+    };
+    let version = release_version(&release);
+    let stable_version = latest_release_for_repo(&state.http_client, &repo, false)
+        .await?
+        .map(|release| release_version(&release));
+    let installed_version = {
+        let registry = state.plugin_registry.lock().unwrap();
+        registry
+            .manifests
+            .iter()
+            .find(|m| m.name == entry.name)
+            .map(|m| m.version.clone())
+    };
+
+    Ok(Some(PluginPrereleaseInfo {
+        name: entry.name,
+        version,
+        tag: release.tag_name.clone(),
+        download_url: asset.browser_download_url.clone(),
+        release_url: release.html_url.clone(),
+        installed_version,
+        stable_version,
+    }))
+}
+
+#[tauri::command]
+pub async fn install_plugin_prerelease(
+    name: String,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let info = check_plugin_prerelease(name.clone(), state.clone()).await?;
+    let info = info.ok_or_else(|| format!("No prerelease package found for '{}'", name))?;
+    let entry = registry_entry_for_plugin(&name, &state)
+        .ok_or_else(|| format!("Plugin '{}' not found in registry", name))?;
+    let mut prerelease_entry = entry.clone();
+    prerelease_entry.version = info.version;
+    prerelease_entry.download_url = Some(info.download_url.clone());
+    prerelease_entry.manifest.version = prerelease_entry.version.clone();
+    prerelease_entry.manifest.download_url = Some(info.download_url);
+
+    state
+        .install_or_update_from_entry(&prerelease_entry)
+        .await?;
+    state.notify_tools_changed();
+    let _ = app_handle.emit("reload_renderers", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn rollback_plugin_to_stable(
+    name: String,
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let entry = registry_entry_for_plugin(&name, &state)
+        .ok_or_else(|| format!("Plugin '{}' not found in registry", name))?;
+    let repo = github_repo_slug(&entry)
+        .ok_or_else(|| format!("Plugin '{}' does not have a GitHub release source", name))?;
+    let release = latest_release_for_repo(&state.http_client, &repo, false)
+        .await?
+        .ok_or_else(|| format!("No stable release found for '{}'", name))?;
+    let asset = release_asset_for_plugin(&release, &entry.name)
+        .ok_or_else(|| format!("No stable release package found for '{}'", name))?;
+    let stable_version = release_version(&release);
+
+    let mut stable_entry = entry.clone();
+    stable_entry.version = stable_version.clone();
+    stable_entry.download_url = Some(asset.browser_download_url.clone());
+    stable_entry.manifest.version = stable_version;
+    stable_entry.manifest.download_url = stable_entry.download_url.clone();
+
+    state.install_or_update_from_entry(&stable_entry).await?;
+    state.notify_tools_changed();
+    let _ = app_handle.emit("reload_renderers", ());
+    Ok(())
+}
+
+fn registry_entry_for_plugin(name: &str, state: &Arc<AppState>) -> Option<RegistryEntry> {
+    let cached = state.latest_registry.lock().unwrap();
+    cached.iter().find(|e| e.name == name).cloned()
+}
+
+fn github_repo_slug(entry: &RegistryEntry) -> Option<String> {
+    [
+        entry.manifest_url.as_deref(),
+        entry.homepage.as_deref(),
+        entry.download_url.as_deref(),
+        entry.manifest.download_url.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(github_repo_slug_from_url)
+}
+
+fn github_repo_slug_from_url(raw: &str) -> Option<String> {
+    let url = url::Url::parse(raw).ok()?;
+    let segments: Vec<_> = url.path_segments()?.collect();
+    match url.host_str()? {
+        "github.com" if segments.len() >= 2 => {
+            Some(format!("{}/{}", segments[0], trim_git_suffix(segments[1])))
+        }
+        "raw.githubusercontent.com" if segments.len() >= 2 => {
+            Some(format!("{}/{}", segments[0], trim_git_suffix(segments[1])))
+        }
+        "api.github.com" if segments.len() >= 4 && segments[0] == "repos" => {
+            Some(format!("{}/{}", segments[1], trim_git_suffix(segments[2])))
+        }
+        _ => None,
+    }
+}
+
+fn trim_git_suffix(repo: &str) -> String {
+    repo.strip_suffix(".git").unwrap_or(repo).to_string()
+}
+
+async fn latest_release_for_repo(
+    client: &reqwest::Client,
+    repo: &str,
+    prerelease: bool,
+) -> Result<Option<GithubRelease>, String> {
+    let url = format!("https://api.github.com/repos/{}/releases", repo);
+    let releases: Vec<GithubRelease> = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "MCPViews Plugin Manager")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to query GitHub releases: {}", e))?
+        .error_for_status()
+        .map_err(|e| format!("GitHub releases request failed: {}", e))?
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse GitHub releases: {}", e))?;
+
+    Ok(releases
+        .into_iter()
+        .filter(|release| release.prerelease == prerelease && !release.draft)
+        .max_by(compare_releases))
+}
+
+fn compare_releases(left: &GithubRelease, right: &GithubRelease) -> std::cmp::Ordering {
+    match (
+        semver::Version::parse(&release_version(left)),
+        semver::Version::parse(&release_version(right)),
+    ) {
+        (Ok(left_version), Ok(right_version)) => left_version.cmp(&right_version),
+        _ => left.published_at.cmp(&right.published_at),
+    }
+}
+
+fn release_version(release: &GithubRelease) -> String {
+    release
+        .tag_name
+        .strip_prefix('v')
+        .unwrap_or(&release.tag_name)
+        .to_string()
+}
+
+fn release_asset_for_plugin<'a>(
+    release: &'a GithubRelease,
+    plugin_name: &str,
+) -> Option<&'a GithubReleaseAsset> {
+    let normalized_plugin = plugin_name.replace('_', "-").to_ascii_lowercase();
+    release
+        .assets
+        .iter()
+        .filter(|asset| asset.name.ends_with(".zip"))
+        .max_by_key(|asset| {
+            let name = asset.name.to_ascii_lowercase();
+            if name.contains(&normalized_plugin) {
+                2
+            } else if name.contains("plugin") {
+                1
+            } else {
+                0
+            }
+        })
+}
+
+#[tauri::command]
 pub async fn save_file(
     app_handle: tauri::AppHandle,
     filename: String,
@@ -915,15 +1566,16 @@ pub async fn save_file(
             let _ = tx.send(path);
         });
 
-    let path = rx.await.map_err(|_| "Save dialog cancelled unexpectedly".to_string())?;
+    let path = rx
+        .await
+        .map_err(|_| "Save dialog cancelled unexpectedly".to_string())?;
 
     match path {
         Some(file_path) => {
             let p = file_path
                 .as_path()
                 .ok_or_else(|| "Save dialog returned a non-local path".to_string())?;
-            std::fs::write(p, &content)
-                .map_err(|e| format!("Failed to write file: {}", e))?;
+            std::fs::write(p, &content).map_err(|e| format!("Failed to write file: {}", e))?;
             Ok(true)
         }
         None => Ok(false), // user cancelled
@@ -953,15 +1605,16 @@ pub async fn save_binary_file(
             let _ = tx.send(path);
         });
 
-    let path = rx.await.map_err(|_| "Save dialog cancelled unexpectedly".to_string())?;
+    let path = rx
+        .await
+        .map_err(|_| "Save dialog cancelled unexpectedly".to_string())?;
 
     match path {
         Some(file_path) => {
             let p = file_path
                 .as_path()
                 .ok_or_else(|| "Save dialog returned a non-local path".to_string())?;
-            std::fs::write(p, &bytes)
-                .map_err(|e| format!("Failed to write file: {}", e))?;
+            std::fs::write(p, &bytes).map_err(|e| format!("Failed to write file: {}", e))?;
             Ok(true)
         }
         None => Ok(false),
@@ -981,6 +1634,8 @@ pub fn collect_standalone_renderers(
         .iter()
         .any(|manifest| manifest.name == CURRENT_PERSONA_STUDIO_PLUGIN);
     let mut results = Vec::new();
+    let mut plugin_positions: HashMap<String, usize> = HashMap::new();
+    let mut renderer_names_by_plugin: HashMap<String, HashSet<String>> = HashMap::new();
 
     for manifest in manifests {
         if current_persona_studio_installed && manifest.name == LEGACY_PERSONA_STUDIO_PLUGIN {
@@ -991,6 +1646,12 @@ pub fn collect_standalone_renderers(
             .renderer_definitions
             .iter()
             .filter(|def| def.standalone)
+            .filter(|def| {
+                renderer_names_by_plugin
+                    .entry(manifest.name.clone())
+                    .or_default()
+                    .insert(def.name.clone())
+            })
             .map(|def| {
                 serde_json::json!({
                     "name": def.name,
@@ -1002,17 +1663,30 @@ pub fn collect_standalone_renderers(
             .collect();
 
         if !standalone_renderers.is_empty() {
-            results.push(serde_json::json!({
-                "plugin": manifest.name,
-                "renderers": standalone_renderers,
-            }));
+            let position = match plugin_positions.get(&manifest.name) {
+                Some(position) => *position,
+                None => {
+                    results.push(serde_json::json!({
+                        "plugin": manifest.name,
+                        "renderers": [],
+                    }));
+                    let position = results.len() - 1;
+                    plugin_positions.insert(manifest.name.clone(), position);
+                    position
+                }
+            };
+            if let Some(renderers) = results[position]["renderers"].as_array_mut() {
+                renderers.extend(standalone_renderers);
+            }
         }
     }
     results
 }
 
 /// Collect invocable renderer definitions (those with invoke_schema) from plugin manifests.
-pub fn collect_invocable_renderers(manifests: &[mcpviews_shared::PluginManifest]) -> Vec<serde_json::Value> {
+pub fn collect_invocable_renderers(
+    manifests: &[mcpviews_shared::PluginManifest],
+) -> Vec<serde_json::Value> {
     let mut results = Vec::new();
     for manifest in manifests {
         for def in &manifest.renderer_definitions {
@@ -1107,6 +1781,132 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_native_app_url_allows_declared_origin() {
+        let origins = vec!["https://staging.app.ludflow.com".to_string()];
+        let parsed = parse_native_app_url(
+            "ludflow",
+            "https://staging.app.ludflow.com/mcpviews/embed/start?token=test",
+            &origins,
+        )
+        .unwrap();
+        assert_eq!(
+            origin_for_url(&parsed).as_deref(),
+            Some("https://staging.app.ludflow.com")
+        );
+    }
+
+    #[test]
+    fn test_parse_native_app_url_rejects_undeclared_origin() {
+        let origins = vec!["https://staging.app.ludflow.com".to_string()];
+        let error = parse_native_app_url("ludflow", "https://example.com/", &origins)
+            .expect_err("unexpectedly allowed undeclared origin");
+        assert!(error.contains("not declared in frame_origins"));
+    }
+
+    #[test]
+    fn test_parse_native_app_url_rejects_non_http_scheme() {
+        let origins = vec!["https://staging.app.ludflow.com".to_string()];
+        let error = parse_native_app_url("ludflow", "javascript:alert(1)", &origins)
+            .expect_err("unexpectedly allowed javascript URL");
+        assert!(error.contains("Unsupported app URL protocol"));
+    }
+
+    #[test]
+    fn test_native_app_window_label_is_stable_and_sanitized() {
+        let first = native_app_window_label("ludflow", Some("Data Governance"), "/ignored");
+        let second = native_app_window_label("ludflow", Some("Data Governance"), "/other");
+        assert_eq!(first, second);
+        assert!(first.starts_with("plugin-app-ludflow-data-governance-"));
+    }
+
+    #[test]
+    fn test_native_app_panel_label_is_distinct_from_window_label() {
+        let window = native_app_window_label("ludflow", Some("Documents"), "/ignored");
+        let panel = native_app_panel_label("ludflow", Some("Documents"), "/ignored");
+
+        assert_ne!(window, panel);
+        assert!(panel.starts_with("plugin-panel-ludflow-documents-"));
+    }
+
+    #[test]
+    fn test_sanitize_native_app_panel_bounds_clamps_dimensions() {
+        let bounds = sanitize_native_app_panel_bounds(NativeAppPanelBounds {
+            x: -20_000.0,
+            y: 20_000.0,
+            width: 0.0,
+            height: 25_000.0,
+            visible: Some(true),
+        })
+        .unwrap();
+
+        assert_eq!(bounds.x, -10_000.0);
+        assert_eq!(bounds.y, 10_000.0);
+        assert_eq!(bounds.width, 1.0);
+        assert_eq!(bounds.height, 10_000.0);
+        assert_eq!(bounds.visible, Some(true));
+    }
+
+    #[test]
+    fn test_sanitize_native_app_panel_bounds_rejects_non_finite_values() {
+        let error = sanitize_native_app_panel_bounds(NativeAppPanelBounds {
+            x: f64::NAN,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            visible: Some(true),
+        })
+        .expect_err("unexpectedly allowed non-finite bounds");
+
+        assert!(error.contains("finite numbers"));
+    }
+
+    #[test]
+    fn test_github_repo_slug_from_manifest_url() {
+        assert_eq!(
+            github_repo_slug_from_url(
+                "https://raw.githubusercontent.com/DeeJanuz/mcpviews-tribex-crm-plugin/master/manifest.json"
+            ),
+            Some("DeeJanuz/mcpviews-tribex-crm-plugin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_github_repo_slug_from_release_asset_url() {
+        assert_eq!(
+            github_repo_slug_from_url(
+                "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.4/decidr.zip"
+            ),
+            Some("DeeJanuz/decidr-plugin".to_string())
+        );
+    }
+
+    #[test]
+    fn test_release_asset_prefers_plugin_named_zip() {
+        let release = GithubRelease {
+            tag_name: "v1.2.3-beta.1".to_string(),
+            html_url: Some(
+                "https://github.com/example/repo/releases/tag/v1.2.3-beta.1".to_string(),
+            ),
+            prerelease: true,
+            draft: false,
+            published_at: None,
+            assets: vec![
+                GithubReleaseAsset {
+                    name: "source.zip".to_string(),
+                    browser_download_url: "https://example.test/source.zip".to_string(),
+                },
+                GithubReleaseAsset {
+                    name: "tribex-crm.zip".to_string(),
+                    browser_download_url: "https://example.test/tribex-crm.zip".to_string(),
+                },
+            ],
+        };
+
+        let asset = release_asset_for_plugin(&release, "tribex-crm").unwrap();
+        assert_eq!(asset.name, "tribex-crm.zip");
+    }
+
+    #[test]
     fn resolve_local_review_decision_records_before_backend_callback_delivery() {
         let (state, _dir) = test_app_state();
         let session_id = "review-session-1";
@@ -1179,7 +1979,10 @@ mod tests {
         let sessions = state.sessions.lock().unwrap();
         let session = sessions.get(session_id).unwrap();
         assert_eq!(session.decision.as_deref(), Some("partial"));
-        assert_eq!(session.operation_decisions, Some(operation_decisions.clone()));
+        assert_eq!(
+            session.operation_decisions,
+            Some(operation_decisions.clone())
+        );
         assert_eq!(session.comments, Some(comments.clone()));
         assert_eq!(session.modifications, Some(modifications.clone()));
         assert_eq!(session.additions, Some(additions.clone()));
@@ -1228,7 +2031,11 @@ mod tests {
         state.install_or_update_from_entry(&entry).await.unwrap();
 
         let registry = state.plugin_registry.lock().unwrap();
-        let count = registry.manifests.iter().filter(|m| m.name == "dup-plugin").count();
+        let count = registry
+            .manifests
+            .iter()
+            .filter(|m| m.name == "dup-plugin")
+            .count();
         assert_eq!(count, 1, "Should not have duplicate entries");
     }
 
@@ -1279,39 +2086,104 @@ mod tests {
     #[test]
     fn test_collect_standalone_renderers_suppresses_legacy_persona_studio() {
         let mut legacy = test_manifest(LEGACY_PERSONA_STUDIO_PLUGIN);
-        legacy.renderer_definitions.push(mcpviews_shared::RendererDef {
-            name: "persona_lab".to_string(),
-            description: "Legacy Persona Studio".to_string(),
-            scope: "universal".to_string(),
-            tools: vec![],
-            data_hint: None,
-            rule: None,
-            display_mode: None,
-            invoke_schema: None,
-            url_patterns: vec![],
-            standalone: true,
-            standalone_label: Some("Persona Studio Legacy".to_string()),
-        });
+        legacy
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "persona_lab".to_string(),
+                description: "Legacy Persona Studio".to_string(),
+                scope: "universal".to_string(),
+                tools: vec![],
+                data_hint: None,
+                rule: None,
+                display_mode: None,
+                invoke_schema: None,
+                url_patterns: vec![],
+                standalone: true,
+                standalone_label: Some("Persona Studio Legacy".to_string()),
+            });
         let mut current = test_manifest(CURRENT_PERSONA_STUDIO_PLUGIN);
-        current.renderer_definitions.push(mcpviews_shared::RendererDef {
-            name: "persona_lab".to_string(),
-            description: "Persona Studio".to_string(),
-            scope: "universal".to_string(),
-            tools: vec![],
-            data_hint: None,
-            rule: None,
-            display_mode: None,
-            invoke_schema: None,
-            url_patterns: vec![],
-            standalone: true,
-            standalone_label: Some("Persona Studio".to_string()),
-        });
+        current
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "persona_lab".to_string(),
+                description: "Persona Studio".to_string(),
+                scope: "universal".to_string(),
+                tools: vec![],
+                data_hint: None,
+                rule: None,
+                display_mode: None,
+                invoke_schema: None,
+                url_patterns: vec![],
+                standalone: true,
+                standalone_label: Some("Persona Studio".to_string()),
+            });
 
         let results = collect_standalone_renderers(&[legacy, current]);
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0]["plugin"], CURRENT_PERSONA_STUDIO_PLUGIN);
         assert_eq!(results[0]["renderers"][0]["name"], "persona_lab");
+    }
+
+    #[test]
+    fn test_collect_standalone_renderers_dedupes_duplicate_plugin_manifests() {
+        let mut first = test_manifest("ludflow");
+        first
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "ludflow_app".to_string(),
+                description: "Ludflow App".to_string(),
+                scope: "universal".to_string(),
+                tools: vec![],
+                data_hint: None,
+                rule: None,
+                display_mode: None,
+                invoke_schema: None,
+                url_patterns: vec![],
+                standalone: true,
+                standalone_label: Some("Ludflow".to_string()),
+            });
+
+        let mut duplicate = test_manifest("ludflow");
+        duplicate
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "ludflow_app".to_string(),
+                description: "Duplicate Ludflow App".to_string(),
+                scope: "universal".to_string(),
+                tools: vec![],
+                data_hint: None,
+                rule: None,
+                display_mode: None,
+                invoke_schema: None,
+                url_patterns: vec![],
+                standalone: true,
+                standalone_label: Some("Duplicate Ludflow".to_string()),
+            });
+        duplicate
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "ludflow_data_governance".to_string(),
+                description: "Data Governance".to_string(),
+                scope: "universal".to_string(),
+                tools: vec![],
+                data_hint: None,
+                rule: None,
+                display_mode: None,
+                invoke_schema: None,
+                url_patterns: vec![],
+                standalone: true,
+                standalone_label: Some("Data Governance".to_string()),
+            });
+
+        let results = collect_standalone_renderers(&[first, duplicate]);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["plugin"], "ludflow");
+        let renderers = results[0]["renderers"].as_array().unwrap();
+        assert_eq!(renderers.len(), 2);
+        assert_eq!(renderers[0]["name"], "ludflow_app");
+        assert_eq!(renderers[1]["name"], "ludflow_data_governance");
     }
 
     #[tokio::test]
@@ -1334,10 +2206,17 @@ mod tests {
             cached.iter().find(|e| e.name == "reinstall-me").cloned()
         };
         assert!(found_entry.is_some());
-        state.install_or_update_from_entry(&found_entry.unwrap()).await.unwrap();
+        state
+            .install_or_update_from_entry(&found_entry.unwrap())
+            .await
+            .unwrap();
 
         let registry = state.plugin_registry.lock().unwrap();
-        let count = registry.manifests.iter().filter(|m| m.name == "reinstall-me").count();
+        let count = registry
+            .manifests
+            .iter()
+            .filter(|m| m.name == "reinstall-me")
+            .count();
         assert_eq!(count, 1, "Should have exactly one instance after reinstall");
     }
 
@@ -1357,7 +2236,10 @@ mod tests {
             let cached = state.latest_registry.lock().unwrap();
             cached.iter().find(|e| e.name == "local-only").cloned()
         };
-        assert!(found_entry.is_none(), "Should not find local-only plugin in registry");
+        assert!(
+            found_entry.is_none(),
+            "Should not find local-only plugin in registry"
+        );
     }
 
     #[test]
@@ -1366,34 +2248,38 @@ mod tests {
 
         // Add a plugin with an invocable renderer
         let mut manifest = test_manifest("test-invocable");
-        manifest.renderer_definitions.push(mcpviews_shared::RendererDef {
-            name: "decision_detail".to_string(),
-            description: "Decision detail".to_string(),
-            scope: "universal".to_string(),
-            tools: vec![],
-            data_hint: None,
-            rule: None,
-            display_mode: Some(mcpviews_shared::DisplayMode::Drawer),
-            invoke_schema: Some("{ id: string }".to_string()),
-            url_patterns: vec!["/decisions/*".to_string()],
-            standalone: false,
-            standalone_label: None,
-        });
+        manifest
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "decision_detail".to_string(),
+                description: "Decision detail".to_string(),
+                scope: "universal".to_string(),
+                tools: vec![],
+                data_hint: None,
+                rule: None,
+                display_mode: Some(mcpviews_shared::DisplayMode::Drawer),
+                invoke_schema: Some("{ id: string }".to_string()),
+                url_patterns: vec!["/decisions/*".to_string()],
+                standalone: false,
+                standalone_label: None,
+            });
 
         // Also add a non-invocable renderer (no invoke_schema)
-        manifest.renderer_definitions.push(mcpviews_shared::RendererDef {
-            name: "basic_view".to_string(),
-            description: "Basic view".to_string(),
-            scope: "tool".to_string(),
-            tools: vec!["some_tool".to_string()],
-            data_hint: None,
-            rule: None,
-            display_mode: None,
-            invoke_schema: None,
-            url_patterns: vec![],
-            standalone: false,
-            standalone_label: None,
-        });
+        manifest
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "basic_view".to_string(),
+                description: "Basic view".to_string(),
+                scope: "tool".to_string(),
+                tools: vec!["some_tool".to_string()],
+                data_hint: None,
+                rule: None,
+                display_mode: None,
+                invoke_schema: None,
+                url_patterns: vec![],
+                standalone: false,
+                standalone_label: None,
+            });
 
         {
             let mut registry = state.plugin_registry.lock().unwrap();
@@ -1430,7 +2316,11 @@ mod tests {
             let cached = state.latest_registry.lock().unwrap();
             let entry = cached.iter().find(|e| e.name == "guarded-plugin").unwrap();
             let registry = state.plugin_registry.lock().unwrap();
-            let installed = registry.manifests.iter().find(|m| m.name == "guarded-plugin").unwrap();
+            let installed = registry
+                .manifests
+                .iter()
+                .find(|m| m.name == "guarded-plugin")
+                .unwrap();
             let installed_ver = semver::Version::parse(&installed.version).ok();
             let available_ver = semver::Version::parse(&entry.version).ok();
             if let (Some(iv), Some(av)) = (installed_ver, available_ver) {
@@ -1470,7 +2360,9 @@ mod tests {
         // Add a plugin with no auth config (mcp is None)
         {
             let mut registry = state.plugin_registry.lock().unwrap();
-            registry.add_plugin(test_manifest("no-auth-plugin")).unwrap();
+            registry
+                .add_plugin(test_manifest("no-auth-plugin"))
+                .unwrap();
         }
         let registry = state.plugin_registry.lock().unwrap();
         let result = registry.resolve_plugin_auth("no-auth-plugin");

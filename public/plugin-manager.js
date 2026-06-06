@@ -46,7 +46,7 @@
     container.innerHTML = '<div class="loading">Loading registry...</div>';
 
     try {
-      var entries = await window.__TAURI__.core.invoke('fetch_registry', { registryUrl: null });
+      var entries = await window.__TAURI__.core.invoke('fetch_registry', { registryUrl: null, forceRefresh: false });
       var installed = await window.__TAURI__.core.invoke('list_plugins');
       var installedMap = {};
       installed.forEach(function (p) { installedMap[p.name] = p; });
@@ -81,18 +81,24 @@
       var installedPlugin = installedMap[name];
       var isInstalled = !!installedPlugin;
       var hasUpdate = installedPlugin && installedPlugin.update_available;
+      var installedVersion = installedPlugin ? (installedPlugin.version || '') : '';
+      var isBetaInstalled = isInstalled && isPrereleaseVersion(installedVersion);
 
       var buttonHtml = hasUpdate
         ? '<button class="btn btn-primary update-btn">Update to v' + escapeHtml(installedPlugin.update_available) + '</button>'
         : isInstalled
           ? '<button class="btn btn-muted" disabled>Installed</button>'
           : '<button class="btn btn-primary install-btn">Install</button>';
+      var betaButtonHtml = isBetaInstalled
+        ? '<button class="btn btn-secondary rollback-btn">Rollback to stable</button>'
+        : '<button class="btn btn-beta beta-btn">' + (isInstalled ? 'Beta' : 'Install beta') + '</button>';
 
       card.innerHTML =
         '<div class="plugin-name">' + escapeHtml(name) + '</div>' +
         '<div class="plugin-description">' + escapeHtml(description) + '</div>' +
         (version ? '<div class="plugin-version">v' + escapeHtml(version) + '</div>' : '') +
-        '<div style="margin-top:8px;">' + buttonHtml + '</div>';
+        '<div class="beta-meta" data-beta-plugin="' + escapeHtml(name) + '"></div>' +
+        '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">' + buttonHtml + betaButtonHtml + '</div>';
 
       if (!isInstalled) {
         card.querySelector('.install-btn').addEventListener('click', function () {
@@ -107,7 +113,22 @@
         });
       }
 
+      var betaBtn = card.querySelector('.beta-btn');
+      if (betaBtn) {
+        betaBtn.addEventListener('click', function () {
+          installBetaPlugin(name);
+        });
+      }
+
+      var rollbackBtn = card.querySelector('.rollback-btn');
+      if (rollbackBtn) {
+        rollbackBtn.addEventListener('click', function () {
+          rollbackPlugin(name);
+        });
+      }
+
       grid.appendChild(card);
+      hydrateBetaInfo(card, name, isBetaInstalled);
     });
 
     container.innerHTML = '';
@@ -307,6 +328,104 @@
       loadRegistry();
     } catch (e) {
       alert('Failed to update plugin: ' + e);
+    }
+  }
+
+  async function installBetaPlugin(name) {
+    try {
+      var info = await window.__TAURI__.core.invoke('check_plugin_prerelease', { name: name });
+      if (!info) {
+        showNotification('No prerelease found for ' + name, true);
+        return;
+      }
+      var current = info.installedVersion ? ' from v' + info.installedVersion : '';
+      var ok = confirm('Install ' + name + ' prerelease v' + info.version + current + '?');
+      if (!ok) return;
+      await window.__TAURI__.core.invoke('install_plugin_prerelease', { name: name });
+      showNotification('Plugin ' + name + ' updated to beta v' + info.version);
+      loadInstalled();
+      loadRegistry();
+    } catch (e) {
+      showNotification('Failed to install beta: ' + e, true);
+    }
+  }
+
+  async function rollbackPlugin(name) {
+    try {
+      var info = await window.__TAURI__.core.invoke('check_plugin_prerelease', { name: name }).catch(function () { return null; });
+      var stableLabel = info && info.stableVersion ? ' v' + info.stableVersion : '';
+      var ok = confirm('Roll back ' + name + ' to the latest stable release' + stableLabel + '?');
+      if (!ok) return;
+      await window.__TAURI__.core.invoke('rollback_plugin_to_stable', { name: name });
+      showNotification('Plugin ' + name + ' rolled back to stable' + stableLabel);
+      loadInstalled();
+      loadRegistry();
+    } catch (e) {
+      showNotification('Failed to roll back plugin: ' + e, true);
+    }
+  }
+
+  async function hydrateBetaInfo(card, name, isBetaInstalled) {
+    var meta = card.querySelector('.beta-meta');
+    var betaBtn = card.querySelector('.beta-btn');
+    var rollbackBtn = card.querySelector('.rollback-btn');
+    if (!meta && !betaBtn && !rollbackBtn) return;
+
+    try {
+      var info = await window.__TAURI__.core.invoke('check_plugin_prerelease', { name: name });
+      if (!info) {
+        if (meta) meta.textContent = 'No beta release available';
+        if (betaBtn) {
+          betaBtn.disabled = true;
+          betaBtn.textContent = 'No beta';
+        }
+        return;
+      }
+
+      if (meta) {
+        meta.innerHTML = 'Beta v' + escapeHtml(info.version) +
+          (info.releaseUrl ? ' · <a href="#" class="beta-release-link">Release notes</a>' : '');
+        var releaseLink = meta.querySelector('.beta-release-link');
+        if (releaseLink) {
+          releaseLink.addEventListener('click', function (event) {
+            event.preventDefault();
+            window.__TAURI__.core.invoke('open_external_url', { url: info.releaseUrl });
+          });
+        }
+      }
+
+      if (betaBtn) {
+        betaBtn.textContent = (isBetaInstalled ? 'Beta' : 'Install beta') + ' v' + info.version;
+      }
+
+      if (rollbackBtn && info.stableVersion) {
+        rollbackBtn.textContent = 'Rollback to v' + info.stableVersion;
+      }
+    } catch (e) {
+      if (meta) meta.textContent = 'Unable to check beta release';
+    }
+  }
+
+  async function checkForUpdates() {
+    var btn = document.getElementById('check-updates-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Checking...';
+    }
+    try {
+      await window.__TAURI__.core.invoke('fetch_registry', { registryUrl: null, forceRefresh: true });
+      var plugins = await window.__TAURI__.core.invoke('list_plugins');
+      var count = plugins.filter(function (plugin) { return !!plugin.update_available; }).length;
+      showNotification(count === 1 ? '1 plugin update available' : count + ' plugin updates available');
+      loadRegistry();
+      loadInstalled();
+    } catch (e) {
+      showNotification('Failed to check for updates: ' + e, true);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Check for updates';
+      }
     }
   }
 
@@ -558,6 +677,10 @@
     return div.innerHTML;
   }
 
+  function isPrereleaseVersion(version) {
+    return typeof version === 'string' && version.indexOf('-') !== -1;
+  }
+
   // --- Init ---
 
   function init() {
@@ -567,6 +690,11 @@
       tabs[i].addEventListener('click', function () {
         switchTab(this.getAttribute('data-tab'));
       });
+    }
+
+    var checkUpdatesBtn = document.getElementById('check-updates-btn');
+    if (checkUpdatesBtn) {
+      checkUpdatesBtn.addEventListener('click', checkForUpdates);
     }
 
     if (!window.__TAURI__) {

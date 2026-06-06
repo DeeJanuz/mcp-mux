@@ -185,13 +185,32 @@ impl AppState {
         origins.into_iter().collect()
     }
 
+    /// Returns normalized HTTP(S) frame origins declared by one installed plugin.
+    pub fn plugin_frame_origins_for(&self, plugin_name: &str) -> Vec<String> {
+        let registry = self.plugin_registry.lock().unwrap();
+        let Some(manifest) = registry
+            .manifests
+            .iter()
+            .find(|manifest| manifest.name == plugin_name)
+        else {
+            return Vec::new();
+        };
+
+        let mut origins = std::collections::HashSet::new();
+        for frame_origin in &manifest.frame_origins {
+            if let Ok(url) = url::Url::parse(frame_origin) {
+                if matches!(url.scheme(), "http" | "https") && !url.authority().is_empty() {
+                    origins.insert(format!("{}://{}", url.scheme(), url.authority()));
+                }
+            }
+        }
+        origins.into_iter().collect()
+    }
+
     /// Install or update a plugin from a registry entry.
     /// Downloads the ZIP package if a download URL is present (checking entry-level
     /// download_url first, then manifest-level), otherwise falls back to manifest-only.
-    pub async fn install_or_update_from_entry(
-        &self,
-        entry: &RegistryEntry,
-    ) -> Result<(), String> {
+    pub async fn install_or_update_from_entry(&self, entry: &RegistryEntry) -> Result<(), String> {
         // Priority: entry.download_url > entry.manifest.download_url > manifest-only
         let download_url = entry
             .download_url
@@ -201,12 +220,9 @@ impl AppState {
         if let Some(url) = download_url {
             let client = self.http_client.clone();
             let plugins_dir = mcpviews_shared::plugins_dir();
-            let manifest = mcpviews_shared::package::download_and_install_plugin(
-                &client,
-                url,
-                &plugins_dir,
-            )
-            .await?;
+            let manifest =
+                mcpviews_shared::package::download_and_install_plugin(&client, url, &plugins_dir)
+                    .await?;
 
             let mut registry = self.plugin_registry.lock().unwrap();
             if registry.manifests.iter().any(|m| m.name == manifest.name) {
@@ -277,16 +293,14 @@ fn retire_legacy_persona_studio_plugin(store: &PluginStore) -> bool {
         Ok(()) => {
             eprintln!(
                 "[mcpviews] Retired legacy Persona Studio plugin '{}' in favor of '{}'",
-                LEGACY_PERSONA_STUDIO_PLUGIN,
-                CURRENT_PERSONA_STUDIO_PLUGIN,
+                LEGACY_PERSONA_STUDIO_PLUGIN, CURRENT_PERSONA_STUDIO_PLUGIN,
             );
             true
         }
         Err(error) => {
             eprintln!(
                 "[mcpviews] Failed to retire legacy Persona Studio plugin '{}': {}",
-                LEGACY_PERSONA_STUDIO_PLUGIN,
-                error,
+                LEGACY_PERSONA_STUDIO_PLUGIN, error,
             );
             false
         }
@@ -307,8 +321,12 @@ fn persist_first_party_ai_cookie_store(
     path: &Path,
 ) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("Failed to create auth dir for first-party AI cookies: {}", err))?;
+        std::fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "Failed to create auth dir for first-party AI cookies: {}",
+                err
+            )
+        })?;
     }
 
     let file = File::create(path)
@@ -323,13 +341,18 @@ fn persist_first_party_ai_cookie_store(
 }
 
 fn ensure_bundled_plugins(store: &PluginStore) {
-    const BUNDLED_MANIFESTS: [&str; 1] = [include_str!("../../bundled-plugins/tribex-ai/manifest.json")];
+    const BUNDLED_MANIFESTS: [&str; 1] = [include_str!(
+        "../../bundled-plugins/tribex-ai/manifest.json"
+    )];
 
     for manifest_json in BUNDLED_MANIFESTS {
         let manifest = match serde_json::from_str::<PluginManifest>(manifest_json) {
             Ok(manifest) => manifest,
             Err(error) => {
-                eprintln!("[mcpviews] Failed to parse bundled plugin manifest: {}", error);
+                eprintln!(
+                    "[mcpviews] Failed to parse bundled plugin manifest: {}",
+                    error
+                );
                 continue;
             }
         };
@@ -445,7 +468,10 @@ fn copy_bundled_plugin_dir(
     Ok(())
 }
 
-fn copy_dir_recursive(source_dir: &std::path::Path, target_dir: &std::path::Path) -> Result<(), String> {
+fn copy_dir_recursive(
+    source_dir: &std::path::Path,
+    target_dir: &std::path::Path,
+) -> Result<(), String> {
     std::fs::create_dir_all(target_dir)
         .map_err(|err| format!("Failed to create bundled plugin directory: {}", err))?;
 
@@ -496,7 +522,10 @@ mod tests {
     fn test_new_with_store() {
         let (state, _dir) = test_app_state();
         let registry = state.plugin_registry.lock().unwrap();
-        assert!(registry.manifests.is_empty(), "Fresh temp dir should have no plugins");
+        assert!(
+            registry.manifests.is_empty(),
+            "Fresh temp dir should have no plugins"
+        );
     }
 
     #[test]
@@ -573,6 +602,26 @@ mod tests {
         assert_eq!(origins.len(), 2);
         assert!(origins.contains(&"https://app.example.com".to_string()));
         assert!(origins.contains(&"http://localhost:3000".to_string()));
+    }
+
+    #[test]
+    fn test_plugin_frame_origins_for_manifest() {
+        let (state, _dir) = test_app_state();
+        let mut first = test_manifest("first-plugin");
+        first.frame_origins = vec![
+            "https://first.example.com/path".to_string(),
+            "javascript:alert(1)".to_string(),
+        ];
+        let mut second = test_manifest("second-plugin");
+        second.frame_origins = vec!["https://second.example.com".to_string()];
+        state.install_plugin_from_manifest(first, false).unwrap();
+        state.install_plugin_from_manifest(second, false).unwrap();
+
+        let origins = state.plugin_frame_origins_for("first-plugin");
+        assert_eq!(origins.len(), 1);
+        assert!(origins.contains(&"https://first.example.com".to_string()));
+        assert!(!origins.contains(&"https://second.example.com".to_string()));
+        assert!(state.plugin_frame_origins_for("missing-plugin").is_empty());
     }
 
     #[test]
@@ -752,7 +801,9 @@ mod tests {
             .get_request_values(&request_url)
             .map(|(name, value)| format!("{}={}", name, value))
             .collect::<Vec<_>>();
-        assert!(cookies.iter().any(|cookie| cookie == "tribex.session_token=test-session"));
+        assert!(cookies
+            .iter()
+            .any(|cookie| cookie == "tribex.session_token=test-session"));
     }
 
     #[test]
@@ -791,7 +842,11 @@ mod tests {
     #[test]
     fn test_relay_handles_start_empty() {
         let (state, _dir) = test_app_state();
-        assert!(state.first_party_ai_desktop_relay_streams.lock().unwrap().is_empty());
+        assert!(state
+            .first_party_ai_desktop_relay_streams
+            .lock()
+            .unwrap()
+            .is_empty());
         assert!(state
             .first_party_ai_desktop_presence_heartbeats
             .lock()

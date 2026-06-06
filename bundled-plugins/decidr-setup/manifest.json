@@ -8,7 +8,7 @@
   "renderer_definitions": [
     {
       "name": "decidr_onboarding",
-      "description": "DecidR login, organization setup, and shared Ludflow plugin authentication",
+      "description": "DecidR login, organization setup, and first-launch MCPViews authentication",
       "scope": "universal",
       "data_hint": "{ organization_id?: string }",
       "standalone": true,

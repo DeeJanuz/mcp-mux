@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import AdmZip from 'adm-zip';
 import { createHash } from 'node:crypto';
 import {

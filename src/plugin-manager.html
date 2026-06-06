@@ -27,9 +27,18 @@
     /* Tab bar */
     .tab-bar {
       display: flex;
+      align-items: center;
       border-bottom: 1px solid #2a2a2a;
       background: #171717;
       padding: 0 16px;
+      flex-shrink: 0;
+    }
+
+    .tab-spacer {
+      flex: 1;
+    }
+
+    .nav-action {
       flex-shrink: 0;
     }
 
@@ -105,6 +114,21 @@
       color: #525252;
     }
 
+    .plugin-card .beta-meta {
+      font-size: 11px;
+      color: #737373;
+      min-height: 15px;
+    }
+
+    .plugin-card .beta-meta a {
+      color: #a5b4fc;
+      text-decoration: none;
+    }
+
+    .plugin-card .beta-meta a:hover {
+      text-decoration: underline;
+    }
+
     /* Buttons */
     .btn {
       padding: 6px 14px;
@@ -139,6 +163,12 @@
     .btn-secondary {
       background: #2a2a2a;
       color: #e5e5e5;
+    }
+
+    .btn-beta {
+      background: #312e81;
+      color: #c4b5fd;
+      border: 1px solid #4338ca;
     }
 
     .btn-muted {
@@ -362,6 +392,8 @@
     <div class="tab active" data-tab="registry">Registry</div>
     <div class="tab" data-tab="installed">Installed</div>
     <div class="tab" data-tab="settings">Settings</div>
+    <div class="tab-spacer"></div>
+    <button class="btn btn-secondary nav-action" id="check-updates-btn">Check for updates</button>
   </div>
 
   <div id="tab-registry" class="tab-content active">

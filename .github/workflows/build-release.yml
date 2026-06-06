@@ -343,6 +343,21 @@ jobs:
           fi
           npm run build -- --target aarch64-apple-darwin
 
+      - name: Verify updater key embedded
+        env:
+          MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+        run: |
+          APP_BIN="target/aarch64-apple-darwin/release/bundle/macos/MCPViews.app/Contents/MacOS/mcpviews"
+          if grep -a -q "development-placeholder" "$APP_BIN"; then
+            echo "::error::Packaged macOS app still contains the development updater placeholder"
+            exit 1
+          fi
+          if ! grep -a -F -q "$MCPVIEWS_UPDATER_PUBLIC_KEY" "$APP_BIN"; then
+            echo "::error::Packaged macOS app does not contain the configured updater public key"
+            exit 1
+          fi
+          echo "Updater public key embedded in macOS app"
+
       - name: Notarize and staple DMG
         if: ${{ env.APPLE_CERTIFICATE != '' && env.NOTARIZE_MACOS == 'true' }}
         env:
@@ -555,6 +570,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run build -- --config tauri.windows.release.conf.json
+
+      - name: Verify updater key embedded
+        shell: bash
+        env:
+          MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+        run: |
+          APP_BIN="target/release/mcpviews.exe"
+          if grep -a -q "development-placeholder" "$APP_BIN"; then
+            echo "::error::Packaged Windows app still contains the development updater placeholder"
+            exit 1
+          fi
+          if ! grep -a -F -q "$MCPVIEWS_UPDATER_PUBLIC_KEY" "$APP_BIN"; then
+            echo "::error::Packaged Windows app does not contain the configured updater public key"
+            exit 1
+          fi
+          echo "Updater public key embedded in Windows app"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

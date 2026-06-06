@@ -15,7 +15,7 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "16"; // Bump when built-in rules change
+const RULES_VERSION: &str = "17"; // Bump when built-in rules change
 const RULES_REFRESH_INSTRUCTION: &str = "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules. If `mcpviews_setup` returns `setup_questions`, ask the user those questions during setup and persist only the selected option's compact `persisted_rule`, using `persist_as_rule_name` when present.";
 
 /// Return all tool definitions (built-in + plugin tools)
@@ -2693,7 +2693,7 @@ pub(crate) fn setup_instructions(agent_type: &str) -> String {
 
 // ─── Renderer definitions ───
 
-const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded read-only universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions, embedded table changes, or read-only graph context for a review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For high-impact or bulk MCP mutations, structured_data with push_review can give the user row-level approval — see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical chart/graph packs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views when the main output is visual analysis rather than prose. Call the direct universal_graph tool when available, or push_content with tool_name universal_graph for compatibility.\n\nFor any review payload sent through push_review, visible titles, labels, table cells, and details must identify the document or entity being changed by human-readable name, title, path, or display label. Do not use an opaque backend ID as the only visible target; keep IDs only in stable row ids, citation metadata, or execution bookkeeping.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main output is a visual analysis. Use rich_content with empty ```universal_graph:<graph-id> fences when graphs need prose, suggestions, citations, or review context.";
+const RENDERER_SELECTION_RULE: &str = "When displaying content in MCPViews, choose the renderer based on data shape:\n\n- **rich_content**: Prose, explanations, diagrams (mermaid), code blocks, simple markdown tables (<10 rows), inline edit suggestions, embedded tables, embedded read-only universal_graph charts, plugin citations. Default choice for documents and explanations. Use push_review when content includes suggestions, embedded table changes, or read-only graph context for a review.\n- **structured_data**: Standalone tabular data with sort/filter/expand needs, hierarchical rows, or proposed changes requiring accept/reject review. Use push_review for change approval workflows. For substantive or risky MCP mutations, structured_data with push_review can give the user row-level approval; see the bulk_action_review rule.\n- **universal_graph**: Standalone read-only analytical chart/graph packs using semantic graph specs in data.graphs. Use for chart, hierarchy, network, flow, timeline, matrix, and distribution views when the main output is visual analysis rather than prose. Call the direct universal_graph tool when available, or push_content with tool_name universal_graph for compatibility.\n\nFor any review payload sent through push_review, visible titles, labels, table cells, and details must identify the document or entity being changed by human-readable name, title, path, or display label. Do not use an opaque backend ID as the only visible target; keep IDs only in stable row ids, citation metadata, or execution bookkeeping.\n\nPlugin tool output routes through rich_content with transformation rules defined in the plugin manifest. When uncertain, default to rich_content. Only use structured_data when the data is genuinely tabular with columns and rows and NOT embedded within a document. Use universal_graph when the main output is a visual analysis. Use rich_content with empty ```universal_graph:<graph-id> fences when graphs need prose, suggestions, citations, or review context.";
 
 const RICH_CONTENT_RULE: &str = r#"CALLER RESTRICTION: ONLY the main/coordinator agent may call rich_content, structured_data, push_review, and push_check. Sub-agents must NEVER call these — return results to the coordinator.
 
@@ -2846,7 +2846,7 @@ const BULK_ACTION_REVIEW_RULE: &str = r#"Use `push_review` for MCP mutations onl
 ## Trigger
 
 Present a structured review before MCP mutations when any of these apply:
-- **Bulk change**: 3 or more create, update, or delete tool calls are planned for external resources.
+- **Substantive or risky batch**: the planned create, update, or delete calls materially affect multiple external resources, long-lived records, or user-visible state. Count alone is not a review trigger.
 - **Destructive or hard-to-undo change**: delete, archive, merge, publish, send, apply, billing/payment, permission, credential, production-data, or cross-organization changes.
 - **Ambiguous or user-editable batch**: the user should be able to accept/reject individual rows, adjust values, or confirm targets before execution.
 - **High blast radius**: the change affects multiple named entities, customer-visible state, governance records, external communications, or long-lived files/documents.
@@ -2857,7 +2857,23 @@ Do not trigger a review for read-only discovery, search, list, get, preview, val
 
 When the trigger applies, present all planned actions as `structured_data` via `push_review` before executing the reviewed mutations.
 
-For one or two low-risk MCP mutations that are explicitly requested, clearly named, and easy to undo, proceed directly and summarize what changed afterward. If the risk is unclear, ask a brief chat clarification before opening a review.
+For low-risk MCP mutations that are explicitly requested, clearly named, and easy to undo, proceed directly and summarize what changed afterward. Routine low-risk creates and minor edits do not require a review just because several similar actions are planned. If the risk is unclear, ask a brief chat clarification before opening a review.
+
+## Examples
+
+Use `push_review` for:
+- Archiving, deleting, merging, publishing, sending, payment, permission, credential, production-data, or cross-organization changes.
+- Governance changes that move important DecidR/Ludflow state, such as decision status transitions plus document/audit updates.
+- Batches where the user should accept or reject individual rows before execution.
+- Ambiguous target changes, such as multiple matching documents, records, projects, or customer-visible entities.
+- Any update that is hard to undo or could affect production/customer-visible state.
+
+Skip `push_review` for:
+- Creating a clearly requested, low-risk document, task, note, folder, category, or draft record.
+- Minor edits like typo fixes, title cleanup, short addenda, metadata corrections, or small field updates.
+- Several routine low-risk creates or edits when the user has explicitly named the targets and desired changes.
+- Read-only search/list/get/preview/validation/test actions.
+- Local Codex file edits through normal coding tools.
 
 ## Table structure
 
@@ -2878,7 +2894,7 @@ Mark each row's `change` field to visually distinguish operations:
 
 ## Workflow
 
-1. **Gather**: Collect the high-impact, destructive, ambiguous, or bulk mutations before executing them
+1. **Gather**: Collect the substantive, risky, destructive, ambiguous, or user-editable mutations before executing them
 2. **Present**: Send them via `push_review` as a structured_data table — this returns immediately with a `session_id`
 3. **Wait**: Call `await_review(session_id)` to wait for the user's decisions (accept/reject per row, possible cell edits). If it returns `pending` before the user decides, call `await_review` again with the same `session_id` — the session persists on the server
 4. **Execute**: Only execute rows the user accepted, respecting any user edits to cell values
@@ -2886,7 +2902,7 @@ Mark each row's `change` field to visually distinguish operations:
 
 ## Minor-action exception
 
-If only 1 or 2 low-risk mutations are planned and the user already named the target and desired change, `push_review` is not required — proceed directly and summarize afterward.
+If low-risk mutations are planned and the user already named the targets and desired changes, `push_review` is not required - proceed directly and summarize afterward.
 
 ## Formatting
 
@@ -3073,7 +3089,7 @@ push_review response contains user decisions:
 }
 ```
 
-**Bulk MCP actions**: Use push_review before MCP mutations when the batch is high-impact, destructive, ambiguous, or includes 3+ external-resource mutations. For one or two clearly requested low-risk mutations, proceed directly and summarize afterward. push_review returns a session_id; call await_review(session_id) to wait until the user decides. See the bulk_action_review rule for the full workflow and table structure.
+**Bulk MCP actions**: Use push_review before MCP mutations when the batch is substantive or risky: high-impact, destructive, ambiguous, hard to undo, production/customer-visible, or needing row-level approval. Routine low-risk creates and minor edits do not require review when targets and requested changes are clear; count alone is not a review trigger. push_review returns a session_id; call await_review(session_id) to wait until the user decides. See the bulk_action_review rule for the full workflow and table structure.
 
 ## Data shape reference
 
@@ -4006,9 +4022,9 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "16");
+        assert_eq!(RULES_VERSION, "17");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 16"));
+        assert!(instructions.contains("mcpviews-rules-version: 17"));
         assert!(instructions.contains("Add or update the MCPViews section in `AGENTS.md`"));
         assert!(instructions.contains("missing from the persisted rules"));
     }
@@ -4043,6 +4059,22 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Do not interrupt the user with a review for every small"));
+        assert!(bulk_action_review["rule"]
+            .as_str()
+            .unwrap()
+            .contains("Count alone is not a review trigger"));
+        assert!(bulk_action_review["rule"]
+            .as_str()
+            .unwrap()
+            .contains("Routine low-risk creates and minor edits do not require a review"));
+        assert!(bulk_action_review["rule"]
+            .as_str()
+            .unwrap()
+            .contains("Destructive or hard-to-undo change"));
+        assert!(bulk_action_review["rule"]
+            .as_str()
+            .unwrap()
+            .contains("Ambiguous or user-editable batch"));
         assert!(structured_data["rule"]
             .as_str()
             .unwrap()

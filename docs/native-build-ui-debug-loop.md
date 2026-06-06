@@ -32,7 +32,7 @@ Use this command when the native build also needs local plugin changes from sibl
 npm run build:mac-dev-bundle
 ```
 
-It stages local copies of DecidR Setup, `../ludflow-mcpviews`, and `../decidr-plugin` under `src-tauri/bundled-plugins/mac-dev/`, writes content hashes for startup comparison, and then runs a macOS Tauri build for `app,dmg`. Optional convenience plugins such as `../tribe-x-persona-studio` and `../mcpviews-email-deliverability-plugin` are included when those sibling worktrees exist, but they do not block a DecidR-focused local installer build. The staged directory is ignored by Git; regenerate it from the sibling plugin worktrees instead of editing it directly.
+It stages local copies of DecidR Setup, `../ludflow-mcpviews`, and `../decidr-plugin` under `src-tauri/bundled-plugins/mac-dev/`, writes content hashes for startup comparison, builds the macOS `.app` without updater artifacts, then creates and verifies a local APFS DMG plus `target/release/bundle/dmg/DecidR-MCPViews-macOS.dmg`. Optional convenience plugins such as `../tribe-x-persona-studio` and `../mcpviews-email-deliverability-plugin` are included when those sibling worktrees exist, but they do not block a DecidR-focused local installer build. The staged directory is ignored by Git; regenerate it from the sibling plugin worktrees instead of editing it directly.
 
 The mac dev bundle also includes the repo-local `bundled-plugins/decidr-setup` renderer so the first-launch DecidR Setup flow can be exercised in the native app/DMG without waiting for a public plugin release.
 

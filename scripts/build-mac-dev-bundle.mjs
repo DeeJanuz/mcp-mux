@@ -3,13 +3,16 @@ import { createHash } from 'node:crypto';
 import {
   cpSync,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -18,6 +21,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const stageRoot = join(repoRoot, 'src-tauri', 'bundled-plugins', 'mac-dev');
 const releaseBundleRoot = join(repoRoot, 'target', 'release', 'bundle');
+const tauriConfig = readJson(join(repoRoot, 'src-tauri', 'tauri.conf.json'));
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -62,6 +66,17 @@ function writePluginHash(pluginDir) {
     hash.update('\0');
   }
   writeFileSync(join(pluginDir, '.mcpviews-bundled-plugin-sha256'), `${hash.digest('hex')}\n`);
+}
+
+function runChecked(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    ...options,
+  });
+  if (result.status !== 0) {
+    process.exit(result.status || 1);
+  }
 }
 
 function stageDirectPlugin(sourceDir, includePaths) {
@@ -127,13 +142,62 @@ function runTauriBuild() {
     MCPVIEWS_BUNDLE_AI_PROVIDER_DEVICE_BASE_URL: process.env.MCPVIEWS_BUNDLE_AI_PROVIDER_DEVICE_BASE_URL || 'https://dev.app.tribexai.com',
   };
 
-  const result = spawnSync('npx', ['tauri', 'build', '--bundles', 'app,dmg'], {
-    cwd: repoRoot,
-    env,
-    stdio: 'inherit',
-  });
-  if (result.status !== 0) {
-    process.exit(result.status || 1);
+  runChecked(
+    'npx',
+    [
+      'tauri',
+      'build',
+      '--bundles',
+      'app',
+      '--no-sign',
+      '--config',
+      '{"bundle":{"createUpdaterArtifacts":false}}',
+    ],
+    { env },
+  );
+  createDevDmg();
+}
+
+function createDevDmg() {
+  const productName = tauriConfig.productName || 'MCPViews';
+  const version = tauriConfig.version || '0.0.0';
+  const arch = process.arch === 'arm64' ? 'aarch64' : process.arch;
+  const appPath = join(releaseBundleRoot, 'macos', `${productName}.app`);
+  const dmgDir = join(releaseBundleRoot, 'dmg');
+  const versionedDmgPath = join(dmgDir, `${productName}_${version}_${arch}.dmg`);
+  const stableDmgPath = join(dmgDir, 'DecidR-MCPViews-macOS.dmg');
+  const tempRoot = mkdtempSync(join(tmpdir(), 'mcpviews-dmg-stage-'));
+
+  if (!existsSync(appPath)) {
+    throw new Error(`Expected app bundle was not built: ${appPath}`);
+  }
+
+  try {
+    mkdirSync(dmgDir, { recursive: true });
+    runChecked('codesign', ['--force', '--deep', '--sign', '-', appPath]);
+    runChecked('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
+    cpSync(appPath, join(tempRoot, `${productName}.app`), { recursive: true });
+    symlinkSync('/Applications', join(tempRoot, 'Applications'));
+
+    runChecked('hdiutil', [
+      'create',
+      '-ov',
+      '-fs',
+      'APFS',
+      '-format',
+      'UDZO',
+      '-volname',
+      'DecidR MCPViews',
+      '-srcfolder',
+      tempRoot,
+      versionedDmgPath,
+    ]);
+    runChecked('hdiutil', ['verify', versionedDmgPath]);
+    cpSync(versionedDmgPath, stableDmgPath);
+    console.log(`Built ${versionedDmgPath}`);
+    console.log(`Copied stable alias ${stableDmgPath}`);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 

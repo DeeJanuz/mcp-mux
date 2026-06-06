@@ -31,6 +31,8 @@
   let pendingAppUpdate = null;
   let appUpdateCheckTimer = null;
   let dismissedAppUpdateVersionFallback = '';
+  const DECIDR_ONBOARDING_RENDERER = 'decidr_onboarding';
+  const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:completed-org-id';
 
   /** @type {Map<string, HTMLElement>} Cached content containers per session */
   const contentCache = new Map();
@@ -357,6 +359,8 @@
       console.error('Failed to load existing sessions:', e);
     }
 
+    maybeAutoOpenDecidrOnboarding();
+
     // Populate invocation registry
     if (window.__companionUtils && window.__companionUtils.populateRendererRegistry) {
       window.__companionUtils.populateRendererRegistry();
@@ -423,6 +427,33 @@
     } catch (e) {
       console.error('[mcpviews] Failed to load plugin renderers:', e);
     }
+  }
+
+  function isDecidrOnboardingCompleted() {
+    try {
+      return !!localStorage.getItem(DECIDR_ONBOARDING_COMPLETED_KEY);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function hasSessionForRenderer(rendererName) {
+    var found = false;
+    sessions.forEach(function (session) {
+      if (found) return;
+      found = !!(session && session.contentType === rendererName);
+    });
+    return found;
+  }
+
+  function maybeAutoOpenDecidrOnboarding() {
+    var renderers = window.__renderers || {};
+    if (typeof renderers[DECIDR_ONBOARDING_RENDERER] !== 'function') return;
+    if (isDecidrOnboardingCompleted()) return;
+    if (hasSessionForRenderer(DECIDR_ONBOARDING_RENDERER)) return;
+    launchStandalone(DECIDR_ONBOARDING_RENDERER, 'DecidR Setup', {}, {
+      autoOpened: true,
+    });
   }
 
   // --- Message Handling ---
@@ -1254,7 +1285,7 @@
       });
   }
 
-  function launchStandalone(rendererName, rendererLabel) {
+  function launchStandalone(rendererName, rendererLabel, data, metaPatch) {
     var renderer = getRenderer(rendererName);
     if (!renderer) {
       console.error('[apps] No renderer found for:', rendererName);
@@ -1269,12 +1300,12 @@
     var session = {
       toolName: 'standalone_launch',
       contentType: rendererName,
-      data: {},  // standalone renderers fetch their own data
-      meta: {
+      data: data || {},  // standalone renderers fetch their own data
+      meta: Object.assign({
         standalone: true,
         headerTitle: displayLabel,
         standaloneRenderer: rendererName,
-      },
+      }, metaPatch || {}),
       toolArgs: { title: displayLabel },
       reviewRequired: false,
       timeoutSecs: null,

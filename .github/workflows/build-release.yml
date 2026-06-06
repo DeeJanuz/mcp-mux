@@ -214,6 +214,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Stage branded bundled plugins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run stage:branded-bundle
+
+      - name: Verify branded bundled plugins
+        run: npm run verify:branded-bundle
+
       - name: Import Apple signing certificate
         if: ${{ env.APPLE_CERTIFICATE != '' }}
         env:
@@ -412,6 +420,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Stage branded bundled plugins
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npm run stage:branded-bundle
+
+      - name: Verify branded bundled plugins
+        shell: bash
+        run: npm run verify:branded-bundle
+
       - name: Run frontend tests
         run: npm test
 
@@ -539,6 +557,34 @@ jobs:
       - name: Create updater manifest
         run: node scripts/create-updater-manifest.mjs
 
+      - name: Create stable DecidR download aliases
+        run: |
+          set -euo pipefail
+          mkdir -p branded-downloads
+
+          MAC_DMG="$(find mcpviews-macos-arm64 -name '*.dmg' -print | sort | head -n 1 || true)"
+          if [ -n "$MAC_DMG" ]; then
+            cp "$MAC_DMG" branded-downloads/DecidR-MCPViews-macOS.dmg
+          fi
+
+          WINDOWS_EXE="$(find mcpviews-windows -name '*setup.exe' -print | sort | head -n 1 || true)"
+          if [ -z "$WINDOWS_EXE" ]; then
+            WINDOWS_EXE="$(find mcpviews-windows -path '*nsis*.exe' -print | sort | head -n 1 || true)"
+          fi
+          if [ -n "$WINDOWS_EXE" ]; then
+            cp "$WINDOWS_EXE" branded-downloads/DecidR-MCPViews-Windows-setup.exe
+          fi
+
+          WINDOWS_MSI="$(find mcpviews-windows -name '*.msi' -print | sort | head -n 1 || true)"
+          if [ -n "$WINDOWS_MSI" ]; then
+            cp "$WINDOWS_MSI" branded-downloads/DecidR-MCPViews-Windows.msi
+          fi
+
+          if [ ! -s branded-downloads/DecidR-MCPViews-macOS.dmg ] && [ ! -s branded-downloads/DecidR-MCPViews-Windows-setup.exe ]; then
+            echo "::error::No installer artifacts were available for stable DecidR aliases"
+            exit 1
+          fi
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -553,5 +599,6 @@ jobs:
             mcpviews-windows/**/*.exe
             mcpviews-windows/**/*.zip
             mcpviews-windows/**/*.sig
+            branded-downloads/*
             latest.json
           body_path: release_notes.txt

@@ -7,6 +7,8 @@
     "dev:update-test": "node scripts/dev-update-test.mjs",
     "build": "tauri build",
     "build:mac-dev-bundle": "node scripts/build-mac-dev-bundle.mjs",
+    "stage:branded-bundle": "node scripts/stage-branded-bundled-plugins.mjs",
+    "verify:branded-bundle": "node scripts/stage-branded-bundled-plugins.mjs --verify-only",
     "dev:frontend": "vite",
     "build:frontend": "vite build",
     "preview": "vite preview",
@@ -18,6 +20,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "adm-zip": "^0.5.17",
     "happy-dom": "^20.8.9",
     "vite": "^6",
     "vitest": "^4.1.2"

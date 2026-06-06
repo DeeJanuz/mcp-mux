@@ -246,14 +246,21 @@ impl AppState {
 
     /// Install or update plugins bundled inside the app resources.
     ///
-    /// The mac dev bundle stages plugin directories at:
+    /// Release bundles stage plugin directories at:
+    /// {resource_dir}/bundled-plugins/release/{plugin}/manifest.json
+    ///
+    /// The mac dev bundle still stages plugin directories at:
     /// {resource_dir}/bundled-plugins/mac-dev/{plugin}/manifest.json
     pub fn ensure_resource_bundled_plugins(
         &self,
         resource_dir: &std::path::Path,
     ) -> Result<Vec<String>, String> {
-        let bundle_root = resource_dir.join("bundled-plugins").join("mac-dev");
-        let mut installed = ensure_bundled_plugin_dirs(&self.plugin_store, &bundle_root)?;
+        let bundle_base = resource_dir.join("bundled-plugins");
+        let mut installed = Vec::new();
+        for bundle_name in ["release", "mac-dev"] {
+            let bundle_root = bundle_base.join(bundle_name);
+            installed.extend(ensure_bundled_plugin_dirs(&self.plugin_store, &bundle_root)?);
+        }
         if retire_legacy_persona_studio_plugin(&self.plugin_store) {
             installed.push(format!("retired:{}", LEGACY_PERSONA_STUDIO_PLUGIN));
         }
@@ -399,7 +406,11 @@ fn bundled_plugin_needs_install(
     let target_manifest = serde_json::from_str::<PluginManifest>(&target_manifest_json)
         .map_err(|err| format!("Failed to parse installed plugin manifest: {}", err))?;
     if target_manifest.version != source_manifest.version {
-        return Ok(true);
+        return Ok(mcpviews_shared::newer_version(
+            &target_manifest.version,
+            &source_manifest.version,
+        )
+        .is_some());
     }
 
     let source_hash = read_bundled_plugin_hash(source_dir);
@@ -459,6 +470,27 @@ fn copy_dir_recursive(source_dir: &std::path::Path, target_dir: &std::path::Path
 mod tests {
     use super::*;
     use crate::test_utils::{test_app_state, test_manifest};
+    use std::path::Path;
+
+    fn write_plugin_manifest(
+        dir: &Path,
+        name: &str,
+        version: &str,
+        hash: Option<&str>,
+    ) -> PluginManifest {
+        std::fs::create_dir_all(dir).unwrap();
+        let mut manifest = test_manifest(name);
+        manifest.version = version.to_string();
+        std::fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+        if let Some(hash) = hash {
+            std::fs::write(dir.join(".mcpviews-bundled-plugin-sha256"), hash).unwrap();
+        }
+        manifest
+    }
 
     #[test]
     fn test_new_with_store() {
@@ -541,6 +573,91 @@ mod tests {
         assert_eq!(origins.len(), 2);
         assert!(origins.contains(&"https://app.example.com".to_string()));
         assert!(origins.contains(&"http://localhost:3000".to_string()));
+    }
+
+    #[test]
+    fn test_bundled_plugin_does_not_downgrade_installed_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let target_dir = dir.path().join("target");
+        let source_manifest = write_plugin_manifest(&source_dir, "ludflow", "0.5.6", Some("old"));
+        write_plugin_manifest(&target_dir, "ludflow", "0.5.8", Some("new"));
+
+        let needs_install =
+            bundled_plugin_needs_install(&source_dir, &target_dir, &source_manifest).unwrap();
+
+        assert!(!needs_install);
+    }
+
+    #[test]
+    fn test_bundled_plugin_installs_newer_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let target_dir = dir.path().join("target");
+        let source_manifest = write_plugin_manifest(&source_dir, "ludflow", "0.5.9", Some("new"));
+        write_plugin_manifest(&target_dir, "ludflow", "0.5.8", Some("old"));
+
+        let needs_install =
+            bundled_plugin_needs_install(&source_dir, &target_dir, &source_manifest).unwrap();
+
+        assert!(needs_install);
+    }
+
+    #[test]
+    fn test_bundled_plugin_installs_same_version_changed_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let target_dir = dir.path().join("target");
+        let source_manifest = write_plugin_manifest(&source_dir, "ludflow", "0.5.8", Some("new"));
+        write_plugin_manifest(&target_dir, "ludflow", "0.5.8", Some("old"));
+
+        let needs_install =
+            bundled_plugin_needs_install(&source_dir, &target_dir, &source_manifest).unwrap();
+
+        assert!(needs_install);
+    }
+
+    #[test]
+    fn test_ensure_resource_bundled_plugins_installs_release_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins_dir = dir.path().join("plugins");
+        let resource_dir = dir.path().join("resources");
+        let store = PluginStore::with_dir(plugins_dir);
+        let state = AppState::new_with_store_and_auth_dir(store, dir.path().join("auth"));
+
+        let bundled_plugin_dir = resource_dir
+            .join("bundled-plugins")
+            .join("release")
+            .join("decidr");
+        write_plugin_manifest(&bundled_plugin_dir, "decidr", "1.2.3", Some("release-hash"));
+
+        let installed = state.ensure_resource_bundled_plugins(&resource_dir).unwrap();
+
+        assert_eq!(installed, vec!["decidr".to_string()]);
+        let manifest = state.plugin_store().load("decidr").unwrap();
+        assert_eq!(manifest.version, "1.2.3");
+    }
+
+    #[test]
+    fn test_ensure_resource_bundled_plugins_fails_on_corrupt_release_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins_dir = dir.path().join("plugins");
+        let resource_dir = dir.path().join("resources");
+        let store = PluginStore::with_dir(plugins_dir);
+        let state = AppState::new_with_store_and_auth_dir(store, dir.path().join("auth"));
+
+        let bundled_plugin_dir = resource_dir
+            .join("bundled-plugins")
+            .join("release")
+            .join("decidr");
+        std::fs::create_dir_all(&bundled_plugin_dir).unwrap();
+        std::fs::write(bundled_plugin_dir.join("manifest.json"), "{not valid json").unwrap();
+
+        let error = state
+            .ensure_resource_bundled_plugins(&resource_dir)
+            .unwrap_err();
+
+        assert!(error.contains("Failed to parse bundled plugin manifest"));
     }
 
     #[test]

@@ -36,6 +36,32 @@ async function flushPromises(count = 4) {
   }
 }
 
+function installLocalStorage() {
+  var values = {};
+  var storage = {
+    getItem: function (key) {
+      return Object.prototype.hasOwnProperty.call(values, key) ? values[key] : null;
+    },
+    setItem: function (key, value) {
+      values[key] = String(value);
+    },
+    removeItem: function (key) {
+      delete values[key];
+    },
+    clear: function () {
+      values = {};
+    },
+  };
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: storage,
+  });
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: storage,
+  });
+}
+
 beforeEach(function () {
   document.body.innerHTML = [
     '<div id="main-title"></div>',
@@ -63,8 +89,10 @@ beforeEach(function () {
   delete window.__tribexAiState;
   delete window.__tribexAiClient;
   delete window.__rendererRegistry;
+  installLocalStorage();
   if (localStorage && typeof localStorage.removeItem === 'function') {
     localStorage.removeItem('mcpviews-dismissed-update-version');
+    localStorage.removeItem('decidr-onboarding:completed-org-id');
   }
   window.__renderers = {
     rich_content: vi.fn(),
@@ -72,6 +100,50 @@ beforeEach(function () {
 });
 
 describe('main session routing', function () {
+  it('auto-opens DecidR Setup when the bundled onboarding renderer is available', async function () {
+    window.__renderers.decidr_onboarding = vi.fn(function (container) {
+      container.textContent = 'setup';
+    });
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+
+    var ids = window.__mainTest.getSessionIds();
+    expect(ids.length).toBe(1);
+    expect(window.__mainTest.getSession(ids[0]).contentType).toBe('decidr_onboarding');
+    expect(window.__mainTest.getSession(ids[0]).meta.autoOpened).toBe(true);
+  });
+
+  it('does not auto-open DecidR Setup after onboarding is completed', async function () {
+    localStorage.setItem('decidr-onboarding:completed-org-id', 'org_123');
+    window.__renderers.decidr_onboarding = vi.fn();
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+
+    expect(window.__mainTest.getSessionIds()).toEqual([]);
+  });
+
   it('shows and dismisses the GitHub release update banner', async function () {
     var update = {
       version: '0.2.5-rc.12',

@@ -132,6 +132,10 @@ rmSync(stageRoot, { recursive: true, force: true });
 mkdirSync(stageRoot, { recursive: true });
 
 const staged = [
+  stageDirectPlugin(resolve(repoRoot, 'bundled-plugins/decidr-setup'), [
+    'manifest.json',
+    'renderers',
+  ]),
   stageDirectPlugin(resolve(repoRoot, '../tribe-x-persona-studio'), [
     'manifest.json',
     'renderers',

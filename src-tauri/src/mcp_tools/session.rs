@@ -6,7 +6,7 @@ use crate::http_server::AsyncAppState;
 
 async fn gather_session_data(
     state: &Arc<TokioMutex<AsyncAppState>>,
-) -> (Vec<Value>, Vec<Value>, Vec<Value>) {
+) -> (Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>) {
     let all_tools = super::list_tools(state).await;
     let available_tools = super::extract_tool_summaries(&all_tools);
 
@@ -15,7 +15,8 @@ async fn gather_session_data(
     let registry = state_guard.inner.plugin_registry.lock().unwrap();
     let rules = super::collect_rules(&all_renderers, &registry.manifests);
     let plugin_status = super::collect_plugin_auth_status(&registry.manifests);
-    (rules, plugin_status, available_tools)
+    let setup_questions = super::collect_setup_questions(&registry.manifests);
+    (rules, plugin_status, available_tools, setup_questions)
 }
 
 async fn gather_slim_session_data(
@@ -113,12 +114,14 @@ pub(super) async fn call_mcpviews_setup(
         .and_then(|v| v.as_str())
         .unwrap_or("generic");
 
-    let (rules, plugin_status, available_tools) = gather_session_data(state).await;
+    let (rules, plugin_status, available_tools, setup_questions) = gather_session_data(state).await;
 
     let response = serde_json::json!({
         "rules": rules,
         "rules_version": super::RULES_VERSION,
         "plugin_status": plugin_status,
+        "setup_questions": setup_questions,
+        "setup_question_instructions": "If setup_questions is non-empty, ask the user each setup question while configuring MCPViews. Persist only the selected option's persisted_rule using persist_as_rule_name when present; do not persist unselected options or the full question text.",
         "persistence_instructions": super::persistence_instructions(agent_type),
         "setup_instructions": setup_instructions(agent_type),
         "rules_update": {

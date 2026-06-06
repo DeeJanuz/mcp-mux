@@ -44,6 +44,7 @@ A plugin manifest is a JSON file with the following structure:
 | `mcp` | object | No | MCP server connection configuration. If omitted, the plugin provides renderers only (no remote tools). |
 | `prompt_definitions` | PromptDef[] | No | Plugin prompt definitions for guided workflows. Each entry defines a prompt that can be discovered via the MCP `prompts/list` protocol and fetched via `get_plugin_prompt` or `prompts/get`. Prompts are markdown files bundled with the plugin that support `{{arg}}` template substitution. |
 | `plugin_rules` | string[] | No | High-level behavioral rules for this plugin. These are returned by `init_session`, `mcpviews_setup`, and `get_plugin_docs` so agents see them every session. Each string is a rule that agents should follow when working with this plugin. Rules are always included regardless of tool/renderer filters in `get_plugin_docs`. Also included in the `plugin_registry` compact index returned by `init_session`. |
+| `setup_questions` | SetupQuestion[] | No | Optional setup-time questions returned by `mcpviews_setup`. Agents should ask these during onboarding and persist only the selected option's compact `persisted_rule`, not every option or the full workflow. |
 | `download_url` | string | No | URL to a ZIP package for this plugin version. Used by `manifest_url`-based registry entries and the `update_plugins` tool. |
 
 ### RendererDef

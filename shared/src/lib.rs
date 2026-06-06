@@ -74,6 +74,32 @@ pub struct PromptDef {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupQuestionOption {
+    pub value: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Compact rule text to persist when this option is selected during setup.
+    #[serde(default)]
+    pub persisted_rule: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetupQuestion {
+    pub id: String,
+    pub question: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub options: Vec<SetupQuestionOption>,
+    #[serde(default)]
+    pub default_value: Option<String>,
+    /// Suggested persisted rule name for the selected answer.
+    #[serde(default)]
+    pub persist_as_rule_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolGroupEntry {
     pub name: String,
     pub hint: String,
@@ -117,6 +143,8 @@ pub struct PluginManifest {
     pub prompt_definitions: Vec<PromptDef>,
     #[serde(default)]
     pub plugin_rules: Vec<String>,
+    #[serde(default)]
+    pub setup_questions: Vec<SetupQuestion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -805,6 +833,51 @@ mod tests {
         }"#;
         let manifest: PluginManifest = serde_json::from_str(json).unwrap();
         assert!(manifest.no_auto_push.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_manifest_setup_questions_default_to_empty_vec() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0"
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.setup_questions.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_manifest_setup_questions_roundtrip() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0",
+            "setup_questions": [{
+                "id": "governance_mode",
+                "question": "Use team approvals?",
+                "description": "Choose the default governance mode.",
+                "default_value": "team",
+                "persist_as_rule_name": "governance_mode",
+                "options": [{
+                    "value": "team",
+                    "label": "Yes",
+                    "description": "Use approval workflow.",
+                    "persisted_rule": "Default governance mode is team."
+                }]
+            }]
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.setup_questions.len(), 1);
+        assert_eq!(manifest.setup_questions[0].id, "governance_mode");
+        assert_eq!(manifest.setup_questions[0].default_value.as_deref(), Some("team"));
+        assert_eq!(manifest.setup_questions[0].options[0].value, "team");
+
+        let serialized = serde_json::to_string(&manifest).unwrap();
+        let deserialized: PluginManifest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(
+            deserialized.setup_questions[0].options[0]
+                .persisted_rule
+                .as_deref(),
+            Some("Default governance mode is team.")
+        );
     }
 
     #[test]

@@ -1303,6 +1303,7 @@ mod tests {
             download_url: None,
             prompt_definitions: vec![],
             plugin_rules: vec![],
+            setup_questions: vec![],
         }
     }
 

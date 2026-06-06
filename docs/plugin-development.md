@@ -864,6 +864,12 @@ Each rule is a plain string. In `mcpviews_setup` and `get_plugin_docs`, plugin r
 
 Use `plugin_rules` for cross-cutting behavioral guidance that applies to the plugin as a whole. Use `tool_rules` for tool-specific instructions.
 
+### setup_questions
+
+Setup questions let a plugin capture a one-time preference during `mcpviews_setup` without loading full workflow instructions into every future session. Each question has stable `id` and `question` fields, optional `description`, `default_value`, and `persist_as_rule_name`, plus an `options` array. Each option can include `value`, `label`, optional `description`, and optional `persisted_rule`.
+
+Agents should ask the question during setup, then persist only the selected option's `persisted_rule`. Put long procedures in `prompt_definitions` and keep persisted setup rules short.
+
 ## Plugin Prompts
 
 Plugins can define guided workflow prompts that are discoverable via the MCP `prompts/list` protocol and fetchable via `get_plugin_prompt` or `prompts/get`. Prompts are markdown files bundled with the plugin that support template argument substitution.

@@ -15,8 +15,8 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "15"; // Bump when built-in rules change
-const RULES_REFRESH_INSTRUCTION: &str = "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules.";
+const RULES_VERSION: &str = "16"; // Bump when built-in rules change
+const RULES_REFRESH_INSTRUCTION: &str = "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules. If `mcpviews_setup` returns `setup_questions`, ask the user those questions during setup and persist only the selected option's compact `persisted_rule`, using `persist_as_rule_name` when present.";
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -2114,6 +2114,27 @@ pub(crate) fn collect_plugin_rules(
     rules
 }
 
+pub(crate) fn collect_setup_questions(
+    manifests: &[mcpviews_shared::PluginManifest],
+) -> Vec<Value> {
+    let mut seen_plugins: HashSet<&str> = HashSet::new();
+
+    manifests
+        .iter()
+        .filter_map(|manifest| {
+            if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty()
+            {
+                return None;
+            }
+
+            Some(serde_json::json!({
+                "plugin": manifest.name,
+                "questions": manifest.setup_questions,
+            }))
+        })
+        .collect()
+}
+
 /// Collect auth status for each plugin that has MCP + auth configured.
 pub(crate) fn collect_plugin_auth_status(
     manifests: &[mcpviews_shared::PluginManifest],
@@ -3352,6 +3373,7 @@ mod tests {
             download_url: None,
             prompt_definitions: vec![],
             plugin_rules: vec![],
+            setup_questions: vec![],
         }
     }
 
@@ -3560,6 +3582,45 @@ mod tests {
         assert_eq!(tr["name"], "do_thing_usage");
     }
 
+    #[test]
+    fn test_collect_setup_questions_includes_plugin_questions() {
+        let mut manifest = make_manifest(
+            "governance-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
+        manifest.setup_questions = vec![mcpviews_shared::SetupQuestion {
+            id: "governance_mode".to_string(),
+            question: "Use teammate approvals?".to_string(),
+            description: None,
+            options: vec![mcpviews_shared::SetupQuestionOption {
+                value: "team".to_string(),
+                label: "Yes".to_string(),
+                description: None,
+                persisted_rule: Some("Default governance mode is team.".to_string()),
+            }],
+            default_value: Some("team".to_string()),
+            persist_as_rule_name: Some("governance_mode".to_string()),
+        }];
+        let empty_manifest = make_manifest(
+            "empty-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
+
+        let questions = collect_setup_questions(&[manifest, empty_manifest]);
+
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0]["plugin"], "governance-plugin");
+        assert_eq!(questions[0]["questions"][0]["id"], "governance_mode");
+        assert_eq!(
+            questions[0]["questions"][0]["options"][0]["persisted_rule"],
+            "Default governance mode is team."
+        );
+    }
+
     // ─── collect_plugin_auth_status tests ───
 
     #[test]
@@ -3640,6 +3701,7 @@ mod tests {
     fn test_persistence_instructions_codex() {
         let instr = persistence_instructions("codex");
         assert!(instr.contains("AGENTS.md"));
+        assert!(instr.contains("setup_questions"));
     }
 
     #[test]
@@ -3702,6 +3764,7 @@ mod tests {
             download_url: None,
             prompt_definitions: vec![],
             plugin_rules: vec![],
+            setup_questions: vec![],
         }
     }
 
@@ -3943,9 +4006,9 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "15");
+        assert_eq!(RULES_VERSION, "16");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 15"));
+        assert!(instructions.contains("mcpviews-rules-version: 16"));
         assert!(instructions.contains("Add or update the MCPViews section in `AGENTS.md`"));
         assert!(instructions.contains("missing from the persisted rules"));
     }

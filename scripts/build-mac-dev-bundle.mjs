@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   cpSync,
   existsSync,
+  lstatSync,
   mkdtempSync,
   mkdirSync,
   readdirSync,
@@ -13,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
@@ -75,8 +76,43 @@ function runChecked(command, args, options = {}) {
     ...options,
   });
   if (result.status !== 0) {
-    process.exit(result.status || 1);
+    if (result.error) {
+      throw result.error;
+    }
+
+    const exitCode = result.status || 1;
+    const signal = result.signal ? `, signal ${result.signal}` : '';
+    const error = new Error(`Command failed (${exitCode}${signal}): ${[command, ...args].join(' ')}`);
+    error.exitCode = exitCode;
+    throw error;
   }
+}
+
+function assertRepoLocalPath(path) {
+  const resolvedPath = resolve(path);
+  const relativePath = relative(repoRoot, resolvedPath);
+  if (relativePath === '..' || relativePath.startsWith(`..${sepToken()}`) || isAbsolute(relativePath)) {
+    throw new Error(`Refusing to remove path outside the MCPViews repo: ${resolvedPath}`);
+  }
+  return resolvedPath;
+}
+
+function removeGeneratedPath(path) {
+  const resolvedPath = assertRepoLocalPath(path);
+  const parts = relative(repoRoot, resolvedPath).split(/[\\/]/).filter(Boolean);
+  let current = repoRoot;
+
+  for (const part of parts) {
+    current = join(current, part);
+    if (!existsSync(current)) {
+      break;
+    }
+    if (lstatSync(current).isSymbolicLink()) {
+      throw new Error(`Refusing to remove generated path through symlink: ${current}`);
+    }
+  }
+
+  rmSync(resolvedPath, { recursive: true, force: true });
 }
 
 function stageDirectPlugin(sourceDir, includePaths) {
@@ -201,45 +237,54 @@ function createDevDmg() {
   }
 }
 
-rmSync(stageRoot, { recursive: true, force: true });
-rmSync(join(releaseBundleRoot, 'macos'), { recursive: true, force: true });
-rmSync(join(releaseBundleRoot, 'dmg'), { recursive: true, force: true });
-mkdirSync(stageRoot, { recursive: true });
+function main() {
+  removeGeneratedPath(stageRoot);
+  removeGeneratedPath(join(releaseBundleRoot, 'macos'));
+  removeGeneratedPath(join(releaseBundleRoot, 'dmg'));
+  mkdirSync(stageRoot, { recursive: true });
 
-const staged = [
-  stageDirectPlugin(resolve(repoRoot, 'bundled-plugins/decidr-setup'), [
-    'manifest.json',
-    'renderers',
-  ]),
-  stageOptionalDirectPlugin(resolve(repoRoot, '../tribe-x-persona-studio'), [
-    'manifest.json',
-    'renderers',
-    'tools',
-    'docs',
-    'README.md',
-  ]),
-  stageDirectPlugin(resolve(repoRoot, '../ludflow-mcpviews'), [
-    'manifest.json',
-    'renderers',
-    'prompts',
-    'README.md',
-    'RELEASE_NOTES.md',
-  ]),
-  stageDecidrPlugin(resolve(repoRoot, '../decidr-plugin')),
-  stageOptionalDirectPlugin(resolve(repoRoot, '../mcpviews-email-deliverability-plugin'), [
-    'manifest.json',
-    'renderers',
-    'src',
-    'fixtures',
-    'package.json',
-    'README.md',
-    'RELEASE_NOTES.md',
-  ]),
-];
+  const staged = [
+    stageDirectPlugin(resolve(repoRoot, 'bundled-plugins/decidr-setup'), [
+      'manifest.json',
+      'renderers',
+    ]),
+    stageOptionalDirectPlugin(resolve(repoRoot, '../tribe-x-persona-studio'), [
+      'manifest.json',
+      'renderers',
+      'tools',
+      'docs',
+      'README.md',
+    ]),
+    stageDirectPlugin(resolve(repoRoot, '../ludflow-mcpviews'), [
+      'manifest.json',
+      'renderers',
+      'prompts',
+      'README.md',
+      'RELEASE_NOTES.md',
+    ]),
+    stageDecidrPlugin(resolve(repoRoot, '../decidr-plugin')),
+    stageOptionalDirectPlugin(resolve(repoRoot, '../mcpviews-email-deliverability-plugin'), [
+      'manifest.json',
+      'renderers',
+      'src',
+      'fixtures',
+      'package.json',
+      'README.md',
+      'RELEASE_NOTES.md',
+    ]),
+  ];
 
-console.log(`Staged mac dev plugins in ${stageRoot}`);
-for (const plugin of staged) {
-  console.log(`  - ${plugin}`);
+  console.log(`Staged mac dev plugins in ${stageRoot}`);
+  for (const plugin of staged) {
+    console.log(`  - ${plugin}`);
+  }
+
+  runTauriBuild();
 }
 
-runTauriBuild();
+try {
+  main();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(error?.exitCode || 1);
+}

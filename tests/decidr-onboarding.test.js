@@ -103,7 +103,6 @@ describe('decidr onboarding renderer', function () {
             pluginName: 'decidr',
             email: 'daenon@example.com',
             code: '123456',
-            storePluginNames: ['decidr', 'ludflow'],
           });
           return Promise.resolve({
             status: true,
@@ -116,7 +115,6 @@ describe('decidr onboarding renderer', function () {
           pluginName: 'decidr',
           email: 'daenon@example.com',
           code: '123456',
-          storePluginNames: ['decidr', 'ludflow'],
           organizationId: 'org_123',
         });
         return Promise.resolve({
@@ -170,7 +168,6 @@ describe('decidr onboarding renderer', function () {
           pluginName: 'decidr',
           email: 'daenon@example.com',
           code: '123456',
-          storePluginNames: ['decidr', 'ludflow'],
           organizationName: 'Acme Decisions',
         });
         return Promise.resolve({

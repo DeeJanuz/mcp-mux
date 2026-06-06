@@ -7,23 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- DecidR-branded bundle support now stages release plugin assets for `decidr` and `ludflow`, bundles a first-party DecidR Setup renderer, verifies bundled plugin hashes, and publishes stable macOS/Windows alias artifacts for DecidR-facing downloads.
+- The DecidR Setup renderer now supports native 6-digit email-code authentication, organization selection/creation, and shared DecidR/Ludflow token provisioning without collecting passwords or raw OAuth tokens in renderer code.
+
+### Changed
+- App-resource bundled plugins can now be discovered from release and mac-dev resource directories, preserving user preferences, avoiding downgrades, and reinstalling same-version bundles only when their packaged content hash changes.
+- The Plugin Manager now checks GitHub prerelease metadata for beta installs only when the user asks to install a beta plugin, avoiding eager registry-load API fan-out.
+
+### Fixed
+- Native plugin email-code verification now chooses token storage plugin namespaces on the Rust side and redacts OAuth token fields before returning success data to renderer JavaScript.
+
 ## [0.2.11] - 2026-06-07
 
 ### Changed
 - Rebuilt the DecidR-branded installer bundle after DeeJanuz/ludflow-mcpviews@v0.5.13, staging the latest stable bundled plugin releases.
-
 
 ## [0.2.10] - 2026-06-07
 
 ### Changed
 - Rebuilt the DecidR-branded installer bundle after manual/codex@installer-pipeline-bootstrap-rerun, staging the latest stable bundled plugin releases.
 
-
 ## [0.2.9] - 2026-06-07
 
 ### Changed
 - Rebuilt the DecidR-branded installer bundle after manual/codex@installer-pipeline-bootstrap, staging the latest stable bundled plugin releases.
-
 
 ## [0.2.8-e2e.1] - 2026-06-06
 

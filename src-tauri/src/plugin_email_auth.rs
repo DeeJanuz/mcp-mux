@@ -126,6 +126,31 @@ fn store_oauth_response_for_plugins(
     Ok(())
 }
 
+fn storage_plugins_for_email_code(plugin_name: &str) -> Vec<String> {
+    match plugin_name {
+        "decidr" => vec!["decidr".to_string(), "ludflow".to_string()],
+        _ => vec![plugin_name.to_string()],
+    }
+}
+
+fn redacted_response(result: &Value) -> Value {
+    let mut redacted = result.clone();
+    if let Some(object) = redacted.as_object_mut() {
+        object.remove("access_token");
+        object.remove("accessToken");
+        object.remove("refresh_token");
+        object.remove("refreshToken");
+        object.remove("token_type");
+        object.remove("tokenType");
+        object.remove("expires_in");
+        object.remove("expiresIn");
+        if result.get("access_token").is_some() || result.get("accessToken").is_some() {
+            object.insert("authenticated".to_string(), Value::Bool(true));
+        }
+    }
+    redacted
+}
+
 pub async fn send_email_code(
     plugin_name: &str,
     email: &str,
@@ -147,7 +172,6 @@ pub async fn send_email_code(
 
 pub async fn verify_email_code(
     plugin_name: &str,
-    store_plugin_names: &[String],
     email: &str,
     code: &str,
     organization_id: Option<&str>,
@@ -170,13 +194,47 @@ pub async fn verify_email_code(
     .await?;
 
     if result.get("access_token").and_then(|value| value.as_str()).is_some() {
-        let plugins = if store_plugin_names.is_empty() {
-            vec![plugin_name.to_string()]
-        } else {
-            store_plugin_names.to_vec()
-        };
+        let plugins = storage_plugins_for_email_code(plugin_name);
         store_oauth_response_for_plugins(&plugins, &result)?;
     }
 
-    Ok(result)
+    Ok(redacted_response(&result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_token_material_from_email_code_response() {
+        let response = json!({
+            "status": true,
+            "organization_id": "org_123",
+            "access_token": "secret_access",
+            "refresh_token": "secret_refresh",
+            "token_type": "bearer",
+            "expires_in": 3600
+        });
+
+        let redacted = redacted_response(&response);
+
+        assert_eq!(redacted["organization_id"], "org_123");
+        assert_eq!(redacted["authenticated"], true);
+        assert!(redacted.get("access_token").is_none());
+        assert!(redacted.get("refresh_token").is_none());
+        assert!(redacted.get("token_type").is_none());
+        assert!(redacted.get("expires_in").is_none());
+    }
+
+    #[test]
+    fn decidr_email_code_storage_uses_backend_owned_plugin_allowlist() {
+        assert_eq!(
+            storage_plugins_for_email_code("decidr"),
+            vec!["decidr".to_string(), "ludflow".to_string()]
+        );
+        assert_eq!(
+            storage_plugins_for_email_code("custom-plugin"),
+            vec!["custom-plugin".to_string()]
+        );
+    }
 }

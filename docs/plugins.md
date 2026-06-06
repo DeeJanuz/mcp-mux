@@ -58,7 +58,12 @@ Structured renderer definition used for agent rule bootstrapping via the `get_pl
   "scope": "universal",
   "tools": [],
   "data_hint": "{ \"title\": \"string\", \"body\": \"markdown\" }",
-  "rule": "When displaying analysis results, use push_content with tool_name 'custom_view'."
+  "rule": "When displaying analysis results, use push_content with tool_name 'custom_view'.",
+  "display_mode": "drawer",
+  "invoke_schema": "{ \"id\": \"string\" }",
+  "url_patterns": ["/records/*"],
+  "standalone": true,
+  "standalone_label": "Custom View"
 }
 ```
 
@@ -70,6 +75,11 @@ Structured renderer definition used for agent rule bootstrapping via the `get_pl
 | `tools` | string[] | No | For tool-scoped renderers: which tool names trigger this renderer. |
 | `data_hint` | string | No | Data schema hint for agents (e.g., `"{ title: string, body: markdown }"`). |
 | `rule` | string | No | Behavioral rule text returned by `get_plugin_docs`/`mcpviews_setup` for agent persistence. |
+| `display_mode` | string | No | Preferred invocation presentation for invocable renderers: `"drawer"`, `"modal"`, or `"replace"`. |
+| `invoke_schema` | string | No | Human-readable JSON/schema hint for renderer invocation params. When present, the renderer appears in the frontend invocation registry. |
+| `url_patterns` | string[] | No | URL or path glob patterns the frontend can auto-convert into renderer invocation links. |
+| `standalone` | boolean | No | Marks the renderer as an Apps-menu entry that can be opened without a tool result. |
+| `standalone_label` | string | No | Human-readable Apps-menu label for a standalone renderer. Defaults to `name` when omitted. |
 
 ### PromptDef
 
@@ -232,6 +242,14 @@ my-plugin.zip
 ```
 
 Renderer files are accessible at `plugin://localhost/{plugin-name}/renderers/{file-name}.js`.
+
+## Bundled Plugin Resources
+
+Desktop builds can ship full plugin directories as Tauri app resources. On startup, MCPViews scans `{resource_dir}/bundled-plugins/release/` first and `{resource_dir}/bundled-plugins/mac-dev/` second. Each child directory must contain a valid `manifest.json`; release bundles should also include `.mcpviews-bundled-plugin-sha256` so same-version content changes can be detected.
+
+Bundled resources are installed into `~/.mcpviews/plugins/{plugin-name}/` as normal plugin directories. The installer path preserves an existing plugin's `preferences.json`, avoids downgrading when the user already has a newer plugin version, and replaces a same-version plugin only when the bundled hash differs. This allows a branded package to preload first-party plugins without changing the plugin update or preference model.
+
+The DecidR-branded package stages latest stable GitHub release ZIPs for `decidr` and `ludflow` into the release resource directory, plus a bundled first-party `decidr-setup` renderer that appears as **DecidR Setup** in Apps and can auto-open on first launch.
 
 ## Registry Format
 

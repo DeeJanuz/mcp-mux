@@ -819,13 +819,10 @@ pub async fn verify_plugin_email_code(
     code: String,
     organization_id: Option<String>,
     organization_name: Option<String>,
-    store_plugin_names: Option<Vec<String>>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<serde_json::Value, String> {
-    let plugin_names = store_plugin_names.unwrap_or_else(|| vec![plugin_name.clone()]);
     crate::plugin_email_auth::verify_email_code(
         &plugin_name,
-        &plugin_names,
         &email,
         &code,
         organization_id.as_deref(),

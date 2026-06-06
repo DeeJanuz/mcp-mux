@@ -128,7 +128,6 @@
       }
 
       grid.appendChild(card);
-      hydrateBetaInfo(card, name, isBetaInstalled);
     });
 
     container.innerHTML = '';

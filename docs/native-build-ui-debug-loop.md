@@ -34,6 +34,8 @@ npm run build:mac-dev-bundle
 
 It stages local copies of `../tribe-x-persona-studio`, `../ludflow-mcpviews`, `../decidr-plugin`, and `../mcpviews-email-deliverability-plugin` under `src-tauri/bundled-plugins/mac-dev/`, writes content hashes for startup comparison, and then runs a macOS Tauri build for `app,dmg`. The staged directory is ignored by Git; regenerate it from the sibling plugin worktrees instead of editing it directly.
 
+The mac dev bundle also includes the repo-local `bundled-plugins/decidr-setup` renderer so the first-launch DecidR Setup flow can be exercised in the native app/DMG without waiting for a public plugin release.
+
 The mac dev bundle bakes in hosted AI provider defaults for `https://dev.app.tribexai.com` unless the corresponding `MCPVIEWS_BUNDLE_AI_PROVIDER_*` environment variables are set for the build.
 
 ## Inspection

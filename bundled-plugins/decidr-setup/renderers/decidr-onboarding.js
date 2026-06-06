@@ -4,7 +4,6 @@
   var COMPLETED_KEY = 'decidr-onboarding:completed-org-id';
   var AUTH_PLUGIN = 'decidr';
   var REQUIRED_PLUGINS = ['decidr', 'ludflow'];
-  var STORE_PLUGIN_NAMES = ['decidr', 'ludflow'];
 
   function invoke(command, args) {
     if (!window.__TAURI__ || !window.__TAURI__.core) {
@@ -247,7 +246,6 @@
       pluginName: AUTH_PLUGIN,
       email: state.email,
       code: state.code,
-      storePluginNames: STORE_PLUGIN_NAMES,
     };
     if (options.organizationId) args.organizationId = options.organizationId;
     if (options.organizationName) args.organizationName = options.organizationName;

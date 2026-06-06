@@ -39,7 +39,7 @@
   const UPDATE_DISMISSED_FAILURE_KEY = 'mcpviews-dismissed-update-check-failure';
   const UPDATE_FAILURE_DISMISS_MS = 4 * 60 * 60 * 1000;
   const DECIDR_ONBOARDING_RENDERER = 'decidr_onboarding';
-  const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:completed-org-id';
+  const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:agent-configured-org-id';
 
   /** @type {Map<string, HTMLElement>} Cached content containers per session */
   const contentCache = new Map();
@@ -1036,6 +1036,7 @@
   window.__companionUtils.openSession = openSyntheticSession;
   window.__companionUtils.replaceSession = replaceSyntheticSession;
   window.__companionUtils.selectSession = selectSession;
+  window.__companionUtils.closeSession = removeSession;
   window.__companionUtils.getSession = function (sessionId) {
     return sessionId ? sessions.get(sessionId) || null : null;
   };

@@ -1,9 +1,36 @@
 (function () {
   'use strict';
 
-  var COMPLETED_KEY = 'decidr-onboarding:completed-org-id';
+  var AUTH_ORG_KEY = 'decidr-onboarding:auth-org-id';
+  var AGENT_CONFIGURED_KEY = 'decidr-onboarding:agent-configured-org-id';
+  var LEGACY_COMPLETED_KEY = 'decidr-onboarding:completed-org-id';
   var AUTH_PLUGIN = 'decidr';
   var REQUIRED_PLUGINS = ['decidr', 'ludflow'];
+  var INSTALL_PROMPT_URL = 'https://github.com/DeeJanuz/mcpviews/blob/master/docs/install-prompt.md';
+  var AGENT_INSTALL_PROMPT = [
+    'Register the MCPViews MCP server for me at user / global scope so it is',
+    'available in every project I work on.',
+    '',
+    'Before doing anything, verify MCPViews is running:',
+    '',
+    '```bash',
+    'curl -sSf http://localhost:4200/health',
+    '```',
+    '',
+    'If that command fails or times out, stop and tell me to launch MCPViews.',
+    '',
+    'Detect which agent tool you are running inside, then register an MCP server',
+    'named mcpviews that points to http://localhost:4200/mcp. Only modify the',
+    'mcpviews entry in user / global config, and preserve every other MCP server',
+    'entry exactly as it is.',
+    '',
+    'After writing the config, re-read it and confirm the mcpviews entry is',
+    'present. Then tell me to fully quit and relaunch the agent tool so MCP',
+    'servers are reloaded.',
+    '',
+    'Canonical full prompt:',
+    INSTALL_PROMPT_URL,
+  ].join('\n');
 
   function invoke(command, args) {
     if (!window.__TAURI__ || !window.__TAURI__.core) {
@@ -39,6 +66,26 @@
     return null;
   }
 
+  function storedValue(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function storeValue(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (_error) {}
+  }
+
+  function initialOrganizationId(data) {
+    if (data && data.organization_id) return data.organization_id;
+    if (data && data.organizationId) return data.organizationId;
+    return storedValue(AUTH_ORG_KEY) || storedValue(LEGACY_COMPLETED_KEY) || null;
+  }
+
   function organizationRows(payload) {
     var parsed = parseToolPayload(payload) || {};
     var data = parsed.data || parsed.organizations || parsed.result || parsed;
@@ -54,6 +101,27 @@
 
   function getOrgId(org) {
     return org.id || org.organization_id || org.organizationId || null;
+  }
+
+  function slugify(value) {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function normalizeName(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  }
+
+  function hasOrganizationNameConflict(state, name) {
+    var targetName = normalizeName(name);
+    var targetSlug = slugify(name);
+    return (state.organizations || []).some(function (org) {
+      return normalizeName(getOrgName(org)) === targetName || slugify(org.slug || getOrgName(org)) === targetSlug;
+    });
   }
 
   function button(label, className, onClick) {
@@ -84,19 +152,46 @@
     status.className = 'decidr-setup-status' + (tone ? ' ' + tone : '');
   }
 
+  function openExternalUrl(url) {
+    if (!url) return;
+    if (window.__TAURI__ && window.__TAURI__.core) {
+      window.__TAURI__.core.invoke('open_external_url', { url: url }).catch(function () {});
+      return;
+    }
+    try {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (_error) {}
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      return navigator.clipboard.writeText(text);
+    }
+    return Promise.reject(new Error('Clipboard is not available.'));
+  }
+
   function renderShell(container) {
     container.innerHTML = [
       '<style>',
       '.decidr-setup{max-width:920px;margin:0 auto;padding:36px 28px;color:var(--text-primary,#111827);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
       '.decidr-setup h1{font-size:28px;line-height:1.2;margin:0 0 8px;font-weight:700;letter-spacing:0;}',
       '.decidr-setup p{color:var(--text-secondary,#4b5563);line-height:1.55;margin:0;}',
+      '.decidr-setup h2{font-size:18px;line-height:1.25;margin:0 0 8px;font-weight:700;letter-spacing:0;}',
       '.decidr-setup-panel{border:1px solid var(--border-color,#d6dbe3);border-radius:8px;background:var(--surface,#fff);padding:22px;margin-top:22px;}',
+      '.decidr-setup-info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:22px;}',
+      '.decidr-setup-info{border:1px solid var(--border-color,#d6dbe3);border-radius:8px;background:var(--surface,#fff);padding:16px;}',
       '.decidr-setup-steps{display:grid;gap:10px;margin:20px 0 0;padding:0;list-style:none;}',
       '.decidr-setup-step{display:flex;align-items:center;gap:10px;color:var(--text-secondary,#4b5563);font-size:14px;}',
       '.decidr-setup-step span:first-child{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--bg-muted,#eef2f7);font-size:12px;font-weight:700;color:var(--text-secondary,#4b5563);}',
       '.decidr-setup-step.done span:first-child{background:#d1fae5;color:#047857;}',
       '.decidr-setup-body{margin-top:20px;}',
       '.decidr-setup-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}',
+      '.decidr-setup-agent-steps{display:grid;gap:14px;margin-top:16px;}',
+      '.decidr-setup-agent-step{border:1px solid var(--border-color,#d6dbe3);border-radius:8px;padding:14px;background:var(--bg-muted,#f8fafc);}',
+      '.decidr-setup-agent-step strong{display:block;margin-bottom:6px;}',
+      '.decidr-setup-prompt{display:block;width:100%;min-height:150px;margin-top:12px;border:1px solid var(--border-color,#cbd5e1);border-radius:6px;padding:10px;background:var(--surface,#fff);color:var(--text-primary,#111827);font:12px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;resize:vertical;}',
+      '.decidr-setup-check{display:flex;align-items:flex-start;gap:10px;margin-top:16px;color:var(--text-primary,#111827);font-size:14px;line-height:1.45;}',
+      '.decidr-setup-check input{margin-top:2px;}',
       '.decidr-setup-button{min-height:38px;border:1px solid var(--border-color,#cbd5e1);border-radius:6px;background:var(--surface,#fff);color:var(--text-primary,#111827);font-weight:600;padding:0 14px;cursor:pointer;}',
       '.decidr-setup-button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff;}',
       '.decidr-setup-button:disabled{opacity:.55;cursor:not-allowed;}',
@@ -108,16 +203,27 @@
       '.decidr-setup-status{min-height:22px;margin-top:14px;font-size:13px;color:var(--text-secondary,#4b5563);}',
       '.decidr-setup-status.error{color:#b91c1c;}',
       '.decidr-setup-status.success{color:#047857;}',
+      '@media(max-width:720px){.decidr-setup{padding:26px 18px;}.decidr-setup-info-grid{grid-template-columns:1fr;}}',
       '</style>',
       '<div class="decidr-setup">',
       '<h1>DecidR Setup</h1>',
       '<p>Sign in to DecidR and choose the organization this MCPViews installation should use.</p>',
+      '<div class="decidr-setup-info-grid">',
+      '<section class="decidr-setup-info">',
+      '<h2>What is MCPViews?</h2>',
+      '<p>MCPViews is the local desktop bridge between your AI agent and DecidR. It runs the MCP server your agent calls and shows DecidR timelines, setup flows, approvals, and other interactive views here.</p>',
+      '</section>',
+      '<section class="decidr-setup-info">',
+      '<h2>What this setup does</h2>',
+      '<p>It signs you in, selects your default organization, and then helps you connect this desktop app to the AI agent you use for day-to-day work.</p>',
+      '</section>',
+      '</div>',
       '<div class="decidr-setup-panel">',
       '<ul class="decidr-setup-steps">',
       '<li class="decidr-setup-step" data-step="plugins"><span>1</span><span>Package components</span></li>',
       '<li class="decidr-setup-step" data-step="login"><span>2</span><span>Sign in</span></li>',
       '<li class="decidr-setup-step" data-step="org"><span>3</span><span>Organization</span></li>',
-      '<li class="decidr-setup-step" data-step="shared-auth"><span>4</span><span>Ready</span></li>',
+      '<li class="decidr-setup-step" data-step="agent"><span>4</span><span>Agent setup</span></li>',
       '</ul>',
       '<div class="decidr-setup-body" data-body></div>',
       '<div class="decidr-setup-status" data-status></div>',
@@ -148,6 +254,11 @@
       }));
       body.appendChild(panel);
       setStatus(root, 'One or more DecidR package components are missing. Reinstall the DecidR MCPViews package, then retry.', 'error');
+      return;
+    }
+
+    if (state.organizationId) {
+      verifySharedAuth(root, state);
       return;
     }
 
@@ -254,6 +365,9 @@
       var payload = parseToolPayload(result) || {};
       markStep(root, 'login', true);
 
+      var organizations = organizationRows(payload);
+      if (organizations.length) state.organizations = organizations;
+
       if (payloadFlag(payload, 'requires_organization', 'requiresOrganization')) {
         renderNewOrganizationForm(root, state);
         return;
@@ -326,6 +440,10 @@
         setStatus(root, 'Enter an organization name.', 'error');
         return;
       }
+      if (hasOrganizationNameConflict(state, name)) {
+        setStatus(root, 'An organization with that name is already available for this account. Choose it from the list or use a different name.', 'error');
+        return;
+      }
       state.organizationName = name;
       verifyLoginCode(root, state, { organizationName: name });
     }));
@@ -345,35 +463,129 @@
       if (decidrOrgs.indexOf(orgId) === -1 || companionOrgs.indexOf(orgId) === -1) {
         throw new Error('DecidR setup is not fully authenticated for the selected organization.');
       }
-      markStep(root, 'shared-auth', true);
-      try {
-        localStorage.setItem(COMPLETED_KEY, orgId);
-      } catch (_error) {}
-      renderComplete(root, state);
+      storeValue(AUTH_ORG_KEY, orgId);
+      renderAgentSetup(root, state);
     }).catch(function (error) {
+      state.organizationId = null;
+      renderLoginForm(root, state);
       setStatus(root, error.message || String(error), 'error');
     });
   }
 
-  function renderComplete(root, state) {
+  function currentSessionId(root) {
+    var session = root.closest ? root.closest('[data-session-id]') : null;
+    return session ? session.getAttribute('data-session-id') : null;
+  }
+
+  function openTimelineAndCloseSetup(root, state) {
+    var utils = window.__companionUtils || {};
+    if (utils && typeof utils.openSession === 'function') {
+      utils.openSession({
+        sessionKey: 'decidr-timeline',
+        toolName: 'DecidR Timeline',
+        contentType: 'decidr_timeline',
+        data: { organization_id: state.organizationId },
+        meta: { headerTitle: 'DecidR Timeline' },
+        toolArgs: { title: 'DecidR Timeline' },
+      });
+    }
+
+    var sessionId = currentSessionId(root);
+    if (sessionId && utils && typeof utils.closeSession === 'function') {
+      window.setTimeout(function () {
+        utils.closeSession(sessionId);
+      }, 0);
+    }
+  }
+
+  function renderAgentSetup(root, state) {
     var body = root.querySelector('[data-body]');
     body.innerHTML = '';
+    markStep(root, 'login', true);
+    markStep(root, 'org', true);
+    markStep(root, 'agent', false);
+
+    var heading = document.createElement('h2');
+    heading.textContent = 'Configure your AI agent';
+    body.appendChild(heading);
+
+    var intro = document.createElement('p');
+    intro.textContent = 'Finish by registering MCPViews with your AI agent, then restart the agent and run setup so it saves the current MCPViews rules.';
+    body.appendChild(intro);
+
+    var steps = document.createElement('div');
+    steps.className = 'decidr-setup-agent-steps';
+
+    var installStep = document.createElement('section');
+    installStep.className = 'decidr-setup-agent-step';
+    var installTitle = document.createElement('strong');
+    installTitle.textContent = '1. Give your agent the MCPViews install prompt';
+    installStep.appendChild(installTitle);
+    var installCopy = document.createElement('p');
+    installCopy.textContent = 'Paste this prompt into an MCP-capable agent. The full canonical prompt lives in the MCPViews GitHub repo.';
+    installStep.appendChild(installCopy);
+
+    var prompt = document.createElement('textarea');
+    prompt.className = 'decidr-setup-prompt';
+    prompt.readOnly = true;
+    prompt.value = AGENT_INSTALL_PROMPT;
+    installStep.appendChild(prompt);
+
     var actions = document.createElement('div');
     actions.className = 'decidr-setup-row';
-    actions.appendChild(button('Open DecidR', 'decidr-setup-button primary', function () {
-      if (window.__companionUtils && typeof window.__companionUtils.openSession === 'function') {
-        window.__companionUtils.openSession({
-          sessionKey: 'decidr-dashboard',
-          toolName: 'DecidR',
-          contentType: 'decidr_dashboard',
-          data: { organization_id: state.organizationId },
-          meta: { headerTitle: 'DecidR' },
-          toolArgs: { title: 'DecidR' },
-        });
-      }
+    actions.appendChild(button('Copy prompt', 'decidr-setup-button', function () {
+      copyText(AGENT_INSTALL_PROMPT).then(function () {
+        setStatus(root, 'Install prompt copied.');
+      }).catch(function () {
+        prompt.focus();
+        prompt.select();
+        setStatus(root, 'Copy the selected prompt text.', 'error');
+      });
     }));
-    body.appendChild(actions);
-    setStatus(root, 'DecidR is ready.', 'success');
+    actions.appendChild(button('Open full prompt', 'decidr-setup-button', function () {
+      openExternalUrl(INSTALL_PROMPT_URL);
+    }));
+    installStep.appendChild(actions);
+    steps.appendChild(installStep);
+
+    var setupStep = document.createElement('section');
+    setupStep.className = 'decidr-setup-agent-step';
+    var setupTitle = document.createElement('strong');
+    setupTitle.textContent = '2. Restart your agent and run setup mcpviews';
+    setupStep.appendChild(setupTitle);
+    var setupCopy = document.createElement('p');
+    setupCopy.textContent = 'Fully quit and relaunch the agent tool so it reloads MCP servers. Then ask it to run setup mcpviews, which calls mcpviews_setup and saves the session-start rules.';
+    setupStep.appendChild(setupCopy);
+    steps.appendChild(setupStep);
+
+    body.appendChild(steps);
+
+    var checkLabel = document.createElement('label');
+    checkLabel.className = 'decidr-setup-check';
+    var check = document.createElement('input');
+    check.type = 'checkbox';
+    checkLabel.appendChild(check);
+    var checkText = document.createElement('span');
+    checkText.textContent = 'I installed the MCPViews MCP server in my AI agent, restarted the agent, and ran setup mcpviews.';
+    checkLabel.appendChild(checkText);
+    body.appendChild(checkLabel);
+
+    var finishRow = document.createElement('div');
+    finishRow.className = 'decidr-setup-row';
+    var finish = button('Finish setup', 'decidr-setup-button primary', function () {
+      if (!check.checked) return;
+      storeValue(AGENT_CONFIGURED_KEY, state.organizationId);
+      markStep(root, 'agent', true);
+      setStatus(root, 'Opening DecidR timeline...', 'success');
+      openTimelineAndCloseSetup(root, state);
+    });
+    finish.disabled = true;
+    check.addEventListener('change', function () {
+      finish.disabled = !check.checked;
+    });
+    finishRow.appendChild(finish);
+    body.appendChild(finishRow);
+    setStatus(root, 'DecidR sign-in is ready. Complete the agent setup steps to finish.', 'success');
   }
 
   window.__renderers = window.__renderers || {};
@@ -383,7 +595,7 @@
       email: '',
       code: '',
       codeSent: false,
-      organizationId: data && data.organization_id ? data.organization_id : null,
+      organizationId: initialOrganizationId(data),
       organizationName: '',
       installedPlugins: {},
       organizations: [],

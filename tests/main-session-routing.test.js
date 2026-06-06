@@ -96,6 +96,8 @@ beforeEach(function () {
     localStorage.removeItem('mcpviews-dismissed-update-version');
     localStorage.removeItem('mcpviews-dismissed-update-check-failure');
     localStorage.removeItem('decidr-onboarding:completed-org-id');
+    localStorage.removeItem('decidr-onboarding:auth-org-id');
+    localStorage.removeItem('decidr-onboarding:agent-configured-org-id');
   }
   window.__renderers = {
     rich_content: vi.fn(),
@@ -128,7 +130,7 @@ describe('main session routing', function () {
   });
 
   it('does not auto-open DecidR Setup after onboarding is completed', async function () {
-    localStorage.setItem('decidr-onboarding:completed-org-id', 'org_123');
+    localStorage.setItem('decidr-onboarding:agent-configured-org-id', 'org_123');
     window.__renderers.decidr_onboarding = vi.fn();
     var invoke = vi.fn(function (command) {
       if (command === 'get_plugin_renderers') return Promise.resolve([]);
@@ -145,6 +147,31 @@ describe('main session routing', function () {
     await flushPromises();
 
     expect(window.__mainTest.getSessionIds()).toEqual([]);
+  });
+
+  it('auto-opens DecidR Setup when only DecidR auth was completed', async function () {
+    localStorage.setItem('decidr-onboarding:auth-org-id', 'org_123');
+    localStorage.setItem('decidr-onboarding:completed-org-id', 'org_123');
+    window.__renderers.decidr_onboarding = vi.fn(function (container) {
+      container.textContent = 'setup';
+    });
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers') return Promise.resolve([]);
+      if (command === 'get_sessions') return Promise.resolve([]);
+      if (command === 'check_app_update') return Promise.resolve(null);
+      return Promise.resolve([]);
+    });
+    window.__TAURI__ = {
+      event: { listen: vi.fn(function () { return Promise.resolve(function () {}); }) },
+      core: { invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+
+    var ids = window.__mainTest.getSessionIds();
+    expect(ids.length).toBe(1);
+    expect(window.__mainTest.getSession(ids[0]).contentType).toBe('decidr_onboarding');
   });
 
   it('shows and dismisses the GitHub release update banner', async function () {

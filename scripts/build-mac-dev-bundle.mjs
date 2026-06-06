@@ -264,15 +264,6 @@ function main() {
       'RELEASE_NOTES.md',
     ]),
     stageDecidrPlugin(resolve(repoRoot, '../decidr-plugin')),
-    stageOptionalDirectPlugin(resolve(repoRoot, '../mcpviews-email-deliverability-plugin'), [
-      'manifest.json',
-      'renderers',
-      'src',
-      'fixtures',
-      'package.json',
-      'README.md',
-      'RELEASE_NOTES.md',
-    ]),
   ];
 
   console.log(`Staged mac dev plugins in ${stageRoot}`);

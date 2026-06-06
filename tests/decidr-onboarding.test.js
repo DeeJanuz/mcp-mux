@@ -31,6 +31,10 @@ function inputByPlaceholder(placeholder) {
   });
 }
 
+function setupCheckbox() {
+  return document.querySelector('input[type="checkbox"]');
+}
+
 function installLocalStorage() {
   var values = {};
   var storage = {
@@ -126,7 +130,7 @@ describe('decidr onboarding renderer', function () {
       },
     });
     window.__TAURI__ = { core: { invoke } };
-    window.__companionUtils = { openSession: vi.fn() };
+    window.__companionUtils = { openSession: vi.fn(), closeSession: vi.fn() };
 
     loadRenderer();
     window.__renderers.decidr_onboarding(document.getElementById('root'), {});
@@ -141,15 +145,25 @@ describe('decidr onboarding renderer', function () {
       email: 'daenon@example.com',
     });
     expect(invoke).not.toHaveBeenCalledWith('start_plugin_auth', expect.anything());
-    expect(localStorage.getItem('decidr-onboarding:completed-org-id')).toBe('org_123');
-    expect(document.body.textContent).toContain('DecidR is ready.');
+    expect(localStorage.getItem('decidr-onboarding:auth-org-id')).toBe('org_123');
+    expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBeNull();
+    expect(document.body.textContent).toContain('Configure your AI agent');
+    expect(document.body.textContent).toContain('What is MCPViews?');
     expect(document.body.textContent).not.toContain('Ludflow');
 
-    textButton('Open DecidR').click();
+    var checkbox = setupCheckbox();
+    expect(checkbox).toBeTruthy();
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change'));
+    textButton('Finish setup').click();
+    await flushPromises();
+
+    expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBe('org_123');
     expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
-      contentType: 'decidr_dashboard',
+      contentType: 'decidr_timeline',
       data: { organization_id: 'org_123' },
     }));
+    expect(document.body.textContent).not.toContain('Ludflow');
   });
 
   it('asks a new user to name an organization before completing setup', async function () {
@@ -191,9 +205,65 @@ describe('decidr onboarding renderer', function () {
     textButton('Create organization').click();
     await flushPromises();
 
-    expect(localStorage.getItem('decidr-onboarding:completed-org-id')).toBe('org_123');
-    expect(document.body.textContent).toContain('DecidR is ready.');
+    expect(localStorage.getItem('decidr-onboarding:auth-org-id')).toBe('org_123');
+    expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBeNull();
+    expect(document.body.textContent).toContain('Configure your AI agent');
     expect(document.body.textContent).not.toContain('Ludflow');
+  });
+
+  it('does not complete onboarding until the user confirms agent setup steps', async function () {
+    localStorage.setItem('decidr-onboarding:auth-org-id', 'org_123');
+    var invoke = baseInvoke();
+    window.__TAURI__ = { core: { invoke } };
+    window.__companionUtils = { openSession: vi.fn(), closeSession: vi.fn() };
+
+    loadRenderer();
+    window.__renderers.decidr_onboarding(document.getElementById('root'), {});
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Configure your AI agent');
+    expect(document.querySelector('.decidr-setup-prompt').value).toContain('Canonical full prompt');
+    expect(textButton('Finish setup').disabled).toBe(true);
+
+    setupCheckbox().checked = true;
+    setupCheckbox().dispatchEvent(new Event('change'));
+    expect(textButton('Finish setup').disabled).toBe(false);
+    textButton('Finish setup').click();
+    await flushPromises();
+
+    expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBe('org_123');
+    expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
+      contentType: 'decidr_timeline',
+    }));
+  });
+
+  it('warns before creating an organization that matches an existing available organization', async function () {
+    var verifyCount = 0;
+    var invoke = baseInvoke({
+      verify_plugin_email_code: function (args) {
+        verifyCount += 1;
+        expect(args.organizationName).toBeUndefined();
+        return Promise.resolve({
+          status: true,
+          user_exists: false,
+          requires_organization: true,
+          organizations: [{ id: 'org_existing', name: '__noop__', slug: 'noop' }],
+        });
+      },
+    });
+    window.__TAURI__ = { core: { invoke } };
+
+    loadRenderer();
+    window.__renderers.decidr_onboarding(document.getElementById('root'), {});
+    await flushPromises();
+
+    await enterEmailAndCode();
+    inputByPlaceholder('Organization name').value = '__noop__';
+    textButton('Create organization').click();
+    await flushPromises();
+
+    expect(verifyCount).toBe(1);
+    expect(document.body.textContent).toContain('already available');
   });
 
   it('shows a retry state when package components are missing without naming internal dependencies', async function () {

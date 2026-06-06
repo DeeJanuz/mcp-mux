@@ -17,6 +17,7 @@ import { spawnSync } from 'node:child_process';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const stageRoot = join(repoRoot, 'src-tauri', 'bundled-plugins', 'mac-dev');
+const releaseBundleRoot = join(repoRoot, 'target', 'release', 'bundle');
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -74,6 +75,14 @@ function stageDirectPlugin(sourceDir, includePaths) {
   return `${manifest.name} v${manifest.version}`;
 }
 
+function stageOptionalDirectPlugin(sourceDir, includePaths) {
+  if (!existsSync(join(sourceDir, 'manifest.json'))) {
+    return `Skipped optional plugin at ${relative(repoRoot, sourceDir)} (manifest.json not found)`;
+  }
+
+  return stageDirectPlugin(sourceDir, includePaths);
+}
+
 function stageDecidrPlugin(sourceDir) {
   const manifest = readJson(join(sourceDir, 'manifest.json'));
   const destination = join(stageRoot, manifest.name);
@@ -129,6 +138,8 @@ function runTauriBuild() {
 }
 
 rmSync(stageRoot, { recursive: true, force: true });
+rmSync(join(releaseBundleRoot, 'macos'), { recursive: true, force: true });
+rmSync(join(releaseBundleRoot, 'dmg'), { recursive: true, force: true });
 mkdirSync(stageRoot, { recursive: true });
 
 const staged = [
@@ -136,7 +147,7 @@ const staged = [
     'manifest.json',
     'renderers',
   ]),
-  stageDirectPlugin(resolve(repoRoot, '../tribe-x-persona-studio'), [
+  stageOptionalDirectPlugin(resolve(repoRoot, '../tribe-x-persona-studio'), [
     'manifest.json',
     'renderers',
     'tools',
@@ -151,7 +162,7 @@ const staged = [
     'RELEASE_NOTES.md',
   ]),
   stageDecidrPlugin(resolve(repoRoot, '../decidr-plugin')),
-  stageDirectPlugin(resolve(repoRoot, '../mcpviews-email-deliverability-plugin'), [
+  stageOptionalDirectPlugin(resolve(repoRoot, '../mcpviews-email-deliverability-plugin'), [
     'manifest.json',
     'renderers',
     'src',

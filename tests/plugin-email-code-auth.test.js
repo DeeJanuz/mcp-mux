@@ -5,9 +5,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 var __dirnameResolved = dirname(fileURLToPath(import.meta.url));
 var rendererCode = readFileSync(
+  join(__dirnameResolved, '../public/renderers/plugin-email-code-auth.js'),
+  'utf8',
+).replace(/\r\n/g, '\n');
+var setupRendererCode = readFileSync(
   join(__dirnameResolved, '../bundled-plugins/decidr-setup/renderers/plugin-email-code-auth.js'),
   'utf8',
 ).replace(/\r\n/g, '\n');
+var indexHtml = readFileSync(join(__dirnameResolved, '../src/index.html'), 'utf8').replace(/\r\n/g, '\n');
 
 function loadRenderer() {
   new Function(rendererCode).call(globalThis);
@@ -39,6 +44,11 @@ beforeEach(function () {
 });
 
 describe('plugin email-code auth renderer', function () {
+  it('ships as a built-in renderer while matching the DecidR setup copy', function () {
+    expect(rendererCode).toBe(setupRendererCode);
+    expect(indexHtml).toContain('<script src="./renderers/plugin-email-code-auth.js"></script>');
+  });
+
   it('sends and verifies a redacted code-auth session', async function () {
     var invoke = vi.fn(function (command, args) {
       if (command === 'send_plugin_email_code') {

@@ -1,6 +1,9 @@
 name: Build Release
 
 on:
+  repository_dispatch:
+    types:
+      - branded-bundle-refresh
   workflow_dispatch:
     inputs:
       version:
@@ -29,7 +32,9 @@ env:
 
 jobs:
   prepare-release:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.version != ''
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '') ||
+      github.event_name == 'repository_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -39,10 +44,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate version format
+      - name: Resolve release version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${{ github.event.inputs.version || github.event.client_payload.version }}"
+          if [ -z "$VERSION" ]; then
+            LATEST_TAG="$(gh api repos/${{ github.repository }}/releases/latest --jq .tag_name 2>/dev/null || echo "")"
+            if [ -z "$LATEST_TAG" ]; then
+              CURRENT_VERSION="$(jq -r '.version' package.json)"
+            else
+              CURRENT_VERSION="${LATEST_TAG#v}"
+            fi
+            BASE_VERSION="${CURRENT_VERSION%%-*}"
+            IFS=. read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
+            PATCH=$((PATCH + 1))
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          fi
           if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
             echo "::error::Invalid version format: $VERSION (expected semver like 1.2.3 or 1.2.3-beta.1)"
             exit 1
@@ -53,7 +72,7 @@ jobs:
 
       - name: Check tag doesn't already exist
         run: |
-          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
             echo "::error::Tag v$VERSION already exists"
             exit 1
           fi
@@ -114,7 +133,33 @@ jobs:
       - name: Update changelog
         run: |
           DATE=$(date +%Y-%m-%d)
-          sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            SOURCE_REPO="${{ github.event.client_payload.source_repo }}"
+            SOURCE_TAG="${{ github.event.client_payload.source_tag }}"
+            SOURCE_LABEL="${SOURCE_REPO:-an upstream plugin release}"
+            if [ -n "$SOURCE_TAG" ]; then
+              SOURCE_LABEL="$SOURCE_LABEL@$SOURCE_TAG"
+            fi
+            export DATE SOURCE_LABEL
+            python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("CHANGELOG.md")
+          text = path.read_text()
+          version = os.environ["VERSION"]
+          date = os.environ["DATE"]
+          source = os.environ.get("SOURCE_LABEL") or "an upstream plugin release"
+          entry = (
+              f"## [{version}] - {date}\n\n"
+              "### Changed\n"
+              f"- Rebuilt the DecidR-branded installer bundle after {source}, staging the latest stable bundled plugin releases.\n"
+          )
+          path.write_text(text.replace("## [Unreleased]\n", f"## [Unreleased]\n\n{entry}\n", 1))
+          PY
+          else
+            sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md
+          fi
 
       - name: Commit and tag
         run: |
@@ -136,6 +181,7 @@ jobs:
       (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') &&
       (
         github.event_name == 'push' ||
+        github.event_name == 'repository_dispatch' ||
         (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'macos'))
       )
     runs-on: macos-latest
@@ -371,6 +417,7 @@ jobs:
       (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') &&
       (
         github.event_name == 'push' ||
+        github.event_name == 'repository_dispatch' ||
         (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'windows'))
       )
     runs-on: windows-latest
@@ -524,6 +571,7 @@ jobs:
       (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
       (
         startsWith(github.ref, 'refs/tags/') ||
+        github.event_name == 'repository_dispatch' ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '')
       )
     needs: [prepare-release, build-macos, build-windows]

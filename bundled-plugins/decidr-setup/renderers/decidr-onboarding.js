@@ -475,7 +475,7 @@
       if (!results[0] || !results[1]) {
         throw new Error('DecidR setup is not fully authenticated for the selected organization.');
       }
-      return ensureDecidrOnboarding(root, results[0]).then(function () {
+      return ensureDecidrOnboarding(root, results[0], orgId).then(function () {
         storeValue(AUTH_ORG_KEY, orgId);
         renderAgentSetup(root, state);
       });
@@ -502,14 +502,17 @@
     });
   }
 
-  function ensureDecidrOnboarding(root, authHeader) {
+  function ensureDecidrOnboarding(root, authHeader, orgId) {
     setStatus(root, 'Preparing your DecidR starter workspace...');
     return fetch(decidrApiBaseUrl() + '/onboarding/ensure', {
       method: 'POST',
       headers: {
         accept: 'application/json',
         authorization: authHeader,
+        'content-type': 'application/json',
+        'x-mcpviews-organization-id': orgId,
       },
+      body: JSON.stringify({ organization_id: orgId }),
       cache: 'no-store',
     }).then(function (response) {
       if (!response.ok) {

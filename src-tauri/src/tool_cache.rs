@@ -27,7 +27,9 @@ pub struct ToolCache {
 
 impl ToolCache {
     pub fn new(plugin_count: usize) -> Self {
-        let entries = (0..plugin_count).map(|_| CachedPluginTools::new()).collect();
+        let entries = (0..plugin_count)
+            .map(|_| CachedPluginTools::new())
+            .collect();
         Self {
             entries,
             tool_index: HashMap::new(),
@@ -66,10 +68,7 @@ impl ToolCache {
 
     /// Return all cached tools across all plugins
     pub fn all_tools(&self) -> Vec<Value> {
-        self.entries
-            .iter()
-            .flat_map(|e| e.tools.clone())
-            .collect()
+        self.entries.iter().flat_map(|e| e.tools.clone()).collect()
     }
 
     /// Apply fetched tools for a plugin: prefix names, update index, set timestamp
@@ -211,22 +210,17 @@ mod tests {
 
         let all = cache.all_tools();
         assert_eq!(all.len(), 2);
-        assert_eq!(all[0].get("name").unwrap().as_str().unwrap(), "github__read");
+        assert_eq!(
+            all[0].get("name").unwrap().as_str().unwrap(),
+            "github__read"
+        );
     }
 
     #[test]
     fn test_apply_then_all_tools() {
         let mut cache = ToolCache::new(2);
-        cache.apply(
-            0,
-            "a__",
-            vec![serde_json::json!({"name": "foo"})],
-        );
-        cache.apply(
-            1,
-            "b__",
-            vec![serde_json::json!({"name": "bar"})],
-        );
+        cache.apply(0, "a__", vec![serde_json::json!({"name": "foo"})]);
+        cache.apply(1, "b__", vec![serde_json::json!({"name": "bar"})]);
         let all = cache.all_tools();
         assert_eq!(all.len(), 2);
     }

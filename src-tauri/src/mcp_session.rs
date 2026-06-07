@@ -141,7 +141,12 @@ mod tests {
         let (id, _rx) = mgr.create_session();
         let mut rx2 = mgr.subscribe(&id).unwrap();
         // Send after subscribing
-        mgr.sessions.get(&id).unwrap().tx.send("test-msg".to_string()).unwrap();
+        mgr.sessions
+            .get(&id)
+            .unwrap()
+            .tx
+            .send("test-msg".to_string())
+            .unwrap();
         assert_eq!(rx2.try_recv().unwrap(), "test-msg");
     }
 

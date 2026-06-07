@@ -118,6 +118,14 @@ pub struct PluginRegistryIndex {
 pub struct PluginManifest {
     pub name: String,
     pub version: String,
+    /// Optional Apps menu group key for standalone renderers. Defaults to the
+    /// plugin name when omitted.
+    #[serde(default)]
+    pub standalone_group: Option<String>,
+    /// Optional human-readable Apps menu group label. Defaults to a title-cased
+    /// form of the standalone group key.
+    #[serde(default)]
+    pub standalone_group_label: Option<String>,
     #[serde(default)]
     pub renderers: HashMap<String, String>,
     /// Origins that plugin renderer iframes are allowed to embed. These are
@@ -187,6 +195,24 @@ pub struct PluginMcpConfig {
     pub tool_prefix: String,
 }
 
+fn default_email_code_send_path() -> String {
+    "/api/mcpviews/auth/email-code/send".to_string()
+}
+
+fn default_email_code_verify_path() -> String {
+    "/api/mcpviews/auth/email-code/verify".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PluginEmailCodeAuth {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_email_code_send_path")]
+    pub send_path: String,
+    #[serde(default = "default_email_code_verify_path")]
+    pub verify_path: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PluginAuth {
@@ -206,6 +232,8 @@ pub enum PluginAuth {
         token_url: String,
         #[serde(default)]
         scopes: Vec<String>,
+        #[serde(default)]
+        email_code_auth: Option<PluginEmailCodeAuth>,
     },
 }
 
@@ -226,6 +254,19 @@ impl PluginAuth {
             PluginAuth::ApiKey { .. } => "api_key",
             PluginAuth::OAuth { .. } => "oauth",
         }
+    }
+
+    pub fn email_code_auth(&self) -> Option<&PluginEmailCodeAuth> {
+        match self {
+            PluginAuth::OAuth {
+                email_code_auth, ..
+            } => email_code_auth.as_ref().filter(|config| config.enabled),
+            _ => None,
+        }
+    }
+
+    pub fn supports_email_code(&self) -> bool {
+        self.email_code_auth().is_some()
     }
 
     /// Check if auth is configured for a plugin (uses default auth_dir).
@@ -484,6 +525,7 @@ mod tests {
             auth_url: "https://example.com/auth".to_string(),
             token_url: "https://example.com/token".to_string(),
             scopes: vec![],
+            email_code_auth: None,
         };
         assert_eq!(auth.display_name(), "oauth");
     }
@@ -556,6 +598,7 @@ mod tests {
             auth_url: "https://example.com/auth".to_string(),
             token_url: "https://example.com/token".to_string(),
             scopes: vec![],
+            email_code_auth: None,
         };
         assert!(!auth.is_configured_with_auth_dir("no-oauth-plugin", dir.path()));
     }
@@ -656,6 +699,7 @@ mod tests {
             auth_url: "https://example.com/auth".to_string(),
             token_url: "https://example.com/token".to_string(),
             scopes: vec![],
+            email_code_auth: None,
         };
         assert_eq!(format!("{}", auth), "oauth");
     }
@@ -702,6 +746,7 @@ mod tests {
             auth_url: "https://example.com/auth".to_string(),
             token_url: "https://example.com/token".to_string(),
             scopes: vec!["read".to_string(), "write".to_string()],
+            email_code_auth: None,
         };
         let json = serde_json::to_string(&auth).unwrap();
         let parsed: PluginAuth = serde_json::from_str(&json).unwrap();
@@ -710,15 +755,41 @@ mod tests {
             auth_url,
             token_url,
             scopes,
+            email_code_auth,
         } = parsed
         {
             assert_eq!(client_id, Some("client123".to_string()));
             assert_eq!(auth_url, "https://example.com/auth");
             assert_eq!(token_url, "https://example.com/token");
             assert_eq!(scopes, vec!["read", "write"]);
+            assert!(email_code_auth.is_none());
         } else {
             panic!("Expected OAuth variant");
         }
+    }
+
+    #[test]
+    fn test_serde_oauth_email_code_defaults() {
+        let json = r#"{
+            "type": "oauth",
+            "client_id": "client123",
+            "auth_url": "https://example.com/auth",
+            "token_url": "https://example.com/token",
+            "email_code_auth": { "enabled": true },
+            "scopes": ["read"]
+        }"#;
+        let auth: PluginAuth = serde_json::from_str(json).unwrap();
+
+        assert!(auth.supports_email_code());
+        let email_code = auth.email_code_auth().unwrap();
+        assert_eq!(
+            email_code.send_path,
+            "/api/mcpviews/auth/email-code/send"
+        );
+        assert_eq!(
+            email_code.verify_path,
+            "/api/mcpviews/auth/email-code/verify"
+        );
     }
 
     #[test]
@@ -1038,6 +1109,7 @@ mod tests {
             auth_url: "https://example.com/auth".to_string(),
             token_url: "https://example.com/token".to_string(),
             scopes: vec![],
+            email_code_auth: None,
         };
         let header =
             auth.resolve_header_for_org_with_auth_dir("plug", "org_3", dir.path());
@@ -1065,6 +1137,7 @@ mod tests {
             auth_url: "https://example.com/auth".to_string(),
             token_url: "https://example.com/token".to_string(),
             scopes: vec![],
+            email_code_auth: None,
         };
         assert!(auth.is_configured_for_org_with_auth_dir("plug", "org_yes", dir.path()));
         assert!(!auth.is_configured_for_org_with_auth_dir("plug", "org_no", dir.path()));

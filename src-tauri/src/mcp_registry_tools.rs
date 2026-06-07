@@ -2,8 +2,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::http_server::AsyncAppState;
-use crate::mcp_tools::{ensure_registry_fresh, collect_plugin_auth_status};
+use crate::http_server::{execute_push, AsyncAppState, ExecutePushResult};
+use crate::mcp_tools::{collect_plugin_auth_status, ensure_registry_fresh};
 
 /// Build registry entry list from cached entries, installed manifests, and auth status.
 /// Pure function for testability — no async or state locks.
@@ -17,7 +17,10 @@ pub(crate) fn build_registry_entries(
         .iter()
         .filter(|entry| {
             if let Some(tag) = tag_filter {
-                entry.tags.iter().any(|t| t.to_lowercase() == tag.to_lowercase())
+                entry
+                    .tags
+                    .iter()
+                    .any(|t| t.to_lowercase() == tag.to_lowercase())
             } else {
                 true
             }
@@ -27,8 +30,7 @@ pub(crate) fn build_registry_entries(
             let is_installed = installed_manifest.is_some();
             let installed_version = installed_manifest.map(|m| m.version.clone());
             let update_available = installed_manifest.and_then(|m| {
-                mcpviews_shared::newer_version(&m.version, &entry.version)
-                    .map(|v| v.to_string())
+                mcpviews_shared::newer_version(&m.version, &entry.version).map(|v| v.to_string())
             });
 
             // Find auth info from collected status
@@ -100,6 +102,7 @@ pub(crate) async fn call_list_registry(
 pub(crate) async fn trigger_plugin_oauth(
     plugin_name: &str,
     organization_id: Option<&str>,
+    auth_flow: Option<&str>,
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<String, String> {
     let (auth, client) = {
@@ -116,7 +119,28 @@ pub(crate) async fn trigger_plugin_oauth(
             auth_url,
             token_url,
             scopes,
+            ..
         } => {
+            let requested_flow = auth_flow.unwrap_or(if auth.supports_email_code() {
+                "email_code"
+            } else {
+                "browser"
+            });
+            if requested_flow != "browser" {
+                if auth.supports_email_code() {
+                    let session_id =
+                        open_plugin_email_code_session(plugin_name, organization_id, state).await?;
+                    return Ok(format!(
+                        "Opened email-code authentication for '{}' in MCPViews session '{}'.",
+                        plugin_name, session_id
+                    ));
+                }
+                return Err(format!(
+                    "Plugin '{}' does not declare email-code authentication. Retry with auth_flow='browser' for the OAuth fallback.",
+                    plugin_name
+                ));
+            }
+
             match crate::auth::start_oauth_flow(
                 plugin_name,
                 client_id.as_deref(),
@@ -164,6 +188,65 @@ pub(crate) async fn trigger_plugin_oauth(
     }
 }
 
+fn plugin_label(plugin_name: &str) -> String {
+    match plugin_name {
+        "decidr" => "DecidR".to_string(),
+        "ludflow" => "Ludflow".to_string(),
+        value => value
+            .split(['-', '_'])
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
+}
+
+pub(crate) async fn open_plugin_email_code_session(
+    plugin_name: &str,
+    organization_id: Option<&str>,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<String, String> {
+    let label = plugin_label(plugin_name);
+    let session_id = format!(
+        "plugin-email-code-auth-{}-{}",
+        plugin_name,
+        organization_id.unwrap_or("default")
+    );
+    let result = execute_push(
+        state,
+        "plugin_email_code_auth".to_string(),
+        Some(serde_json::json!({
+            "plugin_name": plugin_name,
+            "organization_id": organization_id,
+        })),
+        serde_json::json!({
+            "plugin_name": plugin_name,
+            "plugin_label": label,
+            "organization_id": organization_id,
+        }),
+        Some(serde_json::json!({
+            "headerTitle": format!("Sign in to {}", plugin_label(plugin_name)),
+        })),
+        false,
+        0,
+        Some(session_id),
+    )
+    .await;
+
+    match result {
+        ExecutePushResult::Stored { session_id } | ExecutePushResult::Pending { session_id } => {
+            Ok(session_id)
+        }
+        ExecutePushResult::Decision(response) => Ok(response.session_id),
+    }
+}
+
 pub(crate) async fn call_start_plugin_auth(
     arguments: Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
@@ -178,8 +261,18 @@ pub(crate) async fn call_start_plugin_auth(
         .get("organization_id")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let auth_flow = arguments
+        .get("auth_flow")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    let result_text = trigger_plugin_oauth(&plugin_name, organization_id.as_deref(), state).await?;
+    let result_text = trigger_plugin_oauth(
+        &plugin_name,
+        organization_id.as_deref(),
+        auth_flow.as_deref(),
+        state,
+    )
+    .await?;
 
     Ok(serde_json::json!({
         "content": [{
@@ -323,7 +416,7 @@ mod tests {
     async fn _assert_trigger_plugin_oauth_signature(
         state: &Arc<TokioMutex<AsyncAppState>>,
     ) -> Result<String, String> {
-        trigger_plugin_oauth("test", None, state).await
+        trigger_plugin_oauth("test", None, None, state).await
     }
 
     #[test]

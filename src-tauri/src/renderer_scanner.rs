@@ -53,9 +53,14 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                     let renderer_path = renderer_entry.path();
                     if renderer_path.extension().and_then(|e| e.to_str()) == Some("js") {
                         let file_name = renderer_entry.file_name().to_string_lossy().to_string();
-                        let mtime = renderer_entry.metadata()
+                        let mtime = renderer_entry
+                            .metadata()
                             .and_then(|m| m.modified())
-                            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+                            .map(|t| {
+                                t.duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs()
+                            })
                             .unwrap_or(0);
                         // Tauri custom URI schemes resolve to different URL forms
                         // per platform: macOS/iOS/Linux use scheme://localhost/path,
@@ -105,7 +110,8 @@ fn read_renderer_config(manifest_path: &std::path::Path) -> RendererConfig {
         Ok(value) => value,
         Err(_) => return RendererConfig::default(),
     };
-    let mcp_url = value.get("mcp")
+    let mcp_url = value
+        .get("mcp")
         .and_then(|mcp| mcp.get("url"))
         .and_then(|url| url.as_str())
         .map(|url| url.to_string());

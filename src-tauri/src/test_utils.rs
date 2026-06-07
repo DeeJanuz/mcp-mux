@@ -8,6 +8,8 @@ pub fn test_manifest(name: &str) -> mcpviews_shared::PluginManifest {
     mcpviews_shared::PluginManifest {
         name: name.to_string(),
         version: "1.0.0".to_string(),
+        standalone_group: None,
+        standalone_group_label: None,
         renderers: std::collections::HashMap::new(),
         frame_origins: vec![],
         mcp: None,
@@ -26,5 +28,8 @@ pub fn test_app_state() -> (Arc<AppState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = PluginStore::with_dir(dir.path().to_path_buf());
     let auth_dir = dir.path().join("auth");
-    (Arc::new(AppState::new_with_store_and_auth_dir(store, auth_dir)), dir)
+    (
+        Arc::new(AppState::new_with_store_and_auth_dir(store, auth_dir)),
+        dir,
+    )
 }

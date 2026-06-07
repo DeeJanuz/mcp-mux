@@ -139,7 +139,10 @@ pub enum ExecutePushResult {
 
 const AWAIT_REVIEW_TRANSPORT_WAIT: Duration = Duration::from_secs(25);
 
-fn get_nested_value<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+fn get_nested_value<'a>(
+    value: &'a serde_json::Value,
+    path: &[&str],
+) -> Option<&'a serde_json::Value> {
     let mut current = value;
     for segment in path {
         current = current.get(*segment)?;
@@ -238,7 +241,10 @@ fn normalize_http_push_payload(value: serde_json::Value) -> Result<NormalizedPus
     .unwrap_or_else(|| "Streaming Response".to_string());
     let thread_id = extract_string_candidate(&value, &[&["threadId"], &["thread_id"]]);
     let meta = merge_json_objects(
-        value.get("meta").cloned().or_else(|| get_nested_value(&value, &["result", "meta"]).cloned()),
+        value
+            .get("meta")
+            .cloned()
+            .or_else(|| get_nested_value(&value, &["result", "meta"]).cloned()),
         Some(serde_json::json!({
             "streaming": true,
             "sourceType": extract_string_candidate(&value, &[&["type"], &["event"], &["kind"]]),
@@ -247,8 +253,7 @@ fn normalize_http_push_payload(value: serde_json::Value) -> Result<NormalizedPus
         })),
     );
 
-    let tool_args = thread_id
-        .map(|thread_id| serde_json::json!({ "threadId": thread_id }));
+    let tool_args = thread_id.map(|thread_id| serde_json::json!({ "threadId": thread_id }));
 
     Ok(NormalizedPushRequest {
         tool_name: "rich_content".to_string(),
@@ -285,7 +290,10 @@ fn append_streaming_session_data(
 
     if let Some(title) = incoming_data.get("title").and_then(|value| value.as_str()) {
         if !title.trim().is_empty() && !next_data.contains_key("title") {
-            next_data.insert("title".to_string(), serde_json::Value::String(title.to_string()));
+            next_data.insert(
+                "title".to_string(),
+                serde_json::Value::String(title.to_string()),
+            );
         }
     }
 
@@ -336,7 +344,11 @@ pub async fn store_push(
         meta: renderer_meta,
         backend_callback,
         review_required,
-        timeout_secs: if review_required { Some(timeout_secs) } else { None },
+        timeout_secs: if review_required {
+            Some(timeout_secs)
+        } else {
+            None
+        },
         created_at: now,
         decided_at: None,
         decision: None,
@@ -376,10 +388,7 @@ pub async fn store_push(
     }
 }
 
-async fn store_preview_session(
-    state: &Arc<TokioMutex<AsyncAppState>>,
-    session: PreviewSession,
-) {
+async fn store_preview_session(state: &Arc<TokioMutex<AsyncAppState>>, session: PreviewSession) {
     let state_guard = state.lock().await;
 
     {
@@ -492,17 +501,20 @@ fn decision_from_session(session: &PreviewSession) -> Option<ReviewDecision> {
 }
 
 fn error_review_response(session_id: &str, decision: &str) -> ExecutePushResult {
-    ExecutePushResult::Decision(ReviewDecision {
-        session_id: session_id.to_string(),
-        status: "error".to_string(),
-        decision: Some(decision.to_string()),
-        operation_decisions: None,
-        comments: None,
-        modifications: None,
-        additions: None,
-        suggestion_decisions: None,
-        table_decisions: None,
-    }.into())
+    ExecutePushResult::Decision(
+        ReviewDecision {
+            session_id: session_id.to_string(),
+            status: "error".to_string(),
+            decision: Some(decision.to_string()),
+            operation_decisions: None,
+            comments: None,
+            modifications: None,
+            additions: None,
+            suggestion_decisions: None,
+            table_decisions: None,
+        }
+        .into(),
+    )
 }
 
 enum AwaitDecisionOutcome {
@@ -649,17 +661,20 @@ pub(crate) async fn await_decision_from_app_state(
             let mut reviews = state.reviews.lock().unwrap();
             reviews.dismiss(&session_id_owned);
             reviews.remove_resolved(&session_id_owned);
-            ExecutePushResult::Decision(ReviewDecision {
-                session_id: session_id_owned,
-                status: "decision_received".to_string(),
-                decision: Some("dismissed".to_string()),
-                operation_decisions: None,
-                comments: None,
-                modifications: None,
-                additions: None,
-                suggestion_decisions: None,
-                table_decisions: None,
-            }.into())
+            ExecutePushResult::Decision(
+                ReviewDecision {
+                    session_id: session_id_owned,
+                    status: "decision_received".to_string(),
+                    decision: Some("dismissed".to_string()),
+                    operation_decisions: None,
+                    comments: None,
+                    modifications: None,
+                    additions: None,
+                    suggestion_decisions: None,
+                    table_decisions: None,
+                }
+                .into(),
+            )
         }
         AwaitDecisionOutcome::Pending => ExecutePushResult::Pending {
             session_id: session_id_owned,
@@ -710,7 +725,17 @@ pub async fn execute_push(
     timeout_secs: u64,
     session_id: Option<String>,
 ) -> ExecutePushResult {
-    let result = store_push(state, tool_name, tool_args, data, meta, review_required, timeout_secs, session_id).await;
+    let result = store_push(
+        state,
+        tool_name,
+        tool_args,
+        data,
+        meta,
+        review_required,
+        timeout_secs,
+        session_id,
+    )
+    .await;
     match result {
         ExecutePushResult::Pending { ref session_id } => await_decision(state, session_id).await,
         other => other,
@@ -720,12 +745,7 @@ pub async fn execute_push(
 static START_TIME: std::sync::OnceLock<(std::time::Instant, String)> = std::sync::OnceLock::new();
 
 fn get_start_info() -> &'static (std::time::Instant, String) {
-    START_TIME.get_or_init(|| {
-        (
-            std::time::Instant::now(),
-            chrono::Utc::now().to_rfc3339(),
-        )
-    })
+    START_TIME.get_or_init(|| (std::time::Instant::now(), chrono::Utc::now().to_rfc3339()))
 }
 
 async fn health_handler() -> impl IntoResponse {
@@ -746,7 +766,11 @@ fn first_party_ai_debug_enabled_value(value: Option<&str>) -> bool {
 }
 
 fn first_party_ai_debug_enabled() -> bool {
-    first_party_ai_debug_enabled_value(std::env::var("MCPVIEWS_ENABLE_LOCAL_AI_DEBUG").ok().as_deref())
+    first_party_ai_debug_enabled_value(
+        std::env::var("MCPVIEWS_ENABLE_LOCAL_AI_DEBUG")
+            .ok()
+            .as_deref(),
+    )
 }
 
 async fn first_party_ai_debug_handler(
@@ -767,7 +791,15 @@ async fn first_party_ai_debug_handler(
         Arc::clone(&state_guard.inner)
     };
 
-    match crate::first_party_ai::proxy_request(&app_state, &req.method, &req.path, req.body, req.query).await {
+    match crate::first_party_ai::proxy_request(
+        &app_state,
+        &req.method,
+        &req.path,
+        req.body,
+        req.query,
+    )
+    .await
+    {
         Ok(value) => (StatusCode::OK, Json(value)),
         Err(error) => (
             StatusCode::BAD_GATEWAY,
@@ -816,7 +848,9 @@ async fn push_handler(
             );
         }
     };
-    if let Err(message) = crate::mcp_tools::validate_push_payload(&normalized.tool_name, &normalized.data) {
+    if let Err(message) =
+        crate::mcp_tools::validate_push_payload(&normalized.tool_name, &normalized.data)
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(PushResponse {
@@ -893,7 +927,8 @@ async fn desktop_relay_tool_request_handler(
     Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let response = crate::desktop_relay::handle_local_tool_request(Arc::clone(&state), payload).await;
+    let response =
+        crate::desktop_relay::handle_local_tool_request(Arc::clone(&state), payload).await;
     (StatusCode::OK, Json(response))
 }
 
@@ -924,7 +959,10 @@ async fn heartbeat_handler(
         Some((deadline, timeout_secs)) => {
             let mut dl = deadline.lock().await;
             *dl = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-            eprintln!("[mcpviews] Heartbeat OK for session {} (reset to {}s)", session_id, timeout_secs);
+            eprintln!(
+                "[mcpviews] Heartbeat OK for session {} (reset to {}s)",
+                session_id, timeout_secs
+            );
             StatusCode::OK
         }
         None => {
@@ -1016,7 +1054,9 @@ fn build_mcp_response(
     };
     if let Some(session_id) = created_session_id {
         if let Ok(header_value) = session_id.parse() {
-            response.headers_mut().insert("mcp-session-id", header_value);
+            response
+                .headers_mut()
+                .insert("mcp-session-id", header_value);
         }
     }
     response
@@ -1046,8 +1086,7 @@ async fn mcp_post_handler(
         mcp_session_id.as_deref().unwrap_or("<none>")
     );
 
-    let created_session_id =
-        maybe_create_session(&state, &method_name, &mut mcp_session_id).await;
+    let created_session_id = maybe_create_session(&state, &method_name, &mut mcp_session_id).await;
 
     // If session header present, verify it exists
     if let Some(ref session_id) = mcp_session_id {
@@ -1074,10 +1113,7 @@ async fn mcp_delete_handler(
     headers: HeaderMap,
     Extension(state): Extension<Arc<TokioMutex<AsyncAppState>>>,
 ) -> StatusCode {
-    let session_id = match headers
-        .get("mcp-session-id")
-        .and_then(|v| v.to_str().ok())
-    {
+    let session_id = match headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
         Some(id) => id.to_string(),
         None => return StatusCode::BAD_REQUEST,
     };
@@ -1140,9 +1176,7 @@ struct RegisterRequest {
     _extra: serde_json::Value,
 }
 
-async fn oauth_register(
-    body: axum::body::Bytes,
-) -> impl IntoResponse {
+async fn oauth_register(body: axum::body::Bytes) -> impl IntoResponse {
     let req: RegisterRequest = serde_json::from_slice(&body).unwrap_or_default();
     Json(serde_json::json!({
         "client_id": "mcpviews-mock-client",
@@ -1211,8 +1245,14 @@ pub async fn start_http_server(
         .route("/health", get(health_handler))
         .route("/api/push", post(push_handler))
         .route("/api/datasets/query", post(dataset_query_handler))
-        .route("/api/debug/first-party-ai", post(first_party_ai_debug_handler))
-        .route("/api/desktop-relay/tool-request", post(desktop_relay_tool_request_handler))
+        .route(
+            "/api/debug/first-party-ai",
+            post(first_party_ai_debug_handler),
+        )
+        .route(
+            "/api/desktop-relay/tool-request",
+            post(desktop_relay_tool_request_handler),
+        )
         .route("/api/heartbeat", post(heartbeat_handler))
         .route("/api/reload-plugins", post(reload_plugins_handler))
         .route(
@@ -1224,8 +1264,14 @@ pub async fn start_http_server(
         // Mock OAuth endpoints – Claude Code's HTTP transport probes these during
         // connection setup.  We return valid metadata so the handshake completes
         // instantly without real authentication.
-        .route("/.well-known/oauth-protected-resource", get(oauth_protected_resource))
-        .route("/.well-known/oauth-authorization-server", get(oauth_authorization_server))
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth_protected_resource),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth_authorization_server),
+        )
         .route("/oauth/register", post(oauth_register))
         .route("/oauth/authorize", get(oauth_authorize))
         .route("/oauth/token", post(oauth_token))
@@ -1293,6 +1339,8 @@ mod tests {
         PluginManifest {
             name: name.to_string(),
             version: "1.0.0".to_string(),
+            standalone_group: None,
+            standalone_group_label: None,
             renderers,
             frame_origins: vec![],
             mcp: None,
@@ -1309,7 +1357,8 @@ mod tests {
 
     fn test_app_state() -> (Arc<AppState>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().join("plugins"));
+        let store =
+            mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().join("plugins"));
         let state = AppState::new_with_store_and_auth_dir(store, dir.path().join("auth"));
         (Arc::new(state), dir)
     }
@@ -1342,7 +1391,9 @@ mod tests {
         let (mut registry, _dir) = empty_registry();
         let mut renderers = HashMap::new();
         renderers.insert("search_codebase".to_string(), "search_results".to_string());
-        registry.add_plugin(manifest_with_renderers("test-plugin", renderers)).unwrap();
+        registry
+            .add_plugin(manifest_with_renderers("test-plugin", renderers))
+            .unwrap();
 
         let result = resolve_content_type(&registry, "search_codebase");
         assert_eq!(result, "search_results");
@@ -1360,7 +1411,9 @@ mod tests {
         let (mut registry, _dir) = empty_registry();
         let mut renderers = HashMap::new();
         renderers.insert("other_tool".to_string(), "other_renderer".to_string());
-        registry.add_plugin(manifest_with_renderers("test-plugin", renderers)).unwrap();
+        registry
+            .add_plugin(manifest_with_renderers("test-plugin", renderers))
+            .unwrap();
 
         let result = resolve_content_type(&registry, "search_codebase");
         assert_eq!(result, "search_codebase");
@@ -1374,7 +1427,9 @@ mod tests {
     async fn test_oauth_protected_resource_response() {
         let resp = oauth_protected_resource().await;
         let json = resp.into_response();
-        let body = axum::body::to_bytes(json.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(json.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["resource"], "http://localhost:4200");
         assert_eq!(v["authorization_servers"][0], "http://localhost:4200");
@@ -1384,12 +1439,20 @@ mod tests {
     async fn test_oauth_authorization_server_response() {
         let resp = oauth_authorization_server().await;
         let json = resp.into_response();
-        let body = axum::body::to_bytes(json.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(json.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["issuer"], "http://localhost:4200");
-        assert_eq!(v["authorization_endpoint"], "http://localhost:4200/oauth/authorize");
+        assert_eq!(
+            v["authorization_endpoint"],
+            "http://localhost:4200/oauth/authorize"
+        );
         assert_eq!(v["token_endpoint"], "http://localhost:4200/oauth/token");
-        assert_eq!(v["registration_endpoint"], "http://localhost:4200/oauth/register");
+        assert_eq!(
+            v["registration_endpoint"],
+            "http://localhost:4200/oauth/register"
+        );
         assert_eq!(v["response_types_supported"][0], "code");
         assert_eq!(v["grant_types_supported"][0], "authorization_code");
         assert_eq!(v["grant_types_supported"][1], "refresh_token");
@@ -1403,11 +1466,14 @@ mod tests {
             serde_json::to_vec(&serde_json::json!({
                 "redirect_uris": ["http://localhost:9999/callback"],
                 "client_name": "test"
-            })).unwrap()
+            }))
+            .unwrap(),
         );
         let resp = oauth_register(body_bytes).await;
         let json = resp.into_response();
-        let body = axum::body::to_bytes(json.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(json.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["client_id"], "mcpviews-mock-client");
         assert_eq!(v["redirect_uris"][0], "http://localhost:9999/callback");
@@ -1418,7 +1484,9 @@ mod tests {
         let body_bytes = axum::body::Bytes::from(b"{}".to_vec());
         let resp = oauth_register(body_bytes).await;
         let json = resp.into_response();
-        let body = axum::body::to_bytes(json.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(json.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["client_id"], "mcpviews-mock-client");
         assert!(v["redirect_uris"].as_array().unwrap().is_empty());
@@ -1427,7 +1495,10 @@ mod tests {
     #[tokio::test]
     async fn test_oauth_authorize_redirects() {
         let mut params = HashMap::new();
-        params.insert("redirect_uri".to_string(), "http://localhost:9999/cb".to_string());
+        params.insert(
+            "redirect_uri".to_string(),
+            "http://localhost:9999/cb".to_string(),
+        );
         params.insert("state".to_string(), "abc123".to_string());
         let result = oauth_authorize(Query(params)).await;
         assert!(result.is_ok());
@@ -1453,7 +1524,9 @@ mod tests {
     async fn test_oauth_token_response() {
         let resp = oauth_token().await;
         let json = resp.into_response();
-        let body = axum::body::to_bytes(json.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(json.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["access_token"], "mcpviews-mock-token");
         assert_eq!(v["token_type"], "bearer");
@@ -1478,11 +1551,15 @@ mod tests {
 
         let mut renderers1 = HashMap::new();
         renderers1.insert("tool_a".to_string(), "renderer_a".to_string());
-        registry.add_plugin(manifest_with_renderers("plugin-1", renderers1)).unwrap();
+        registry
+            .add_plugin(manifest_with_renderers("plugin-1", renderers1))
+            .unwrap();
 
         let mut renderers2 = HashMap::new();
         renderers2.insert("tool_b".to_string(), "renderer_b".to_string());
-        registry.add_plugin(manifest_with_renderers("plugin-2", renderers2)).unwrap();
+        registry
+            .add_plugin(manifest_with_renderers("plugin-2", renderers2))
+            .unwrap();
 
         assert_eq!(resolve_content_type(&registry, "tool_a"), "renderer_a");
         assert_eq!(resolve_content_type(&registry, "tool_b"), "renderer_b");
@@ -1518,7 +1595,10 @@ mod tests {
         assert_eq!(response.operation_decisions, Some(op_decisions));
         assert_eq!(response.comments, Some(comments));
         assert_eq!(response.modifications, Some(modifications));
-        assert_eq!(response.additions, Some(serde_json::json!({"extra": "data"})));
+        assert_eq!(
+            response.additions,
+            Some(serde_json::json!({"extra": "data"}))
+        );
     }
 
     #[test]
@@ -1686,7 +1766,11 @@ mod tests {
             _ => panic!("expected pending result before review deadline"),
         }
         assert!(state.reviews.lock().unwrap().has_pending("review-pending"));
-        assert!(state.review_deadlines.lock().unwrap().contains_key("review-pending"));
+        assert!(state
+            .review_deadlines
+            .lock()
+            .unwrap()
+            .contains_key("review-pending"));
     }
 
     #[tokio::test]
@@ -1739,7 +1823,11 @@ mod tests {
             ExecutePushResult::Decision(response) => {
                 assert_eq!(response.decision.as_deref(), Some("approved"));
                 assert_eq!(
-                    response.operation_decisions.unwrap().get("row-1").map(String::as_str),
+                    response
+                        .operation_decisions
+                        .unwrap()
+                        .get("row-1")
+                        .map(String::as_str),
                     Some("accept")
                 );
             }

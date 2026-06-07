@@ -601,6 +601,57 @@ describe('main session routing', function () {
     expect(document.getElementById('main-title').textContent).toBe('Persona Studio');
   });
 
+  it('shows DecidR Setup under the DecidR app group', async function () {
+    window.__TAURI__ = {
+      event: {
+        listen: vi.fn(function () {
+          return Promise.resolve(function () {});
+        }),
+      },
+      core: {
+        invoke: vi.fn(function (command) {
+          if (command === 'get_standalone_renderers') {
+            return Promise.resolve([{
+              plugin: 'decidr',
+              label: 'DecidR',
+              renderers: [
+                {
+                  name: 'decidr_timeline',
+                  label: 'Timeline',
+                  description: 'DecidR timeline',
+                },
+                {
+                  name: 'decidr_onboarding',
+                  label: 'DecidR Setup',
+                  description: 'DecidR setup',
+                },
+              ],
+            }]);
+          }
+          if (command === 'get_plugin_renderers' || command === 'get_sessions') {
+            return Promise.resolve([]);
+          }
+          return Promise.resolve(null);
+        }),
+      },
+    };
+
+    loadMain();
+
+    document.getElementById('apps-button').click();
+    await flushPromises();
+
+    var headers = Array.from(document.querySelectorAll('.apps-plugin-header')).map(function (header) {
+      return header.textContent.trim();
+    });
+    var items = Array.from(document.querySelectorAll('.apps-renderer-item')).map(function (item) {
+      return item.textContent.trim();
+    });
+    expect(headers).toEqual(['\u25B6DecidR']);
+    expect(items).toEqual(['Timeline', 'DecidR Setup']);
+    expect(document.getElementById('apps-dropdown').textContent).not.toContain('Decidr-setup');
+  });
+
   it('reloads an installed plugin renderer when its cache-busted URL changes', async function () {
     var rendererResponses = [
       [{

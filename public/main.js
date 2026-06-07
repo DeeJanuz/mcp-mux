@@ -1541,6 +1541,24 @@
     refreshAiWorkspaceAvailability();
   }
 
+  function humanizePluginName(pluginName) {
+    var known = {
+      decidr: 'DecidR',
+      ludflow: 'Ludflow',
+      tribex_ai: 'TribeX AI',
+      'tribe-x-persona-studio': 'Persona Studio',
+    };
+    var key = String(pluginName || '');
+    if (known[key]) return known[key];
+    return key
+      .split(/[-_]+/)
+      .filter(Boolean)
+      .map(function(part) {
+        return part.charAt(0).toUpperCase() + part.slice(1);
+      })
+      .join(' ');
+  }
+
   function populateAppsDropdown(dropdown) {
     if (!window.__TAURI__) {
       dropdown.innerHTML = '<div class="apps-empty">Not available in browser mode</div>';
@@ -1554,24 +1572,38 @@
           return;
         }
 
-        var html = '';
+        dropdown.innerHTML = '';
         plugins.forEach(function(plugin) {
-          var pluginName = plugin.plugin.charAt(0).toUpperCase() + plugin.plugin.slice(1);
-          html += '<div class="apps-plugin-entry">';
-          html += '<div class="apps-plugin-header" data-plugin="' + plugin.plugin + '">';
-          html += '<span class="chevron">\u25B6</span>';
-          html += '<span>' + pluginName + '</span>';
-          html += '</div>';
-          html += '<div class="apps-renderer-list">';
+          var pluginName = plugin.label || humanizePluginName(plugin.plugin);
+          var entry = document.createElement('div');
+          entry.className = 'apps-plugin-entry';
+
+          var header = document.createElement('div');
+          header.className = 'apps-plugin-header';
+          header.setAttribute('data-plugin', plugin.plugin);
+          var chevron = document.createElement('span');
+          chevron.className = 'chevron';
+          chevron.textContent = '\u25B6';
+          var label = document.createElement('span');
+          label.textContent = pluginName;
+          header.appendChild(chevron);
+          header.appendChild(label);
+          entry.appendChild(header);
+
+          var rendererList = document.createElement('div');
+          rendererList.className = 'apps-renderer-list';
           plugin.renderers.forEach(function(renderer) {
-            html += '<div class="apps-renderer-item" data-renderer="' + renderer.name + '" data-plugin="' + plugin.plugin + '" title="' + (renderer.description || '') + '">';
-            html += renderer.label;
-            html += '</div>';
+            var item = document.createElement('div');
+            item.className = 'apps-renderer-item';
+            item.setAttribute('data-renderer', renderer.name);
+            item.setAttribute('data-plugin', plugin.plugin);
+            item.setAttribute('title', renderer.description || '');
+            item.textContent = renderer.label;
+            rendererList.appendChild(item);
           });
-          html += '</div>';
-          html += '</div>';
+          entry.appendChild(rendererList);
+          dropdown.appendChild(entry);
         });
-        dropdown.innerHTML = html;
 
         // Bind expand/collapse
         dropdown.querySelectorAll('.apps-plugin-header').forEach(function(header) {

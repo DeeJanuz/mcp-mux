@@ -253,6 +253,7 @@ fn main() {
             commands::send_plugin_email_code,
             commands::verify_plugin_email_code,
             commands::get_plugin_auth_header,
+            commands::list_plugin_org_auth,
             commands::store_plugin_token,
             commands::get_first_party_ai_config,
             commands::start_first_party_ai_auth,

@@ -170,7 +170,10 @@ mod tests {
         state.resolve("s4", decision);
 
         // After resolve, borrow returns the decision without needing changed()
-        let val = rx.borrow().clone().expect("should have decision after resolve");
+        let val = rx
+            .borrow()
+            .clone()
+            .expect("should have decision after resolve");
         assert_eq!(val.session_id, "s4");
         assert_eq!(val.status, "decision_received");
         assert_eq!(val.decision, Some("approved".to_string()));
@@ -209,7 +212,10 @@ mod tests {
 
         state.dismiss("s6");
 
-        let val = rx.borrow().clone().expect("should have decision after dismiss");
+        let val = rx
+            .borrow()
+            .clone()
+            .expect("should have decision after dismiss");
         assert_eq!(val.decision, Some("dismissed".to_string()));
         assert_eq!(val.status, "decision_received");
     }

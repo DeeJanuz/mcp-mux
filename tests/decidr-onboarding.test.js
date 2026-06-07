@@ -71,8 +71,8 @@ function baseInvoke(overrides) {
     }
     if (command === 'list_local_mcp_tools') return Promise.resolve([]);
     if (command === 'send_plugin_email_code') return Promise.resolve({ status: true });
-    if (command === 'list_plugin_orgs' && args.pluginName === 'decidr') return Promise.resolve(['org_123']);
-    if (command === 'list_plugin_orgs' && args.pluginName === 'ludflow') return Promise.resolve(['org_123']);
+    if (command === 'get_plugin_auth_header' && args.pluginName === 'decidr') return Promise.resolve('Bearer decidr-token');
+    if (command === 'get_plugin_auth_header' && args.pluginName === 'ludflow') return Promise.resolve('Bearer ludflow-token');
     if (overrides && overrides[command]) return overrides[command](args);
     return Promise.resolve(null);
   });
@@ -160,7 +160,7 @@ describe('decidr onboarding renderer', function () {
 
     expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBe('org_123');
     expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
-      contentType: 'decidr_timeline',
+      contentType: 'decidr_dashboard',
       data: { organization_id: 'org_123' },
     }));
     expect(document.body.textContent).not.toContain('Ludflow');
@@ -233,7 +233,7 @@ describe('decidr onboarding renderer', function () {
 
     expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBe('org_123');
     expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
-      contentType: 'decidr_timeline',
+      contentType: 'decidr_dashboard',
     }));
   });
 
@@ -281,5 +281,20 @@ describe('decidr onboarding renderer', function () {
     expect(document.body.textContent).toContain('One or more DecidR package components are missing.');
     expect(document.body.textContent).not.toContain('Ludflow');
     expect(textButton('Retry component check')).toBeTruthy();
+  });
+
+  it('ships dark-mode styles that follow the MCPViews theme tokens', async function () {
+    window.__TAURI__ = { core: { invoke: baseInvoke() } };
+    document.documentElement.setAttribute('data-theme', 'dark');
+
+    loadRenderer();
+    window.__renderers.decidr_onboarding(document.getElementById('root'), {});
+    await flushPromises();
+
+    var styleText = document.querySelector('style').textContent;
+    expect(styleText).toContain('[data-theme="dark"] .decidr-setup');
+    expect(styleText).toContain('color-scheme:light dark');
+    expect(styleText).toContain('var(--bg-surface');
+    expect(styleText).toContain('var(--text-primary');
   });
 });

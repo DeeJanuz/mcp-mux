@@ -1,7 +1,9 @@
-use mcpviews_shared::{PluginAuth, PluginInfo, PluginManifest};
 use mcpviews_shared::plugin_store::PluginStore;
+use mcpviews_shared::{PluginAuth, PluginInfo, PluginManifest};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::http_server::AsyncAppState;
@@ -13,6 +15,64 @@ pub(crate) struct OAuthRefreshInfo {
     pub token_url: String,
     pub client_id: Option<String>,
     pub org_id: Option<String>,
+}
+
+const OAUTH_REFRESH_LEEWAY_SECONDS: i64 = 300;
+static OAUTH_REFRESH_LOCKS: OnceLock<std::sync::Mutex<HashMap<String, Arc<TokioMutex<()>>>>> =
+    OnceLock::new();
+
+fn oauth_refresh_key(oauth_info: &OAuthRefreshInfo) -> String {
+    format!(
+        "{}:{}",
+        oauth_info.plugin_name,
+        oauth_info.org_id.as_deref().unwrap_or("_default")
+    )
+}
+
+fn oauth_refresh_lock(oauth_info: &OAuthRefreshInfo) -> Arc<TokioMutex<()>> {
+    let locks = OAUTH_REFRESH_LOCKS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let mut guard = locks.lock().unwrap();
+    guard
+        .entry(oauth_refresh_key(oauth_info))
+        .or_insert_with(|| Arc::new(TokioMutex::new(())))
+        .clone()
+}
+
+pub(crate) fn oauth_token_needs_preemptive_refresh(oauth_info: &OAuthRefreshInfo) -> bool {
+    let auth_dir = mcpviews_shared::auth_dir();
+    if let Some(org_id) = oauth_info.org_id.as_deref() {
+        return mcpviews_shared::token_store::token_needs_preemptive_refresh_for_org(
+            &auth_dir,
+            &oauth_info.plugin_name,
+            org_id,
+            OAUTH_REFRESH_LEEWAY_SECONDS,
+        );
+    }
+    mcpviews_shared::token_store::load_stored_token_unvalidated(
+        &auth_dir,
+        &oauth_info.plugin_name,
+    )
+    .map(|token| {
+        token.refresh_token.is_some() && token.expires_within(OAUTH_REFRESH_LEEWAY_SECONDS)
+    })
+    .unwrap_or(false)
+}
+
+fn current_oauth_bearer_if_fresh(oauth_info: &OAuthRefreshInfo) -> Option<String> {
+    let auth_dir = mcpviews_shared::auth_dir();
+    let token = if let Some(org_id) = oauth_info.org_id.as_deref() {
+        mcpviews_shared::token_store::load_stored_token_for_org(
+            &auth_dir,
+            &oauth_info.plugin_name,
+            org_id,
+        )
+    } else {
+        mcpviews_shared::token_store::load_stored_token(&auth_dir, &oauth_info.plugin_name)
+    }?;
+    if token.expires_within(OAUTH_REFRESH_LEEWAY_SECONDS) {
+        return None;
+    }
+    Some(format!("Bearer {}", token.access_token))
 }
 
 /// Result of looking up a plugin tool by prefixed name.
@@ -29,6 +89,31 @@ pub async fn try_refresh_oauth(
     oauth_info: &OAuthRefreshInfo,
     client: &reqwest::Client,
 ) -> Option<String> {
+    refresh_oauth_with_lock(oauth_info, client, false).await
+}
+
+/// Force OAuth token refresh after a backend rejected the current access token.
+pub async fn force_refresh_oauth(
+    oauth_info: &OAuthRefreshInfo,
+    client: &reqwest::Client,
+) -> Option<String> {
+    refresh_oauth_with_lock(oauth_info, client, true).await
+}
+
+async fn refresh_oauth_with_lock(
+    oauth_info: &OAuthRefreshInfo,
+    client: &reqwest::Client,
+    force: bool,
+) -> Option<String> {
+    let lock = oauth_refresh_lock(oauth_info);
+    let _guard = lock.lock().await;
+
+    if !force {
+        if let Some(existing) = current_oauth_bearer_if_fresh(oauth_info) {
+            return Some(existing);
+        }
+    }
+
     match crate::auth::refresh_oauth_token(
         &oauth_info.plugin_name,
         &oauth_info.token_url,
@@ -97,7 +182,10 @@ impl PluginRegistry {
     }
 
     pub fn find_plugin_by_name(&self, name: &str) -> Option<(usize, &PluginManifest)> {
-        self.manifests.iter().enumerate().find(|(_, m)| m.name == name)
+        self.manifests
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.name == name)
     }
 
     /// Return indices of plugins whose tool cache is stale or empty
@@ -124,11 +212,8 @@ impl PluginRegistry {
                 if registry.tool_cache.entries[i].refresh_pending {
                     if let Some(mcp) = &registry.manifests[i].mcp {
                         let auth = resolve_auth_header(&registry.manifests[i].name, &mcp.auth);
-                        let oauth_info = if auth.is_none() {
-                            extract_oauth_refresh_info(&registry.manifests[i].name, &mcp.auth)
-                        } else {
-                            None
-                        };
+                        let oauth_info =
+                            extract_oauth_refresh_info(&registry.manifests[i].name, &mcp.auth);
                         result.push((i, mcp.url.clone(), auth, oauth_info));
                     }
                 }
@@ -137,10 +222,10 @@ impl PluginRegistry {
         };
         drop(state_guard);
 
-        // Attempt OAuth token refresh for entries where auth is None but OAuth info is present
+        // Attempt OAuth token refresh for entries where auth is missing or nearly expired.
         for entry in &mut to_refresh {
-            if entry.2.is_none() {
-                if let Some(oauth_info) = &entry.3 {
+            if let Some(oauth_info) = &entry.3 {
+                if entry.2.is_none() || oauth_token_needs_preemptive_refresh(oauth_info) {
                     if let Some(bearer) = try_refresh_oauth(oauth_info, client).await {
                         entry.2 = Some(bearer);
                     }
@@ -256,7 +341,8 @@ impl PluginRegistry {
 
     /// Extract the PluginAuth config for a plugin by name.
     pub fn resolve_plugin_auth(&self, plugin_name: &str) -> Result<PluginAuth, String> {
-        let manifest = self.manifests
+        let manifest = self
+            .manifests
             .iter()
             .find(|m| m.name == plugin_name)
             .ok_or_else(|| format!("Plugin '{}' not found", plugin_name))?;
@@ -268,14 +354,18 @@ impl PluginRegistry {
     }
 
     /// Return info about all loaded plugins, checking for updates against registry.
-    pub fn list_plugins_with_updates(&self, registry_entries: &[mcpviews_shared::RegistryEntry]) -> Vec<PluginInfo> {
+    pub fn list_plugins_with_updates(
+        &self,
+        registry_entries: &[mcpviews_shared::RegistryEntry],
+    ) -> Vec<PluginInfo> {
         self.manifests
             .iter()
             .enumerate()
             .map(|(i, manifest)| {
-                let auth_type = manifest.mcp.as_ref().and_then(|m| {
-                    m.auth.as_ref().map(|a| a.display_name().to_string())
-                });
+                let auth_type = manifest
+                    .mcp
+                    .as_ref()
+                    .and_then(|m| m.auth.as_ref().map(|a| a.display_name().to_string()));
                 let auth_configured = manifest
                     .mcp
                     .as_ref()
@@ -420,11 +510,7 @@ async fn fetch_plugin_tools(
 }
 
 /// Apply fetched tools to the plugin cache: prefix names, update tool_index, set timestamps.
-async fn apply_tool_cache(
-    state: &Arc<TokioMutex<AsyncAppState>>,
-    idx: usize,
-    tools: Vec<Value>,
-) {
+async fn apply_tool_cache(state: &Arc<TokioMutex<AsyncAppState>>, idx: usize, tools: Vec<Value>) {
     let state_guard = state.lock().await;
     let mut registry = state_guard.inner.plugin_registry.lock().unwrap();
 
@@ -461,7 +547,10 @@ fn resolve_auth_header(plugin_name: &str, auth: &Option<PluginAuth>) -> Option<S
 }
 
 /// Extract OAuth refresh info from a plugin's auth config, if it's an OAuth type.
-fn extract_oauth_refresh_info(plugin_name: &str, auth: &Option<PluginAuth>) -> Option<OAuthRefreshInfo> {
+fn extract_oauth_refresh_info(
+    plugin_name: &str,
+    auth: &Option<PluginAuth>,
+) -> Option<OAuthRefreshInfo> {
     match auth.as_ref()? {
         PluginAuth::OAuth {
             client_id,
@@ -480,7 +569,7 @@ fn extract_oauth_refresh_info(plugin_name: &str, auth: &Option<PluginAuth>) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcpviews_shared::{PluginMcpConfig, PluginAuth};
+    use mcpviews_shared::{PluginAuth, PluginMcpConfig};
 
     fn test_manifest(name: &str) -> PluginManifest {
         crate::test_utils::test_manifest(name)

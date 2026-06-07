@@ -26,8 +26,9 @@ Ask the user which plugins they'd like to install. For each one:
 
 For plugins that require authentication:
 1. Call `start_plugin_auth` with the plugin name
-2. For OAuth plugins, this will open the user's browser — wait for them to complete the flow
-3. For Bearer/ApiKey plugins, tell the user which environment variable to set
+2. For OAuth plugins with email-code support, this opens the MCPViews in-app code flow by default
+3. For OAuth browser recovery only, call `start_plugin_auth` with `auth_flow: "browser"`
+4. For Bearer/ApiKey plugins, tell the user which environment variable to set
 
 ## Step 4: Verify
 
@@ -36,20 +37,18 @@ Call `init_session` to verify all plugins are loaded and authenticated.
 ## Troubleshooting Tips
 
 - If a plugin's tools don't appear after install, the MCP connection may need to be refreshed. Suggest the user reconnect MCP (e.g., `/mcp` in Claude Code).
-- For OAuth auth failures, suggest retrying `start_plugin_auth` — the browser flow may have timed out.
+- For OAuth auth failures, suggest retrying `start_plugin_auth`; use `auth_flow: "browser"` only as an advanced fallback.
 - For Bearer/ApiKey auth, remind the user to restart their agent after setting environment variables.
 - If `list_registry` returns empty, the registry may be unreachable — check network connectivity.
 "#;
 
 fn builtin_prompt_definitions() -> Vec<(&'static str, &'static str, Vec<Value>, &'static str)> {
-    vec![
-        (
-            "onboarding",
-            "Guided setup to discover, install, and authenticate MCPViews plugins.",
-            vec![],
-            ONBOARDING_PROMPT,
-        ),
-    ]
+    vec![(
+        "onboarding",
+        "Guided setup to discover, install, and authenticate MCPViews plugins.",
+        vec![],
+        ONBOARDING_PROMPT,
+    )]
 }
 
 /// Return all prompts available (built-in + plugin prompts) in MCP format.
@@ -122,7 +121,9 @@ pub async fn get_prompt(
             "prompt": prompt_name,
         });
         if let Some(template_args) = arguments {
-            args.as_object_mut().unwrap().insert("arguments".to_string(), template_args);
+            args.as_object_mut()
+                .unwrap()
+                .insert("arguments".to_string(), template_args);
         }
         let result = call_get_plugin_prompt(args, state).await?;
         // Transform plugin prompt result into MCP prompt format
@@ -179,14 +180,26 @@ pub(crate) async fn call_get_plugin_prompt(
             .prompt_definitions
             .iter()
             .find(|p| p.name == prompt_name)
-            .ok_or_else(|| format!("Prompt '{}' not found in plugin '{}'", prompt_name, plugin_name))?;
+            .ok_or_else(|| {
+                format!(
+                    "Prompt '{}' not found in plugin '{}'",
+                    prompt_name, plugin_name
+                )
+            })?;
 
-        (prompt_def.source.clone(), state_guard.inner.plugins_dir().to_path_buf())
+        (
+            prompt_def.source.clone(),
+            state_guard.inner.plugins_dir().to_path_buf(),
+        )
     };
 
     let path = plugins_dir.join(plugin_name).join(&source_path);
-    let mut content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read prompt '{}' from plugin '{}': {}", source_path, plugin_name, e))?;
+    let mut content = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "Failed to read prompt '{}' from plugin '{}': {}",
+            source_path, plugin_name, e
+        )
+    })?;
 
     // Template arguments: replace {{arg_name}} with provided values
     for (key, value) in &template_args {
@@ -268,16 +281,18 @@ mod tests {
         let (state, _dir) = test_app_state();
 
         let mut manifest = test_manifest("my-plugin");
-        manifest.prompt_definitions.push(mcpviews_shared::PromptDef {
-            name: "setup-guide".to_string(),
-            description: "Setup instructions".to_string(),
-            arguments: vec![mcpviews_shared::PromptArgument {
-                name: "env".to_string(),
-                description: "Target environment".to_string(),
-                required: true,
-            }],
-            source: "prompts/setup.md".to_string(),
-        });
+        manifest
+            .prompt_definitions
+            .push(mcpviews_shared::PromptDef {
+                name: "setup-guide".to_string(),
+                description: "Setup instructions".to_string(),
+                arguments: vec![mcpviews_shared::PromptArgument {
+                    name: "env".to_string(),
+                    description: "Target environment".to_string(),
+                    required: true,
+                }],
+                source: "prompts/setup.md".to_string(),
+            });
 
         {
             let mut registry = state.plugin_registry.lock().unwrap();
@@ -317,12 +332,14 @@ mod tests {
         let (state, _dir) = test_app_state();
 
         let mut manifest = test_manifest("test-plugin");
-        manifest.prompt_definitions.push(mcpviews_shared::PromptDef {
-            name: "hello".to_string(),
-            description: "Hello prompt".to_string(),
-            arguments: vec![],
-            source: "prompts/hello.md".to_string(),
-        });
+        manifest
+            .prompt_definitions
+            .push(mcpviews_shared::PromptDef {
+                name: "hello".to_string(),
+                description: "Hello prompt".to_string(),
+                arguments: vec![],
+                source: "prompts/hello.md".to_string(),
+            });
 
         {
             let mut registry = state.plugin_registry.lock().unwrap();
@@ -379,7 +396,10 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[0]["content"]["type"], "text");
-        assert!(messages[0]["content"]["text"].as_str().unwrap().contains("MCPViews Plugin Onboarding"));
+        assert!(messages[0]["content"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("MCPViews Plugin Onboarding"));
     }
 
     #[test]
@@ -444,16 +464,18 @@ mod tests {
         let (state, _dir) = test_app_state();
 
         let mut manifest = test_manifest("file-plugin");
-        manifest.prompt_definitions.push(mcpviews_shared::PromptDef {
-            name: "greet".to_string(),
-            description: "Greeting prompt".to_string(),
-            arguments: vec![mcpviews_shared::PromptArgument {
-                name: "user".to_string(),
-                description: "User name".to_string(),
-                required: true,
-            }],
-            source: "prompts/greet.md".to_string(),
-        });
+        manifest
+            .prompt_definitions
+            .push(mcpviews_shared::PromptDef {
+                name: "greet".to_string(),
+                description: "Greeting prompt".to_string(),
+                arguments: vec![mcpviews_shared::PromptArgument {
+                    name: "user".to_string(),
+                    description: "User name".to_string(),
+                    required: true,
+                }],
+                source: "prompts/greet.md".to_string(),
+            });
 
         {
             let mut registry = state.plugin_registry.lock().unwrap();
@@ -479,7 +501,9 @@ mod tests {
         let mut content = std::fs::read_to_string(&path).unwrap();
 
         let template_args: std::collections::HashMap<String, String> =
-            [("user".to_string(), "Bob".to_string())].into_iter().collect();
+            [("user".to_string(), "Bob".to_string())]
+                .into_iter()
+                .collect();
         for (key, value) in &template_args {
             let placeholder = format!("{{{{{}}}}}", key);
             content = content.replace(&placeholder, value);
@@ -503,12 +527,14 @@ mod tests {
         let (state, _dir) = test_app_state();
 
         let mut manifest = test_manifest("missing-file-plugin");
-        manifest.prompt_definitions.push(mcpviews_shared::PromptDef {
-            name: "missing".to_string(),
-            description: "Missing prompt".to_string(),
-            arguments: vec![],
-            source: "prompts/does-not-exist.md".to_string(),
-        });
+        manifest
+            .prompt_definitions
+            .push(mcpviews_shared::PromptDef {
+                name: "missing".to_string(),
+                description: "Missing prompt".to_string(),
+                arguments: vec![],
+                source: "prompts/does-not-exist.md".to_string(),
+            });
 
         {
             let mut registry = state.plugin_registry.lock().unwrap();
@@ -524,7 +550,9 @@ mod tests {
             .unwrap();
 
         let plugins_dir = state.plugins_dir();
-        let path = plugins_dir.join("missing-file-plugin").join(&prompt_def.source);
+        let path = plugins_dir
+            .join("missing-file-plugin")
+            .join(&prompt_def.source);
         let result = std::fs::read_to_string(&path);
         assert!(result.is_err());
     }

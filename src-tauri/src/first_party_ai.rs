@@ -151,14 +151,8 @@ fn same_loopback_endpoint(left: &str, right: &str) -> bool {
 
     left_url.scheme() == right_url.scheme()
         && left_url.port_or_known_default() == right_url.port_or_known_default()
-        && left_url
-            .host_str()
-            .map(is_loopback_host)
-            .unwrap_or(false)
-        && right_url
-            .host_str()
-            .map(is_loopback_host)
-            .unwrap_or(false)
+        && left_url.host_str().map(is_loopback_host).unwrap_or(false)
+        && right_url.host_str().map(is_loopback_host).unwrap_or(false)
 }
 
 fn should_align_endpoint(
@@ -440,7 +434,10 @@ pub async fn get_auth_header(state: &Arc<AppState>) -> Result<String, String> {
         return Ok(format!("Bearer {}", stored.access_token));
     }
 
-    Err("Hosted AI provider auth uses the session cookie established by email code sign-in.".to_string())
+    Err(
+        "Hosted AI provider auth uses the session cookie established by email code sign-in."
+            .to_string(),
+    )
 }
 
 pub(crate) async fn get_relay_auth_header(state: &Arc<AppState>) -> Result<String, String> {
@@ -496,8 +493,10 @@ pub(crate) fn persist_relay_session_with_paths(
     device_base_url: Option<&str>,
     relay_device_id: Option<&str>,
 ) -> Result<(), String> {
-    let should_persist_settings =
-        token.is_some() || relay_base_url.is_some() || device_base_url.is_some() || relay_device_id.is_some();
+    let should_persist_settings = token.is_some()
+        || relay_base_url.is_some()
+        || device_base_url.is_some()
+        || relay_device_id.is_some();
     if let Some(token) = token {
         mcpviews_shared::token_store::store_token(
             &auth_dir,
@@ -688,8 +687,14 @@ pub async fn proxy_request(
         return Ok(json!({}));
     }
 
-    serde_json::from_str(&text)
-        .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))
+    serde_json::from_str(&text).map_err(|err| {
+        format!(
+            "Failed to parse JSON from '{}': {} ({})",
+            url,
+            err,
+            shorten_error_body(&text)
+        )
+    })
 }
 
 fn normalize_local_runtime_probe_url(url: &str) -> Result<reqwest::Url, String> {
@@ -736,7 +741,10 @@ async fn send_local_runtime_probe_request(
 ) -> Result<(), String> {
     let probe_targets = if token.map(|value| !value.trim().is_empty()).unwrap_or(false) {
         vec![
-            ("/__runtime-session-probe", token.map(str::trim).filter(|value| !value.is_empty())),
+            (
+                "/__runtime-session-probe",
+                token.map(str::trim).filter(|value| !value.is_empty()),
+            ),
             ("/healthz", None),
         ]
     } else {
@@ -759,10 +767,12 @@ async fn send_local_runtime_probe_request(
             request = request.bearer_auth(token);
         }
 
-        let response = request
-            .send()
-            .await
-            .map_err(|err| format!("Failed to reach local runtime at '{}': {}", request_url, err));
+        let response = request.send().await.map_err(|err| {
+            format!(
+                "Failed to reach local runtime at '{}': {}",
+                request_url, err
+            )
+        });
 
         let response = match response {
             Ok(response) => response,
@@ -773,10 +783,12 @@ async fn send_local_runtime_probe_request(
         };
 
         let status = response.status();
-        let body = response
-            .text()
-            .await
-            .map_err(|err| format!("Failed to read local runtime response from '{}': {}", request_url, err))?;
+        let body = response.text().await.map_err(|err| {
+            format!(
+                "Failed to read local runtime response from '{}': {}",
+                request_url, err
+            )
+        })?;
 
         if status.is_success() {
             return Ok(());
@@ -847,8 +859,14 @@ pub async fn get_session(state: &Arc<AppState>) -> Result<Value, String> {
         return Ok(Value::Null);
     }
 
-    serde_json::from_str(&text)
-        .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))
+    serde_json::from_str(&text).map_err(|err| {
+        format!(
+            "Failed to parse JSON from '{}': {} ({})",
+            url,
+            err,
+            shorten_error_body(&text)
+        )
+    })
 }
 
 pub async fn send_email_code(state: &Arc<AppState>, email: &str) -> Result<Value, String> {
@@ -885,8 +903,14 @@ pub async fn send_email_code(state: &Arc<AppState>, email: &str) -> Result<Value
         return Ok(json!({ "status": true }));
     }
 
-    serde_json::from_str(&text)
-        .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))
+    serde_json::from_str(&text).map_err(|err| {
+        format!(
+            "Failed to parse JSON from '{}': {} ({})",
+            url,
+            err,
+            shorten_error_body(&text)
+        )
+    })
 }
 
 pub async fn send_magic_link(state: &Arc<AppState>, email: &str) -> Result<Value, String> {
@@ -898,7 +922,11 @@ pub async fn verify_email_code(
     email: &str,
     code: &str,
 ) -> Result<Value, String> {
-    let normalized_code: String = code.chars().filter(|ch| ch.is_ascii_digit()).take(6).collect();
+    let normalized_code: String = code
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .take(6)
+        .collect();
     if email.trim().is_empty() || normalized_code.len() != 6 {
         return Err("Email and 6-digit code are required.".to_string());
     }
@@ -933,8 +961,14 @@ pub async fn verify_email_code(
     }
 
     if !text.trim().is_empty() {
-        serde_json::from_str::<Value>(&text)
-            .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))?;
+        serde_json::from_str::<Value>(&text).map_err(|err| {
+            format!(
+                "Failed to parse JSON from '{}': {} ({})",
+                url,
+                err,
+                shorten_error_body(&text)
+            )
+        })?;
     }
 
     get_session(state).await
@@ -1241,8 +1275,7 @@ mod tests {
     #[test]
     fn url_origin_extracts_scheme_host_and_port() {
         assert_eq!(
-            url_origin("http://localhost:3000/api/auth/magic-link/verify?token=abc")
-                .as_deref(),
+            url_origin("http://localhost:3000/api/auth/magic-link/verify?token=abc").as_deref(),
             Some("http://localhost:3000")
         );
         assert_eq!(
@@ -1272,10 +1305,9 @@ mod tests {
     #[test]
     fn signed_file_download_url_allows_configured_https_origin() {
         let settings = test_settings(Some("https://ai.example.com"), None, None);
-        let parsed = reqwest::Url::parse(
-            "https://ai.example.com/__sandbox/workspace-file?token=download",
-        )
-        .unwrap();
+        let parsed =
+            reqwest::Url::parse("https://ai.example.com/__sandbox/workspace-file?token=download")
+                .unwrap();
 
         assert!(validate_signed_file_download_url_for_settings(&parsed, &settings).is_ok());
     }
@@ -1309,10 +1341,9 @@ mod tests {
     #[test]
     fn signed_file_download_url_allows_loopback_http_for_configured_origin() {
         let settings = test_settings(Some("http://127.0.0.1:8787"), None, None);
-        let parsed = reqwest::Url::parse(
-            "http://localhost:8787/__sandbox/workspace-file?token=download",
-        )
-        .unwrap();
+        let parsed =
+            reqwest::Url::parse("http://localhost:8787/__sandbox/workspace-file?token=download")
+                .unwrap();
 
         assert!(validate_signed_file_download_url_for_settings(&parsed, &settings).is_ok());
     }
@@ -1320,10 +1351,9 @@ mod tests {
     #[test]
     fn signed_file_download_url_rejects_untrusted_origin() {
         let settings = test_settings(Some("https://ai.example.com"), None, None);
-        let parsed = reqwest::Url::parse(
-            "https://attacker.example/__sandbox/workspace-file?token=download",
-        )
-        .unwrap();
+        let parsed =
+            reqwest::Url::parse("https://attacker.example/__sandbox/workspace-file?token=download")
+                .unwrap();
 
         let error = validate_signed_file_download_url_for_settings(&parsed, &settings)
             .expect_err("untrusted origin should be rejected");
@@ -1333,10 +1363,9 @@ mod tests {
     #[test]
     fn signed_file_download_url_rejects_non_loopback_http() {
         let settings = test_settings(Some("http://ai.example.com"), None, None);
-        let parsed = reqwest::Url::parse(
-            "http://ai.example.com/__sandbox/workspace-file?token=download",
-        )
-        .unwrap();
+        let parsed =
+            reqwest::Url::parse("http://ai.example.com/__sandbox/workspace-file?token=download")
+                .unwrap();
 
         let error = validate_signed_file_download_url_for_settings(&parsed, &settings)
             .expect_err("non-loopback http should be rejected");
@@ -1357,8 +1386,7 @@ mod tests {
     #[test]
     fn signed_file_download_url_rejects_wrong_path() {
         let settings = test_settings(Some("https://ai.example.com"), None, None);
-        let parsed =
-            reqwest::Url::parse("https://ai.example.com/other?token=download").unwrap();
+        let parsed = reqwest::Url::parse("https://ai.example.com/other?token=download").unwrap();
 
         let error = validate_signed_file_download_url_for_settings(&parsed, &settings)
             .expect_err("workspace-file path should be required");
@@ -1368,8 +1396,14 @@ mod tests {
     #[test]
     fn provider_env_aliases_take_precedence_over_legacy_names() {
         let values = [
-            ("MCPVIEWS_AI_PROVIDER_BASE_URL", "https://generic.example.com"),
-            ("MCPVIEWS_FIRST_PARTY_AI_BASE_URL", "https://first-party.example.com"),
+            (
+                "MCPVIEWS_AI_PROVIDER_BASE_URL",
+                "https://generic.example.com",
+            ),
+            (
+                "MCPVIEWS_FIRST_PARTY_AI_BASE_URL",
+                "https://first-party.example.com",
+            ),
             ("PROPAASAI_BASE_URL", "https://propaas.example.com"),
         ]
         .into_iter()
@@ -1412,7 +1446,10 @@ mod tests {
     fn empty_provider_env_aliases_fall_back_to_legacy_names() {
         let values = [
             ("MCPVIEWS_AI_PROVIDER_BASE_URL", " "),
-            ("MCPVIEWS_FIRST_PARTY_AI_BASE_URL", "https://legacy.example.com"),
+            (
+                "MCPVIEWS_FIRST_PARTY_AI_BASE_URL",
+                "https://legacy.example.com",
+            ),
         ]
         .into_iter()
         .collect::<std::collections::HashMap<_, _>>();
@@ -1467,7 +1504,10 @@ mod tests {
         let cfg = updated.first_party_ai.unwrap();
         assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:3000"));
         assert_eq!(cfg.relay_base_url.as_deref(), Some("http://localhost:3000"));
-        assert_eq!(cfg.device_base_url.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(
+            cfg.device_base_url.as_deref(),
+            Some("http://localhost:3000")
+        );
         assert_eq!(cfg.relay_token.as_deref(), Some("keep-token"));
         assert_eq!(cfg.relay_device_id.as_deref(), Some("device-1"));
     }
@@ -1498,8 +1538,14 @@ mod tests {
         let updated = mcpviews_shared::settings::Settings::load_from_path(&settings_path);
         let cfg = updated.first_party_ai.unwrap();
         assert_eq!(cfg.base_url.as_deref(), Some("http://localhost:3000"));
-        assert_eq!(cfg.relay_base_url.as_deref(), Some("https://relay.example.com"));
-        assert_eq!(cfg.device_base_url.as_deref(), Some("https://device.example.com"));
+        assert_eq!(
+            cfg.relay_base_url.as_deref(),
+            Some("https://relay.example.com")
+        );
+        assert_eq!(
+            cfg.device_base_url.as_deref(),
+            Some("https://device.example.com")
+        );
     }
 
     #[test]
@@ -1527,6 +1573,9 @@ mod tests {
                 auth_dir, namespace
             ));
         }
-        assert!(mcpviews_shared::token_store::has_stored_token(auth_dir, "other-plugin"));
+        assert!(mcpviews_shared::token_store::has_stored_token(
+            auth_dir,
+            "other-plugin"
+        ));
     }
 }

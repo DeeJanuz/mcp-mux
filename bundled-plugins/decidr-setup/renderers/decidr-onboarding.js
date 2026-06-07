@@ -173,36 +173,41 @@
   function renderShell(container) {
     container.innerHTML = [
       '<style>',
-      '.decidr-setup{max-width:920px;margin:0 auto;padding:36px 28px;color:var(--text-primary,#111827);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
+      '.decidr-setup{--decidr-setup-surface:var(--bg-surface,#ffffff);--decidr-setup-surface-subtle:var(--bg-surface-subtle,#f9fafb);--decidr-setup-surface-inset:var(--bg-surface-inset,#f3f4f6);--decidr-setup-border:var(--border-default,var(--border-color,#d6dbe3));--decidr-setup-border-strong:var(--border-strong,var(--border-color,#cbd5e1));--decidr-setup-accent:var(--accent-primary,#1f6feb);--decidr-setup-accent-hover:var(--accent-primary-hover,#155bd5);--decidr-setup-success-bg:var(--color-success-bg,#d1fae5);--decidr-setup-success-text:var(--color-success-text,#047857);--decidr-setup-error-text:var(--color-error-text,#b91c1c);color-scheme:light dark;max-width:920px;margin:0 auto;padding:36px 28px;color:var(--text-primary,#111827);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}',
+      '[data-theme="dark"] .decidr-setup{--decidr-setup-surface:rgba(255,255,255,.055);--decidr-setup-surface-subtle:rgba(255,255,255,.04);--decidr-setup-surface-inset:rgba(255,255,255,.08);--decidr-setup-border:rgba(255,255,255,.11);--decidr-setup-border-strong:rgba(255,255,255,.2);--decidr-setup-accent:#818cf8;--decidr-setup-accent-hover:#a5b4fc;--decidr-setup-success-bg:rgba(34,197,94,.16);--decidr-setup-success-text:#86efac;--decidr-setup-error-text:#fca5a5;}',
       '.decidr-setup h1{font-size:28px;line-height:1.2;margin:0 0 8px;font-weight:700;letter-spacing:0;}',
       '.decidr-setup p{color:var(--text-secondary,#4b5563);line-height:1.55;margin:0;}',
       '.decidr-setup h2{font-size:18px;line-height:1.25;margin:0 0 8px;font-weight:700;letter-spacing:0;}',
-      '.decidr-setup-panel{border:1px solid var(--border-color,#d6dbe3);border-radius:8px;background:var(--surface,#fff);padding:22px;margin-top:22px;}',
+      '.decidr-setup-panel{border:1px solid var(--decidr-setup-border);border-radius:8px;background:var(--decidr-setup-surface);padding:22px;margin-top:22px;}',
       '.decidr-setup-info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:22px;}',
-      '.decidr-setup-info{border:1px solid var(--border-color,#d6dbe3);border-radius:8px;background:var(--surface,#fff);padding:16px;}',
+      '.decidr-setup-info{border:1px solid var(--decidr-setup-border);border-radius:8px;background:var(--decidr-setup-surface);padding:16px;}',
       '.decidr-setup-steps{display:grid;gap:10px;margin:20px 0 0;padding:0;list-style:none;}',
       '.decidr-setup-step{display:flex;align-items:center;gap:10px;color:var(--text-secondary,#4b5563);font-size:14px;}',
-      '.decidr-setup-step span:first-child{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--bg-muted,#eef2f7);font-size:12px;font-weight:700;color:var(--text-secondary,#4b5563);}',
-      '.decidr-setup-step.done span:first-child{background:#d1fae5;color:#047857;}',
+      '.decidr-setup-step span:first-child{width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--decidr-setup-surface-inset);font-size:12px;font-weight:700;color:var(--text-secondary,#4b5563);}',
+      '.decidr-setup-step.done span:first-child{background:var(--decidr-setup-success-bg);color:var(--decidr-setup-success-text);}',
       '.decidr-setup-body{margin-top:20px;}',
       '.decidr-setup-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;}',
       '.decidr-setup-agent-steps{display:grid;gap:14px;margin-top:16px;}',
-      '.decidr-setup-agent-step{border:1px solid var(--border-color,#d6dbe3);border-radius:8px;padding:14px;background:var(--bg-muted,#f8fafc);}',
+      '.decidr-setup-agent-step{border:1px solid var(--decidr-setup-border);border-radius:8px;padding:14px;background:var(--decidr-setup-surface-subtle);}',
       '.decidr-setup-agent-step strong{display:block;margin-bottom:6px;}',
-      '.decidr-setup-prompt{display:block;width:100%;min-height:150px;margin-top:12px;border:1px solid var(--border-color,#cbd5e1);border-radius:6px;padding:10px;background:var(--surface,#fff);color:var(--text-primary,#111827);font:12px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;resize:vertical;}',
+      '.decidr-setup-prompt{display:block;width:100%;min-height:150px;margin-top:12px;border:1px solid var(--decidr-setup-border-strong);border-radius:6px;padding:10px;background:var(--decidr-setup-surface);color:var(--text-primary,#111827);font:12px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;resize:vertical;}',
       '.decidr-setup-check{display:flex;align-items:flex-start;gap:10px;margin-top:16px;color:var(--text-primary,#111827);font-size:14px;line-height:1.45;}',
+      '.decidr-setup-check input{accent-color:var(--decidr-setup-accent);}',
       '.decidr-setup-check input{margin-top:2px;}',
-      '.decidr-setup-button{min-height:38px;border:1px solid var(--border-color,#cbd5e1);border-radius:6px;background:var(--surface,#fff);color:var(--text-primary,#111827);font-weight:600;padding:0 14px;cursor:pointer;}',
-      '.decidr-setup-button.primary{background:#1f6feb;border-color:#1f6feb;color:#fff;}',
+      '.decidr-setup-button{min-height:38px;border:1px solid var(--decidr-setup-border-strong);border-radius:6px;background:var(--decidr-setup-surface);color:var(--text-primary,#111827);font-weight:600;padding:0 14px;cursor:pointer;}',
+      '.decidr-setup-button:hover{background:var(--decidr-setup-surface-inset);}',
+      '.decidr-setup-button.primary{background:var(--decidr-setup-accent);border-color:var(--decidr-setup-accent);color:#fff;}',
+      '.decidr-setup-button.primary:hover{background:var(--decidr-setup-accent-hover);border-color:var(--decidr-setup-accent-hover);}',
       '.decidr-setup-button:disabled{opacity:.55;cursor:not-allowed;}',
-      '.decidr-setup-input{min-height:38px;border:1px solid var(--border-color,#cbd5e1);border-radius:6px;padding:0 12px;min-width:260px;background:var(--surface,#fff);color:var(--text-primary,#111827);font:inherit;}',
+      '.decidr-setup-input{min-height:38px;border:1px solid var(--decidr-setup-border-strong);border-radius:6px;padding:0 12px;min-width:260px;background:var(--decidr-setup-surface);color:var(--text-primary,#111827);font:inherit;}',
+      '.decidr-setup-input::placeholder{color:var(--text-tertiary,#9ca3af);}',
       '.decidr-setup-code{width:150px;min-width:150px;letter-spacing:4px;text-align:center;font-weight:700;}',
       '.decidr-setup-orgs{display:grid;gap:8px;margin-top:16px;}',
-      '.decidr-setup-org{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--border-color,#d6dbe3);border-radius:6px;padding:12px;}',
+      '.decidr-setup-org{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--decidr-setup-border);border-radius:6px;padding:12px;background:var(--decidr-setup-surface-subtle);}',
       '.decidr-setup-org strong{font-size:14px;}',
       '.decidr-setup-status{min-height:22px;margin-top:14px;font-size:13px;color:var(--text-secondary,#4b5563);}',
-      '.decidr-setup-status.error{color:#b91c1c;}',
-      '.decidr-setup-status.success{color:#047857;}',
+      '.decidr-setup-status.error{color:var(--decidr-setup-error-text);}',
+      '.decidr-setup-status.success{color:var(--decidr-setup-success-text);}',
       '@media(max-width:720px){.decidr-setup{padding:26px 18px;}.decidr-setup-info-grid{grid-template-columns:1fr;}}',
       '</style>',
       '<div class="decidr-setup">',
@@ -211,7 +216,7 @@
       '<div class="decidr-setup-info-grid">',
       '<section class="decidr-setup-info">',
       '<h2>What is MCPViews?</h2>',
-      '<p>MCPViews is the local desktop bridge between your AI agent and DecidR. It runs the MCP server your agent calls and shows DecidR timelines, setup flows, approvals, and other interactive views here.</p>',
+      '<p>MCPViews is the local desktop bridge between your AI agent and DecidR. It runs the MCP server your agent calls and shows DecidR dashboards, setup flows, approvals, and other interactive views here.</p>',
       '</section>',
       '<section class="decidr-setup-info">',
       '<h2>What this setup does</h2>',
@@ -455,12 +460,10 @@
     var orgId = state.organizationId;
     setStatus(root, 'Finishing DecidR setup...');
     return Promise.all([
-      invoke('list_plugin_orgs', { pluginName: 'decidr' }),
-      invoke('list_plugin_orgs', { pluginName: 'ludflow' }),
+      invoke('get_plugin_auth_header', { pluginName: 'decidr', orgId: orgId }),
+      invoke('get_plugin_auth_header', { pluginName: 'ludflow', orgId: orgId }),
     ]).then(function (results) {
-      var decidrOrgs = results[0] || [];
-      var companionOrgs = results[1] || [];
-      if (decidrOrgs.indexOf(orgId) === -1 || companionOrgs.indexOf(orgId) === -1) {
+      if (!results[0] || !results[1]) {
         throw new Error('DecidR setup is not fully authenticated for the selected organization.');
       }
       storeValue(AUTH_ORG_KEY, orgId);
@@ -477,16 +480,16 @@
     return session ? session.getAttribute('data-session-id') : null;
   }
 
-  function openTimelineAndCloseSetup(root, state) {
+  function openDashboardAndCloseSetup(root, state) {
     var utils = window.__companionUtils || {};
     if (utils && typeof utils.openSession === 'function') {
       utils.openSession({
-        sessionKey: 'decidr-timeline',
-        toolName: 'DecidR Timeline',
-        contentType: 'decidr_timeline',
+        sessionKey: 'decidr-dashboard',
+        toolName: 'DecidR Dashboard',
+        contentType: 'decidr_dashboard',
         data: { organization_id: state.organizationId },
-        meta: { headerTitle: 'DecidR Timeline' },
-        toolArgs: { title: 'DecidR Timeline' },
+        meta: { headerTitle: 'DecidR Dashboard' },
+        toolArgs: { title: 'DecidR Dashboard' },
       });
     }
 
@@ -576,8 +579,8 @@
       if (!check.checked) return;
       storeValue(AGENT_CONFIGURED_KEY, state.organizationId);
       markStep(root, 'agent', true);
-      setStatus(root, 'Opening DecidR timeline...', 'success');
-      openTimelineAndCloseSetup(root, state);
+      setStatus(root, 'Opening DecidR dashboard...', 'success');
+      openDashboardAndCloseSetup(root, state);
     });
     finish.disabled = true;
     check.addEventListener('change', function () {

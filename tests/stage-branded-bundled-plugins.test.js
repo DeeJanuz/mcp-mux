@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BUNDLED_HASH_FILE,
   stageBrandedBundledPlugins,
+  verifyBrandedAuthOrigins,
   verifyBrandedBundle,
 } from '../scripts/stage-branded-bundled-plugins.mjs';
 
@@ -24,6 +25,24 @@ function pluginManifest(name, version) {
     renderers: {},
     renderer_definitions: [],
   };
+}
+
+function pluginManifestWithAuth(name, version, origin, codeAuth) {
+  var manifest = pluginManifest(name, version);
+  manifest.mcp = {
+    url: 'https://example.test/api/mcp',
+    auth: {
+      type: 'oauth',
+      client_id: 'client',
+      auth_url: origin + '/oauth/authorize',
+      token_url: origin + '/oauth/token',
+      email_code_auth: codeAuth === false ? undefined : { enabled: true },
+      scopes: ['mcp:tools'],
+    },
+    tool_prefix: name + '__',
+  };
+  if (codeAuth === false) delete manifest.mcp.auth.email_code_auth;
+  return manifest;
 }
 
 function writeLocalPlugin(root, name, version) {
@@ -140,5 +159,43 @@ describe('stage branded bundled plugins', function () {
       fetchImpl: fetchImpl,
       plugins: [{ name: 'decidr', repo: 'DeeJanuz/decidr-plugin', assetName: 'decidr.zip' }],
     })).rejects.toThrow('missing decidr.zip');
+  });
+
+  it('fails when bundled DecidR and Ludflow auth origins differ', function () {
+    var root = tempDir();
+    var stageRoot = join(root, 'stage');
+    mkdirSync(join(stageRoot, 'decidr'), { recursive: true });
+    mkdirSync(join(stageRoot, 'ludflow'), { recursive: true });
+    writeFileSync(
+      join(stageRoot, 'decidr', 'manifest.json'),
+      JSON.stringify(pluginManifestWithAuth('decidr', '1.0.0', 'https://app.ludflow.com'), null, 2)
+    );
+    writeFileSync(
+      join(stageRoot, 'ludflow', 'manifest.json'),
+      JSON.stringify(pluginManifestWithAuth('ludflow', '1.0.0', 'https://staging.app.ludflow.com'), null, 2)
+    );
+
+    expect(function () {
+      verifyBrandedAuthOrigins({ stageRoot: stageRoot });
+    }).toThrow('auth origins differ');
+  });
+
+  it('fails when a bundled OAuth plugin omits email-code auth metadata', function () {
+    var root = tempDir();
+    var stageRoot = join(root, 'stage');
+    mkdirSync(join(stageRoot, 'decidr'), { recursive: true });
+    mkdirSync(join(stageRoot, 'ludflow'), { recursive: true });
+    writeFileSync(
+      join(stageRoot, 'decidr', 'manifest.json'),
+      JSON.stringify(pluginManifestWithAuth('decidr', '1.0.0', 'https://app.ludflow.com', false), null, 2)
+    );
+    writeFileSync(
+      join(stageRoot, 'ludflow', 'manifest.json'),
+      JSON.stringify(pluginManifestWithAuth('ludflow', '1.0.0', 'https://app.ludflow.com'), null, 2)
+    );
+
+    expect(function () {
+      verifyBrandedAuthOrigins({ stageRoot: stageRoot });
+    }).toThrow('email_code_auth.enabled=true');
   });
 });

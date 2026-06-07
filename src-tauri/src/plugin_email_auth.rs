@@ -26,6 +26,25 @@ fn oauth_endpoint_url(auth: &PluginAuth, path: &str) -> Result<String, String> {
     Ok(format!("{}{}", origin, path))
 }
 
+fn email_code_path(auth: &PluginAuth, kind: &str) -> Result<String, String> {
+    let config = auth
+        .email_code_auth()
+        .ok_or_else(|| "Email-code sign-in is not declared for this plugin.".to_string())?;
+    let path = match kind {
+        "send" => &config.send_path,
+        "verify" => &config.verify_path,
+        _ => return Err(format!("Unknown email-code endpoint kind: {}", kind)),
+    };
+    if path.starts_with('/') {
+        Ok(path.clone())
+    } else {
+        Err(format!(
+            "Email-code {} path must be absolute, got '{}'",
+            kind, path
+        ))
+    }
+}
+
 fn oauth_client_id(auth: &PluginAuth) -> Option<String> {
     match auth {
         PluginAuth::OAuth { client_id, .. } => client_id.clone(),
@@ -43,11 +62,7 @@ fn shorten_error_body(value: &str) -> String {
     }
 }
 
-async fn post_json(
-    state: &Arc<AppState>,
-    url: &str,
-    payload: Value,
-) -> Result<Value, String> {
+async fn post_json(state: &Arc<AppState>, url: &str, payload: Value) -> Result<Value, String> {
     let response = state
         .http_client
         .post(url)
@@ -76,24 +91,30 @@ async fn post_json(
         return Ok(json!({ "status": true }));
     }
 
-    serde_json::from_str(&text)
-        .map_err(|err| format!("Failed to parse JSON from '{}': {} ({})", url, err, shorten_error_body(&text)))
-}
-
-fn expires_at_from_response(result: &Value) -> Option<i64> {
-    result.get("expires_in").and_then(|value| value.as_i64()).map(|expires_in| {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64
-            + expires_in
+    serde_json::from_str(&text).map_err(|err| {
+        format!(
+            "Failed to parse JSON from '{}': {} ({})",
+            url,
+            err,
+            shorten_error_body(&text)
+        )
     })
 }
 
-fn store_oauth_response_for_plugins(
-    plugin_names: &[String],
-    result: &Value,
-) -> Result<(), String> {
+fn expires_at_from_response(result: &Value) -> Option<i64> {
+    result
+        .get("expires_in")
+        .and_then(|value| value.as_i64())
+        .map(|expires_in| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64
+                + expires_in
+        })
+}
+
+fn store_oauth_response_for_plugins(plugin_names: &[String], result: &Value) -> Result<(), String> {
     let access_token = result
         .get("access_token")
         .and_then(|value| value.as_str())
@@ -157,7 +178,7 @@ pub async fn send_email_code(
     state: &Arc<AppState>,
 ) -> Result<Value, String> {
     let auth = oauth_auth(plugin_name, state)?;
-    let url = oauth_endpoint_url(&auth, "/api/mcpviews/auth/email-code/send")?;
+    let url = oauth_endpoint_url(&auth, &email_code_path(&auth, "send")?)?;
 
     post_json(
         state,
@@ -179,7 +200,7 @@ pub async fn verify_email_code(
     state: &Arc<AppState>,
 ) -> Result<Value, String> {
     let auth = oauth_auth(plugin_name, state)?;
-    let url = oauth_endpoint_url(&auth, "/api/mcpviews/auth/email-code/verify")?;
+    let url = oauth_endpoint_url(&auth, &email_code_path(&auth, "verify")?)?;
     let result = post_json(
         state,
         &url,
@@ -193,7 +214,11 @@ pub async fn verify_email_code(
     )
     .await?;
 
-    if result.get("access_token").and_then(|value| value.as_str()).is_some() {
+    if result
+        .get("access_token")
+        .and_then(|value| value.as_str())
+        .is_some()
+    {
         let plugins = storage_plugins_for_email_code(plugin_name);
         store_oauth_response_for_plugins(&plugins, &result)?;
     }

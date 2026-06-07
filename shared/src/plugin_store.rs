@@ -222,6 +222,8 @@ mod tests {
         PluginManifest {
             name: name.to_string(),
             version: "1.0.0".to_string(),
+            standalone_group: None,
+            standalone_group_label: None,
             renderers: std::collections::HashMap::new(),
             frame_origins: vec![],
             mcp: None,

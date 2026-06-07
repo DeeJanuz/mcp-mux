@@ -755,7 +755,9 @@ pub fn toggle_registry_source(url: String) -> Result<(), String> {
 pub async fn start_plugin_auth(
     plugin_name: String,
     org_id: Option<String>,
+    auth_flow: Option<String>,
     state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let auth = {
         let registry = state.plugin_registry.lock().unwrap();
@@ -770,7 +772,35 @@ pub async fn start_plugin_auth(
             auth_url,
             token_url,
             scopes,
+            ..
         } => {
+            let requested_flow = auth_flow.as_deref().unwrap_or(if auth.supports_email_code() {
+                "email_code"
+            } else {
+                "browser"
+            });
+            if requested_flow != "browser" {
+                if auth.supports_email_code() {
+                    let async_state = Arc::new(TokioMutex::new(AsyncAppState {
+                        inner: state.inner().clone(),
+                        app_handle,
+                    }));
+                    let session_id = crate::mcp_registry_tools::open_plugin_email_code_session(
+                        &plugin_name,
+                        org_id.as_deref(),
+                        &async_state,
+                    )
+                    .await?;
+                    return Ok(format!(
+                        "Opened email-code authentication for '{}' in MCPViews session '{}'.",
+                        plugin_name, session_id
+                    ));
+                }
+                return Err(format!(
+                    "Plugin '{}' does not declare email-code authentication. Retry with authFlow='browser' for the OAuth fallback.",
+                    plugin_name
+                ));
+            }
             crate::auth::start_oauth_flow(
                 &plugin_name,
                 client_id.as_deref(),
@@ -843,6 +873,26 @@ pub async fn get_plugin_auth_header(
         registry.resolve_plugin_auth(&plugin_name)?
     };
 
+    if let PluginAuth::OAuth {
+        client_id,
+        token_url,
+        ..
+    } = &auth
+    {
+        let oauth_info = crate::plugin::OAuthRefreshInfo {
+            plugin_name: plugin_name.clone(),
+            token_url: token_url.clone(),
+            client_id: client_id.clone(),
+            org_id: org_id.clone(),
+        };
+        if crate::plugin::oauth_token_needs_preemptive_refresh(&oauth_info) {
+            let client = state.http_client.clone();
+            if let Some(header) = crate::plugin::try_refresh_oauth(&oauth_info, &client).await {
+                return Ok(header);
+            }
+        }
+    }
+
     // Try resolving from stored token (env var fallback for Bearer/ApiKey, stored file for OAuth)
     let header = if let Some(ref oid) = org_id {
         auth.resolve_header_for_org(&plugin_name, oid)
@@ -861,15 +911,15 @@ pub async fn get_plugin_auth_header(
     } = &auth
     {
         let client = state.http_client.clone();
-        let token = crate::auth::refresh_oauth_token(
-            &plugin_name,
-            token_url,
-            client_id.as_deref(),
-            &client,
-            org_id.as_deref(),
-        )
-        .await?;
-        return Ok(format!("Bearer {}", token));
+        let oauth_info = crate::plugin::OAuthRefreshInfo {
+            plugin_name: plugin_name.clone(),
+            token_url: token_url.clone(),
+            client_id: client_id.clone(),
+            org_id: org_id.clone(),
+        };
+        if let Some(header) = crate::plugin::try_refresh_oauth(&oauth_info, &client).await {
+            return Ok(header);
+        }
     }
 
     Err(format!("No token available for plugin '{}'", plugin_name))
@@ -980,6 +1030,23 @@ pub fn clear_plugin_auth(name: String, org_id: Option<String>) -> Result<(), Str
 #[tauri::command]
 pub fn list_plugin_orgs(plugin_name: String) -> Vec<String> {
     mcpviews_shared::token_store::list_orgs(&mcpviews_shared::auth_dir(), &plugin_name)
+}
+
+#[tauri::command]
+pub fn list_plugin_org_auth(plugin_name: String) -> Vec<serde_json::Value> {
+    let auth_dir = mcpviews_shared::auth_dir();
+    mcpviews_shared::token_store::list_orgs(&auth_dir, &plugin_name)
+        .into_iter()
+        .map(|org_id| {
+            let status =
+                mcpviews_shared::token_store::token_status_for_org(&auth_dir, &plugin_name, &org_id);
+            serde_json::json!({
+                "org_id": org_id,
+                "status": status.as_str(),
+                "refreshable": status.refreshable()
+            })
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -1630,8 +1697,9 @@ pub fn collect_standalone_renderers(
     let current_persona_studio_installed = manifests
         .iter()
         .any(|manifest| manifest.name == CURRENT_PERSONA_STUDIO_PLUGIN);
-    let mut results = Vec::new();
+    let mut results: Vec<serde_json::Value> = Vec::new();
     let mut plugin_positions: HashMap<String, usize> = HashMap::new();
+    let mut plugin_label_is_explicit: HashMap<String, bool> = HashMap::new();
     let mut renderer_names_by_plugin: HashMap<String, HashSet<String>> = HashMap::new();
 
     for manifest in manifests {
@@ -1639,13 +1707,31 @@ pub fn collect_standalone_renderers(
             continue;
         }
 
+        let plugin_group = manifest
+            .standalone_group
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&manifest.name)
+            .to_string();
+        let explicit_plugin_label = manifest
+            .standalone_group_label
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let plugin_label = explicit_plugin_label
+            .clone()
+            .unwrap_or_else(|| humanize_standalone_plugin_label(&plugin_group));
+        let plugin_label_explicit = explicit_plugin_label.is_some();
+
         let standalone_renderers: Vec<serde_json::Value> = manifest
             .renderer_definitions
             .iter()
             .filter(|def| def.standalone)
             .filter(|def| {
                 renderer_names_by_plugin
-                    .entry(manifest.name.clone())
+                    .entry(plugin_group.clone())
                     .or_default()
                     .insert(def.name.clone())
             })
@@ -1660,15 +1746,28 @@ pub fn collect_standalone_renderers(
             .collect();
 
         if !standalone_renderers.is_empty() {
-            let position = match plugin_positions.get(&manifest.name) {
-                Some(position) => *position,
+            let position = match plugin_positions.get(&plugin_group) {
+                Some(position) => {
+                    if plugin_label_explicit
+                        && !plugin_label_is_explicit
+                            .get(&plugin_group)
+                            .copied()
+                            .unwrap_or(false)
+                    {
+                        results[*position]["label"] = serde_json::json!(plugin_label);
+                        plugin_label_is_explicit.insert(plugin_group.clone(), true);
+                    }
+                    *position
+                }
                 None => {
                     results.push(serde_json::json!({
-                        "plugin": manifest.name,
+                        "plugin": plugin_group.as_str(),
+                        "label": plugin_label.as_str(),
                         "renderers": [],
                     }));
                     let position = results.len() - 1;
-                    plugin_positions.insert(manifest.name.clone(), position);
+                    plugin_positions.insert(plugin_group.clone(), position);
+                    plugin_label_is_explicit.insert(plugin_group.clone(), plugin_label_explicit);
                     position
                 }
             };
@@ -1678,6 +1777,27 @@ pub fn collect_standalone_renderers(
         }
     }
     results
+}
+
+fn humanize_standalone_plugin_label(plugin: &str) -> String {
+    match plugin {
+        "decidr" => "DecidR".to_string(),
+        "ludflow" => "Ludflow".to_string(),
+        "tribex_ai" => "TribeX AI".to_string(),
+        "tribe-x-persona-studio" => "Persona Studio".to_string(),
+        value => value
+            .split(['-', '_'])
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+    }
 }
 
 /// Collect invocable renderer definitions (those with invoke_schema) from plugin manifests.
@@ -2181,6 +2301,55 @@ mod tests {
         assert_eq!(renderers.len(), 2);
         assert_eq!(renderers[0]["name"], "ludflow_app");
         assert_eq!(renderers[1]["name"], "ludflow_data_governance");
+    }
+
+    #[test]
+    fn test_collect_standalone_renderers_groups_decidr_setup_under_decidr() {
+        let mut decidr = test_manifest("decidr");
+        decidr
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "decidr_timeline".to_string(),
+                description: "Timeline".to_string(),
+                scope: "universal".to_string(),
+                tools: vec![],
+                data_hint: None,
+                rule: None,
+                display_mode: None,
+                invoke_schema: None,
+                url_patterns: vec![],
+                standalone: true,
+                standalone_label: Some("Timeline".to_string()),
+            });
+
+        let mut setup = test_manifest("decidr-setup");
+        setup.standalone_group = Some("decidr".to_string());
+        setup.standalone_group_label = Some("DecidR".to_string());
+        setup
+            .renderer_definitions
+            .push(mcpviews_shared::RendererDef {
+                name: "decidr_onboarding".to_string(),
+                description: "DecidR Setup".to_string(),
+                scope: "universal".to_string(),
+                tools: vec![],
+                data_hint: None,
+                rule: None,
+                display_mode: None,
+                invoke_schema: None,
+                url_patterns: vec![],
+                standalone: true,
+                standalone_label: Some("DecidR Setup".to_string()),
+            });
+
+        let results = collect_standalone_renderers(&[decidr, setup]);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["plugin"], "decidr");
+        assert_eq!(results[0]["label"], "DecidR");
+        let renderers = results[0]["renderers"].as_array().unwrap();
+        assert_eq!(renderers.len(), 2);
+        assert_eq!(renderers[0]["name"], "decidr_timeline");
+        assert_eq!(renderers[1]["name"], "decidr_onboarding");
     }
 
     #[tokio::test]

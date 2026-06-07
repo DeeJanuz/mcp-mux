@@ -101,7 +101,7 @@ pub async fn call_tool(
                 Err(ref e) if e.contains("HTTP 401") => {
                     if let Some(ref oauth) = info.oauth_info {
                         if let Some(new_header) =
-                            crate::plugin::try_refresh_oauth(oauth, &client).await
+                            crate::plugin::force_refresh_oauth(oauth, &client).await
                         {
                             let mut retry = plugin_proxy::proxy_plugin_tool_call(
                                 &client,
@@ -2176,16 +2176,13 @@ pub(crate) fn collect_rules(
     rules
 }
 
-pub(crate) fn collect_setup_questions(
-    manifests: &[mcpviews_shared::PluginManifest],
-) -> Vec<Value> {
+pub(crate) fn collect_setup_questions(manifests: &[mcpviews_shared::PluginManifest]) -> Vec<Value> {
     let mut seen_plugins: HashSet<&str> = HashSet::new();
 
     manifests
         .iter()
         .filter_map(|manifest| {
-            if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty()
-            {
+            if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty() {
                 return None;
             }
 
@@ -2220,7 +2217,7 @@ pub(crate) fn collect_builtin_rules(all_renderers: &[RendererDef]) -> Vec<Value>
         "name": "org_switching",
         "category": "system",
         "source": "built-in",
-        "rule": "When working with multi-org plugins, be aware of which organization the current token is scoped to. The init_session response includes org_tokens showing available organizations and token status per plugin. If the user asks about data in a different org, include organization_id in tool call arguments. If no token exists for that org, call start_plugin_auth with organization_id to authenticate."
+        "rule": "When working with multi-org plugins, be aware of which organization the current token is scoped to. The init_session response includes org_tokens showing available organizations and token status per plugin: valid, expired_refreshable, expired_unrefreshable, or missing. If the user asks about data in a different org, include organization_id in tool call arguments. Treat expired_refreshable as configured while MCPViews refreshes it. If the token is missing or expired_unrefreshable, call start_plugin_auth with organization_id to authenticate."
     }));
 
     // Only built-in (universal scope) renderers with rules
@@ -2364,23 +2361,75 @@ pub(crate) fn collect_plugin_auth_status(
         }
         if let Some(mcp) = &manifest.mcp {
             if let Some(auth) = &mcp.auth {
-                let is_configured = auth.is_configured(&manifest.name);
+                let mut is_configured = auth.is_configured(&manifest.name);
+                let auth_status = if matches!(auth, mcpviews_shared::PluginAuth::OAuth { .. }) {
+                    let auth_dir = mcpviews_shared::auth_dir();
+                    let org_statuses: Vec<_> =
+                        mcpviews_shared::token_store::list_orgs(&auth_dir, &manifest.name)
+                            .iter()
+                            .map(|org_id| {
+                                mcpviews_shared::token_store::token_status_for_org(
+                                    &auth_dir,
+                                    &manifest.name,
+                                    org_id,
+                                )
+                            })
+                            .collect();
+                    if org_statuses
+                        .iter()
+                        .any(|status| {
+                            matches!(
+                                status,
+                                mcpviews_shared::token_store::StoredTokenStatus::Valid
+                                    | mcpviews_shared::token_store::StoredTokenStatus::ExpiredRefreshable
+                            )
+                        })
+                    {
+                        is_configured = true;
+                    }
+                    if org_statuses.iter().any(|status| {
+                        *status == mcpviews_shared::token_store::StoredTokenStatus::Valid
+                    }) {
+                        "valid"
+                    } else if org_statuses.iter().any(|status| {
+                        *status
+                            == mcpviews_shared::token_store::StoredTokenStatus::ExpiredRefreshable
+                    }) {
+                        "expired_refreshable"
+                    } else if org_statuses.iter().any(|status| {
+                        *status
+                            == mcpviews_shared::token_store::StoredTokenStatus::ExpiredUnrefreshable
+                    }) {
+                        "expired_unrefreshable"
+                    } else if is_configured {
+                        "valid"
+                    } else {
+                        "missing"
+                    }
+                } else if is_configured {
+                    "valid"
+                } else {
+                    "missing"
+                };
                 let mut status_entry = serde_json::json!({
                     "plugin": manifest.name,
                     "auth_type": auth.display_name(),
                     "auth_configured": is_configured,
+                    "auth_status": auth_status,
                 });
 
                 if !is_configured {
                     if let mcpviews_shared::PluginAuth::OAuth { auth_url, .. } = auth {
-                        status_entry.as_object_mut().unwrap().insert(
-                            "auth_url".to_string(),
-                            serde_json::Value::String(auth_url.clone()),
-                        );
+                        if !auth.supports_email_code() {
+                            status_entry.as_object_mut().unwrap().insert(
+                                "auth_url".to_string(),
+                                serde_json::Value::String(auth_url.clone()),
+                            );
+                        }
                         status_entry.as_object_mut().unwrap().insert(
                             "message".to_string(),
                             serde_json::Value::String(format!(
-                                "Plugin '{}' requires re-authentication. Direct the user to authenticate via the companion window or open the auth URL.",
+                                "Plugin '{}' requires authentication. Call start_plugin_auth; browser OAuth is only needed if auth_flow='browser' is explicitly requested.",
                                 manifest.name
                             )),
                         );
@@ -2898,25 +2947,15 @@ fn collect_org_tokens(manifests: &[mcpviews_shared::PluginManifest]) -> Value {
                     let org_entries: Vec<Value> = orgs
                         .iter()
                         .map(|org_id| {
-                            let token =
-                                mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(
-                                    &auth_dir,
-                                    &manifest.name,
-                                    org_id,
-                                );
-                            let status = match token {
-                                Some(t) => {
-                                    if t.is_expired() {
-                                        "expired"
-                                    } else {
-                                        "valid"
-                                    }
-                                }
-                                None => "missing",
-                            };
+                            let status = mcpviews_shared::token_store::token_status_for_org(
+                                &auth_dir,
+                                &manifest.name,
+                                org_id,
+                            );
                             serde_json::json!({
                                 "org_id": org_id,
-                                "status": status
+                                "status": status.as_str(),
+                                "refreshable": status.refreshable()
                             })
                         })
                         .collect();
@@ -3636,6 +3675,8 @@ mod tests {
         PluginManifest {
             name: name.to_string(),
             version: "1.0.0".to_string(),
+            standalone_group: None,
+            standalone_group_label: None,
             renderers: std::collections::HashMap::new(),
             frame_origins: vec![],
             mcp,
@@ -3973,6 +4014,7 @@ mod tests {
                     auth_url: "https://example.com/auth".into(),
                     token_url: "https://example.com/token".into(),
                     scopes: vec![],
+                    email_code_auth: None,
                 }),
                 tool_prefix: "otp".into(),
             }),
@@ -3987,7 +4029,7 @@ mod tests {
         assert!(status[0]["message"]
             .as_str()
             .unwrap()
-            .contains("requires re-authentication"));
+            .contains("requires authentication"));
     }
 
     #[test]
@@ -4003,6 +4045,7 @@ mod tests {
                     auth_url: "https://example.com/auth".into(),
                     token_url: "https://example.com/token".into(),
                     scopes: vec![],
+                    email_code_auth: None,
                 }),
                 tool_prefix: "lf".into(),
             }),
@@ -4104,6 +4147,8 @@ mod tests {
         PluginManifest {
             name: name.to_string(),
             version: "1.0.0".to_string(),
+            standalone_group: None,
+            standalone_group_label: None,
             renderers,
             frame_origins: vec![],
             mcp: Some(PluginMcpConfig {
@@ -5037,6 +5082,7 @@ mod tests {
         let schema = &tool.unwrap()["inputSchema"];
         let required = schema["required"].as_array().unwrap();
         assert!(required.iter().any(|r| r == "plugin_name"));
+        assert!(schema["properties"]["auth_flow"].is_object());
     }
 
     #[test]
@@ -5125,6 +5171,7 @@ mod tests {
                     auth_url: "https://example.com/auth".into(),
                     token_url: "https://example.com/token".into(),
                     scopes: vec![],
+                    email_code_auth: None,
                 }),
                 tool_prefix: "ap".into(),
             }),

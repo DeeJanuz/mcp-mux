@@ -451,12 +451,17 @@ fn list_registry_definition(_: &[RendererDef]) -> Value {
 fn start_plugin_auth_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "start_plugin_auth",
-        "description": "Start authentication for an installed plugin. Opens browser for OAuth, or checks env var for Bearer/ApiKey.",
+        "description": "Start authentication for an installed plugin. OAuth plugins that declare email-code auth open an in-app code flow by default; pass auth_flow='browser' only for advanced OAuth fallback.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "plugin_name": { "type": "string", "description": "Name of the plugin to authenticate" },
-                "organization_id": { "type": "string", "description": "Optional organization ID to scope the auth flow to a specific org" }
+                "organization_id": { "type": "string", "description": "Optional organization ID to scope the auth flow to a specific org" },
+                "auth_flow": {
+                    "type": "string",
+                    "enum": ["email_code", "browser"],
+                    "description": "Optional auth flow. Defaults to email_code when the plugin declares support; use browser only for advanced fallback."
+                }
             },
             "required": ["plugin_name"]
         }
@@ -624,21 +629,27 @@ fn list_registry_handler<'a>(
     arguments: Value,
     state: &'a Arc<TokioMutex<AsyncAppState>>,
 ) -> BuiltinToolFuture<'a> {
-    Box::pin(crate::mcp_registry_tools::call_list_registry(arguments, state))
+    Box::pin(crate::mcp_registry_tools::call_list_registry(
+        arguments, state,
+    ))
 }
 
 fn start_plugin_auth_handler<'a>(
     arguments: Value,
     state: &'a Arc<TokioMutex<AsyncAppState>>,
 ) -> BuiltinToolFuture<'a> {
-    Box::pin(crate::mcp_registry_tools::call_start_plugin_auth(arguments, state))
+    Box::pin(crate::mcp_registry_tools::call_start_plugin_auth(
+        arguments, state,
+    ))
 }
 
 fn save_update_preference_handler<'a>(
     arguments: Value,
     state: &'a Arc<TokioMutex<AsyncAppState>>,
 ) -> BuiltinToolFuture<'a> {
-    Box::pin(super::lifecycle::call_save_update_preference(arguments, state))
+    Box::pin(super::lifecycle::call_save_update_preference(
+        arguments, state,
+    ))
 }
 
 pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {

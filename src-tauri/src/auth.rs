@@ -168,15 +168,16 @@ pub async fn start_oauth_flow(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let expires_at = token_data.get("expires_in").and_then(|v| v.as_i64()).map(
-        |expires_in| {
+    let expires_at = token_data
+        .get("expires_in")
+        .and_then(|v| v.as_i64())
+        .map(|expires_in| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs() as i64
                 + expires_in
-        },
-    );
+        });
 
     let stored = StoredToken {
         access_token: access_token.clone(),
@@ -184,14 +185,22 @@ pub async fn start_oauth_flow(
         expires_at,
     };
     if let Some(ref org_id) = response_org_id {
-        mcpviews_shared::token_store::store_token_for_org(&auth_dir(), plugin_name, org_id, &stored)?;
+        mcpviews_shared::token_store::store_token_for_org(
+            &auth_dir(),
+            plugin_name,
+            org_id,
+            &stored,
+        )?;
         // Always update default org so start_plugin_auth acts as an org-switch command
         mcpviews_shared::token_store::set_default_org(&auth_dir(), plugin_name, org_id)?;
     } else {
         store_token(plugin_name, &stored)?;
     }
 
-    eprintln!("[mcpviews] OAuth flow completed for plugin '{}'", plugin_name);
+    eprintln!(
+        "[mcpviews] OAuth flow completed for plugin '{}'",
+        plugin_name
+    );
     Ok(access_token)
 }
 
@@ -214,8 +223,10 @@ fn open_browser(url: &str) -> Result<(), String> {
         .spawn();
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let result: Result<std::process::Child, std::io::Error> =
-        Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Unsupported platform"));
+    let result: Result<std::process::Child, std::io::Error> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Unsupported platform",
+    ));
 
     result.map_err(|e| format!("Failed to open browser: {}", e))?;
     Ok(())
@@ -225,7 +236,6 @@ fn open_browser(url: &str) -> Result<(), String> {
 pub fn store_token(plugin_name: &str, token: &StoredToken) -> Result<(), String> {
     mcpviews_shared::token_store::store_token(&auth_dir(), plugin_name, token)
 }
-
 
 /// Attempt to refresh an expired OAuth token using the refresh_token grant.
 /// Returns the new access token on success, storing the refreshed token to disk.
@@ -238,7 +248,11 @@ pub async fn refresh_oauth_token(
 ) -> Result<String, String> {
     let auth_dir = mcpviews_shared::auth_dir();
     let stored = if let Some(oid) = org_id {
-        mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(&auth_dir, plugin_name, oid)
+        mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(
+            &auth_dir,
+            plugin_name,
+            oid,
+        )
     } else {
         mcpviews_shared::token_store::load_stored_token_unvalidated(&auth_dir, plugin_name)
     }
@@ -306,7 +320,12 @@ pub async fn refresh_oauth_token(
         expires_at,
     };
     if let Some(oid) = org_id {
-        mcpviews_shared::token_store::store_token_for_org(&auth_dir, plugin_name, oid, &new_stored)?;
+        mcpviews_shared::token_store::store_token_for_org(
+            &auth_dir,
+            plugin_name,
+            oid,
+            &new_stored,
+        )?;
     } else {
         store_token(plugin_name, &new_stored)?;
     }
@@ -409,6 +428,9 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
 
-        assert!(token.expires_at.unwrap() > now, "Token should not be expired");
+        assert!(
+            token.expires_at.unwrap() > now,
+            "Token should not be expired"
+        );
     }
 }

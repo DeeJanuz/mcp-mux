@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::http_server::AsyncAppState;
 use crate::first_party_ai;
+use crate::http_server::AsyncAppState;
 use crate::mcp_tools;
 use crate::state::AppState;
 
@@ -93,7 +93,9 @@ fn get_nested_value<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
 }
 
 fn extract_string(value: Option<&Value>) -> Option<String> {
-    value.and_then(|entry| entry.as_str()).map(|entry| entry.to_string())
+    value
+        .and_then(|entry| entry.as_str())
+        .map(|entry| entry.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,14 +151,8 @@ fn extract_hosted_tool_request(payload: &Value) -> Option<HostedToolRequest> {
         "tools/list" | "tools.list" | "mcp.tools/list" | "mcp_tools_list" | "mcp.tools_list" => {
             HostedToolMethod::List
         }
-        "tools/call"
-        | "tools.call"
-        | "tool_request"
-        | "tool.call"
-        | "mcp.tool_request"
-        | "mcp.tool_call"
-        | "mcp.tools/call"
-        | "mcp_tools_call" => HostedToolMethod::Call,
+        "tools/call" | "tools.call" | "tool_request" | "tool.call" | "mcp.tool_request"
+        | "mcp.tool_call" | "mcp.tools/call" | "mcp_tools_call" => HostedToolMethod::Call,
         _ => {
             if extract_string(params.get("name"))
                 .or_else(|| extract_string(params.get("toolName")))
@@ -514,7 +510,10 @@ fn enrich_thread_scoped_renderer_arguments(request: &HostedToolRequest) -> Value
         .cloned()
         .unwrap_or_default();
     meta.insert("threadId".to_string(), json!(thread_id));
-    meta.insert("chatOutputSource".to_string(), json!("tribex-ai-thread-result"));
+    meta.insert(
+        "chatOutputSource".to_string(),
+        json!("tribex-ai-thread-result"),
+    );
     object.insert("meta".to_string(), Value::Object(meta));
 
     let mut tool_args = object
@@ -523,7 +522,10 @@ fn enrich_thread_scoped_renderer_arguments(request: &HostedToolRequest) -> Value
         .cloned()
         .unwrap_or_default();
     tool_args.insert("threadId".to_string(), json!(thread_id));
-    tool_args.insert("chatOutputSource".to_string(), json!("tribex-ai-thread-result"));
+    tool_args.insert(
+        "chatOutputSource".to_string(),
+        json!("tribex-ai-thread-result"),
+    );
     object.insert("toolArgs".to_string(), Value::Object(tool_args));
 
     Value::Object(object)
@@ -669,7 +671,14 @@ pub(crate) async fn handle_local_tool_request(
     };
 
     let request_for_response = request.clone();
-    emit_local_tool_event(&async_state, &request, "relay.tool.request.local", None, None).await;
+    emit_local_tool_event(
+        &async_state,
+        &request,
+        "relay.tool.request.local",
+        None,
+        None,
+    )
+    .await;
     let result = execute_hosted_tool_request_with_async_state(&async_state, request).await;
     let is_error = result
         .get("isError")
@@ -1098,7 +1107,10 @@ async fn send_realtime_tool_response(
         .await
         .map_err(|err| RealtimeRelayHttpError {
             status: None,
-            message: redact_realtime_error(&format!("Realtime relay response failed: {}", err), token),
+            message: redact_realtime_error(
+                &format!("Realtime relay response failed: {}", err),
+                token,
+            ),
         })?;
 
     let status = response.status();
@@ -1155,8 +1167,13 @@ pub async fn register_desktop_relay(
     let app_handle_clone = app_handle.clone();
     let response_clone = response.clone();
     tokio::spawn(async move {
-        if let Err(err) = publish_tools_snapshot(state_clone, app_handle_clone, response_clone).await {
-            eprintln!("[mcpviews] failed to publish desktop relay tool snapshot after register: {}", err);
+        if let Err(err) =
+            publish_tools_snapshot(state_clone, app_handle_clone, response_clone).await
+        {
+            eprintln!(
+                "[mcpviews] failed to publish desktop relay tool snapshot after register: {}",
+                err
+            );
         }
     });
 
@@ -1190,8 +1207,13 @@ pub async fn refresh_desktop_relay(
     let app_handle_clone = app_handle.clone();
     let response_clone = response.clone();
     tokio::spawn(async move {
-        if let Err(err) = publish_tools_snapshot(state_clone, app_handle_clone, response_clone).await {
-            eprintln!("[mcpviews] failed to publish desktop relay tool snapshot after refresh: {}", err);
+        if let Err(err) =
+            publish_tools_snapshot(state_clone, app_handle_clone, response_clone).await
+        {
+            eprintln!(
+                "[mcpviews] failed to publish desktop relay tool snapshot after refresh: {}",
+                err
+            );
         }
     });
 
@@ -1451,7 +1473,14 @@ async fn post_realtime_validation_failure(
     error: String,
 ) {
     let response_payload = build_realtime_tool_failure_payload(&request_id, &error);
-    match send_realtime_tool_response(&state.http_client, &response_url, &token, response_payload.clone()).await {
+    match send_realtime_tool_response(
+        &state.http_client,
+        &response_url,
+        &token,
+        response_payload.clone(),
+    )
+    .await
+    {
         Ok(_) => {
             mark_realtime_request_responded(&state, &relay_session_id, &request_id);
             emit_event(
@@ -1535,7 +1564,8 @@ fn handle_realtime_sse_payload(
     payload: Value,
     sse_event_name: Option<String>,
 ) {
-    let should_dispatch = payload.get("type").and_then(|value| value.as_str()) == Some("relay.tool.request");
+    let should_dispatch =
+        payload.get("type").and_then(|value| value.as_str()) == Some("relay.tool.request");
     if should_dispatch {
         match extract_realtime_tool_request(&payload, &relay_session_id) {
             Ok(realtime_request) => {
@@ -2189,15 +2219,22 @@ mod tests {
         )
         .unwrap();
 
-        let token = mcpviews_shared::token_store::load_stored_token(&auth_dir, "first_party_ai_relay")
-            .expect("relay token should persist");
+        let token =
+            mcpviews_shared::token_store::load_stored_token(&auth_dir, "first_party_ai_relay")
+                .expect("relay token should persist");
         assert_eq!(token.access_token, "relay-123");
         assert_eq!(token.expires_at, Some(2_000_000_000));
 
         let settings = mcpviews_shared::settings::Settings::load_from_path(&settings_path);
         let relay = settings.first_party_ai.expect("first_party_ai config");
-        assert_eq!(relay.relay_base_url.as_deref(), Some("https://relay.example.com"));
-        assert_eq!(relay.device_base_url.as_deref(), Some("https://device.example.com"));
+        assert_eq!(
+            relay.relay_base_url.as_deref(),
+            Some("https://relay.example.com")
+        );
+        assert_eq!(
+            relay.device_base_url.as_deref(),
+            Some("https://device.example.com")
+        );
         assert_eq!(relay.relay_device_id.as_deref(), Some("device-1"));
     }
 
@@ -2382,7 +2419,10 @@ mod tests {
                 "workspaceId": "workspace-1",
                 "threadId": "thread-1"
             }),
-            vec![json!({ "name": "push_content" }), json!({ "name": "list_registry" })],
+            vec![
+                json!({ "name": "push_content" }),
+                json!({ "name": "list_registry" }),
+            ],
         );
 
         assert_eq!(payload["method"], "tools/list");
@@ -2481,7 +2521,10 @@ mod tests {
 
         let key = legacy_request_key("thread-legacy", &request).unwrap();
         let requests = state.first_party_ai_legacy_relay_requests.lock().unwrap();
-        assert_eq!(requests.get(&key).unwrap()["status"], RELAY_REQUEST_RESPONDED);
+        assert_eq!(
+            requests.get(&key).unwrap()["status"],
+            RELAY_REQUEST_RESPONDED
+        );
         assert!(requests.get(&key).unwrap().get("response").is_none());
         drop(requests);
 
@@ -2512,12 +2555,7 @@ mod tests {
             claim_legacy_request(&state, "thread-legacy", &request),
             RelayRequestClaim::Started,
         );
-        mark_legacy_request_response_pending(
-            &state,
-            "thread-legacy",
-            &request,
-            response.clone(),
-        );
+        mark_legacy_request_response_pending(&state, "thread-legacy", &request, response.clone());
 
         assert_eq!(
             claim_legacy_request(&state, "thread-legacy", &request),

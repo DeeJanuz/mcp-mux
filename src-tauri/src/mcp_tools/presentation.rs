@@ -2,7 +2,9 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::http_server::{await_decision_for_transport, execute_push, store_push, AsyncAppState, ExecutePushResult};
+use crate::http_server::{
+    await_decision_for_transport, execute_push, store_push, AsyncAppState, ExecutePushResult,
+};
 use crate::session::PreviewSession;
 
 pub(super) async fn call_push_content(
@@ -256,7 +258,11 @@ mod tests {
             timeout_secs: Some(120),
             created_at: 1,
             decided_at: if decided { Some(2) } else { None },
-            decision: if decided { Some("approved".to_string()) } else { None },
+            decision: if decided {
+                Some("approved".to_string())
+            } else {
+                None
+            },
             operation_decisions: None,
             comments: None,
             modifications: None,

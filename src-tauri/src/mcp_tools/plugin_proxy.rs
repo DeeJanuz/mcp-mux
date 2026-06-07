@@ -3,7 +3,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::http_server::AsyncAppState;
-use crate::plugin::{try_refresh_oauth, PluginRegistry, PluginToolResult};
+use crate::plugin::{
+    oauth_token_needs_preemptive_refresh, try_refresh_oauth, PluginRegistry, PluginToolResult,
+};
 
 pub(super) async fn lookup_plugin_tool(
     name: &str,
@@ -20,7 +22,13 @@ pub(super) async fn lookup_plugin_tool(
 
     match info {
         Some(mut result) => {
-            if result.auth_header.is_none() {
+            let should_refresh = result.auth_header.is_none()
+                || result
+                    .oauth_info
+                    .as_ref()
+                    .map(oauth_token_needs_preemptive_refresh)
+                    .unwrap_or(false);
+            if should_refresh {
                 if let Some(oauth) = &result.oauth_info {
                     if let Some(bearer) = try_refresh_oauth(oauth, &client).await {
                         result.auth_header = Some(bearer);
@@ -78,8 +86,21 @@ pub(super) fn enrich_list_organizations(result: &mut Value, plugin_name: &str) {
                             plugin_name,
                             org_id,
                         );
+                        let token_status = mcpviews_shared::token_store::token_status_for_org(
+                            &auth_dir,
+                            plugin_name,
+                            org_id,
+                        );
                         if let Some(obj) = org.as_object_mut() {
                             obj.insert("has_mcpviews_token".to_string(), Value::Bool(has_token));
+                            obj.insert(
+                                "mcpviews_token_status".to_string(),
+                                Value::String(token_status.as_str().to_string()),
+                            );
+                            obj.insert(
+                                "mcpviews_token_refreshable".to_string(),
+                                Value::Bool(token_status.refreshable()),
+                            );
                             modified = true;
                         }
                     }
@@ -94,8 +115,21 @@ pub(super) fn enrich_list_organizations(result: &mut Value, plugin_name: &str) {
                             plugin_name,
                             org_id,
                         );
+                        let token_status = mcpviews_shared::token_store::token_status_for_org(
+                            &auth_dir,
+                            plugin_name,
+                            org_id,
+                        );
                         if let Some(obj) = org.as_object_mut() {
                             obj.insert("has_mcpviews_token".to_string(), Value::Bool(has_token));
+                            obj.insert(
+                                "mcpviews_token_status".to_string(),
+                                Value::String(token_status.as_str().to_string()),
+                            );
+                            obj.insert(
+                                "mcpviews_token_refreshable".to_string(),
+                                Value::Bool(token_status.refreshable()),
+                            );
                             modified = true;
                         }
                     }
@@ -152,7 +186,10 @@ pub(super) async fn proxy_plugin_tool_call(
         .map_err(|e| format!("Plugin request failed: {}", e))?;
 
     if !response.status().is_success() {
-        return Err(format!("Plugin returned HTTP {}", response.status().as_u16()));
+        return Err(format!(
+            "Plugin returned HTTP {}",
+            response.status().as_u16()
+        ));
     }
 
     let body: Value = response

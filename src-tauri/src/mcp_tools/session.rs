@@ -151,17 +151,30 @@ pub(super) async fn call_get_plugin_docs(
     let groups_filter: Option<Vec<String>> = arguments
         .get("groups")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
 
-    let tools_filter: Option<Vec<String>> = arguments
-        .get("tools")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+    let tools_filter: Option<Vec<String>> =
+        arguments
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            });
 
     let renderers_filter: Option<Vec<String>> = arguments
         .get("renderers")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
 
     let state_guard = state.lock().await;
     let all_renderers = super::available_renderers(&state_guard.inner);
@@ -181,9 +194,13 @@ pub(super) async fn call_get_plugin_docs(
             }
         }
         if manifest.registry_index.is_none() {
-            let cached_tools = registry
-                .tool_cache
-                .plugin_tools(registry.manifests.iter().position(|m| m.name == plugin_name).unwrap_or(0));
+            let cached_tools = registry.tool_cache.plugin_tools(
+                registry
+                    .manifests
+                    .iter()
+                    .position(|m| m.name == plugin_name)
+                    .unwrap_or(0),
+            );
             let derived = super::auto_derive_registry_index(manifest, cached_tools);
             for group in &derived.tool_groups {
                 if groups.iter().any(|g| g.eq_ignore_ascii_case(&group.name)) {

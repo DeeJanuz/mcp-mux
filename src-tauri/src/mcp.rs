@@ -66,17 +66,19 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
     let state_guard = state.lock().await;
     let renderers = mcp_tools::available_renderers(&state_guard.inner);
 
-    let universal: Vec<_> = renderers.iter()
+    let universal: Vec<_> = renderers
+        .iter()
         .filter(|r| r.scope == "universal")
         .collect();
 
     let mut instructions = String::from(
-        "MCPViews provides a rich display window for presenting content to the user.\n\n"
+        "MCPViews provides a rich display window for presenting content to the user.\n\n",
     );
 
     if !universal.is_empty() {
         instructions.push_str("## Available Display Renderers\n\n");
-        instructions.push_str("Use the `push_content` tool with `tool_name` set to a renderer name:\n\n");
+        instructions
+            .push_str("Use the `push_content` tool with `tool_name` set to a renderer name:\n\n");
         for r in &universal {
             instructions.push_str(&format!("- **{}**: {}", r.name, r.description));
             if let Some(hint) = &r.data_hint {
@@ -92,7 +94,7 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
         "ONLY the main/coordinator agent may call `push_content`, `push_review`, and \
          `push_check`. Sub-agents and background agents must NEVER call these tools. \
          Sub-agents return results to the coordinator, which decides what (if anything) \
-         to push to the companion window.\n"
+         to push to the companion window.\n",
     );
 
     instructions.push_str("\n## Complex Explanations → Companion Window\n\n");
@@ -100,7 +102,7 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
         "Push complex explanations to the companion window instead of explaining \
          them inline in chat. Call `init_session` at the start of every conversation, \
          chat session, or interaction to get renderer rules, plugin status, and the \
-         list of available tools.\n"
+         list of available tools.\n",
     );
 
     instructions.push_str("\n## Session Initialization\n\n");
@@ -141,9 +143,7 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
             instructions.push_str(warning);
             instructions.push_str("\n");
         }
-        instructions.push_str(
-            "\nCall `init_session` to get auth URLs and status details.\n",
-        );
+        instructions.push_str("\nCall `init_session` to get auth URLs and status details.\n");
     }
 
     instructions
@@ -259,11 +259,7 @@ async fn handle_single_request(
 
             match crate::mcp_prompts::get_prompt(&name, arguments, state).await {
                 Ok(result) => Some(JsonRpcResponse::success(id, result)),
-                Err(err_msg) => Some(JsonRpcResponse::error(
-                    id,
-                    -32602,
-                    err_msg,
-                )),
+                Err(err_msg) => Some(JsonRpcResponse::error(id, -32602, err_msg)),
             }
         }
 
@@ -286,12 +282,14 @@ pub async fn mcp_handler(
         Err(_) => {
             return (
                 StatusCode::OK,
-                Some(serde_json::to_value(JsonRpcResponse::error(
-                    None,
-                    -32700,
-                    "Parse error".to_string(),
-                ))
-                .unwrap()),
+                Some(
+                    serde_json::to_value(JsonRpcResponse::error(
+                        None,
+                        -32700,
+                        "Parse error".to_string(),
+                    ))
+                    .unwrap(),
+                ),
             );
         }
     };
@@ -303,12 +301,14 @@ pub async fn mcp_handler(
             Err(_) => {
                 return (
                     StatusCode::OK,
-                    Some(serde_json::to_value(JsonRpcResponse::error(
-                        None,
-                        -32700,
-                        "Parse error: invalid batch".to_string(),
-                    ))
-                    .unwrap()),
+                    Some(
+                        serde_json::to_value(JsonRpcResponse::error(
+                            None,
+                            -32700,
+                            "Parse error: invalid batch".to_string(),
+                        ))
+                        .unwrap(),
+                    ),
                 );
             }
         };
@@ -325,7 +325,10 @@ pub async fn mcp_handler(
             return (StatusCode::ACCEPTED, None);
         }
 
-        (StatusCode::OK, Some(serde_json::to_value(responses).unwrap()))
+        (
+            StatusCode::OK,
+            Some(serde_json::to_value(responses).unwrap()),
+        )
     } else {
         // Single request
         let request: JsonRpcRequest = match serde_json::from_value(body_value) {
@@ -333,12 +336,14 @@ pub async fn mcp_handler(
             Err(_) => {
                 return (
                     StatusCode::OK,
-                    Some(serde_json::to_value(JsonRpcResponse::error(
-                        None,
-                        -32700,
-                        "Parse error: invalid request".to_string(),
-                    ))
-                    .unwrap()),
+                    Some(
+                        serde_json::to_value(JsonRpcResponse::error(
+                            None,
+                            -32700,
+                            "Parse error: invalid request".to_string(),
+                        ))
+                        .unwrap(),
+                    ),
                 );
             }
         };

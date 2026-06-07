@@ -26,6 +26,43 @@ impl StoredToken {
             false
         }
     }
+
+    /// Check if this token should be refreshed soon.
+    pub fn expires_within(&self, leeway_seconds: i64) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            now + leeway_seconds >= expires_at
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StoredTokenStatus {
+    Valid,
+    ExpiredRefreshable,
+    ExpiredUnrefreshable,
+    Missing,
+}
+
+impl StoredTokenStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StoredTokenStatus::Valid => "valid",
+            StoredTokenStatus::ExpiredRefreshable => "expired_refreshable",
+            StoredTokenStatus::ExpiredUnrefreshable => "expired_unrefreshable",
+            StoredTokenStatus::Missing => "missing",
+        }
+    }
+
+    pub fn refreshable(self) -> bool {
+        matches!(self, StoredTokenStatus::ExpiredRefreshable)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +186,30 @@ pub fn has_stored_token_for_org(dir: &Path, plugin_name: &str, org_id: &str) -> 
     dir.join(plugin_name)
         .join(format!("{}.json", org_id))
         .exists()
+}
+
+/// Return the current status for an org-scoped token without exposing token material.
+pub fn token_status_for_org(dir: &Path, plugin_name: &str, org_id: &str) -> StoredTokenStatus {
+    match load_stored_token_for_org_unvalidated(dir, plugin_name, org_id) {
+        Some(token) if token.is_expired() && token.refresh_token.is_some() => {
+            StoredTokenStatus::ExpiredRefreshable
+        }
+        Some(token) if token.is_expired() => StoredTokenStatus::ExpiredUnrefreshable,
+        Some(_) => StoredTokenStatus::Valid,
+        None => StoredTokenStatus::Missing,
+    }
+}
+
+/// Return whether an org-scoped token is near expiry and can be refreshed.
+pub fn token_needs_preemptive_refresh_for_org(
+    dir: &Path,
+    plugin_name: &str,
+    org_id: &str,
+    leeway_seconds: i64,
+) -> bool {
+    load_stored_token_for_org_unvalidated(dir, plugin_name, org_id)
+        .map(|token| token.refresh_token.is_some() && token.expires_within(leeway_seconds))
+        .unwrap_or(false)
 }
 
 /// Migrate a legacy flat-file token ({dir}/{plugin_name}.json) to the new
@@ -322,6 +383,51 @@ mod tests {
             expires_at: None,
         };
         assert!(!token.is_expired());
+    }
+
+    #[test]
+    fn test_token_status_distinguishes_refreshable_expired_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let past = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            - 60;
+        store_token_for_org(
+            dir.path(),
+            "plug",
+            "refreshable",
+            &StoredToken {
+                access_token: "access".to_string(),
+                refresh_token: Some("refresh".to_string()),
+                expires_at: Some(past),
+            },
+        )
+        .unwrap();
+        store_token_for_org(
+            dir.path(),
+            "plug",
+            "unrefreshable",
+            &StoredToken {
+                access_token: "access".to_string(),
+                refresh_token: None,
+                expires_at: Some(past),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            token_status_for_org(dir.path(), "plug", "refreshable"),
+            StoredTokenStatus::ExpiredRefreshable
+        );
+        assert_eq!(
+            token_status_for_org(dir.path(), "plug", "unrefreshable"),
+            StoredTokenStatus::ExpiredUnrefreshable
+        );
+        assert_eq!(
+            token_status_for_org(dir.path(), "plug", "missing"),
+            StoredTokenStatus::Missing
+        );
     }
 
     #[test]

@@ -67,7 +67,9 @@ pub(super) async fn call_install_plugin(
             let is_oauth = status["auth_type"].as_str() == Some("oauth");
             let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
             if is_oauth && !is_configured {
-                match crate::mcp_registry_tools::trigger_plugin_oauth(&plugin_name, None, state).await {
+                match crate::mcp_registry_tools::trigger_plugin_oauth(&plugin_name, None, None, state)
+                    .await
+                {
                     Ok(msg) => Some(msg),
                     Err(e) => Some(format!("Auth trigger failed: {}", e)),
                 }
@@ -209,7 +211,9 @@ pub(super) async fn call_update_plugins(
             let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
 
             if trigger_auth && is_oauth && !is_configured {
-                match crate::mcp_registry_tools::trigger_plugin_oauth(updated_name, None, state).await {
+                match crate::mcp_registry_tools::trigger_plugin_oauth(updated_name, None, None, state)
+                    .await
+                {
                     Ok(msg) => auth_results.push(serde_json::json!({
                         "plugin": updated_name,
                         "result": msg,

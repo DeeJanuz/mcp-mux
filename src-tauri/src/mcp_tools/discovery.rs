@@ -10,8 +10,9 @@ pub(crate) async fn build_hosted_discovery_catalog(
     super::ensure_registry_fresh(state).await;
 
     let all_tools = super::list_tools(state).await;
-    let available_tools =
-        super::filter_hosted_model_facing_tools(super::extract_tool_summaries_with_schema(&all_tools));
+    let available_tools = super::filter_hosted_model_facing_tools(
+        super::extract_tool_summaries_with_schema(&all_tools),
+    );
 
     let state_guard = state.lock().await;
     let registry = state_guard.inner.plugin_registry.lock().unwrap();
@@ -47,9 +48,9 @@ pub(super) async fn call_describe_connector(
         .get("connectors")
         .and_then(|value| value.as_array())
         .and_then(|connectors| {
-            connectors.iter().find(|entry| {
-                entry.get("key").and_then(|value| value.as_str()) == Some(key)
-            })
+            connectors
+                .iter()
+                .find(|entry| entry.get("key").and_then(|value| value.as_str()) == Some(key))
         })
         .cloned()
         .ok_or_else(|| format!("Unknown connector: {}", key))?;
@@ -83,14 +84,23 @@ pub(super) async fn call_describe_tool_group(
                 entry.get("key").and_then(|value| value.as_str()) == Some(connector_key)
             })
         })
-        .and_then(|connector| connector.get("toolGroups").and_then(|value| value.as_array()))
+        .and_then(|connector| {
+            connector
+                .get("toolGroups")
+                .and_then(|value| value.as_array())
+        })
         .and_then(|groups| {
             groups.iter().find(|entry| {
                 entry.get("name").and_then(|value| value.as_str()) == Some(group_name)
             })
         })
         .cloned()
-        .ok_or_else(|| format!("Unknown tool group '{}' for connector '{}'", group_name, connector_key))?;
+        .ok_or_else(|| {
+            format!(
+                "Unknown tool group '{}' for connector '{}'",
+                group_name, connector_key
+            )
+        })?;
 
     Ok(serde_json::json!({
         "content": [{
@@ -113,9 +123,9 @@ pub(super) async fn call_describe_tool(
         .get("tools")
         .and_then(|value| value.as_array())
         .and_then(|tools| {
-            tools.iter().find(|entry| {
-                entry.get("name").and_then(|value| value.as_str()) == Some(name)
-            })
+            tools
+                .iter()
+                .find(|entry| entry.get("name").and_then(|value| value.as_str()) == Some(name))
         })
         .cloned()
         .ok_or_else(|| format!("Unknown tool: {}", name))?;

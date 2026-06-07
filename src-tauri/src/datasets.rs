@@ -115,10 +115,10 @@ impl DatasetStore {
             .ok_or("Dataset query arguments must be a JSON object.".to_string())?;
         let dataset_id = string_field(object, &["dataset_id", "datasetId"])
             .ok_or("Dataset query requires dataset_id.".to_string())?;
-        let entry = self
-            .entries
-            .get(&dataset_id)
-            .ok_or(format!("Dataset `{}` was not found or has expired.", dataset_id))?;
+        let entry = self.entries.get(&dataset_id).ok_or(format!(
+            "Dataset `{}` was not found or has expired.",
+            dataset_id
+        ))?;
         let query_token = string_field(object, &["query_token", "queryToken", "token"])
             .ok_or("Dataset query requires query_token.".to_string())?;
         if query_token != entry.query_token {
@@ -127,10 +127,10 @@ impl DatasetStore {
         let source_id = string_field(object, &["source_id", "sourceId"])
             .or_else(|| entry.source_order.first().cloned())
             .unwrap_or_else(|| DEFAULT_SOURCE_ID.to_string());
-        let source = entry
-            .sources
-            .get(&source_id)
-            .ok_or(format!("Dataset `{}` has no source `{}`.", dataset_id, source_id))?;
+        let source = entry.sources.get(&source_id).ok_or(format!(
+            "Dataset `{}` has no source `{}`.",
+            dataset_id, source_id
+        ))?;
         let recipe = string_field(object, &["recipe"]).unwrap_or_else(|| "select_rows".to_string());
         let params = object
             .get("params")
@@ -173,7 +173,8 @@ impl DatasetStore {
 
     pub fn gc(&mut self) -> usize {
         let before = self.entries.len();
-        self.entries.retain(|_, entry| entry.inserted_at.elapsed() < entry.ttl);
+        self.entries
+            .retain(|_, entry| entry.inserted_at.elapsed() < entry.ttl);
         before - self.entries.len()
     }
 }
@@ -216,9 +217,13 @@ fn collect_sources(object: &Map<String, Value>) -> Result<Vec<DatasetSource>, St
 
     if let Some(source_values) = object.get("sources").and_then(Value::as_array) {
         for (index, source_value) in source_values.iter().enumerate() {
-            let (source_object, compatibility_warning) = source_object_from_value(source_value, index)?;
-            let mut expanded_sources = sources_from_object(&source_object, &format!("source_{}", index + 1))?;
-            if let (Some(warning), Some(first_source)) = (compatibility_warning, expanded_sources.first_mut()) {
+            let (source_object, compatibility_warning) =
+                source_object_from_value(source_value, index)?;
+            let mut expanded_sources =
+                sources_from_object(&source_object, &format!("source_{}", index + 1))?;
+            if let (Some(warning), Some(first_source)) =
+                (compatibility_warning, expanded_sources.first_mut())
+            {
                 first_source.warnings.push(warning);
             }
             sources.extend(expanded_sources);
@@ -228,7 +233,10 @@ fn collect_sources(object: &Map<String, Value>) -> Result<Vec<DatasetSource>, St
     if let Some(tables) = object.get("tables").and_then(Value::as_array) {
         for (index, table) in tables.iter().enumerate() {
             if let Some(table_object) = table.as_object() {
-                sources.push(source_from_table(table_object, &format!("table_{}", index + 1))?);
+                sources.push(source_from_table(
+                    table_object,
+                    &format!("table_{}", index + 1),
+                )?);
             }
         }
     }
@@ -236,7 +244,10 @@ fn collect_sources(object: &Map<String, Value>) -> Result<Vec<DatasetSource>, St
     if let Some(graphs) = object.get("graphs").and_then(Value::as_array) {
         for (index, graph) in graphs.iter().enumerate() {
             if let Some(graph_object) = graph.as_object() {
-                sources.push(source_from_graph(graph_object, &format!("graph_{}", index + 1))?);
+                sources.push(source_from_graph(
+                    graph_object,
+                    &format!("graph_{}", index + 1),
+                )?);
             }
         }
     }
@@ -250,13 +261,19 @@ fn collect_sources(object: &Map<String, Value>) -> Result<Vec<DatasetSource>, St
     Ok(sources)
 }
 
-fn source_object_from_value(source_value: &Value, index: usize) -> Result<(Map<String, Value>, Option<String>), String> {
+fn source_object_from_value(
+    source_value: &Value,
+    index: usize,
+) -> Result<(Map<String, Value>, Option<String>), String> {
     if let Some(source_object) = source_value.as_object() {
         return Ok((source_object.clone(), None));
     }
 
     let Some(source_text) = source_value.as_str() else {
-        return Err(format!("register_dataset.sources[{}] must be an object.", index));
+        return Err(format!(
+            "register_dataset.sources[{}] must be an object.",
+            index
+        ));
     };
     let parsed: Value = serde_json::from_str(source_text).map_err(|err| {
         format!(
@@ -280,18 +297,25 @@ fn source_object_from_value(source_value: &Value, index: usize) -> Result<(Map<S
     ))
 }
 
-fn sources_from_object(object: &Map<String, Value>, fallback_id: &str) -> Result<Vec<DatasetSource>, String> {
+fn sources_from_object(
+    object: &Map<String, Value>,
+    fallback_id: &str,
+) -> Result<Vec<DatasetSource>, String> {
     if let Some(sources) = sources_from_markdown_reference(object, fallback_id)? {
         return Ok(sources);
     }
     Ok(vec![source_from_object(object, fallback_id)?])
 }
 
-fn source_from_object(object: &Map<String, Value>, fallback_id: &str) -> Result<DatasetSource, String> {
+fn source_from_object(
+    object: &Map<String, Value>,
+    fallback_id: &str,
+) -> Result<DatasetSource, String> {
     if let Some(table) = object.get("table").and_then(Value::as_object) {
         let mut source = source_from_table(table, fallback_id)?;
         source.id = string_field(object, &["id", "source_id", "sourceId"]).unwrap_or(source.id);
-        source.kind = string_field(object, &["kind", "type"]).unwrap_or_else(|| "table".to_string());
+        source.kind =
+            string_field(object, &["kind", "type"]).unwrap_or_else(|| "table".to_string());
         source.source_ref = source_reference(object);
         return Ok(source);
     }
@@ -299,12 +323,14 @@ fn source_from_object(object: &Map<String, Value>, fallback_id: &str) -> Result<
     if let Some(graph) = object.get("graph").and_then(Value::as_object) {
         let mut source = source_from_graph(graph, fallback_id)?;
         source.id = string_field(object, &["id", "source_id", "sourceId"]).unwrap_or(source.id);
-        source.kind = string_field(object, &["kind", "type"]).unwrap_or_else(|| "graph".to_string());
+        source.kind =
+            string_field(object, &["kind", "type"]).unwrap_or_else(|| "graph".to_string());
         source.source_ref = source_reference(object);
         return Ok(source);
     }
 
-    let id = string_field(object, &["id", "source_id", "sourceId"]).unwrap_or_else(|| fallback_id.to_string());
+    let id = string_field(object, &["id", "source_id", "sourceId"])
+        .unwrap_or_else(|| fallback_id.to_string());
     let title = string_field(object, &["title", "name"]);
     let kind = string_field(object, &["kind", "type"]).unwrap_or_else(|| "inline".to_string());
     let (columns, rows) = columns_rows_from_object(object)?;
@@ -338,7 +364,8 @@ fn source_from_top_level(object: &Map<String, Value>) -> Result<Option<DatasetSo
     if !has_rows {
         return Ok(None);
     }
-    let id = string_field(object, &["source_id", "sourceId", "id"]).unwrap_or_else(|| DEFAULT_SOURCE_ID.to_string());
+    let id = string_field(object, &["source_id", "sourceId", "id"])
+        .unwrap_or_else(|| DEFAULT_SOURCE_ID.to_string());
     let title = string_field(object, &["title", "name"]);
     let (columns, rows) = columns_rows_from_object(object)?;
     let structured_rows = rows.iter().any(is_structured_row);
@@ -354,7 +381,10 @@ fn source_from_top_level(object: &Map<String, Value>) -> Result<Option<DatasetSo
     }))
 }
 
-fn source_from_table(object: &Map<String, Value>, fallback_id: &str) -> Result<DatasetSource, String> {
+fn source_from_table(
+    object: &Map<String, Value>,
+    fallback_id: &str,
+) -> Result<DatasetSource, String> {
     let id = string_field(object, &["id"]).unwrap_or_else(|| fallback_id.to_string());
     let title = string_field(object, &["name", "title"]);
     let columns = object
@@ -379,13 +409,19 @@ fn source_from_table(object: &Map<String, Value>, fallback_id: &str) -> Result<D
     })
 }
 
-fn source_from_graph(object: &Map<String, Value>, fallback_id: &str) -> Result<DatasetSource, String> {
+fn source_from_graph(
+    object: &Map<String, Value>,
+    fallback_id: &str,
+) -> Result<DatasetSource, String> {
     let id = string_field(object, &["id"]).unwrap_or_else(|| fallback_id.to_string());
     let title = string_field(object, &["title", "name"]);
     let data = object
         .get("data")
         .and_then(Value::as_object)
-        .ok_or(format!("Graph source `{}` must include data.columns and data.rows.", id))?;
+        .ok_or(format!(
+            "Graph source `{}` must include data.columns and data.rows.",
+            id
+        ))?;
     let columns = data
         .get("columns")
         .and_then(Value::as_array)
@@ -491,7 +527,9 @@ fn markdown_json_block_sources(
         let trimmed = line.trim();
         if in_json_block {
             if trimmed.starts_with("```") {
-                let title = block_heading.clone().unwrap_or_else(|| fallback_id.to_string());
+                let title = block_heading
+                    .clone()
+                    .unwrap_or_else(|| fallback_id.to_string());
                 if heading_matches(&heading_filter, &title) {
                     let value: Value = serde_json::from_str(block.trim()).map_err(|err| {
                         format!("Could not parse markdown JSON block `{}`: {}.", title, err)
@@ -549,7 +587,9 @@ fn markdown_table_sources(
         }
 
         if is_markdown_table_start(&lines, index) {
-            let title = current_heading.clone().unwrap_or_else(|| fallback_id.to_string());
+            let title = current_heading
+                .clone()
+                .unwrap_or_else(|| fallback_id.to_string());
             let mut table_lines = Vec::new();
             while index < lines.len() && lines[index].trim_start().starts_with('|') {
                 table_lines.push(lines[index]);
@@ -612,7 +652,10 @@ fn source_from_markdown_table_lines(
     source_ref: Option<Value>,
 ) -> Result<DatasetSource, String> {
     if lines.len() < 2 {
-        return Err(format!("Markdown table source `{}` must include a header and separator row.", id));
+        return Err(format!(
+            "Markdown table source `{}` must include a header and separator row.",
+            id
+        ));
     }
     let headers = parse_markdown_table_row(lines[0]);
     let columns = headers
@@ -684,7 +727,8 @@ fn apply_reference_id_options(
 
 fn reference_path(object: &Map<String, Value>) -> Option<PathBuf> {
     let raw_path = string_field(object, &["path"]).or_else(|| {
-        string_field(object, &["uri"]).and_then(|uri| uri.strip_prefix("file://").map(ToString::to_string))
+        string_field(object, &["uri"])
+            .and_then(|uri| uri.strip_prefix("file://").map(ToString::to_string))
     })?;
     let expanded = if raw_path == "~" {
         std::env::var("HOME").ok().map(PathBuf::from)?
@@ -743,8 +787,13 @@ fn validate_reference_path(path: &Path) -> Result<PathBuf, String> {
 }
 
 fn read_reference_text(path: &PathBuf) -> Result<String, String> {
-    let metadata = fs::metadata(path)
-        .map_err(|err| format!("Could not read dataset reference `{}`: {}.", path.display(), err))?;
+    let metadata = fs::metadata(path).map_err(|err| {
+        format!(
+            "Could not read dataset reference `{}`: {}.",
+            path.display(),
+            err
+        )
+    })?;
     if metadata.len() > MAX_REFERENCE_FILE_BYTES {
         return Err(format!(
             "Dataset reference `{}` is {} bytes; maximum supported size is {} bytes.",
@@ -753,8 +802,13 @@ fn read_reference_text(path: &PathBuf) -> Result<String, String> {
             MAX_REFERENCE_FILE_BYTES
         ));
     }
-    fs::read_to_string(path)
-        .map_err(|err| format!("Could not read dataset reference `{}` as UTF-8 text: {}.", path.display(), err))
+    fs::read_to_string(path).map_err(|err| {
+        format!(
+            "Could not read dataset reference `{}` as UTF-8 text: {}.",
+            path.display(),
+            err
+        )
+    })
 }
 
 fn markdown_heading(line: &str) -> Option<String> {
@@ -784,9 +838,7 @@ fn is_markdown_table_separator(line: &str) -> bool {
         && cells.iter().all(|cell| {
             let trimmed = cell.trim();
             trimmed.len() >= 3
-                && trimmed
-                    .chars()
-                    .all(|ch| matches!(ch, '-' | ':' | ' '))
+                && trimmed.chars().all(|ch| matches!(ch, '-' | ':' | ' '))
                 && trimmed.chars().any(|ch| ch == '-')
         })
 }
@@ -819,7 +871,10 @@ fn heading_filter(object: &Map<String, Value>) -> Vec<String> {
 }
 
 fn heading_matches(filter: &[String], heading: &str) -> bool {
-    filter.is_empty() || filter.iter().any(|candidate| candidate == &normalize_heading(heading))
+    filter.is_empty()
+        || filter
+            .iter()
+            .any(|candidate| candidate == &normalize_heading(heading))
 }
 
 fn normalize_heading(value: &str) -> String {
@@ -841,7 +896,9 @@ fn value_kind(value: &Value) -> &'static str {
     }
 }
 
-fn columns_rows_from_object(object: &Map<String, Value>) -> Result<(Vec<Value>, Vec<Value>), String> {
+fn columns_rows_from_object(
+    object: &Map<String, Value>,
+) -> Result<(Vec<Value>, Vec<Value>), String> {
     if let Some(data) = object.get("data").and_then(Value::as_object) {
         let columns = data
             .get("columns")
@@ -902,11 +959,11 @@ fn normalize_columns(columns: Vec<Value>, rows: &[Value], structured_rows: bool)
             }
             Value::Object(map) => {
                 if !map.contains_key("id") {
-                    let fallback = map
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("column");
-                    map.insert("id".to_string(), Value::String(sanitize_id(fallback, index)));
+                    let fallback = map.get("name").and_then(Value::as_str).unwrap_or("column");
+                    map.insert(
+                        "id".to_string(),
+                        Value::String(sanitize_id(fallback, index)),
+                    );
                 }
                 if !map.contains_key("name") {
                     let fallback = map
@@ -944,7 +1001,11 @@ fn infer_columns(rows: &[Value], structured_rows: bool) -> Vec<Value> {
             .map(|cells| cells.keys().cloned().collect())
             .unwrap_or_default()
     } else {
-        first.keys().filter(|key| key.as_str() != "children").cloned().collect()
+        first
+            .keys()
+            .filter(|key| key.as_str() != "children")
+            .cloned()
+            .collect()
     };
     keys.into_iter()
         .enumerate()
@@ -958,7 +1019,11 @@ fn infer_columns(rows: &[Value], structured_rows: bool) -> Vec<Value> {
         .collect()
 }
 
-fn run_recipe(source: &DatasetSource, recipe: &str, params: &Map<String, Value>) -> Result<RecipeResult, String> {
+fn run_recipe(
+    source: &DatasetSource,
+    recipe: &str,
+    params: &Map<String, Value>,
+) -> Result<RecipeResult, String> {
     match recipe {
         "select_rows" | "selectRows" => Ok(select_rows(source, params)),
         "review_rows" | "reviewRows" => Ok(review_rows(source)),
@@ -1035,7 +1100,12 @@ fn review_rows(source: &DatasetSource) -> RecipeResult {
 
     let column_ids = columns
         .iter()
-        .filter_map(|column| column.get("id").and_then(Value::as_str).map(ToString::to_string))
+        .filter_map(|column| {
+            column
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
         .collect::<Vec<_>>();
     let rows = source
         .rows
@@ -1092,11 +1162,14 @@ fn count_by(source: &DatasetSource, params: &Map<String, Value>) -> Result<Recip
 fn group_sum(source: &DatasetSource, params: &Map<String, Value>) -> Result<RecipeResult, String> {
     let group_field = required_param(params, &["groupBy", "group_by", "field"])?;
     let value_field = required_param(params, &["value", "valueField", "value_field"])?;
-    let output_field = string_field_map(params, &["outputField", "output_field"]).unwrap_or_else(|| "value".to_string());
+    let output_field = string_field_map(params, &["outputField", "output_field"])
+        .unwrap_or_else(|| "value".to_string());
     let mut groups: BTreeMap<String, f64> = BTreeMap::new();
     for row in &source.rows {
         let key = string_key(row_value(row, &group_field));
-        let value = row_value(row, &value_field).and_then(number_value).unwrap_or(0.0);
+        let value = row_value(row, &value_field)
+            .and_then(number_value)
+            .unwrap_or(0.0);
         *groups.entry(key).or_insert(0.0) += value;
     }
     let rows = groups
@@ -1114,12 +1187,24 @@ fn group_sum(source: &DatasetSource, params: &Map<String, Value>) -> Result<Reci
 }
 
 fn trend(source: &DatasetSource, params: &Map<String, Value>) -> Result<RecipeResult, String> {
-    let x_field = required_param(params, &["x", "date", "dateField", "date_field", "groupBy", "group_by"])?;
+    let x_field = required_param(
+        params,
+        &[
+            "x",
+            "date",
+            "dateField",
+            "date_field",
+            "groupBy",
+            "group_by",
+        ],
+    )?;
     let y_field = required_param(params, &["y", "value", "valueField", "value_field"])?;
     let mut groups: BTreeMap<String, f64> = BTreeMap::new();
     for row in &source.rows {
         let key = string_key(row_value(row, &x_field));
-        let value = row_value(row, &y_field).and_then(number_value).unwrap_or(0.0);
+        let value = row_value(row, &y_field)
+            .and_then(number_value)
+            .unwrap_or(0.0);
         *groups.entry(key).or_insert(0.0) += value;
     }
     let rows = groups
@@ -1136,7 +1221,10 @@ fn trend(source: &DatasetSource, params: &Map<String, Value>) -> Result<RecipeRe
     })
 }
 
-fn heatmap_by_pair(source: &DatasetSource, params: &Map<String, Value>) -> Result<RecipeResult, String> {
+fn heatmap_by_pair(
+    source: &DatasetSource,
+    params: &Map<String, Value>,
+) -> Result<RecipeResult, String> {
     let x_field = required_param(params, &["x", "xField", "x_field"])?;
     let y_field = required_param(params, &["y", "yField", "y_field"])?;
     let value_field = string_field_map(params, &["value", "valueField", "value_field"]);
@@ -1167,7 +1255,10 @@ fn heatmap_by_pair(source: &DatasetSource, params: &Map<String, Value>) -> Resul
     })
 }
 
-fn funnel_from_counts(source: &DatasetSource, params: &Map<String, Value>) -> Result<RecipeResult, String> {
+fn funnel_from_counts(
+    source: &DatasetSource,
+    params: &Map<String, Value>,
+) -> Result<RecipeResult, String> {
     if let Some(stages) = params.get("stages").and_then(Value::as_array) {
         let rows = stages
             .iter()
@@ -1192,10 +1283,30 @@ fn funnel_from_counts(source: &DatasetSource, params: &Map<String, Value>) -> Re
         });
     }
 
-    let stage_field = string_field_map(params, &["stage", "stageField", "stage_field", "label", "labelField", "label_field"])
-        .unwrap_or_else(|| "stage".to_string());
-    let count_field = string_field_map(params, &["count", "countField", "count_field", "value", "valueField", "value_field"])
-        .unwrap_or_else(|| "count".to_string());
+    let stage_field = string_field_map(
+        params,
+        &[
+            "stage",
+            "stageField",
+            "stage_field",
+            "label",
+            "labelField",
+            "label_field",
+        ],
+    )
+    .unwrap_or_else(|| "stage".to_string());
+    let count_field = string_field_map(
+        params,
+        &[
+            "count",
+            "countField",
+            "count_field",
+            "value",
+            "valueField",
+            "value_field",
+        ],
+    )
+    .unwrap_or_else(|| "count".to_string());
     Ok(RecipeResult {
         columns: vec![
             serde_json::json!({ "id": stage_field.clone(), "name": titleize(&stage_field) }),
@@ -1215,10 +1326,24 @@ fn funnel_from_counts(source: &DatasetSource, params: &Map<String, Value>) -> Re
     })
 }
 
-fn waterfall_from_deltas(source: &DatasetSource, params: &Map<String, Value>) -> Result<RecipeResult, String> {
-    let label_field = string_field_map(params, &["label", "labelField", "label_field"]).unwrap_or_else(|| "label".to_string());
-    let value_field = string_field_map(params, &["value", "valueField", "value_field", "delta", "deltaField", "delta_field"])
-        .unwrap_or_else(|| "value".to_string());
+fn waterfall_from_deltas(
+    source: &DatasetSource,
+    params: &Map<String, Value>,
+) -> Result<RecipeResult, String> {
+    let label_field = string_field_map(params, &["label", "labelField", "label_field"])
+        .unwrap_or_else(|| "label".to_string());
+    let value_field = string_field_map(
+        params,
+        &[
+            "value",
+            "valueField",
+            "value_field",
+            "delta",
+            "deltaField",
+            "delta_field",
+        ],
+    )
+    .unwrap_or_else(|| "value".to_string());
     Ok(RecipeResult {
         columns: vec![
             serde_json::json!({ "id": label_field.clone(), "name": titleize(&label_field) }),
@@ -1266,7 +1391,10 @@ fn normalize_structured_row(row: &Value, index: usize) -> Value {
     };
     let mut next = object.clone();
     if !next.contains_key("id") {
-        next.insert("id".to_string(), Value::String(format!("row_{}", index + 1)));
+        next.insert(
+            "id".to_string(),
+            Value::String(format!("row_{}", index + 1)),
+        );
     }
     if !next.contains_key("cells") {
         next.insert("cells".to_string(), Value::Object(Map::new()));
@@ -1359,7 +1487,11 @@ fn is_structured_row(row: &Value) -> bool {
 fn number_value(value: &Value) -> Option<f64> {
     match value {
         Value::Number(number) => number.as_f64().filter(|value| value.is_finite()),
-        Value::String(text) => text.trim().parse::<f64>().ok().filter(|value| value.is_finite()),
+        Value::String(text) => text
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite()),
         _ => None,
     }
 }
@@ -1375,7 +1507,8 @@ fn string_key(value: Option<&Value>) -> String {
 }
 
 fn required_param(params: &Map<String, Value>, names: &[&str]) -> Result<String, String> {
-    string_field_map(params, names).ok_or(format!("Dataset recipe requires parameter `{}`.", names[0]))
+    string_field_map(params, names)
+        .ok_or(format!("Dataset recipe requires parameter `{}`.", names[0]))
 }
 
 fn string_field(object: &Map<String, Value>, names: &[&str]) -> Option<String> {
@@ -1618,12 +1751,10 @@ mod tests {
         assert_eq!(result["dataset_id"], "stringified");
         assert_eq!(result["row_count"], 1);
         assert_eq!(result["sources"][0]["source_id"], "risk");
-        assert!(
-            result["warnings"][0]
-                .as_str()
-                .unwrap()
-                .contains("stringified JSON")
-        );
+        assert!(result["warnings"][0]
+            .as_str()
+            .unwrap()
+            .contains("stringified JSON"));
     }
 
     #[test]
@@ -1896,8 +2027,7 @@ mod tests {
         );
 
         let register_tokens = estimated_output_tokens(&register_payload);
-        let semantic_tokens =
-            register_tokens + estimated_output_tokens(&semantic_renderer_payload);
+        let semantic_tokens = register_tokens + estimated_output_tokens(&semantic_renderer_payload);
         let inline_tokens = estimated_output_tokens(&inline_renderer_payload);
         let html_tokens = (html_preview.len() + 3) / 4;
 

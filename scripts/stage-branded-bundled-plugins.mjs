@@ -35,6 +35,10 @@ export const brandedRemotePlugins = [
 ];
 
 export const requiredBrandedPlugins = ['decidr-setup', 'decidr', 'ludflow'];
+export const brandedAuthOrigins = {
+  production: 'https://app.ludflow.com',
+  staging: 'https://staging.app.ludflow.com',
+};
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -151,6 +155,62 @@ function normalizePluginDirectory(sourceDir, stageRoot) {
   };
 }
 
+function resolveAuthOriginOption(value) {
+  const raw = value || process.env.MCPVIEWS_BRANDED_AUTH_ORIGIN || 'production';
+  if (brandedAuthOrigins[raw]) return brandedAuthOrigins[raw];
+  try {
+    const parsed = new URL(raw);
+    return parsed.origin;
+  } catch (_error) {
+    throw new Error(
+      `Invalid branded auth origin '${raw}'. Use production, staging, or a full origin URL.`
+    );
+  }
+}
+
+function pluginAuthOrigin(manifest) {
+  const auth = manifest && manifest.mcp && manifest.mcp.auth;
+  if (!auth || auth.type !== 'oauth' || !auth.token_url) return null;
+  return new URL(auth.token_url).origin;
+}
+
+export function verifyBrandedAuthOrigins(options = {}) {
+  const stageRoot = options.stageRoot || defaultStageRoot;
+  const expectedOrigin = resolveAuthOriginOption(options.authOrigin);
+  const pluginNames = options.plugins || ['decidr', 'ludflow'];
+  const origins = [];
+
+  for (const pluginName of pluginNames) {
+    const manifestPath = join(stageRoot, pluginName, 'manifest.json');
+    if (!existsSync(manifestPath)) continue;
+    const manifest = readJson(manifestPath);
+    const origin = pluginAuthOrigin(manifest);
+    if (!origin) continue;
+    origins.push({ pluginName, origin });
+
+    const codeAuth = manifest.mcp && manifest.mcp.auth && manifest.mcp.auth.email_code_auth;
+    if (!codeAuth || codeAuth.enabled !== true) {
+      throw new Error(`Bundled plugin '${pluginName}' must declare email_code_auth.enabled=true`);
+    }
+  }
+
+  if (origins.length < 2) return [];
+  const uniqueOrigins = Array.from(new Set(origins.map((entry) => entry.origin)));
+  if (uniqueOrigins.length > 1) {
+    throw new Error(
+      `Bundled DecidR/Ludflow auth origins differ: ${origins
+        .map((entry) => `${entry.pluginName}=${entry.origin}`)
+        .join(', ')}`
+    );
+  }
+  if (uniqueOrigins[0] !== expectedOrigin) {
+    throw new Error(
+      `Bundled auth origin ${uniqueOrigins[0]} does not match expected ${expectedOrigin}. Set MCPVIEWS_BRANDED_AUTH_ORIGIN=staging only for staging builds.`
+    );
+  }
+  return origins.map((entry) => `${entry.pluginName} auth ${entry.origin}`);
+}
+
 export async function fetchLatestStableRelease(repo, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const apiBase = options.githubApiBase || 'https://api.github.com';
@@ -254,6 +314,8 @@ export async function stageBrandedBundledPlugins(options = {}) {
     staged.push(await stageRemotePlugin(plugin, { ...options, stageRoot, workRoot }));
   }
 
+  verifyBrandedAuthOrigins({ stageRoot, authOrigin: options.authOrigin });
+
   rmSync(workRoot, { recursive: true, force: true });
   const metadata = {
     generated_at: new Date().toISOString(),
@@ -292,19 +354,25 @@ export function verifyBrandedBundle(options = {}) {
   if (missing.length > 0) {
     throw new Error(`Missing bundled plugins: ${missing.join(', ')}`);
   }
+  verifyBrandedAuthOrigins({
+    stageRoot,
+    authOrigin: options.authOrigin,
+  });
   return found;
 }
 
 async function main() {
   const verifyOnly = process.argv.includes('--verify-only');
+  const authOriginArg = process.argv.find((arg) => arg.startsWith('--auth-origin='));
+  const authOrigin = authOriginArg ? authOriginArg.split('=').slice(1).join('=') : undefined;
   if (verifyOnly) {
-    const found = verifyBrandedBundle();
+    const found = verifyBrandedBundle({ authOrigin });
     console.log(`Verified branded bundled plugins in ${defaultStageRoot}`);
     for (const plugin of found) console.log(`  - ${plugin}`);
     return;
   }
 
-  const metadata = await stageBrandedBundledPlugins();
+  const metadata = await stageBrandedBundledPlugins({ authOrigin });
   console.log(`Staged branded bundled plugins in ${defaultStageRoot}`);
   for (const plugin of metadata.plugins) {
     console.log(`  - ${plugin.name} v${plugin.version} (${plugin.source})`);

@@ -21,6 +21,11 @@ use crate::session::SessionStore;
 
 pub(crate) const LEGACY_PERSONA_STUDIO_PLUGIN: &str = "tribe-x-ai-plugin";
 pub(crate) const CURRENT_PERSONA_STUDIO_PLUGIN: &str = "tribe-x-persona-studio";
+const DECIDR_PLUGIN: &str = "decidr";
+const DECIDR_SETUP_PLUGIN: &str = "decidr-setup";
+const LUDFLOW_PLUGIN: &str = "ludflow";
+const EMAIL_DELIVERABILITY_PLUGIN: &str = "email-deliverability";
+const RESOURCE_BUNDLED_PLUGIN_ROOTS: [&str; 2] = ["release", "mac-dev"];
 
 pub struct AppState {
     pub sessions: Mutex<SessionStore>,
@@ -273,15 +278,67 @@ impl AppState {
     ) -> Result<Vec<String>, String> {
         let bundle_base = resource_dir.join("bundled-plugins");
         let mut installed = Vec::new();
-        for bundle_name in ["release", "mac-dev"] {
+        for bundle_name in RESOURCE_BUNDLED_PLUGIN_ROOTS {
             let bundle_root = bundle_base.join(bundle_name);
-            installed.extend(ensure_bundled_plugin_dirs(&self.plugin_store, &bundle_root)?);
+            installed.extend(ensure_bundled_plugin_dirs(
+                &self.plugin_store,
+                &bundle_root,
+            )?);
+        }
+        if retire_email_deliverability_for_decidr_bundle(&self.plugin_store, resource_dir) {
+            installed.push(format!("retired:{}", EMAIL_DELIVERABILITY_PLUGIN));
         }
         if retire_legacy_persona_studio_plugin(&self.plugin_store) {
             installed.push(format!("retired:{}", LEGACY_PERSONA_STUDIO_PLUGIN));
         }
         Ok(installed)
     }
+}
+
+fn retire_email_deliverability_for_decidr_bundle(
+    store: &PluginStore,
+    resource_dir: &std::path::Path,
+) -> bool {
+    if !resource_bundle_is_decidr_branded_without_email(resource_dir)
+        || !store.exists(EMAIL_DELIVERABILITY_PLUGIN)
+    {
+        return false;
+    }
+
+    match store.remove(EMAIL_DELIVERABILITY_PLUGIN) {
+        Ok(()) => {
+            eprintln!(
+                "[mcpviews] Retired '{}' because the DecidR-branded bundle does not include it",
+                EMAIL_DELIVERABILITY_PLUGIN,
+            );
+            true
+        }
+        Err(error) => {
+            eprintln!(
+                "[mcpviews] Failed to retire DecidR-excluded plugin '{}': {}",
+                EMAIL_DELIVERABILITY_PLUGIN, error,
+            );
+            false
+        }
+    }
+}
+
+fn resource_bundle_is_decidr_branded_without_email(resource_dir: &std::path::Path) -> bool {
+    resource_bundle_contains_plugin(resource_dir, DECIDR_PLUGIN)
+        && resource_bundle_contains_plugin(resource_dir, DECIDR_SETUP_PLUGIN)
+        && resource_bundle_contains_plugin(resource_dir, LUDFLOW_PLUGIN)
+        && !resource_bundle_contains_plugin(resource_dir, EMAIL_DELIVERABILITY_PLUGIN)
+}
+
+fn resource_bundle_contains_plugin(resource_dir: &std::path::Path, plugin: &str) -> bool {
+    RESOURCE_BUNDLED_PLUGIN_ROOTS.iter().any(|bundle_name| {
+        resource_dir
+            .join("bundled-plugins")
+            .join(*bundle_name)
+            .join(plugin)
+            .join("manifest.json")
+            .exists()
+    })
 }
 
 fn retire_legacy_persona_studio_plugin(store: &PluginStore) -> bool {
@@ -680,11 +737,79 @@ mod tests {
             .join("decidr");
         write_plugin_manifest(&bundled_plugin_dir, "decidr", "1.2.3", Some("release-hash"));
 
-        let installed = state.ensure_resource_bundled_plugins(&resource_dir).unwrap();
+        let installed = state
+            .ensure_resource_bundled_plugins(&resource_dir)
+            .unwrap();
 
         assert_eq!(installed, vec!["decidr".to_string()]);
         let manifest = state.plugin_store().load("decidr").unwrap();
         assert_eq!(manifest.version, "1.2.3");
+    }
+
+    #[test]
+    fn test_ensure_resource_bundled_plugins_retires_email_deliverability_from_decidr_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins_dir = dir.path().join("plugins");
+        let resource_dir = dir.path().join("resources");
+        let store = PluginStore::with_dir(plugins_dir);
+        store
+            .save(&test_manifest(EMAIL_DELIVERABILITY_PLUGIN))
+            .unwrap();
+        let state = AppState::new_with_store_and_auth_dir(store, dir.path().join("auth"));
+
+        let release_root = resource_dir.join("bundled-plugins").join("release");
+        write_plugin_manifest(
+            &release_root.join(DECIDR_PLUGIN),
+            DECIDR_PLUGIN,
+            "1.2.3",
+            Some("decidr-hash"),
+        );
+        write_plugin_manifest(
+            &release_root.join(DECIDR_SETUP_PLUGIN),
+            DECIDR_SETUP_PLUGIN,
+            "0.1.0",
+            Some("setup-hash"),
+        );
+        write_plugin_manifest(
+            &release_root.join(LUDFLOW_PLUGIN),
+            LUDFLOW_PLUGIN,
+            "0.8.0",
+            Some("ludflow-hash"),
+        );
+
+        let installed = state
+            .ensure_resource_bundled_plugins(&resource_dir)
+            .unwrap();
+
+        assert!(installed.contains(&format!("retired:{}", EMAIL_DELIVERABILITY_PLUGIN)));
+        assert!(!state.plugin_store().exists(EMAIL_DELIVERABILITY_PLUGIN));
+    }
+
+    #[test]
+    fn test_ensure_resource_bundled_plugins_preserves_email_deliverability_for_generic_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins_dir = dir.path().join("plugins");
+        let resource_dir = dir.path().join("resources");
+        let store = PluginStore::with_dir(plugins_dir);
+        store
+            .save(&test_manifest(EMAIL_DELIVERABILITY_PLUGIN))
+            .unwrap();
+        let state = AppState::new_with_store_and_auth_dir(store, dir.path().join("auth"));
+
+        let release_root = resource_dir.join("bundled-plugins").join("release");
+        write_plugin_manifest(
+            &release_root.join(LUDFLOW_PLUGIN),
+            LUDFLOW_PLUGIN,
+            "0.8.0",
+            Some("ludflow-hash"),
+        );
+
+        let installed = state
+            .ensure_resource_bundled_plugins(&resource_dir)
+            .unwrap();
+
+        assert!(!installed.contains(&format!("retired:{}", EMAIL_DELIVERABILITY_PLUGIN)));
+        assert!(state.plugin_store().exists(EMAIL_DELIVERABILITY_PLUGIN));
     }
 
     #[test]

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-06-07
+
 ### Fixed
 - Email-code organization selection now gives the create-organization action proper spacing, and DecidR Setup now treats a returned organization ID as completed auth before falling back to organization-selection prompts.
 

@@ -61,6 +61,10 @@ jobs:
             IFS=. read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
             PATCH=$((PATCH + 1))
             VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            while git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; do
+              PATCH=$((PATCH + 1))
+              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            done
           fi
           if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
             echo "::error::Invalid version format: $VERSION (expected semver like 1.2.3 or 1.2.3-beta.1)"

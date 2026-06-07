@@ -1,12 +1,11 @@
 {
   "name": "decidr-setup",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "First-launch DecidR setup wizard for MCPViews branded distributions",
   "standalone_group": "decidr",
   "standalone_group_label": "DecidR",
   "renderers": {
-    "decidr_onboarding": "renderers/decidr-onboarding.js",
-    "plugin_email_code_auth": "renderers/plugin-email-code-auth.js"
+    "decidr_onboarding": "renderers/decidr-onboarding.js"
   },
   "renderer_definitions": [
     {
@@ -16,13 +15,6 @@
       "data_hint": "{ organization_id?: string }",
       "standalone": true,
       "standalone_label": "DecidR Setup"
-    },
-    {
-      "name": "plugin_email_code_auth",
-      "description": "Generic MCPViews email-code authentication for OAuth plugins",
-      "scope": "universal",
-      "data_hint": "{ plugin_name: string, plugin_label?: string, organization_id?: string }",
-      "standalone": false
     }
   ],
   "registry_index": {
@@ -34,8 +26,7 @@
     ],
     "tool_groups": [],
     "renderer_names": [
-      "decidr_onboarding",
-      "plugin_email_code_auth"
+      "decidr_onboarding"
     ]
   }
 }

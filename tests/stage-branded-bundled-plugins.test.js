@@ -9,7 +9,7 @@ var stageBrandedBundledPlugins;
 var stageLocalSetupPlugin;
 var verifyBrandedAuthOrigins;
 var verifyBrandedBundle;
-var verifySetupEmailCodeRenderer;
+var verifySetupEmailCodeAuth;
 var describeIfScriptImportSupported = process.platform === 'win32' ? describe.skip : describe;
 
 var tempDirs = [];
@@ -54,13 +54,13 @@ function writeLocalPlugin(root, name, version) {
   return pluginDir;
 }
 
-function writeSetupPlugin(root, withEmailCodeRenderer = true, onboardingSource) {
+function writeSetupPlugin(root, withDuplicateEmailCodeRenderer = false, onboardingSource) {
   var pluginDir = join(root, 'decidr-setup');
   mkdirSync(join(pluginDir, 'renderers'), { recursive: true });
   var manifest = pluginManifest('decidr-setup', '0.1.0');
   manifest.renderers = { decidr_onboarding: 'renderers/decidr-onboarding.js' };
   manifest.renderer_definitions = [{ name: 'decidr_onboarding' }];
-  if (withEmailCodeRenderer) {
+  if (withDuplicateEmailCodeRenderer) {
     manifest.renderers.plugin_email_code_auth = 'renderers/plugin-email-code-auth.js';
     manifest.renderer_definitions.push({ name: 'plugin_email_code_auth' });
     writeFileSync(join(pluginDir, 'renderers', 'plugin-email-code-auth.js'), 'window.__renderers = window.__renderers || {};');
@@ -104,7 +104,7 @@ beforeAll(async function () {
   stageLocalSetupPlugin = helpers.stageLocalSetupPlugin;
   verifyBrandedAuthOrigins = helpers.verifyBrandedAuthOrigins;
   verifyBrandedBundle = helpers.verifyBrandedBundle;
-  verifySetupEmailCodeRenderer = helpers.verifySetupEmailCodeRenderer;
+  verifySetupEmailCodeAuth = helpers.verifySetupEmailCodeAuth;
 });
 
 describeIfScriptImportSupported('stage branded bundled plugins', function () {
@@ -172,7 +172,7 @@ describeIfScriptImportSupported('stage branded bundled plugins', function () {
       'ludflow v2.0.0',
     ]);
     expect(function () {
-      verifySetupEmailCodeRenderer({ stageRoot: stageRoot });
+      verifySetupEmailCodeAuth({ stageRoot: stageRoot });
     }).not.toThrow();
   });
 
@@ -196,16 +196,16 @@ describeIfScriptImportSupported('stage branded bundled plugins', function () {
     })).rejects.toThrow('missing decidr.zip');
   });
 
-  it('fails branded bundle verification when DecidR setup omits email-code auth renderer', function () {
+  it('fails branded bundle verification when DecidR setup bundles the host-owned email-code auth renderer', function () {
     var root = tempDir();
     var stageRoot = join(root, 'stage');
-    var setupPluginDir = writeSetupPlugin(root, false);
+    var setupPluginDir = writeSetupPlugin(root, true);
 
     stageLocalSetupPlugin({ stageRoot: stageRoot, setupPluginDir: setupPluginDir });
 
     expect(function () {
-      verifySetupEmailCodeRenderer({ stageRoot: stageRoot });
-    }).toThrow('plugin_email_code_auth');
+      verifySetupEmailCodeAuth({ stageRoot: stageRoot });
+    }).toThrow('host-owned plugin_email_code_auth');
   });
 
   it('fails branded bundle verification when DecidR setup starts browser OAuth', function () {
@@ -213,14 +213,14 @@ describeIfScriptImportSupported('stage branded bundled plugins', function () {
     var stageRoot = join(root, 'stage');
     var setupPluginDir = writeSetupPlugin(
       root,
-      true,
+      false,
       'send_plugin_email_code(); verify_plugin_email_code(); start_plugin_auth();',
     );
 
     stageLocalSetupPlugin({ stageRoot: stageRoot, setupPluginDir: setupPluginDir });
 
     expect(function () {
-      verifySetupEmailCodeRenderer({ stageRoot: stageRoot });
+      verifySetupEmailCodeAuth({ stageRoot: stageRoot });
     }).toThrow('browser OAuth');
   });
 

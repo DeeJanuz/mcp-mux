@@ -302,7 +302,7 @@ export function stageLocalSetupPlugin(options = {}) {
   };
 }
 
-export function verifySetupEmailCodeRenderer(options = {}) {
+export function verifySetupEmailCodeAuth(options = {}) {
   const stageRoot = options.stageRoot || defaultStageRoot;
   const setupDir = join(stageRoot, 'decidr-setup');
   const manifestPath = join(setupDir, 'manifest.json');
@@ -312,19 +312,18 @@ export function verifySetupEmailCodeRenderer(options = {}) {
 
   const manifest = readJson(manifestPath);
   const rendererPath = manifest.renderers && manifest.renderers.plugin_email_code_auth;
-  if (rendererPath !== 'renderers/plugin-email-code-auth.js') {
-    throw new Error('decidr-setup must declare the plugin_email_code_auth renderer');
+  if (rendererPath) {
+    throw new Error('decidr-setup must not bundle the host-owned plugin_email_code_auth renderer');
   }
-
-  if (!existsSync(join(setupDir, rendererPath))) {
-    throw new Error('decidr-setup is missing renderers/plugin-email-code-auth.js');
+  if (existsSync(join(setupDir, 'renderers', 'plugin-email-code-auth.js'))) {
+    throw new Error('decidr-setup must not include renderers/plugin-email-code-auth.js');
   }
 
   const rendererNames = new Set(
     (manifest.renderer_definitions || []).map((definition) => definition && definition.name),
   );
-  if (!rendererNames.has('plugin_email_code_auth')) {
-    throw new Error('decidr-setup renderer_definitions must include plugin_email_code_auth');
+  if (rendererNames.has('plugin_email_code_auth')) {
+    throw new Error('decidr-setup renderer_definitions must not include plugin_email_code_auth');
   }
 
   const onboardingPath = manifest.renderers && manifest.renderers.decidr_onboarding;
@@ -397,7 +396,7 @@ export function verifyBrandedBundle(options = {}) {
     stageRoot,
     authOrigin: options.authOrigin,
   });
-  verifySetupEmailCodeRenderer({ stageRoot });
+  verifySetupEmailCodeAuth({ stageRoot });
   return found;
 }
 

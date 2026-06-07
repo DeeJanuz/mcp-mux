@@ -8,10 +8,6 @@ var rendererCode = readFileSync(
   join(__dirnameResolved, '../public/renderers/plugin-email-code-auth.js'),
   'utf8',
 ).replace(/\r\n/g, '\n');
-var setupRendererCode = readFileSync(
-  join(__dirnameResolved, '../bundled-plugins/decidr-setup/renderers/plugin-email-code-auth.js'),
-  'utf8',
-).replace(/\r\n/g, '\n');
 var indexHtml = readFileSync(join(__dirnameResolved, '../src/index.html'), 'utf8').replace(/\r\n/g, '\n');
 
 function loadRenderer() {
@@ -44,8 +40,7 @@ beforeEach(function () {
 });
 
 describe('plugin email-code auth renderer', function () {
-  it('ships as a built-in renderer while matching the DecidR setup copy', function () {
-    expect(rendererCode).toBe(setupRendererCode);
+  it('ships as a built-in renderer', function () {
     expect(indexHtml).toContain('<script src="./renderers/plugin-email-code-auth.js"></script>');
   });
 

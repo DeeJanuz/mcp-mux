@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-06-07
+
+### Changed
+- Rebuilt the DecidR-branded installer bundle after manual/codex@installer-pipeline-bootstrap-rerun, staging the latest stable bundled plugin releases.
+
+
 ## [0.2.9] - 2026-06-07
 
 ### Changed

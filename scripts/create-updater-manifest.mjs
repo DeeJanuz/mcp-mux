@@ -16,6 +16,7 @@ const artifactRoot = optionValue('--artifact-root', process.env.ARTIFACT_ROOT ||
 const outputPath = optionValue('--out', process.env.UPDATER_MANIFEST_PATH || 'latest.json');
 const notesPath = optionValue('--notes', process.env.RELEASE_NOTES_PATH || 'release_notes.txt');
 const version = optionValue('--version', process.env.VERSION || '');
+const artifactFlavor = optionValue('--artifact-flavor', process.env.ARTIFACT_FLAVOR || 'generic');
 const repository = optionValue('--repository', process.env.GITHUB_REPOSITORY || '');
 const releaseBaseUrl = optionValue(
   '--release-base-url',
@@ -30,6 +31,10 @@ if (!version) {
 
 if (!releaseBaseUrl) {
   throw new Error('GITHUB_REPOSITORY or RELEASE_BASE_URL is required');
+}
+
+if (!['generic', 'decidr'].includes(artifactFlavor)) {
+  throw new Error(`Unsupported artifact flavor: ${artifactFlavor}`);
 }
 
 function walk(dir) {
@@ -65,24 +70,81 @@ function signatureFor(artifactPath) {
 }
 
 const files = walk(artifactRoot).sort();
+
+function pathSegments(file) {
+  return file.replace(/\\/g, '/').split('/');
+}
+
+function inDirectory(file, directoryName) {
+  return pathSegments(file).includes(directoryName);
+}
+
+function isGenericMacArchive(file) {
+  return inDirectory(file, 'mcpviews-macos-arm64-generic') && file.endsWith('.app.tar.gz');
+}
+
+function isDecidrMacArchive(file) {
+  return (
+    (inDirectory(file, 'mcpviews-macos-arm64-decidr') && file.endsWith('.app.tar.gz')) ||
+    basename(file) === 'DecidR-MCPViews.app.tar.gz'
+  );
+}
+
+function isLegacyMacArchive(file) {
+  return (
+    inDirectory(file, 'mcpviews-macos-arm64') &&
+    !inDirectory(file, 'mcpviews-macos-arm64-decidr') &&
+    file.endsWith('.app.tar.gz')
+  );
+}
+
+function isGenericWindowsArchive(file) {
+  return (
+    inDirectory(file, 'mcpviews-windows-generic') &&
+    (file.endsWith('.exe') || file.endsWith('.msi') || file.endsWith('.zip'))
+  );
+}
+
+function isDecidrWindowsArchive(file) {
+  return (
+    (inDirectory(file, 'mcpviews-windows-decidr') &&
+      (file.endsWith('.exe') || file.endsWith('.msi') || file.endsWith('.zip'))) ||
+    basename(file) === 'DecidR-MCPViews-Windows-setup.exe' ||
+    basename(file) === 'DecidR-MCPViews-Windows.msi'
+  );
+}
+
+function isLegacyWindowsArchive(file) {
+  return (
+    inDirectory(file, 'mcpviews-windows') &&
+    !inDirectory(file, 'mcpviews-windows-decidr') &&
+    (file.endsWith('.exe') || file.endsWith('.msi') || file.endsWith('.zip'))
+  );
+}
+
 const macArchive = firstMatching(
   files,
-  [
-    (file) => file.includes('mcpviews-macos-arm64') && file.endsWith('.app.tar.gz'),
-    (file) => file.endsWith('.app.tar.gz'),
-  ],
+  artifactFlavor === 'decidr'
+    ? [isDecidrMacArchive]
+    : [isGenericMacArchive, isLegacyMacArchive],
   'macOS',
 );
 const windowsArchive = firstMatching(
   files,
-  [
-    (file) => file.includes('mcpviews-windows') && file.endsWith('.exe'),
-    (file) => file.includes('mcpviews-windows') && file.endsWith('.msi'),
-    (file) => file.includes('mcpviews-windows') && file.endsWith('.zip'),
-    (file) => file.endsWith('.exe'),
-    (file) => file.endsWith('.msi'),
-    (file) => file.endsWith('.zip'),
-  ],
+  artifactFlavor === 'decidr'
+    ? [
+        (file) => isDecidrWindowsArchive(file) && file.endsWith('.exe'),
+        (file) => isDecidrWindowsArchive(file) && file.endsWith('.msi'),
+        (file) => isDecidrWindowsArchive(file) && file.endsWith('.zip'),
+      ]
+    : [
+        (file) => isGenericWindowsArchive(file) && file.endsWith('.exe'),
+        (file) => isGenericWindowsArchive(file) && file.endsWith('.msi'),
+        (file) => isGenericWindowsArchive(file) && file.endsWith('.zip'),
+        (file) => isLegacyWindowsArchive(file) && file.endsWith('.exe'),
+        (file) => isLegacyWindowsArchive(file) && file.endsWith('.msi'),
+        (file) => isLegacyWindowsArchive(file) && file.endsWith('.zip'),
+      ],
   'Windows',
 );
 

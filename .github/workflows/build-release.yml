@@ -190,6 +190,12 @@ jobs:
       )
     runs-on: macos-latest
     environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - generic
+          - decidr
     env:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       NOTARIZE_MACOS: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.notarize_macos == 'true' }}
@@ -264,12 +270,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Clear bundled plugins for generic release
+        if: ${{ matrix.flavor == 'generic' }}
+        run: |
+          rm -rf src-tauri/bundled-plugins/release src-tauri/bundled-plugins/mac-dev
+          mkdir -p src-tauri/bundled-plugins
+          touch src-tauri/bundled-plugins/.gitkeep
+
       - name: Stage branded bundled plugins
+        if: ${{ matrix.flavor == 'decidr' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run stage:branded-bundle
 
       - name: Verify branded bundled plugins
+        if: ${{ matrix.flavor == 'decidr' }}
         run: npm run verify:branded-bundle
 
       - name: Import Apple signing certificate
@@ -333,6 +348,7 @@ jobs:
           APPLE_ID: ${{ vars.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          MCPVIEWS_RELEASE_FLAVOR: ${{ matrix.flavor }}
           MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -342,6 +358,19 @@ jobs:
             unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
           fi
           npm run build -- --target aarch64-apple-darwin
+
+      - name: Verify generic macOS bundle excludes bundled plugins
+        if: ${{ matrix.flavor == 'generic' }}
+        run: |
+          set -euo pipefail
+          RESOURCE_ROOT="target/aarch64-apple-darwin/release/bundle/macos/MCPViews.app/Contents/Resources/bundled-plugins"
+          for plugin in decidr ludflow decidr-setup; do
+            if [ -d "$RESOURCE_ROOT" ] && find "$RESOURCE_ROOT" -path "*/${plugin}/manifest.json" -print -quit | grep -q .; then
+              echo "::error::Generic macOS bundle contains preinstalled plugin: ${plugin}"
+              exit 1
+            fi
+          done
+          echo "Generic macOS bundle has no DecidR/Ludflow bundled plugin resources"
 
       - name: Verify updater key embedded
         env:
@@ -422,7 +451,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mcpviews-macos-arm64
+          name: mcpviews-macos-arm64-${{ matrix.flavor }}
           path: |
             target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
             target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
@@ -441,6 +470,12 @@ jobs:
       )
     runs-on: windows-latest
     environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - generic
+          - decidr
     steps:
       - name: Validate updater signing secrets
         shell: bash
@@ -486,13 +521,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Clear bundled plugins for generic release
+        if: ${{ matrix.flavor == 'generic' }}
+        shell: bash
+        run: |
+          rm -rf src-tauri/bundled-plugins/release src-tauri/bundled-plugins/mac-dev
+          mkdir -p src-tauri/bundled-plugins
+          touch src-tauri/bundled-plugins/.gitkeep
+
       - name: Stage branded bundled plugins
+        if: ${{ matrix.flavor == 'decidr' }}
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: npm run stage:branded-bundle
 
       - name: Verify branded bundled plugins
+        if: ${{ matrix.flavor == 'decidr' }}
         shell: bash
         run: npm run verify:branded-bundle
 
@@ -566,10 +611,25 @@ jobs:
 
       - name: Build Tauri app
         env:
+          MCPVIEWS_RELEASE_FLAVOR: ${{ matrix.flavor }}
           MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run build -- --config tauri.windows.release.conf.json
+
+      - name: Verify generic Windows bundle excludes bundled plugins
+        if: ${{ matrix.flavor == 'generic' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESOURCE_ROOT="target/release/bundle/resources/bundled-plugins"
+          for plugin in decidr ludflow decidr-setup; do
+            if [ -d "$RESOURCE_ROOT" ] && find "$RESOURCE_ROOT" -path "*/${plugin}/manifest.json" -print -quit | grep -q .; then
+              echo "::error::Generic Windows bundle contains preinstalled plugin: ${plugin}"
+              exit 1
+            fi
+          done
+          echo "Generic Windows bundle has no DecidR/Ludflow bundled plugin resources"
 
       - name: Verify updater key embedded
         shell: bash
@@ -590,7 +650,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mcpviews-windows
+          name: mcpviews-windows-${{ matrix.flavor }}
           path: |
             target/release/bundle/msi/*.msi
             target/release/bundle/**/*.zip
@@ -637,36 +697,77 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
 
-      - name: Create updater manifest
-        run: node scripts/create-updater-manifest.mjs
-
       - name: Create stable DecidR download aliases
         run: |
           set -euo pipefail
           mkdir -p branded-downloads
 
-          MAC_DMG="$(find mcpviews-macos-arm64 -name '*.dmg' -print | sort | head -n 1 || true)"
+          copy_with_signature() {
+            local source="$1"
+            local target="$2"
+            cp "$source" "$target"
+            if [ -s "${source}.sig" ]; then
+              cp "${source}.sig" "${target}.sig"
+            fi
+          }
+
+          MAC_DMG="$(find mcpviews-macos-arm64-decidr -name '*.dmg' -print | sort | head -n 1 || true)"
           if [ -n "$MAC_DMG" ]; then
-            cp "$MAC_DMG" branded-downloads/DecidR-MCPViews-macOS.dmg
+            copy_with_signature "$MAC_DMG" branded-downloads/DecidR-MCPViews-macOS.dmg
           fi
 
-          WINDOWS_EXE="$(find mcpviews-windows -name '*setup.exe' -print | sort | head -n 1 || true)"
+          MAC_ARCHIVE="$(find mcpviews-macos-arm64-decidr -name '*.app.tar.gz' -print | sort | head -n 1 || true)"
+          if [ -n "$MAC_ARCHIVE" ]; then
+            copy_with_signature "$MAC_ARCHIVE" branded-downloads/DecidR-MCPViews.app.tar.gz
+          fi
+
+          WINDOWS_EXE="$(find mcpviews-windows-decidr -name '*setup.exe' -print | sort | head -n 1 || true)"
           if [ -z "$WINDOWS_EXE" ]; then
-            WINDOWS_EXE="$(find mcpviews-windows -path '*nsis*.exe' -print | sort | head -n 1 || true)"
+            WINDOWS_EXE="$(find mcpviews-windows-decidr -path '*nsis*.exe' -print | sort | head -n 1 || true)"
           fi
           if [ -n "$WINDOWS_EXE" ]; then
-            cp "$WINDOWS_EXE" branded-downloads/DecidR-MCPViews-Windows-setup.exe
+            copy_with_signature "$WINDOWS_EXE" branded-downloads/DecidR-MCPViews-Windows-setup.exe
           fi
 
-          WINDOWS_MSI="$(find mcpviews-windows -name '*.msi' -print | sort | head -n 1 || true)"
+          WINDOWS_MSI="$(find mcpviews-windows-decidr -name '*.msi' -print | sort | head -n 1 || true)"
           if [ -n "$WINDOWS_MSI" ]; then
-            cp "$WINDOWS_MSI" branded-downloads/DecidR-MCPViews-Windows.msi
+            copy_with_signature "$WINDOWS_MSI" branded-downloads/DecidR-MCPViews-Windows.msi
           fi
 
           if [ ! -s branded-downloads/DecidR-MCPViews-macOS.dmg ] && [ ! -s branded-downloads/DecidR-MCPViews-Windows-setup.exe ]; then
             echo "::error::No installer artifacts were available for stable DecidR aliases"
             exit 1
           fi
+
+      - name: Verify release flavors are distinct
+        run: |
+          set -euo pipefail
+
+          compare_hashes() {
+            local generic="$1"
+            local branded="$2"
+            local label="$3"
+            if [ ! -s "$generic" ] || [ ! -s "$branded" ]; then
+              return
+            fi
+            local generic_hash branded_hash
+            generic_hash="$(sha256sum "$generic" | awk '{print $1}')"
+            branded_hash="$(sha256sum "$branded" | awk '{print $1}')"
+            if [ "$generic_hash" = "$branded_hash" ]; then
+              echo "::error::Generic and DecidR ${label} artifacts are byte-identical"
+              exit 1
+            fi
+          }
+
+          GENERIC_MAC_DMG="$(find mcpviews-macos-arm64-generic -name '*.dmg' -print | sort | head -n 1 || true)"
+          GENERIC_WINDOWS_EXE="$(find mcpviews-windows-generic -name '*setup.exe' -print | sort | head -n 1 || true)"
+          compare_hashes "$GENERIC_MAC_DMG" branded-downloads/DecidR-MCPViews-macOS.dmg "macOS installer"
+          compare_hashes "$GENERIC_WINDOWS_EXE" branded-downloads/DecidR-MCPViews-Windows-setup.exe "Windows installer"
+
+      - name: Create updater manifests
+        run: |
+          ARTIFACT_FLAVOR=generic node scripts/create-updater-manifest.mjs --out latest.json
+          ARTIFACT_FLAVOR=decidr node scripts/create-updater-manifest.mjs --artifact-root branded-downloads --out decidr-latest.json
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -675,13 +776,14 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: false
           files: |
-            mcpviews-macos-arm64/**/*.dmg
-            mcpviews-macos-arm64/**/*.app.tar.gz
-            mcpviews-macos-arm64/**/*.sig
-            mcpviews-windows/**/*.msi
-            mcpviews-windows/**/*.exe
-            mcpviews-windows/**/*.zip
-            mcpviews-windows/**/*.sig
+            mcpviews-macos-arm64-generic/**/*.dmg
+            mcpviews-macos-arm64-generic/**/*.app.tar.gz
+            mcpviews-macos-arm64-generic/**/*.sig
+            mcpviews-windows-generic/**/*.msi
+            mcpviews-windows-generic/**/*.exe
+            mcpviews-windows-generic/**/*.zip
+            mcpviews-windows-generic/**/*.sig
             branded-downloads/*
             latest.json
+            decidr-latest.json
           body_path: release_notes.txt

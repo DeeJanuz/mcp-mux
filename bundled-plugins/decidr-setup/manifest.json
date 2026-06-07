@@ -1,6 +1,6 @@
 {
   "name": "decidr-setup",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "First-launch DecidR setup wizard for MCPViews branded distributions",
   "standalone_group": "decidr",
   "standalone_group_label": "DecidR",

@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BUNDLED_HASH_FILE,
   stageBrandedBundledPlugins,
+  stageLocalSetupPlugin,
   verifyBrandedAuthOrigins,
   verifyBrandedBundle,
+  verifySetupEmailCodeRenderer,
 } from '../scripts/stage-branded-bundled-plugins.mjs';
 
 var tempDirs = [];
@@ -52,6 +54,25 @@ function writeLocalPlugin(root, name, version) {
   return pluginDir;
 }
 
+function writeSetupPlugin(root, withEmailCodeRenderer = true, onboardingSource) {
+  var pluginDir = join(root, 'decidr-setup');
+  mkdirSync(join(pluginDir, 'renderers'), { recursive: true });
+  var manifest = pluginManifest('decidr-setup', '0.1.0');
+  manifest.renderers = { decidr_onboarding: 'renderers/decidr-onboarding.js' };
+  manifest.renderer_definitions = [{ name: 'decidr_onboarding' }];
+  if (withEmailCodeRenderer) {
+    manifest.renderers.plugin_email_code_auth = 'renderers/plugin-email-code-auth.js';
+    manifest.renderer_definitions.push({ name: 'plugin_email_code_auth' });
+    writeFileSync(join(pluginDir, 'renderers', 'plugin-email-code-auth.js'), 'window.__renderers = window.__renderers || {};');
+  }
+  writeFileSync(join(pluginDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  writeFileSync(
+    join(pluginDir, 'renderers', 'decidr-onboarding.js'),
+    onboardingSource || 'send_plugin_email_code(); verify_plugin_email_code(); window.__renderers = window.__renderers || {};',
+  );
+  return pluginDir;
+}
+
 function zipPlugin(name, version) {
   var zip = new AdmZip();
   zip.addFile('manifest.json', Buffer.from(JSON.stringify(pluginManifest(name, version), null, 2)));
@@ -79,7 +100,7 @@ describe('stage branded bundled plugins', function () {
   it('stages local setup plus latest stable DecidR and Ludflow ZIP assets', async function () {
     var root = tempDir();
     var stageRoot = join(root, 'stage');
-    var setupPluginDir = writeLocalPlugin(root, 'decidr-setup', '0.1.0');
+    var setupPluginDir = writeSetupPlugin(root);
     var decidrZip = zipPlugin('decidr', '1.0.0');
     var ludflowZip = zipPlugin('ludflow', '2.0.0');
 
@@ -139,11 +160,14 @@ describe('stage branded bundled plugins', function () {
       'decidr v1.0.0',
       'ludflow v2.0.0',
     ]);
+    expect(function () {
+      verifySetupEmailCodeRenderer({ stageRoot: stageRoot });
+    }).not.toThrow();
   });
 
   it('fails when the latest stable release is missing the expected ZIP asset', async function () {
     var root = tempDir();
-    var setupPluginDir = writeLocalPlugin(root, 'decidr-setup', '0.1.0');
+    var setupPluginDir = writeSetupPlugin(root);
     var fetchImpl = vi.fn(function () {
       return Promise.resolve({
         ok: true,
@@ -159,6 +183,34 @@ describe('stage branded bundled plugins', function () {
       fetchImpl: fetchImpl,
       plugins: [{ name: 'decidr', repo: 'DeeJanuz/decidr-plugin', assetName: 'decidr.zip' }],
     })).rejects.toThrow('missing decidr.zip');
+  });
+
+  it('fails branded bundle verification when DecidR setup omits email-code auth renderer', function () {
+    var root = tempDir();
+    var stageRoot = join(root, 'stage');
+    var setupPluginDir = writeSetupPlugin(root, false);
+
+    stageLocalSetupPlugin({ stageRoot: stageRoot, setupPluginDir: setupPluginDir });
+
+    expect(function () {
+      verifySetupEmailCodeRenderer({ stageRoot: stageRoot });
+    }).toThrow('plugin_email_code_auth');
+  });
+
+  it('fails branded bundle verification when DecidR setup starts browser OAuth', function () {
+    var root = tempDir();
+    var stageRoot = join(root, 'stage');
+    var setupPluginDir = writeSetupPlugin(
+      root,
+      true,
+      'send_plugin_email_code(); verify_plugin_email_code(); start_plugin_auth();',
+    );
+
+    stageLocalSetupPlugin({ stageRoot: stageRoot, setupPluginDir: setupPluginDir });
+
+    expect(function () {
+      verifySetupEmailCodeRenderer({ stageRoot: stageRoot });
+    }).toThrow('browser OAuth');
   });
 
   it('fails when bundled DecidR and Ludflow auth origins differ', function () {

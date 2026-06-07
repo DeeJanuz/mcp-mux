@@ -302,6 +302,45 @@ export function stageLocalSetupPlugin(options = {}) {
   };
 }
 
+export function verifySetupEmailCodeRenderer(options = {}) {
+  const stageRoot = options.stageRoot || defaultStageRoot;
+  const setupDir = join(stageRoot, 'decidr-setup');
+  const manifestPath = join(setupDir, 'manifest.json');
+  if (!existsSync(manifestPath)) {
+    throw new Error('Missing decidr-setup manifest');
+  }
+
+  const manifest = readJson(manifestPath);
+  const rendererPath = manifest.renderers && manifest.renderers.plugin_email_code_auth;
+  if (rendererPath !== 'renderers/plugin-email-code-auth.js') {
+    throw new Error('decidr-setup must declare the plugin_email_code_auth renderer');
+  }
+
+  if (!existsSync(join(setupDir, rendererPath))) {
+    throw new Error('decidr-setup is missing renderers/plugin-email-code-auth.js');
+  }
+
+  const rendererNames = new Set(
+    (manifest.renderer_definitions || []).map((definition) => definition && definition.name),
+  );
+  if (!rendererNames.has('plugin_email_code_auth')) {
+    throw new Error('decidr-setup renderer_definitions must include plugin_email_code_auth');
+  }
+
+  const onboardingPath = manifest.renderers && manifest.renderers.decidr_onboarding;
+  if (!onboardingPath || !existsSync(join(setupDir, onboardingPath))) {
+    throw new Error('decidr-setup is missing the decidr_onboarding renderer');
+  }
+
+  const onboardingSource = readFileSync(join(setupDir, onboardingPath), 'utf8');
+  if (!onboardingSource.includes('send_plugin_email_code') || !onboardingSource.includes('verify_plugin_email_code')) {
+    throw new Error('decidr-setup onboarding must use the email-code auth commands');
+  }
+  if (onboardingSource.includes('start_plugin_auth')) {
+    throw new Error('decidr-setup onboarding must not start browser OAuth authentication');
+  }
+}
+
 export async function stageBrandedBundledPlugins(options = {}) {
   const stageRoot = options.stageRoot || defaultStageRoot;
   const workRoot = options.workRoot || join(stageRoot, '.downloads');
@@ -358,6 +397,7 @@ export function verifyBrandedBundle(options = {}) {
     stageRoot,
     authOrigin: options.authOrigin,
   });
+  verifySetupEmailCodeRenderer({ stageRoot });
   return found;
 }
 

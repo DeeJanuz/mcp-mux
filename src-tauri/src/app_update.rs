@@ -10,7 +10,8 @@ const GITHUB_RELEASES_API_URL: &str = "https://api.github.com/repos/DeeJanuz/mcp
 const GITHUB_RELEASE_HOST: &str = "github.com";
 const GITHUB_OWNER: &str = "DeeJanuz";
 const GITHUB_REPO: &str = "mcpviews";
-const UPDATE_MANIFEST_ASSET: &str = "latest.json";
+const GENERIC_UPDATE_MANIFEST_ASSET: &str = "latest.json";
+const DECIDR_UPDATE_MANIFEST_ASSET: &str = "decidr-latest.json";
 const DEV_UPDATE_FLAG: &str = "MCPVIEWS_DEV_UPDATE";
 const DEV_UPDATE_VERSION_ENV: &str = "MCPVIEWS_DEV_UPDATE_VERSION";
 const DEV_UPDATE_MANIFEST_URL: &str = "mcpviews-dev://mock/latest.json";
@@ -227,10 +228,11 @@ fn update_info_from_release(
         return None;
     }
 
+    let update_manifest_asset = update_manifest_asset();
     let update_json_url = release
         .assets
         .iter()
-        .find(|asset| asset.name == UPDATE_MANIFEST_ASSET)
+        .find(|asset| asset.name == update_manifest_asset)
         .map(|asset| asset.browser_download_url.clone())?;
 
     let manual_download = if install_availability.can_install {
@@ -292,11 +294,12 @@ fn manual_download_for_release(
     release: &GitHubRelease,
     platform: ManualDownloadPlatform,
 ) -> ManualDownload {
+    let flavor = release_flavor();
     let asset = match platform {
         ManualDownloadPlatform::MacOs => release
             .assets
             .iter()
-            .find(|asset| asset.name.ends_with(".dmg"))
+            .find(|asset| matches_macos_download_asset(&asset.name, flavor))
             .map(|asset| ManualDownload {
                 url: asset.browser_download_url.clone(),
                 label: "Download macOS installer".to_string(),
@@ -304,12 +307,12 @@ fn manual_download_for_release(
         ManualDownloadPlatform::Windows => release
             .assets
             .iter()
-            .find(|asset| asset.name.ends_with(".exe"))
+            .find(|asset| matches_windows_setup_download_asset(&asset.name, flavor))
             .or_else(|| {
                 release
                     .assets
                     .iter()
-                    .find(|asset| asset.name.ends_with(".msi"))
+                    .find(|asset| matches_windows_msi_download_asset(&asset.name, flavor))
             })
             .map(|asset| ManualDownload {
                 url: asset.browser_download_url.clone(),
@@ -322,6 +325,52 @@ fn manual_download_for_release(
         url: release.html_url.clone(),
         label: "Open release page".to_string(),
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReleaseFlavor {
+    Generic,
+    Decidr,
+}
+
+fn release_flavor() -> ReleaseFlavor {
+    match option_env!("MCPVIEWS_RELEASE_FLAVOR")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "decidr" => ReleaseFlavor::Decidr,
+        _ => ReleaseFlavor::Generic,
+    }
+}
+
+fn update_manifest_asset() -> &'static str {
+    match release_flavor() {
+        ReleaseFlavor::Generic => GENERIC_UPDATE_MANIFEST_ASSET,
+        ReleaseFlavor::Decidr => DECIDR_UPDATE_MANIFEST_ASSET,
+    }
+}
+
+fn matches_macos_download_asset(name: &str, flavor: ReleaseFlavor) -> bool {
+    match flavor {
+        ReleaseFlavor::Generic => name.starts_with("MCPViews_") && name.ends_with("_aarch64.dmg"),
+        ReleaseFlavor::Decidr => name == "DecidR-MCPViews-macOS.dmg",
+    }
+}
+
+fn matches_windows_setup_download_asset(name: &str, flavor: ReleaseFlavor) -> bool {
+    match flavor {
+        ReleaseFlavor::Generic => name.starts_with("MCPViews_") && name.ends_with("_x64-setup.exe"),
+        ReleaseFlavor::Decidr => name == "DecidR-MCPViews-Windows-setup.exe",
+    }
+}
+
+fn matches_windows_msi_download_asset(name: &str, flavor: ReleaseFlavor) -> bool {
+    match flavor {
+        ReleaseFlavor::Generic => name.starts_with("MCPViews_") && name.ends_with("_x64_en-US.msi"),
+        ReleaseFlavor::Decidr => name == "DecidR-MCPViews-Windows.msi",
+    }
 }
 
 fn dev_update_enabled() -> bool {
@@ -452,10 +501,10 @@ fn validate_update_manifest_url(value: &str) -> Result<url::Url, String> {
         || segments[1] != GITHUB_REPO
         || segments[2] != "releases"
         || segments[3] != "download"
-        || segments.last().copied() != Some(UPDATE_MANIFEST_ASSET)
+        || segments.last().copied() != Some(update_manifest_asset())
     {
         return Err(
-            "Update manifests must be the latest.json asset from an MCPViews GitHub release."
+            "Update manifests must be the expected flavor-specific latest asset from an MCPViews GitHub release."
                 .to_string(),
         );
     }
@@ -516,6 +565,7 @@ mod tests {
                 false,
                 vec![
                     "latest.json",
+                    "DecidR-MCPViews-macOS.dmg",
                     "MCPViews.app.tar.gz",
                     "MCPViews_0.2.7_aarch64.dmg",
                 ],
@@ -539,6 +589,60 @@ mod tests {
             selected.install_unavailable_reason.as_deref(),
             Some("missing updater key")
         );
+    }
+
+    #[test]
+    fn generic_manual_download_ignores_branded_aliases() {
+        let selected = select_update_with_install_availability(
+            vec![release(
+                "v0.2.7",
+                false,
+                vec![
+                    "latest.json",
+                    "DecidR-MCPViews-macOS.dmg",
+                    "DecidR-MCPViews-Windows-setup.exe",
+                    "MCPViews_0.2.7_x64-setup.exe",
+                    "MCPViews_0.2.7_aarch64.dmg",
+                ],
+            )],
+            "0.2.6",
+            InstallAvailability::unavailable("missing updater key"),
+            ManualDownloadPlatform::MacOs,
+        )
+        .expect("expected an update");
+
+        assert_eq!(
+            selected.manual_download_url.as_deref(),
+            Some("https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.7/MCPViews_0.2.7_aarch64.dmg")
+        );
+    }
+
+    #[test]
+    fn recognizes_flavor_specific_download_assets() {
+        assert!(matches_macos_download_asset(
+            "MCPViews_0.2.7_aarch64.dmg",
+            ReleaseFlavor::Generic
+        ));
+        assert!(!matches_macos_download_asset(
+            "DecidR-MCPViews-macOS.dmg",
+            ReleaseFlavor::Generic
+        ));
+        assert!(matches_macos_download_asset(
+            "DecidR-MCPViews-macOS.dmg",
+            ReleaseFlavor::Decidr
+        ));
+        assert!(matches_windows_setup_download_asset(
+            "MCPViews_0.2.7_x64-setup.exe",
+            ReleaseFlavor::Generic
+        ));
+        assert!(!matches_windows_setup_download_asset(
+            "DecidR-MCPViews-Windows-setup.exe",
+            ReleaseFlavor::Generic
+        ));
+        assert!(matches_windows_setup_download_asset(
+            "DecidR-MCPViews-Windows-setup.exe",
+            ReleaseFlavor::Decidr
+        ));
     }
 
     #[test]

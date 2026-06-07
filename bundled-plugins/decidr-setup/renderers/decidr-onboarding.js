@@ -475,12 +475,51 @@
       if (!results[0] || !results[1]) {
         throw new Error('DecidR setup is not fully authenticated for the selected organization.');
       }
-      storeValue(AUTH_ORG_KEY, orgId);
-      renderAgentSetup(root, state);
+      return ensureDecidrOnboarding(root, results[0]).then(function () {
+        storeValue(AUTH_ORG_KEY, orgId);
+        renderAgentSetup(root, state);
+      });
     }).catch(function (error) {
       state.organizationId = null;
       renderLoginForm(root, state);
       setStatus(root, error.message || String(error), 'error');
+    });
+  }
+
+  function decidrApiBaseUrl() {
+    if (window.__mcpviews_plugins && window.__mcpviews_plugins.decidr && window.__mcpviews_plugins.decidr.mcp_url) {
+      return window.__mcpviews_plugins.decidr.mcp_url.replace(/\/api\/mcp\/?$/, '/api').replace(/\/$/, '');
+    }
+    return 'https://app.decidrmcp.com/api';
+  }
+
+  function parseApiError(response) {
+    return response.json().then(function (payload) {
+      if (payload && payload.error) return payload.error;
+      return response.statusText || 'Request failed';
+    }).catch(function () {
+      return response.statusText || 'Request failed';
+    });
+  }
+
+  function ensureDecidrOnboarding(root, authHeader) {
+    setStatus(root, 'Preparing your DecidR starter workspace...');
+    return fetch(decidrApiBaseUrl() + '/onboarding/ensure', {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        authorization: authHeader,
+      },
+      cache: 'no-store',
+    }).then(function (response) {
+      if (!response.ok) {
+        return parseApiError(response).then(function (message) {
+          throw new Error(message || 'Failed to prepare DecidR onboarding.');
+        });
+      }
+      return response.json().catch(function () {
+        return { seeded: false };
+      });
     });
   }
 

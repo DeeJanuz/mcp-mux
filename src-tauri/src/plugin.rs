@@ -82,6 +82,7 @@ pub(crate) struct PluginToolResult {
     pub auth_header: Option<String>,
     pub unprefixed_name: String,
     pub oauth_info: Option<OAuthRefreshInfo>,
+    pub supports_email_code_auth: bool,
 }
 
 /// Attempt OAuth token refresh, returning "Bearer {token}" on success.
@@ -281,6 +282,11 @@ impl PluginRegistry {
             info.org_id = org_id.clone();
             info
         });
+        let supports_email_code_auth = mcp
+            .auth
+            .as_ref()
+            .map(|auth| auth.supports_email_code())
+            .unwrap_or(false);
 
         Some(PluginToolResult {
             plugin_name: manifest.name.clone(),
@@ -288,6 +294,7 @@ impl PluginRegistry {
             auth_header: auth,
             unprefixed_name: unprefixed.to_string(),
             oauth_info,
+            supports_email_code_auth,
         })
     }
 
@@ -569,7 +576,7 @@ fn extract_oauth_refresh_info(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcpviews_shared::{PluginAuth, PluginMcpConfig};
+    use mcpviews_shared::{PluginAuth, PluginEmailCodeAuth, PluginMcpConfig};
 
     fn test_manifest(name: &str) -> PluginManifest {
         crate::test_utils::test_manifest(name)
@@ -625,5 +632,40 @@ mod tests {
             PluginAuth::Bearer { token_env } => assert_eq!(token_env, "TEST_TOKEN"),
             _ => panic!("Expected Bearer auth"),
         }
+    }
+
+    #[test]
+    fn test_find_plugin_tool_marks_email_code_auth_support() {
+        let (mut registry, _dir) = test_registry();
+        let mut manifest = test_manifest("email-code-plugin");
+        manifest.mcp = Some(PluginMcpConfig {
+            url: "http://localhost:8080/api/mcp".into(),
+            auth: Some(PluginAuth::OAuth {
+                client_id: Some("client123".into()),
+                auth_url: "https://example.com/auth".into(),
+                token_url: "https://example.com/token".into(),
+                scopes: vec![],
+                email_code_auth: Some(PluginEmailCodeAuth {
+                    enabled: true,
+                    send_path: "/send".into(),
+                    verify_path: "/verify".into(),
+                }),
+            }),
+            tool_prefix: "ec__".into(),
+        });
+        registry.add_plugin(manifest).unwrap();
+        registry
+            .tool_cache
+            .apply(0, "ec__", vec![serde_json::json!({ "name": "ping" })]);
+
+        let result = registry
+            .find_plugin_for_tool_with_args(
+                "ec__ping",
+                &serde_json::json!({ "organization_id": "org_1" }),
+            )
+            .unwrap();
+
+        assert!(result.supports_email_code_auth);
+        assert_eq!(result.oauth_info.unwrap().org_id.as_deref(), Some("org_1"));
     }
 }

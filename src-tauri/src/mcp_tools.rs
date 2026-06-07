@@ -59,6 +59,37 @@ pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
     tools
 }
 
+fn is_plugin_auth_http_error(error: &str) -> bool {
+    error.contains("HTTP 401") || error.contains("HTTP 403")
+}
+
+async fn open_plugin_email_auth_for_failure(
+    info: &crate::plugin::PluginToolResult,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let organization_id = info
+        .oauth_info
+        .as_ref()
+        .and_then(|oauth| oauth.org_id.as_deref());
+    let session_id = crate::mcp_registry_tools::open_plugin_email_code_session(
+        &info.plugin_name,
+        organization_id,
+        state,
+    )
+    .await?;
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": format!(
+                "Plugin '{}' needs authentication or a refreshed organization token. Opened email-code authentication in MCPViews session '{}'.",
+                info.plugin_name,
+                session_id
+            )
+        }]
+    }))
+}
+
 /// Dispatch a tool call (built-in first, then plugins)
 pub async fn call_tool(
     name: &str,
@@ -98,31 +129,48 @@ pub async fn call_tool(
                     }
                     Ok(val)
                 }
-                Err(ref e) if e.contains("HTTP 401") => {
-                    if let Some(ref oauth) = info.oauth_info {
-                        if let Some(new_header) =
-                            crate::plugin::force_refresh_oauth(oauth, &client).await
-                        {
-                            let mut retry = plugin_proxy::proxy_plugin_tool_call(
-                                &client,
-                                &info.mcp_url,
-                                Some(&new_header),
-                                &info.unprefixed_name,
-                                &arguments,
-                            )
-                            .await?;
-                            if info.unprefixed_name == "list_organizations" {
-                                plugin_proxy::enrich_list_organizations(
-                                    &mut retry,
-                                    &info.plugin_name,
-                                );
+                Err(e) if is_plugin_auth_http_error(&e) => {
+                    if e.contains("HTTP 401") {
+                        if let Some(ref oauth) = info.oauth_info {
+                            if let Some(new_header) =
+                                crate::plugin::force_refresh_oauth(oauth, &client).await
+                            {
+                                let retry_result = plugin_proxy::proxy_plugin_tool_call(
+                                    &client,
+                                    &info.mcp_url,
+                                    Some(&new_header),
+                                    &info.unprefixed_name,
+                                    &arguments,
+                                )
+                                .await;
+                                match retry_result {
+                                    Ok(mut retry) => {
+                                        if info.unprefixed_name == "list_organizations" {
+                                            plugin_proxy::enrich_list_organizations(
+                                                &mut retry,
+                                                &info.plugin_name,
+                                            );
+                                        }
+                                        return Ok(retry);
+                                    }
+                                    Err(retry_error)
+                                        if is_plugin_auth_http_error(&retry_error)
+                                            && info.supports_email_code_auth =>
+                                    {
+                                        return open_plugin_email_auth_for_failure(&info, state)
+                                            .await;
+                                    }
+                                    Err(retry_error) => return Err(retry_error),
+                                }
                             }
-                            return Ok(retry);
                         }
                     }
-                    result
+                    if info.supports_email_code_auth {
+                        return open_plugin_email_auth_for_failure(&info, state).await;
+                    }
+                    Err(e)
                 }
-                Err(_) => result,
+                Err(e) => Err(e),
             }
         }
         None => Err(format!("Unknown tool: {}", name)),
@@ -3665,6 +3713,16 @@ mod tests {
     use super::*;
     use crate::test_utils::test_app_state;
     use mcpviews_shared::{PluginAuth, PluginManifest, PluginMcpConfig};
+
+    #[test]
+    fn test_plugin_auth_http_error_detector_includes_permission_failures() {
+        assert!(is_plugin_auth_http_error("Plugin returned HTTP 401"));
+        assert!(is_plugin_auth_http_error("Plugin returned HTTP 403"));
+        assert!(!is_plugin_auth_http_error("Plugin returned HTTP 500"));
+        assert!(!is_plugin_auth_http_error(
+            "Plugin error: Forbidden by workspace role"
+        ));
+    }
 
     fn make_manifest(
         name: &str,

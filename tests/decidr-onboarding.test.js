@@ -91,7 +91,24 @@ beforeEach(function () {
   document.body.innerHTML = '<div id="root"></div>';
   installLocalStorage();
   localStorage.clear();
+  var fetchMock = vi.fn(function () {
+    return Promise.resolve({
+      ok: true,
+      json: function () { return Promise.resolve({ seeded: true }); },
+    });
+  });
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    value: fetchMock,
+  });
+  Object.defineProperty(window, 'fetch', {
+    configurable: true,
+    value: fetchMock,
+  });
   window.__renderers = {};
+  window.__mcpviews_plugins = {
+    decidr: { mcp_url: 'https://app.decidrmcp.com/api/mcp' },
+  };
   delete window.__companionUtils;
   delete window.__TAURI__;
 });
@@ -145,6 +162,15 @@ describe('decidr onboarding renderer', function () {
       email: 'daenon@example.com',
     });
     expect(invoke).not.toHaveBeenCalledWith('start_plugin_auth', expect.anything());
+    expect(fetch).toHaveBeenCalledWith(
+      'https://app.decidrmcp.com/api/onboarding/ensure',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          authorization: 'Bearer decidr-token',
+        }),
+      })
+    );
     expect(localStorage.getItem('decidr-onboarding:auth-org-id')).toBe('org_123');
     expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBeNull();
     expect(document.body.textContent).toContain('Configure your AI agent');
@@ -288,6 +314,35 @@ describe('decidr onboarding renderer', function () {
     expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
       contentType: 'decidr_dashboard',
     }));
+  });
+
+  it('keeps the user on login when the DecidR starter seed fails', async function () {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      statusText: 'Internal Server Error',
+      json: function () { return Promise.resolve({ error: 'Failed to prepare starter workspace' }); },
+    });
+    var invoke = baseInvoke({
+      verify_plugin_email_code: function () {
+        return Promise.resolve({
+          status: true,
+          user_exists: true,
+          organization_id: 'org_123',
+          access_token: 'lf_mcp_oauth_token',
+        });
+      },
+    });
+    window.__TAURI__ = { core: { invoke } };
+
+    loadRenderer();
+    window.__renderers.decidr_onboarding(document.getElementById('root'), {});
+    await flushPromises();
+
+    await enterEmailAndCode();
+
+    expect(localStorage.getItem('decidr-onboarding:auth-org-id')).toBeNull();
+    expect(document.body.textContent).toContain('Failed to prepare starter workspace');
+    expect(document.body.textContent).not.toContain('Configure your AI agent');
   });
 
   it('warns before creating an organization that matches an existing available organization', async function () {

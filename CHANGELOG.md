@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.16] - 2026-06-07
+
 ### Changed
 - DecidR Setup no longer bundles its own copy of the generic `plugin_email_code_auth` renderer; the renderer is provided by MCPViews core, and branded bundle verification now rejects duplicate setup copies.
 

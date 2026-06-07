@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-06-07
+
 ### Added
 - DecidR-branded bundle support now stages release plugin assets for `decidr` and `ludflow`, bundles a first-party DecidR Setup renderer, verifies bundled plugin hashes, and publishes stable macOS/Windows alias artifacts for DecidR-facing downloads.
 - The DecidR Setup renderer now supports native 6-digit email-code authentication, organization selection/creation, and shared DecidR/Ludflow token provisioning without collecting passwords or raw OAuth tokens in renderer code.

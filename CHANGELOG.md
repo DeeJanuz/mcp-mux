@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.15] - 2026-06-07
+
 ### Fixed
 - Generic MCPViews now ships the built-in `plugin_email_code_auth` renderer, so installed OAuth plugins with six-digit email-code auth can open the in-app sign-in screen without requiring the DecidR Setup bundle.
 

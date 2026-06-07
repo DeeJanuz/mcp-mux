@@ -211,6 +211,59 @@ describe('decidr onboarding renderer', function () {
     expect(document.body.textContent).not.toContain('Ludflow');
   });
 
+  it('lets an existing user create another organization from the organization picker', async function () {
+    var verifyCount = 0;
+    var invoke = baseInvoke({
+      verify_plugin_email_code: function (args) {
+        verifyCount += 1;
+        if (verifyCount === 1) {
+          return Promise.resolve({
+            status: true,
+            user_exists: true,
+            requires_organization_selection: true,
+            organizations: [{ id: 'org_123', name: 'Northstar' }],
+          });
+        }
+        expect(args).toEqual({
+          pluginName: 'decidr',
+          email: 'daenon@example.com',
+          code: '123456',
+          organizationName: 'Acme Decisions',
+        });
+        return Promise.resolve({
+          status: true,
+          user_exists: true,
+          organization_id: 'org_new',
+          access_token: 'lf_mcp_oauth_token',
+          organizations: [
+            { id: 'org_123', name: 'Northstar' },
+            { id: 'org_new', name: 'Acme Decisions' },
+          ],
+        });
+      },
+    });
+    window.__TAURI__ = { core: { invoke } };
+
+    loadRenderer();
+    window.__renderers.decidr_onboarding(document.getElementById('root'), {});
+    await flushPromises();
+
+    await enterEmailAndCode();
+    var actions = document.querySelector('.decidr-setup-org-actions');
+    expect(actions).toBeTruthy();
+    expect(actions.contains(textButton('Create organization'))).toBe(true);
+
+    textButton('Create organization').click();
+    await flushPromises();
+    inputByPlaceholder('Organization name').value = 'Acme Decisions';
+    textButton('Create organization').click();
+    await flushPromises();
+
+    expect(localStorage.getItem('decidr-onboarding:auth-org-id')).toBe('org_new');
+    expect(document.body.textContent).toContain('Configure your AI agent');
+    expect(document.body.textContent).not.toContain('Choose the organization');
+  });
+
   it('does not complete onboarding until the user confirms agent setup steps', async function () {
     localStorage.setItem('decidr-onboarding:auth-org-id', 'org_123');
     var invoke = baseInvoke();

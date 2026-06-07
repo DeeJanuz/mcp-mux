@@ -205,6 +205,7 @@
       '.decidr-setup-orgs{display:grid;gap:8px;margin-top:16px;}',
       '.decidr-setup-org{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--decidr-setup-border);border-radius:6px;padding:12px;background:var(--decidr-setup-surface-subtle);}',
       '.decidr-setup-org strong{font-size:14px;}',
+      '.decidr-setup-org-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;}',
       '.decidr-setup-status{min-height:22px;margin-top:14px;font-size:13px;color:var(--text-secondary,#4b5563);}',
       '.decidr-setup-status.error{color:var(--decidr-setup-error-text);}',
       '.decidr-setup-status.success{color:var(--decidr-setup-success-text);}',
@@ -373,6 +374,13 @@
       var organizations = organizationRows(payload);
       if (organizations.length) state.organizations = organizations;
 
+      var orgId = payloadField(payload, 'organization_id', 'organizationId');
+      if (orgId) {
+        state.organizationId = orgId;
+        markStep(root, 'org', true);
+        return verifySharedAuth(root, state);
+      }
+
       if (payloadFlag(payload, 'requires_organization', 'requiresOrganization')) {
         renderNewOrganizationForm(root, state);
         return;
@@ -384,13 +392,7 @@
         return;
       }
 
-      var orgId = payloadField(payload, 'organization_id', 'organizationId');
-      if (!orgId) {
-        throw new Error('DecidR did not return an organization ID.');
-      }
-      state.organizationId = orgId;
-      markStep(root, 'org', true);
-      return verifySharedAuth(root, state);
+      throw new Error('DecidR did not return an organization ID.');
     }).catch(function (error) {
       setStatus(root, error.message || String(error), 'error');
     });
@@ -423,6 +425,13 @@
       renderNewOrganizationForm(root, state);
       return;
     }
+
+    var actions = document.createElement('div');
+    actions.className = 'decidr-setup-org-actions';
+    actions.appendChild(button('Create organization', 'decidr-setup-button', function () {
+      renderNewOrganizationForm(root, state);
+    }));
+    body.appendChild(actions);
 
     setStatus(root, 'Choose the organization DecidR should use by default.');
   }

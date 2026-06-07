@@ -84,6 +84,7 @@
       '.plugin-code-auth-orgs{display:grid;gap:8px;margin-top:16px;}',
       '.plugin-code-auth-org{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--pca-border);border-radius:6px;background:var(--pca-soft);padding:12px;}',
       '.plugin-code-auth-org strong{font-size:14px;}',
+      '.plugin-code-auth-org-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;}',
       '.plugin-code-auth-status{min-height:22px;margin-top:14px;font-size:13px;color:var(--text-secondary,#4b5563);}',
       '.plugin-code-auth-status.error{color:var(--pca-error);}',
       '.plugin-code-auth-status.success{color:var(--pca-success);}',
@@ -219,9 +220,12 @@
       list.appendChild(row);
     });
     body.appendChild(list);
-    body.appendChild(button('Create organization', 'plugin-code-auth-button', function () {
+    var actions = document.createElement('div');
+    actions.className = 'plugin-code-auth-org-actions';
+    actions.appendChild(button('Create organization', 'plugin-code-auth-button', function () {
       renderNewOrganizationForm(root, state);
     }));
+    body.appendChild(actions);
     setStatus(root, '');
   }
 

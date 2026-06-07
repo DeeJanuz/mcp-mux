@@ -86,4 +86,67 @@ describe('plugin email-code auth renderer', function () {
     expect(document.body.textContent).toContain('DecidR is connected');
     expect(invoke).not.toHaveBeenCalledWith('start_plugin_auth', expect.anything());
   });
+
+  it('spaces the create organization action below organization selection', async function () {
+    var verifyCount = 0;
+    var invoke = vi.fn(function (command, args) {
+      if (command === 'send_plugin_email_code') return Promise.resolve({ status: true });
+      if (command === 'verify_plugin_email_code') {
+        verifyCount += 1;
+        if (verifyCount === 1) {
+          expect(args).toEqual({
+            pluginName: 'decidr',
+            email: 'daenon@example.com',
+            code: '123456',
+            organizationId: null,
+            organizationName: null,
+          });
+          return Promise.resolve({
+            status: true,
+            requires_organization_selection: true,
+            organizations: [{ id: 'org_123', name: 'Northstar', slug: 'northstar' }],
+          });
+        }
+        expect(args).toEqual({
+          pluginName: 'decidr',
+          email: 'daenon@example.com',
+          code: '123456',
+          organizationId: null,
+          organizationName: 'Acme Decisions',
+        });
+        return Promise.resolve({
+          status: true,
+          authenticated: true,
+          organization_id: 'org_new',
+        });
+      }
+      return Promise.resolve(null);
+    });
+    window.__TAURI__ = { core: { invoke: invoke } };
+
+    loadRenderer();
+    window.__renderers.plugin_email_code_auth(document.getElementById('root'), {
+      plugin_name: 'decidr',
+      plugin_label: 'DecidR',
+    });
+
+    inputByPlaceholder('you@example.com').value = 'daenon@example.com';
+    textButton('Send code').click();
+    await flushPromises();
+    inputByPlaceholder('000000').value = '123456';
+    textButton('Verify').click();
+    await flushPromises();
+
+    var actions = document.querySelector('.plugin-code-auth-org-actions');
+    expect(actions).toBeTruthy();
+    expect(actions.contains(textButton('Create organization'))).toBe(true);
+
+    textButton('Create organization').click();
+    await flushPromises();
+    inputByPlaceholder('Organization name').value = 'Acme Decisions';
+    textButton('Create organization').click();
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('DecidR is connected');
+  });
 });

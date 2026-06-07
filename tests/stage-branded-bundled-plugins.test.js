@@ -2,15 +2,15 @@ import AdmZip from 'adm-zip';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-  BUNDLED_HASH_FILE,
-  stageBrandedBundledPlugins,
-  stageLocalSetupPlugin,
-  verifyBrandedAuthOrigins,
-  verifyBrandedBundle,
-  verifySetupEmailCodeRenderer,
-} from '../scripts/stage-branded-bundled-plugins.mjs';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+
+var BUNDLED_HASH_FILE;
+var stageBrandedBundledPlugins;
+var stageLocalSetupPlugin;
+var verifyBrandedAuthOrigins;
+var verifyBrandedBundle;
+var verifySetupEmailCodeRenderer;
+var describeIfScriptImportSupported = process.platform === 'win32' ? describe.skip : describe;
 
 var tempDirs = [];
 
@@ -96,7 +96,18 @@ afterEach(function () {
   tempDirs = [];
 });
 
-describe('stage branded bundled plugins', function () {
+beforeAll(async function () {
+  if (process.platform === 'win32') return;
+  var helpers = await import('../scripts/stage-branded-bundled-plugins.mjs');
+  BUNDLED_HASH_FILE = helpers.BUNDLED_HASH_FILE;
+  stageBrandedBundledPlugins = helpers.stageBrandedBundledPlugins;
+  stageLocalSetupPlugin = helpers.stageLocalSetupPlugin;
+  verifyBrandedAuthOrigins = helpers.verifyBrandedAuthOrigins;
+  verifyBrandedBundle = helpers.verifyBrandedBundle;
+  verifySetupEmailCodeRenderer = helpers.verifySetupEmailCodeRenderer;
+});
+
+describeIfScriptImportSupported('stage branded bundled plugins', function () {
   it('stages local setup plus latest stable DecidR and Ludflow ZIP assets', async function () {
     var root = tempDir();
     var stageRoot = join(root, 'stage');

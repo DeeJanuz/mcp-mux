@@ -1014,7 +1014,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "16",
+  "rules_version": "18",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -1058,15 +1058,15 @@ sequenceDiagram
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
   "rules_update": {
-    "current_version": "17",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 17; run mcpviews_setup to refresh stale persisted rules because init_session is slim..."
+    "current_version": "18",
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 18; run mcpviews_setup to refresh stale persisted rules because init_session is slim..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 17 -->`) so agents can detect when persisted rules are stale. Because `init_session` is intentionally slim and returns only built-in rules, the `rules_update` object tells agents to run `mcpviews_setup` before refreshing persisted rules, and to use `get_plugin_docs` for plugin-specific details during a task. Agents should refresh an existing MCPViews rules section when installed or updated plugins add rule details missing from the persisted rules, without appending duplicate MCPViews sections.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 18 -->`) so agents can detect when persisted rules are stale. Because `init_session` is intentionally slim and returns only built-in rules, the `rules_update` object tells agents to run `mcpviews_setup` before refreshing persisted rules, and to use `get_plugin_docs` for plugin-specific details during a task. Agents should refresh an existing MCPViews rules section when installed or updated plugins add rule details missing from the persisted rules, without appending duplicate MCPViews sections.
 
 The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
@@ -1278,7 +1278,7 @@ Setup or refresh MCPViews agent rules. Returns instructions for persisting a rul
 ```json
 {
   "rules": [ ... ],
-  "rules_version": "16",
+  "rules_version": "18",
   "plugin_status": [ ... ],
   "setup_questions": [ ... ],
   "setup_question_instructions": "If setup_questions is non-empty, ask the user each setup question while configuring MCPViews...",
@@ -1287,6 +1287,13 @@ Setup or refresh MCPViews agent rules. Returns instructions for persisting a rul
   "rules_update": { ... }
 }
 ```
+
+`setup_questions` includes a built-in `mcpviews-core` group before installed plugin questions. The core group asks whether to persist Gronk Speak output compression rules and, if enabled, which nonpublic outputs may use them:
+
+- `mcpviews_gronk_speak_mode`: `off` (default), `lite`, `full`, or `ultra`
+- `mcpviews_gronk_speak_scope`: `chat_status_only` (default), `internal_artifacts`, or `all_nonpublic`
+
+Agents must persist only the selected option's compact `persisted_rule` using `persist_as_rule_name`, and must not persist unselected Gronk Speak options. The persisted Gronk rules exclude public-facing artifacts by default and preserve commands, paths, citations, warnings, code, JSON, schema names, and test results.
 
 ## MCP Prompts
 

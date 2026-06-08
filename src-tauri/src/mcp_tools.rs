@@ -15,7 +15,7 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "17"; // Bump when built-in rules change
+const RULES_VERSION: &str = "18"; // Bump when built-in rules change
 const RULES_REFRESH_INSTRUCTION: &str = "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules. If `mcpviews_setup` returns `setup_questions`, ask the user those questions during setup and persist only the selected option's compact `persisted_rule`, using `persist_as_rule_name` when present.";
 
 /// Return all tool definitions (built-in + plugin tools)
@@ -2224,22 +2224,90 @@ pub(crate) fn collect_rules(
     rules
 }
 
+fn core_setup_question_group() -> Value {
+    serde_json::json!({
+        "plugin": "mcpviews-core",
+        "questions": [
+            {
+                "id": "mcpviews_gronk_speak_mode",
+                "question": "Enable Gronk Speak for MCPViews setup-persisted agent output style?",
+                "description": "Choose the compression level for allowed outputs. Gronk Speak is direct language that cuts filler while preserving required facts.",
+                "default_value": "off",
+                "persist_as_rule_name": "mcpviews_gronk_speak_mode",
+                "options": [
+                    {
+                        "value": "off",
+                        "label": "Off",
+                        "description": "Use normal assistant style unless the user explicitly asks for Gronk Speak.",
+                        "persisted_rule": "MCPViews Gronk Speak mode is off by default. Use normal assistant style unless the user explicitly asks for Gronk Speak."
+                    },
+                    {
+                        "value": "lite",
+                        "label": "Lite",
+                        "description": "Use short direct technical English; remove filler, hedging, preambles, and repeated summaries.",
+                        "persisted_rule": "MCPViews Gronk Speak mode is lite. Where the selected Gronk scope allows it, use short direct technical English; cut filler, hedging, preambles, and repeated summaries while preserving required facts."
+                    },
+                    {
+                        "value": "full",
+                        "label": "Full",
+                        "description": "Use compressed fragments, drop articles/connective fluff, and use bullets or -> for cause/effect.",
+                        "persisted_rule": "MCPViews Gronk Speak mode is full. Where the selected Gronk scope allows it, use compressed fragments, drop articles and connective fluff, prefer bullets, and use -> for cause/effect while preserving required facts."
+                    },
+                    {
+                        "value": "ultra",
+                        "label": "Ultra",
+                        "description": "Use maximum compression with terse fragments and obvious abbreviations only when clarity survives.",
+                        "persisted_rule": "MCPViews Gronk Speak mode is ultra. Where the selected Gronk scope allows it, use maximum compression: terse fragments and obvious abbreviations only when clarity survives. Never sacrifice correctness or required facts."
+                    }
+                ]
+            },
+            {
+                "id": "mcpviews_gronk_speak_scope",
+                "question": "Where should Gronk Speak apply when the mode is enabled?",
+                "description": "Choose which nonpublic outputs may use Gronk compression.",
+                "default_value": "chat_status_only",
+                "persist_as_rule_name": "mcpviews_gronk_speak_scope",
+                "options": [
+                    {
+                        "value": "chat_status_only",
+                        "label": "Chat/status only",
+                        "description": "Apply only to assistant chat responses and progress updates.",
+                        "persisted_rule": "MCPViews Gronk Speak scope is chat_status_only. When Gronk Speak mode is enabled, apply it only to assistant chat responses and progress updates. Never apply by default to public-facing artifacts: websites, emails, customer docs, PR descriptions/comments, published Ludflow docs, legal/medical/financial guidance, or user-facing copy. Preserve commands, file paths, line refs, citations, error text, warnings, uncertainty, API names, schema fields, code, JSON, and test results. User style instructions, renderer payload requirements, safety, and correctness outrank compression. Do not promise hidden reasoning-token savings; Gronk Speak mainly targets visible output and persisted context size."
+                    },
+                    {
+                        "value": "internal_artifacts",
+                        "label": "Internal artifacts",
+                        "description": "Apply to chat/status plus private plans, specs, incident notes, and research docs.",
+                        "persisted_rule": "MCPViews Gronk Speak scope is internal_artifacts. When Gronk Speak mode is enabled, apply it to assistant chat responses, progress updates, and private/internal plans, specs, incident notes, and research docs. Never apply by default to public-facing artifacts: websites, emails, customer docs, PR descriptions/comments, published Ludflow docs, legal/medical/financial guidance, or user-facing copy. Preserve commands, file paths, line refs, citations, error text, warnings, uncertainty, API names, schema fields, code, JSON, and test results. User style instructions, renderer payload requirements, safety, and correctness outrank compression. Do not promise hidden reasoning-token savings; Gronk Speak mainly targets visible output and persisted context size."
+                    },
+                    {
+                        "value": "all_nonpublic",
+                        "label": "All nonpublic",
+                        "description": "Apply to any nonpublic output unless the user asks for polished prose.",
+                        "persisted_rule": "MCPViews Gronk Speak scope is all_nonpublic. When Gronk Speak mode is enabled, apply it to any nonpublic output unless the user asks for polished prose. Never apply by default to public-facing artifacts: websites, emails, customer docs, PR descriptions/comments, published Ludflow docs, legal/medical/financial guidance, or user-facing copy. Preserve commands, file paths, line refs, citations, error text, warnings, uncertainty, API names, schema fields, code, JSON, and test results. User style instructions, renderer payload requirements, safety, and correctness outrank compression. Do not promise hidden reasoning-token savings; Gronk Speak mainly targets visible output and persisted context size."
+                    }
+                ]
+            }
+        ]
+    })
+}
+
 pub(crate) fn collect_setup_questions(manifests: &[mcpviews_shared::PluginManifest]) -> Vec<Value> {
     let mut seen_plugins: HashSet<&str> = HashSet::new();
+    let mut questions = vec![core_setup_question_group()];
 
-    manifests
-        .iter()
-        .filter_map(|manifest| {
-            if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty() {
-                return None;
-            }
+    questions.extend(manifests.iter().filter_map(|manifest| {
+        if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty() {
+            return None;
+        }
 
-            Some(serde_json::json!({
-                "plugin": manifest.name,
-                "questions": manifest.setup_questions,
-            }))
-        })
-        .collect()
+        Some(serde_json::json!({
+            "plugin": manifest.name,
+            "questions": manifest.setup_questions,
+        }))
+    }));
+
+    questions
 }
 
 /// Collect only built-in (universal) rules — renderer_selection + universal renderer rules.
@@ -4009,7 +4077,80 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_setup_questions_includes_plugin_questions() {
+    fn test_collect_setup_questions_prepends_core_gronk_questions() {
+        let questions = collect_setup_questions(&[]);
+
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0]["plugin"], "mcpviews-core");
+
+        let core_questions = questions[0]["questions"].as_array().unwrap();
+        assert_eq!(core_questions.len(), 2);
+        assert_eq!(core_questions[0]["id"], "mcpviews_gronk_speak_mode");
+        assert_eq!(core_questions[1]["id"], "mcpviews_gronk_speak_scope");
+    }
+
+    #[test]
+    fn test_core_gronk_mode_question_has_tiered_options() {
+        let questions = collect_setup_questions(&[]);
+        let mode_question = &questions[0]["questions"][0];
+        let options = mode_question["options"].as_array().unwrap();
+        let values: Vec<&str> = options
+            .iter()
+            .map(|option| option["value"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(mode_question["default_value"], "off");
+        assert_eq!(values, vec!["off", "lite", "full", "ultra"]);
+        assert_eq!(
+            mode_question["persist_as_rule_name"],
+            "mcpviews_gronk_speak_mode"
+        );
+        assert!(options[1]["persisted_rule"]
+            .as_str()
+            .unwrap()
+            .contains("short direct technical English"));
+        assert!(options[2]["persisted_rule"]
+            .as_str()
+            .unwrap()
+            .contains("-> for cause/effect"));
+        assert!(options[3]["persisted_rule"]
+            .as_str()
+            .unwrap()
+            .contains("Never sacrifice correctness"));
+    }
+
+    #[test]
+    fn test_core_gronk_scope_question_has_guardrails() {
+        let questions = collect_setup_questions(&[]);
+        let scope_question = &questions[0]["questions"][1];
+        let options = scope_question["options"].as_array().unwrap();
+        let values: Vec<&str> = options
+            .iter()
+            .map(|option| option["value"].as_str().unwrap())
+            .collect();
+
+        assert_eq!(scope_question["default_value"], "chat_status_only");
+        assert_eq!(
+            values,
+            vec!["chat_status_only", "internal_artifacts", "all_nonpublic"]
+        );
+        assert_eq!(
+            scope_question["persist_as_rule_name"],
+            "mcpviews_gronk_speak_scope"
+        );
+
+        for option in options {
+            let persisted_rule = option["persisted_rule"].as_str().unwrap();
+            assert!(persisted_rule.contains("public-facing artifacts"));
+            assert!(persisted_rule.contains("PR descriptions/comments"));
+            assert!(persisted_rule.contains("Preserve commands"));
+            assert!(persisted_rule.contains("renderer payload requirements"));
+            assert!(persisted_rule.contains("visible output and persisted context size"));
+        }
+    }
+
+    #[test]
+    fn test_collect_setup_questions_includes_plugin_questions_after_core() {
         let mut manifest = make_manifest(
             "governance-plugin",
             vec![],
@@ -4038,11 +4179,12 @@ mod tests {
 
         let questions = collect_setup_questions(&[manifest, empty_manifest]);
 
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0]["plugin"], "governance-plugin");
-        assert_eq!(questions[0]["questions"][0]["id"], "governance_mode");
+        assert_eq!(questions.len(), 2);
+        assert_eq!(questions[0]["plugin"], "mcpviews-core");
+        assert_eq!(questions[1]["plugin"], "governance-plugin");
+        assert_eq!(questions[1]["questions"][0]["id"], "governance_mode");
         assert_eq!(
-            questions[0]["questions"][0]["options"][0]["persisted_rule"],
+            questions[1]["questions"][0]["options"][0]["persisted_rule"],
             "Default governance mode is team."
         );
     }
@@ -4484,9 +4626,9 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "17");
+        assert_eq!(RULES_VERSION, "18");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 17"));
+        assert!(instructions.contains("mcpviews-rules-version: 18"));
         assert!(instructions.contains("Add or update the MCPViews section in `AGENTS.md`"));
         assert!(instructions.contains("missing from the persisted rules"));
     }

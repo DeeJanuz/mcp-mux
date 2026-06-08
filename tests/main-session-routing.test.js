@@ -565,6 +565,16 @@ describe('main session routing', function () {
     });
   });
 
+  it('ignores unsupported external web URL schemes', function () {
+    loadMain();
+
+    var sessionId = window.__mainTest.openExternalUrlInTab('javascript:alert(1)');
+
+    expect(sessionId).toBeNull();
+    expect(window.__mainTest.getActiveSessionId()).toBeNull();
+    expect(window.__mainTest.getSessionIds()).toEqual([]);
+  });
+
   it('renders and clears the top-of-viewport busy pulse from session metadata', function () {
     loadMain();
 

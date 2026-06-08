@@ -801,6 +801,18 @@
     return finalizeSyntheticSessionSelection(sessionId, sessions.get(sessionId), existing, options);
   }
 
+  function normalizeExternalWebUrl(url) {
+    try {
+      var parsed = new URL(String(url || '').trim());
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        return parsed.href;
+      }
+    } catch (_error) {
+      return '';
+    }
+    return '';
+  }
+
   function externalWebTitleForUrl(url, title) {
     if (title && String(title).trim()) return String(title).trim();
     try {
@@ -817,15 +829,15 @@
 
   function openExternalUrlInTab(url, options) {
     options = options || {};
-    var rawUrl = String(url || '').trim();
-    if (!rawUrl) return null;
-    var title = externalWebTitleForUrl(rawUrl, options.title || null);
+    var normalizedUrl = normalizeExternalWebUrl(url);
+    if (!normalizedUrl) return null;
+    var title = externalWebTitleForUrl(normalizedUrl, options.title || null);
     return openSyntheticSession({
       sessionId: options.sessionId || null,
       toolName: EXTERNAL_WEB_CONTENT_TYPE,
       contentType: EXTERNAL_WEB_CONTENT_TYPE,
       data: {
-        url: rawUrl,
+        url: normalizedUrl,
         title: title,
         returnOrigins: Array.isArray(options.returnOrigins) ? options.returnOrigins : [],
       },
@@ -1169,7 +1181,7 @@
   function renderExternalWebPage(container, data, meta, toolArgs) {
     data = data && typeof data === 'object' ? data : {};
     var bridge = externalWebNativeBridge();
-    var url = String(data.url || '').trim();
+    var url = normalizeExternalWebUrl(data.url);
     var title = externalWebTitleForUrl(url, (data.title || (meta && meta.headerTitle) || (toolArgs && toolArgs.title) || null));
     var sessionContent = container.closest('.session-content');
     var sessionId = sessionContent ? sessionContent.getAttribute('data-session-id') : null;
@@ -1262,7 +1274,7 @@
     }
 
     if (!url) {
-      message.textContent = 'No external URL was provided.';
+      message.textContent = 'No valid external URL was provided.';
       return;
     }
     if (!bridge) {

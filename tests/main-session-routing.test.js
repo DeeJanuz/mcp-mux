@@ -15,6 +15,8 @@ function loadMain() {
       '    getSession: function (sessionId) { return sessions.get(sessionId) || null; },',
       '    getSessionIds: function () { return Array.from(sessions.keys()); },',
       '    updateSessionMetadata: updateSessionMetadata,',
+      '    openExternalUrlInTab: openExternalUrlInTab,',
+      '    getActiveSessionId: function () { return activeSessionId; },',
       '    loadPluginRenderers: loadPluginRenderers,',
       '    checkForAppUpdate: checkForAppUpdate,',
       '  };',
@@ -471,6 +473,98 @@ describe('main session routing', function () {
     });
   });
 
+  it('focuses newly opened push tabs by default', function () {
+    window.__renderers.rich_content = vi.fn(function (container, data) {
+      container.textContent = data.title || '';
+    });
+    loadMain();
+
+    window.__mainTest.handlePush({
+      sessionId: 'first-session',
+      toolName: 'rich_content',
+      contentType: 'rich_content',
+      data: { title: 'First' },
+      meta: { headerTitle: 'First' },
+      toolArgs: {},
+      reviewRequired: false,
+    });
+    window.__mainTest.handlePush({
+      sessionId: 'second-session',
+      toolName: 'rich_content',
+      contentType: 'rich_content',
+      data: { title: 'Second' },
+      meta: { headerTitle: 'Second' },
+      toolArgs: {},
+      reviewRequired: false,
+    });
+
+    expect(window.__mainTest.getActiveSessionId()).toBe('second-session');
+    expect(document.querySelector('.session-content.active').getAttribute('data-session-id')).toBe('second-session');
+  });
+
+  it('keeps existing background session updates from stealing focus', function () {
+    window.__renderers.rich_content = vi.fn(function (container, data) {
+      container.textContent = data.title || '';
+    });
+    loadMain();
+
+    window.__mainTest.handlePush({
+      sessionId: 'first-session',
+      toolName: 'rich_content',
+      contentType: 'rich_content',
+      data: { title: 'First' },
+      meta: { headerTitle: 'First' },
+      toolArgs: {},
+      reviewRequired: false,
+    });
+    window.__mainTest.handlePush({
+      sessionId: 'second-session',
+      toolName: 'rich_content',
+      contentType: 'rich_content',
+      data: { title: 'Second' },
+      meta: { headerTitle: 'Second' },
+      toolArgs: {},
+      reviewRequired: false,
+    });
+    document.querySelector('.tab[data-session-id="first-session"]').click();
+
+    window.__mainTest.handlePush({
+      sessionId: 'second-session',
+      toolName: 'rich_content',
+      contentType: 'rich_content',
+      data: { title: 'Second updated' },
+      meta: { headerTitle: 'Second updated' },
+      toolArgs: {},
+      reviewRequired: false,
+    });
+
+    expect(window.__mainTest.getActiveSessionId()).toBe('first-session');
+    expect(document.querySelector('.session-content.active').getAttribute('data-session-id')).toBe('first-session');
+  });
+
+  it('opens external billing URLs as focused external web sessions', function () {
+    loadMain();
+
+    var sessionId = window.__mainTest.openExternalUrlInTab('https://billing.stripe.com/session/test', {
+      returnOrigins: ['https://app.example.test'],
+    });
+
+    expect(window.__mainTest.getActiveSessionId()).toBe(sessionId);
+    expect(window.__mainTest.getSession(sessionId)).toMatchObject({
+      toolName: 'external_web_page',
+      contentType: 'external_web_page',
+      data: {
+        url: 'https://billing.stripe.com/session/test',
+        title: 'Stripe Billing',
+        returnOrigins: ['https://app.example.test'],
+      },
+      meta: expect.objectContaining({
+        headerTitle: 'Stripe Billing',
+        externalWeb: true,
+      }),
+    });
+  });
+
   it('renders and clears the top-of-viewport busy pulse from session metadata', function () {
     loadMain();
 
@@ -705,8 +799,7 @@ describe('main session routing', function () {
     });
 
     loadMain();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushPromises();
 
     var firstScript = scriptHost.querySelector('script[data-plugin-renderer="tribex-crm/tribex-crm.js"]');
     expect(firstScript).not.toBeNull();

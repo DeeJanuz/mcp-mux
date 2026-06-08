@@ -240,6 +240,7 @@ fn main() {
             commands::open_external_url,
             commands::open_native_app_view,
             commands::mount_native_app_panel,
+            commands::mount_external_web_panel,
             commands::update_native_app_panel_bounds,
             commands::close_native_app_panel,
             commands::list_plugins,

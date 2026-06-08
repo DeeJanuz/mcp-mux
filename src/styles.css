@@ -606,6 +606,40 @@ body {
   box-sizing: border-box;
 }
 
+.external-web-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  color: #171717;
+}
+
+.external-web-panel {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.external-web-panel-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: #525252;
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.external-web-panel-mounted .external-web-panel-message {
+  opacity: 0;
+}
+
 /* Empty state — see Phase 6 enhanced version below */
 
 /* Connection status */

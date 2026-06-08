@@ -40,6 +40,7 @@
   const UPDATE_FAILURE_DISMISS_MS = 4 * 60 * 60 * 1000;
   const DECIDR_ONBOARDING_RENDERER = 'decidr_onboarding';
   const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:agent-configured-org-id';
+  const EXTERNAL_WEB_CONTENT_TYPE = 'external_web_page';
 
   /** @type {Map<string, HTMLElement>} Cached content containers per session */
   const contentCache = new Map();
@@ -128,6 +129,25 @@
     });
   }
 
+  function mountExternalWebPanel(options) {
+    options = options || {};
+    if (!window.__TAURI__ || !window.__TAURI__.core) {
+      return Promise.reject(new Error('External web tabs are only available in MCPViews desktop.'));
+    }
+    var requestedBounds = nativeAppBounds(options.bounds);
+    return window.__TAURI__.core.invoke('mount_external_web_panel', {
+      url: options.url || '',
+      title: options.title || null,
+      label: options.label || null,
+      sessionId: options.sessionId || options.session_id || null,
+      returnOrigins: Array.isArray(options.returnOrigins) ? options.returnOrigins : [],
+      bounds: nativeAppBoundsForOverlay(requestedBounds),
+    }).then(function (result) {
+      rememberNativeAppPanel(result && result.label ? result.label : options.label, requestedBounds);
+      return result;
+    });
+  }
+
   function updateNativeAppViewBounds(options) {
     options = options || {};
     if (!window.__TAURI__ || !window.__TAURI__.core) {
@@ -182,6 +202,8 @@
   window.__mcpviewsHost.mountNativeAppView = mountNativeAppView;
   window.__mcpviewsHost.updateNativeAppViewBounds = updateNativeAppViewBounds;
   window.__mcpviewsHost.closeNativeAppView = closeNativeAppView;
+  window.__mcpviewsHost.openExternalUrlInTab = openExternalUrlInTab;
+  window.__mcpviewsHost.mountExternalWebPanel = mountExternalWebPanel;
   window.__mcpviewsHost.isNativeAppOverlayActive = function () {
     return nativeAppOverlayActive;
   };
@@ -482,6 +504,23 @@
       handlePush(session);
     });
 
+    await listen('external_web_tab_open_requested', function (event) {
+      var payload = event && event.payload ? event.payload : {};
+      if (!payload.url) return;
+      openExternalUrlInTab(payload.url, {
+        title: payload.title || null,
+        returnOrigins: Array.isArray(payload.returnOrigins) ? payload.returnOrigins : [],
+      });
+    });
+
+    await listen('external_web_panel_close_requested', function (event) {
+      var payload = event && event.payload ? event.payload : {};
+      var sessionId = payload.sessionId || payload.session_id || null;
+      if (sessionId && sessions.has(sessionId)) {
+        removeSession(sessionId);
+      }
+    });
+
     // Load plugin renderers before rendering any sessions
     await loadPluginRenderers();
 
@@ -605,6 +644,7 @@
     if (!activeSessionId) return true;
     if (activeSessionId === session.sessionId) return true;
     if (session.reviewRequired) return true;
+    if (!existingSession) return true;
     return !!(session.meta && session.meta.autoFocus === true);
   }
 
@@ -649,7 +689,7 @@
     }
   }
 
-  function finalizeSyntheticSessionSelection(sessionId, session, options) {
+  function finalizeSyntheticSessionSelection(sessionId, session, existingSession, options) {
     if (!sessionId) return sessionId;
     if (activeSessionId === sessionId) {
       selectSession(sessionId);
@@ -659,7 +699,7 @@
       sessionId: sessionId,
       reviewRequired: !!(session && session.reviewRequired),
       meta: session && session.meta ? session.meta : {},
-    }, sessions.get(sessionId) || null, options);
+    }, existingSession || null, options);
 
     if (shouldFocus) {
       selectSession(sessionId);
@@ -705,7 +745,7 @@
         cached.parentNode.removeChild(cached);
       }
       contentCache.delete(existingSessionId);
-      return finalizeSyntheticSessionSelection(existingSessionId, existing, options);
+      return finalizeSyntheticSessionSelection(existingSessionId, existing, existing, options);
     }
 
     var sessionId = config.sessionId || ('synthetic-' + (config.toolName || config.contentType || 'session') + '-' + Date.now());
@@ -723,7 +763,7 @@
       timestamp: Date.now(),
     });
 
-    return finalizeSyntheticSessionSelection(sessionId, sessions.get(sessionId), options);
+    return finalizeSyntheticSessionSelection(sessionId, sessions.get(sessionId), null, options);
   }
 
   function replaceSyntheticSession(sessionId, config, options) {
@@ -758,7 +798,46 @@
     }
     contentCache.delete(sessionId);
 
-    return finalizeSyntheticSessionSelection(sessionId, sessions.get(sessionId), options);
+    return finalizeSyntheticSessionSelection(sessionId, sessions.get(sessionId), existing, options);
+  }
+
+  function externalWebTitleForUrl(url, title) {
+    if (title && String(title).trim()) return String(title).trim();
+    try {
+      var parsed = new URL(url);
+      var host = parsed.hostname || '';
+      if (host === 'stripe.com' || host.endsWith('.stripe.com')) {
+        return 'Stripe Billing';
+      }
+      return host || 'External Page';
+    } catch (_error) {
+      return 'External Page';
+    }
+  }
+
+  function openExternalUrlInTab(url, options) {
+    options = options || {};
+    var rawUrl = String(url || '').trim();
+    if (!rawUrl) return null;
+    var title = externalWebTitleForUrl(rawUrl, options.title || null);
+    return openSyntheticSession({
+      sessionId: options.sessionId || null,
+      toolName: EXTERNAL_WEB_CONTENT_TYPE,
+      contentType: EXTERNAL_WEB_CONTENT_TYPE,
+      data: {
+        url: rawUrl,
+        title: title,
+        returnOrigins: Array.isArray(options.returnOrigins) ? options.returnOrigins : [],
+      },
+      meta: {
+        headerTitle: title,
+        externalWeb: true,
+      },
+      toolArgs: {
+        title: title,
+      },
+      reviewRequired: false,
+    }, { autoFocus: true });
   }
 
   function getTabLabel(session) {
@@ -1021,6 +1100,9 @@
   }
 
   function getRenderer(contentType) {
+    if (contentType === EXTERNAL_WEB_CONTENT_TYPE) {
+      return renderExternalWebPage;
+    }
     var renderers = window.__renderers || {};
     if (contentType && typeof renderers[contentType] === 'function') {
       return renderers[contentType];
@@ -1030,6 +1112,213 @@
         '<h3>No renderer for content type: ' + (contentType || 'unknown') + '</h3>' +
         '<p style="color:var(--text-secondary);">This tool needs a renderer added to the UI.</p></div>';
     };
+  }
+
+  function externalWebNativeBridge() {
+    if (!window.__TAURI__ || !window.__TAURI__.core) return null;
+    var host = window.__mcpviewsHost || {};
+    var companion = window.__companionUtils || {};
+    var mount = typeof host.mountExternalWebPanel === 'function'
+      ? host.mountExternalWebPanel
+      : companion.mountExternalWebPanel;
+    var update = typeof host.updateNativeAppViewBounds === 'function'
+      ? host.updateNativeAppViewBounds
+      : companion.updateNativeAppViewBounds;
+    var close = typeof host.closeNativeAppView === 'function'
+      ? host.closeNativeAppView
+      : companion.closeNativeAppView;
+    if (typeof mount === 'function' && typeof update === 'function' && typeof close === 'function') {
+      return { mount: mount, update: update, close: close };
+    }
+    return null;
+  }
+
+  function externalWebPanelLabel(sessionId, data) {
+    var seed = sessionId || (data && data.url) || 'external';
+    return 'external-web-' + String(seed)
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80);
+  }
+
+  function externalWebPanelBounds(panel) {
+    var rect = panel.getBoundingClientRect();
+    var root = document.documentElement;
+    var sessionContent = panel.closest('.session-content');
+    var style = window.getComputedStyle(panel);
+    var visible = !!(
+      root &&
+      root.contains(panel) &&
+      (!sessionContent || sessionContent.classList.contains('active')) &&
+      !nativeAppOverlayActive &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      rect.width >= 2 &&
+      rect.height >= 2
+    );
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width: Math.max(1, Math.round(rect.width)),
+      height: Math.max(1, Math.round(rect.height)),
+      visible: visible,
+    };
+  }
+
+  function renderExternalWebPage(container, data, meta, toolArgs) {
+    data = data && typeof data === 'object' ? data : {};
+    var bridge = externalWebNativeBridge();
+    var url = String(data.url || '').trim();
+    var title = externalWebTitleForUrl(url, (data.title || (meta && meta.headerTitle) || (toolArgs && toolArgs.title) || null));
+    var sessionContent = container.closest('.session-content');
+    var sessionId = sessionContent ? sessionContent.getAttribute('data-session-id') : null;
+    var nativeLabel = null;
+    var disposed = false;
+    var updateTimer = null;
+    var resizeObserver = null;
+    var removalObserver = null;
+    var pollTimer = null;
+    var lastBoundsKey = '';
+
+    container.style.padding = '0';
+    container.style.overflow = 'hidden';
+    container.innerHTML = '';
+
+    var shell = document.createElement('div');
+    shell.className = 'external-web-shell';
+    var panel = document.createElement('div');
+    panel.className = 'external-web-panel';
+    var message = document.createElement('div');
+    message.className = 'external-web-panel-message';
+    message.textContent = bridge ? 'Opening external billing page...' : 'External web tabs are available in MCPViews desktop.';
+    panel.appendChild(message);
+    shell.appendChild(panel);
+    container.appendChild(shell);
+
+    function boundsKey(bounds) {
+      return [
+        bounds.x,
+        bounds.y,
+        bounds.width,
+        bounds.height,
+        bounds.visible ? '1' : '0',
+      ].join(':');
+    }
+
+    function updateBounds(force) {
+      if (disposed || !nativeLabel) return;
+      var bounds = externalWebPanelBounds(panel);
+      var nextKey = boundsKey(bounds);
+      if (!force && nextKey === lastBoundsKey) return;
+      lastBoundsKey = nextKey;
+      Promise.resolve(bridge.update({
+        label: nativeLabel,
+        bounds: bounds,
+      })).catch(function (error) {
+        console.warn('Failed to update external web tab bounds:', error);
+      });
+    }
+
+    function scheduleUpdate(force) {
+      if (disposed || !bridge) return;
+      if (updateTimer) window.clearTimeout(updateTimer);
+      updateTimer = window.setTimeout(function () {
+        updateTimer = null;
+        updateBounds(force);
+      }, force ? 0 : 50);
+    }
+
+    function cleanup(closePanel) {
+      if (disposed) return;
+      disposed = true;
+      if (updateTimer) window.clearTimeout(updateTimer);
+      if (pollTimer) window.clearInterval(pollTimer);
+      if (resizeObserver) resizeObserver.disconnect();
+      if (removalObserver) removalObserver.disconnect();
+      window.removeEventListener('resize', onVisibilityChange, true);
+      window.removeEventListener('scroll', onVisibilityChange, true);
+      window.removeEventListener('mcpviews:session-visibility-changed', onSessionVisibility);
+      window.removeEventListener('mcpviews:native-app-overlay-changed', onVisibilityChange);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      if (nativeLabel && closePanel !== false) {
+        Promise.resolve(bridge.close({ label: nativeLabel })).catch(function (error) {
+          console.warn('Failed to close external web tab panel:', error);
+        });
+      }
+    }
+
+    function onVisibilityChange() {
+      scheduleUpdate(true);
+    }
+
+    function onSessionVisibility(event) {
+      var detail = event && event.detail ? event.detail : {};
+      if (sessionId && detail.sessionId === sessionId && detail.removed) {
+        cleanup(true);
+        return;
+      }
+      scheduleUpdate(true);
+    }
+
+    if (!url) {
+      message.textContent = 'No external URL was provided.';
+      return;
+    }
+    if (!bridge) {
+      if (window.open) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+      return;
+    }
+
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(function () {
+        scheduleUpdate(false);
+      });
+      resizeObserver.observe(panel);
+    }
+
+    removalObserver = new MutationObserver(function () {
+      if (!document.documentElement.contains(panel)) {
+        cleanup(true);
+      }
+    });
+    removalObserver.observe(document.documentElement, { childList: true, subtree: true });
+
+    window.addEventListener('resize', onVisibilityChange, true);
+    window.addEventListener('scroll', onVisibilityChange, true);
+    window.addEventListener('mcpviews:session-visibility-changed', onSessionVisibility);
+    window.addEventListener('mcpviews:native-app-overlay-changed', onVisibilityChange);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    pollTimer = window.setInterval(function () {
+      scheduleUpdate(false);
+    }, 750);
+
+    Promise.resolve(bridge.mount({
+      url: url,
+      title: title,
+      label: externalWebPanelLabel(sessionId, data),
+      sessionId: sessionId,
+      returnOrigins: Array.isArray(data.returnOrigins) ? data.returnOrigins : [],
+      bounds: externalWebPanelBounds(panel),
+    })).then(function (result) {
+      if (disposed) {
+        if (result && result.label) {
+          Promise.resolve(bridge.close({ label: result.label })).catch(function (error) {
+            console.warn('Failed to close late external web tab panel:', error);
+          });
+        }
+        return;
+      }
+      nativeLabel = result && result.label ? result.label : null;
+      panel.classList.add('external-web-panel-mounted');
+      scheduleUpdate(true);
+    }).catch(function (error) {
+      console.error('Failed to mount external web tab:', error);
+      message.textContent = 'Failed to open external billing page.';
+      cleanup(false);
+    });
   }
 
   window.__companionUtils = window.__companionUtils || {};
@@ -1044,6 +1333,8 @@
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
   window.__companionUtils.openNativeAppView = openNativeAppView;
   window.__companionUtils.mountNativeAppView = mountNativeAppView;
+  window.__companionUtils.openExternalUrlInTab = openExternalUrlInTab;
+  window.__companionUtils.mountExternalWebPanel = mountExternalWebPanel;
   window.__companionUtils.updateNativeAppViewBounds = updateNativeAppViewBounds;
   window.__companionUtils.closeNativeAppView = closeNativeAppView;
   window.__companionUtils.isNativeAppOverlayActive = function () {

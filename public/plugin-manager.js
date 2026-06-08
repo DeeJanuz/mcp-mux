@@ -90,8 +90,9 @@
           ? '<button class="btn btn-muted" disabled>Installed</button>'
           : '<button class="btn btn-primary install-btn">Install</button>';
       var betaButtonHtml = isBetaInstalled
-        ? '<button class="btn btn-secondary rollback-btn">Rollback to stable</button>'
-        : '<button class="btn btn-beta beta-btn">' + (isInstalled ? 'Beta' : 'Install beta') + '</button>';
+        ? '<button class="btn btn-beta beta-btn" disabled>Checking beta...</button>' +
+          '<button class="btn btn-secondary rollback-btn">Rollback to stable</button>'
+        : '<button class="btn btn-beta beta-btn" disabled>Checking beta...</button>';
 
       card.innerHTML =
         '<div class="plugin-name">' + escapeHtml(name) + '</div>' +
@@ -128,6 +129,7 @@
       }
 
       grid.appendChild(card);
+      hydrateBetaInfo(card, name, installedVersion, isInstalled);
     });
 
     container.innerHTML = '';
@@ -178,6 +180,10 @@
         if (plugin.update_available) {
           updateBadgeHtml = '<span class="auth-badge" style="background:#1e1b4b;color:#818cf8">v' + escapeHtml(plugin.update_available) + ' available</span>';
         }
+        var isBetaInstalled = isPrereleaseVersion(plugin.version || '');
+        var betaUpdateBadgeHtml = isBetaInstalled
+          ? '<span class="auth-badge beta-update-badge" style="display:none;background:#312e81;color:#c4b5fd"></span>'
+          : '';
 
         var autoUpdateHtml = '<label class="auto-update-toggle" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#737373;cursor:pointer">' +
             '<input type="checkbox" class="auto-update-checkbox" ' +
@@ -188,6 +194,9 @@
         var actionsHtml = '';
         if (plugin.update_available) {
           actionsHtml += '<button class="btn btn-primary update-btn">Update</button>';
+        }
+        if (isBetaInstalled) {
+          actionsHtml += '<button class="btn btn-beta beta-update-btn" disabled>Checking beta...</button>';
         }
         if (hasAuth) {
           actionsHtml += '<button class="btn btn-secondary reauth-btn">' +
@@ -203,6 +212,7 @@
               (plugin.version ? 'v' + escapeHtml(plugin.version) : '') +
               (authBadgeHtml ? ' ' + authBadgeHtml : '') +
               (updateBadgeHtml ? ' ' + updateBadgeHtml : '') +
+              (betaUpdateBadgeHtml ? ' ' + betaUpdateBadgeHtml : '') +
               ' ' + autoUpdateHtml +
             '</div>' +
           '</div>' +
@@ -234,6 +244,14 @@
           updateBtn.addEventListener('click', function () {
             updatePlugin(plugin.name);
           });
+        }
+
+        var betaUpdateBtn = row.querySelector('.beta-update-btn');
+        if (betaUpdateBtn) {
+          betaUpdateBtn.addEventListener('click', function () {
+            installBetaPlugin(plugin.name);
+          });
+          hydrateInstalledBetaUpdate(row, plugin.name, plugin.version || '');
         }
 
         var autoUpdateCheckbox = row.querySelector('.auto-update-checkbox');
@@ -337,8 +355,13 @@
         showNotification('No prerelease found for ' + name, true);
         return;
       }
+      if (info.installedVersion && !info.updateAvailable) {
+        showNotification('No newer beta release found for ' + name, true);
+        return;
+      }
       var current = info.installedVersion ? ' from v' + info.installedVersion : '';
-      var ok = confirm('Install ' + name + ' prerelease v' + info.version + current + '?');
+      var action = info.installedPrerelease ? 'Update' : 'Install';
+      var ok = confirm(action + ' ' + name + ' beta v' + info.version + current + '?');
       if (!ok) return;
       await window.__TAURI__.core.invoke('install_plugin_prerelease', { name: name });
       showNotification('Plugin ' + name + ' updated to beta v' + info.version);
@@ -364,11 +387,12 @@
     }
   }
 
-  async function hydrateBetaInfo(card, name, isBetaInstalled) {
+  async function hydrateBetaInfo(card, name, installedVersion, isInstalled) {
     var meta = card.querySelector('.beta-meta');
     var betaBtn = card.querySelector('.beta-btn');
     var rollbackBtn = card.querySelector('.rollback-btn');
     if (!meta && !betaBtn && !rollbackBtn) return;
+    var isBetaInstalled = isPrereleaseVersion(installedVersion || '');
 
     try {
       var info = await window.__TAURI__.core.invoke('check_plugin_prerelease', { name: name });
@@ -382,7 +406,11 @@
       }
 
       if (meta) {
-        meta.innerHTML = 'Beta v' + escapeHtml(info.version) +
+        var betaMeta = 'Beta v' + escapeHtml(info.version);
+        if (info.installedVersion) {
+          betaMeta += ' · installed v' + escapeHtml(info.installedVersion);
+        }
+        meta.innerHTML = betaMeta +
           (info.releaseUrl ? ' · <a href="#" class="beta-release-link">Release notes</a>' : '');
         var releaseLink = meta.querySelector('.beta-release-link');
         if (releaseLink) {
@@ -394,7 +422,16 @@
       }
 
       if (betaBtn) {
-        betaBtn.textContent = (isBetaInstalled ? 'Beta' : 'Install beta') + ' v' + info.version;
+        betaBtn.disabled = isInstalled && !info.updateAvailable;
+        if (isBetaInstalled) {
+          betaBtn.textContent = info.updateAvailable
+            ? 'Update beta to v' + info.version
+            : 'Beta v' + installedVersion;
+        } else if (info.updateAvailable) {
+          betaBtn.textContent = 'Install beta v' + info.version;
+        } else {
+          betaBtn.textContent = 'No newer beta';
+        }
       }
 
       if (rollbackBtn && info.stableVersion) {
@@ -402,6 +439,10 @@
       }
     } catch (e) {
       if (meta) meta.textContent = 'Unable to check beta release';
+      if (betaBtn) {
+        betaBtn.disabled = true;
+        betaBtn.textContent = 'Beta unavailable';
+      }
     }
   }
 
@@ -415,6 +456,7 @@
       await window.__TAURI__.core.invoke('fetch_registry', { registryUrl: null, forceRefresh: true });
       var plugins = await window.__TAURI__.core.invoke('list_plugins');
       var count = plugins.filter(function (plugin) { return !!plugin.update_available; }).length;
+      count += await countBetaUpdates(plugins);
       showNotification(count === 1 ? '1 plugin update available' : count + ' plugin updates available');
       loadRegistry();
       loadInstalled();
@@ -426,6 +468,47 @@
         btn.textContent = 'Check for updates';
       }
     }
+  }
+
+  async function hydrateInstalledBetaUpdate(row, name, installedVersion) {
+    var badge = row.querySelector('.beta-update-badge');
+    var btn = row.querySelector('.beta-update-btn');
+    if (!btn) return;
+
+    try {
+      var info = await window.__TAURI__.core.invoke('check_plugin_prerelease', { name: name });
+      if (info && info.updateAvailable) {
+        if (badge) {
+          badge.style.display = '';
+          badge.textContent = 'beta v' + info.version + ' available';
+        }
+        btn.disabled = false;
+        btn.textContent = 'Update beta';
+      } else {
+        if (badge) badge.style.display = 'none';
+        btn.disabled = true;
+        btn.textContent = installedVersion ? 'Beta current' : 'No beta';
+      }
+    } catch (e) {
+      if (badge) badge.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Beta unavailable';
+    }
+  }
+
+  async function countBetaUpdates(plugins) {
+    var betaPlugins = (plugins || []).filter(function (plugin) {
+      return isPrereleaseVersion(plugin.version || '');
+    });
+    if (betaPlugins.length === 0) return 0;
+
+    var checks = await Promise.all(betaPlugins.map(function (plugin) {
+      return window.__TAURI__.core.invoke('check_plugin_prerelease', { name: plugin.name })
+        .then(function (info) { return !!(info && info.updateAvailable); })
+        .catch(function () { return false; });
+    }));
+
+    return checks.filter(Boolean).length;
   }
 
   async function addCustomPlugin() {

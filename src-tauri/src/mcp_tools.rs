@@ -15,8 +15,9 @@ mod plugin_proxy;
 mod presentation;
 mod session;
 
-const RULES_VERSION: &str = "18"; // Bump when built-in rules change
-const RULES_REFRESH_INSTRUCTION: &str = "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules. If `mcpviews_setup` returns `setup_questions`, ask the user those questions during setup and persist only the selected option's compact `persisted_rule`, using `persist_as_rule_name` when present.";
+const RULES_VERSION: &str = "19"; // Bump when built-in rules change
+pub(crate) const SETUP_QUESTION_INSTRUCTIONS: &str = "If setup_questions is non-empty, ask exactly one setup question at a time in the returned order. Start with the mcpviews-core group before plugin groups: ask Gronk Speak mode first, wait for the user's answer, then ask Gronk Speak scope, wait again, then continue through each installed plugin's setup questions the same one-at-a-time way. Show only the options for the current question, not every configuration option across groups at once. Persist only the selected option's persisted_rule using persist_as_rule_name when present; do not persist unselected options or the full question text.";
+const RULES_REFRESH_INSTRUCTION: &str = "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules. If `mcpviews_setup` returns `setup_questions`, follow `setup_question_instructions`: ask one setup question at a time in the returned order, starting with the `mcpviews-core` Gronk questions before installed-plugin questions, and persist only the selected option's compact `persisted_rule` using `persist_as_rule_name` when present.";
 
 /// Return all tool definitions (built-in + plugin tools)
 pub async fn list_tools(state: &Arc<TokioMutex<AsyncAppState>>) -> Vec<Value> {
@@ -2230,14 +2231,14 @@ fn core_setup_question_group() -> Value {
         "questions": [
             {
                 "id": "mcpviews_gronk_speak_mode",
-                "question": "Enable Gronk Speak for MCPViews setup-persisted agent output style?",
+                "question": "Which Gronk Speak mode do you want for MCPViews setup-persisted agent output style?",
                 "description": "Choose the compression level for allowed outputs. Gronk Speak is direct language that cuts filler while preserving required facts.",
                 "default_value": "off",
                 "persist_as_rule_name": "mcpviews_gronk_speak_mode",
                 "options": [
                     {
                         "value": "off",
-                        "label": "Off",
+                        "label": "None",
                         "description": "Use normal assistant style unless the user explicitly asks for Gronk Speak.",
                         "persisted_rule": "MCPViews Gronk Speak mode is off by default. Use normal assistant style unless the user explicitly asks for Gronk Speak."
                     },
@@ -4189,6 +4190,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_setup_question_instructions_require_sequential_questions() {
+        assert!(SETUP_QUESTION_INSTRUCTIONS.contains("exactly one setup question at a time"));
+        assert!(SETUP_QUESTION_INSTRUCTIONS.contains("Gronk Speak mode first"));
+        assert!(SETUP_QUESTION_INSTRUCTIONS.contains("Gronk Speak scope"));
+        assert!(SETUP_QUESTION_INSTRUCTIONS.contains("each installed plugin's setup questions"));
+        assert!(SETUP_QUESTION_INSTRUCTIONS.contains("not every configuration option"));
+    }
+
     // ─── collect_plugin_auth_status tests ───
 
     #[test]
@@ -4299,6 +4309,8 @@ mod tests {
         let instr = persistence_instructions("codex");
         assert!(instr.contains("AGENTS.md"));
         assert!(instr.contains("setup_questions"));
+        assert!(instr.contains("ask one setup question at a time"));
+        assert!(instr.contains("mcpviews-core"));
     }
 
     #[test]
@@ -4626,9 +4638,9 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "18");
+        assert_eq!(RULES_VERSION, "19");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 18"));
+        assert!(instructions.contains("mcpviews-rules-version: 19"));
         assert!(instructions.contains("Add or update the MCPViews section in `AGENTS.md`"));
         assert!(instructions.contains("missing from the persisted rules"));
     }

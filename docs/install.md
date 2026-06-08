@@ -291,7 +291,7 @@ This does two things:
 
 > **This step is required.** Without it, your agent won't know MCPViews is available or how to use its renderers.
 
-When setup returns questions, answer the choices you want persisted. Agents should save only the selected option's compact rule, not every option. Gronk Speak defaults to off; enabling it never changes public-facing artifacts such as websites, emails, customer docs, PR descriptions, published Ludflow docs, or user-facing copy unless you explicitly ask for that.
+When setup returns questions, answer them one at a time. Agents should start with the MCPViews core Gronk Speak choices, ask only the current question's options, wait for your answer, and then move through installed plugin setup questions the same way. Agents should save only the selected option's compact rule, not every option. Gronk Speak defaults to off; enabling it never changes public-facing artifacts such as websites, emails, customer docs, PR descriptions, published Ludflow docs, or user-facing copy unless you explicitly ask for that.
 
 ### 3. Verify it works
 

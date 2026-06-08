@@ -121,7 +121,7 @@ pub(super) async fn call_mcpviews_setup(
         "rules_version": super::RULES_VERSION,
         "plugin_status": plugin_status,
         "setup_questions": setup_questions,
-        "setup_question_instructions": "If setup_questions is non-empty, ask the user each setup question while configuring MCPViews. Persist only the selected option's persisted_rule using persist_as_rule_name when present; do not persist unselected options or the full question text.",
+        "setup_question_instructions": super::SETUP_QUESTION_INSTRUCTIONS,
         "persistence_instructions": super::persistence_instructions(agent_type),
         "setup_instructions": setup_instructions(agent_type),
         "rules_update": {

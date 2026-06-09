@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.25] - 2026-06-09
+
 ### Changed
 - Moved Gronk Speak setup out of MCPViews core and into an optional installable registry plugin, so users see those mode/scope setup questions only after installing `mcpviews-gronk-speak`.
 - Extended plugin `setup_questions` to preserve optional `guidance`, `recommended_value`, and `example_outputs` fields for richer one-question-at-a-time setup prompts.

@@ -683,7 +683,7 @@ describe('main session routing', function () {
     loadMain();
 
     document.getElementById('apps-button').click();
-    await Promise.resolve();
+    await flushPromises();
 
     var rendererItem = document.querySelector('.apps-renderer-item');
     expect(rendererItem).not.toBeNull();
@@ -707,7 +707,94 @@ describe('main session routing', function () {
     expect(document.getElementById('main-title').textContent).toBe('Persona Studio');
   });
 
-  it('moves native app panels offscreen while the apps dropdown is open', async function () {
+  it('opens the native apps popup over mounted panels without hiding them', async function () {
+    window.__renderers.ludflow_documents_home = vi.fn(function (container) {
+      container.textContent = 'Documents';
+    });
+    var panelUpdates = [];
+    var listeners = {};
+    window.__TAURI__ = {
+      event: {
+        listen: vi.fn(function (eventName, callback) {
+          listeners[eventName] = callback;
+          return Promise.resolve(function () {});
+        }),
+      },
+      core: {
+        invoke: vi.fn(function (command, args) {
+          if (command === 'open_apps_popup') {
+            return Promise.resolve({
+              opened: true,
+            });
+          }
+          if (command === 'mount_native_app_panel') {
+            return Promise.resolve({
+              label: 'plugin-panel-ludflow-app',
+              url: args.url,
+              created: true,
+            });
+          }
+          if (command === 'update_native_app_panel_bounds') {
+            panelUpdates.push(args);
+            return Promise.resolve({
+              label: args.label,
+              updated: true,
+              visible: args.bounds.visible !== false,
+            });
+          }
+          if (command === 'get_plugin_renderers' || command === 'get_sessions') {
+            return Promise.resolve([]);
+          }
+          if (command === 'check_app_update') {
+            return Promise.resolve(null);
+          }
+          return Promise.resolve(null);
+        }),
+      },
+    };
+
+    loadMain();
+    await window.__mcpviewsHost.mountNativeAppView({
+      pluginName: 'ludflow',
+      url: 'https://app.ludflow.com/mcpviews/embed/start?token=test',
+      label: 'ludflow-app',
+      bounds: { x: 48, y: 96, width: 640, height: 420, visible: true },
+    });
+
+    document.getElementById('apps-button').click();
+    await flushPromises();
+
+    expect(window.__TAURI__.core.invoke).toHaveBeenCalledWith('open_apps_popup', {
+      bounds: expect.objectContaining({
+        width: expect.any(Number),
+        height: expect.any(Number),
+      }),
+    });
+    expect(document.getElementById('apps-dropdown').classList.contains('hidden')).toBe(true);
+    expect(panelUpdates).toEqual([]);
+
+    expect(listeners['apps-popup-select']).toEqual(expect.any(Function));
+    listeners['apps-popup-select']({
+      payload: {
+        rendererName: 'ludflow_documents_home',
+        rendererLabel: 'Documents',
+      },
+    });
+    await flushPromises();
+
+    var sessionId = window.__mainTest.getSessionIds()[0];
+    expect(window.__mainTest.getSession(sessionId)).toMatchObject({
+      toolName: 'standalone_launch',
+      contentType: 'ludflow_documents_home',
+      meta: expect.objectContaining({
+        standalone: true,
+        headerTitle: 'Documents',
+      }),
+    });
+    expect(panelUpdates).toEqual([]);
+  });
+
+  it('moves native app panels offscreen when the apps dropdown falls back to DOM', async function () {
     window.__renderers.ludflow_documents_home = vi.fn(function (container) {
       container.textContent = 'Documents';
     });
@@ -720,6 +807,9 @@ describe('main session routing', function () {
       },
       core: {
         invoke: vi.fn(function (command, args) {
+          if (command === 'open_apps_popup') {
+            return Promise.reject(new Error('native popup unavailable'));
+          }
           if (command === 'get_standalone_renderers') {
             return Promise.resolve([{
               plugin: 'ludflow',

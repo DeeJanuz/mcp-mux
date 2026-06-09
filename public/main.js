@@ -41,6 +41,11 @@
   const DECIDR_ONBOARDING_RENDERER = 'decidr_onboarding';
   const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:agent-configured-org-id';
   const EXTERNAL_WEB_CONTENT_TYPE = 'external_web_page';
+  const APPS_POPUP_WIDTH = 260;
+  const APPS_POPUP_MAX_HEIGHT = 360;
+  const APPS_POPUP_MIN_WIDTH = 180;
+  const APPS_POPUP_MIN_HEIGHT = 140;
+  const APPS_POPUP_MARGIN = 8;
   const NATIVE_APP_OVERLAY_BOUNDS = Object.freeze({
     x: -10000,
     y: -10000,
@@ -194,6 +199,9 @@
     var changed = nativeAppOverlayActive !== next;
     nativeAppOverlayActive = next;
     document.body.classList.toggle('native-app-overlay-active', next);
+    if (!changed) {
+      return Promise.resolve();
+    }
     if (changed) {
       try {
         window.dispatchEvent(new CustomEvent('mcpviews:native-app-overlay-changed', {
@@ -202,6 +210,49 @@
       } catch (_error) {}
     }
     return applyNativeAppOverlayBounds();
+  }
+
+  function appsPopupBounds(anchor) {
+    var viewportWidth = Math.max(window.innerWidth || APPS_POPUP_WIDTH, APPS_POPUP_MIN_WIDTH + APPS_POPUP_MARGIN * 2);
+    var viewportHeight = Math.max(window.innerHeight || APPS_POPUP_MAX_HEIGHT, APPS_POPUP_MIN_HEIGHT + APPS_POPUP_MARGIN * 2);
+    var rect = anchor && typeof anchor.getBoundingClientRect === 'function'
+      ? anchor.getBoundingClientRect()
+      : { right: viewportWidth - APPS_POPUP_MARGIN, bottom: APPS_POPUP_MARGIN };
+    var width = Math.min(APPS_POPUP_WIDTH, Math.max(APPS_POPUP_MIN_WIDTH, viewportWidth - APPS_POPUP_MARGIN * 2));
+    var height = Math.min(APPS_POPUP_MAX_HEIGHT, Math.max(APPS_POPUP_MIN_HEIGHT, viewportHeight - APPS_POPUP_MARGIN * 2));
+    var x = rect.right - width;
+    var y = rect.bottom + APPS_POPUP_MARGIN;
+    x = Math.max(APPS_POPUP_MARGIN, Math.min(x, viewportWidth - width - APPS_POPUP_MARGIN));
+    if (y + height > viewportHeight - APPS_POPUP_MARGIN) {
+      y = Math.max(APPS_POPUP_MARGIN, viewportHeight - height - APPS_POPUP_MARGIN);
+    }
+    return {
+      x: Math.round(x),
+      y: Math.round(y),
+      width: Math.round(width),
+      height: Math.round(height),
+    };
+  }
+
+  function openNativeAppsPopup(anchor) {
+    if (!window.__TAURI__ || !window.__TAURI__.core || typeof window.__TAURI__.core.invoke !== 'function') {
+      return Promise.resolve(false);
+    }
+    return window.__TAURI__.core.invoke('open_apps_popup', {
+      bounds: appsPopupBounds(anchor),
+    }).then(function (result) {
+      return !!(result && result.opened === true);
+    }).catch(function (error) {
+      console.warn('[apps] Falling back to DOM apps dropdown:', error);
+      return false;
+    });
+  }
+
+  function closeNativeAppsPopup() {
+    if (!window.__TAURI__ || !window.__TAURI__.core || typeof window.__TAURI__.core.invoke !== 'function') {
+      return;
+    }
+    window.__TAURI__.core.invoke('close_apps_popup').catch(function () {});
   }
 
   window.__mcpviewsHost = window.__mcpviewsHost || {};
@@ -1808,11 +1859,11 @@
     function closeDropdown() {
       dropdownGeneration += 1;
       dropdown.classList.add('hidden');
+      closeNativeAppsPopup();
       setNativeAppOverlayActive(false, 'apps-dropdown');
     }
 
-    function openDropdown() {
-      var generation = ++dropdownGeneration;
+    function openDomDropdown(generation) {
       populateAppsDropdown(dropdown);
       Promise.resolve(setNativeAppOverlayActive(true, 'apps-dropdown')).then(function () {
         if (generation === dropdownGeneration) {
@@ -1823,6 +1874,33 @@
         if (generation === dropdownGeneration) {
           dropdown.classList.remove('hidden');
         }
+      });
+    }
+
+    function openDropdown() {
+      var generation = ++dropdownGeneration;
+      dropdown.classList.add('hidden');
+      setNativeAppOverlayActive(false, 'apps-dropdown');
+      openNativeAppsPopup(appsBtn).then(function (opened) {
+        if (generation !== dropdownGeneration) return;
+        if (!opened) {
+          openDomDropdown(generation);
+        }
+      });
+    }
+
+    if (window.__TAURI__ && window.__TAURI__.event && typeof window.__TAURI__.event.listen === 'function') {
+      window.__TAURI__.event.listen('apps-popup-select', function (event) {
+        var payload = event && event.payload ? event.payload : {};
+        var rendererName = payload.rendererName || payload.renderer_name || '';
+        var rendererLabel = payload.rendererLabel || payload.renderer_label || rendererName;
+        if (!rendererName) return;
+        dropdownGeneration += 1;
+        dropdown.classList.add('hidden');
+        setNativeAppOverlayActive(false, 'apps-popup-select');
+        launchStandalone(rendererName, rendererLabel);
+      }).catch(function (error) {
+        console.warn('[apps] Failed to listen for native apps popup selections:', error);
       });
     }
 

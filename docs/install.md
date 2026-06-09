@@ -10,7 +10,7 @@ All installers are available on the [GitHub Releases](https://github.com/DeeJanu
 
 ### macOS (Apple Silicon)
 
-1. Download **[MCPViews.dmg](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.23/MCPViews_0.2.23_aarch64.dmg)** from the release
+1. Download **[MCPViews.dmg](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.24/MCPViews_0.2.24_aarch64.dmg)** from the release
 2. Open the `.dmg` and drag MCPViews to your Applications folder
 3. Launch MCPViews — it starts a local server on `http://localhost:4200`
 
@@ -22,8 +22,8 @@ Choose one:
 
 | Installer | Format | Download |
 |-----------|--------|----------|
-| Setup wizard | `.exe` | [MCPViews_setup.exe](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.23/MCPViews_0.2.23_x64-setup.exe) |
-| MSI package | `.msi` | [MCPViews.msi](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.23/MCPViews_0.2.23_x64_en-US.msi) |
+| Setup wizard | `.exe` | [MCPViews_setup.exe](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.24/MCPViews_0.2.24_x64-setup.exe) |
+| MSI package | `.msi` | [MCPViews.msi](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.24/MCPViews_0.2.24_x64_en-US.msi) |
 
 Run the installer and launch MCPViews from your Start menu.
 
@@ -291,7 +291,7 @@ This does two things:
 
 > **This step is required.** Without it, your agent won't know MCPViews is available or how to use its renderers.
 
-When setup returns questions, answer them one at a time. Agents should start with the MCPViews core Gronk Speak choices, ask only the current question's options, wait for your answer, and then move through installed plugin setup questions the same way. Agents should save only the selected option's compact rule, not every option. Gronk Speak defaults to off; enabling it never changes public-facing artifacts such as websites, emails, customer docs, PR descriptions, published Ludflow docs, or user-facing copy unless you explicitly ask for that.
+When setup returns questions, answer them one at a time. Agents should start with the MCPViews core Gronk Speak choices, explain the current question in conversational language, show what the options do with examples when available, ask only that question's options, and wait for your answer before moving on. Agents should save only the selected option's compact rule, not every option. Gronk Speak defaults to off; it is optional terse agent style for setup/status chatter, and enabling it never changes public-facing artifacts such as websites, emails, customer docs, PR descriptions, published Ludflow docs, or user-facing copy unless you explicitly ask for that.
 
 ### 3. Verify it works
 

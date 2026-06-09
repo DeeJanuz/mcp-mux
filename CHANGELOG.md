@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.24] - 2026-06-09
+
+### Changed
+- `mcpviews_setup` now tells agents to explain setup questions conversationally, including Gronk Speak guidance, option fit, defaults, and examples before waiting for one answer at a time.
+
 ## [0.2.23] - 2026-06-09
 
 ## [0.2.22] - 2026-06-08

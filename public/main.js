@@ -41,6 +41,13 @@
   const DECIDR_ONBOARDING_RENDERER = 'decidr_onboarding';
   const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:agent-configured-org-id';
   const EXTERNAL_WEB_CONTENT_TYPE = 'external_web_page';
+  const NATIVE_APP_OVERLAY_BOUNDS = Object.freeze({
+    x: -10000,
+    y: -10000,
+    width: 1,
+    height: 1,
+    visible: false,
+  });
 
   /** @type {Map<string, HTMLElement>} Cached content containers per session */
   const contentCache = new Map();
@@ -68,7 +75,7 @@
 
   function nativeAppBoundsForOverlay(bounds) {
     var normalized = nativeAppBounds(bounds);
-    if (nativeAppOverlayActive) normalized.visible = false;
+    if (nativeAppOverlayActive) return Object.assign({}, NATIVE_APP_OVERLAY_BOUNDS);
     return normalized;
   }
 
@@ -978,15 +985,35 @@
     var cached = contentCache.get(sessionId);
     if (cached) {
       syncSessionBusyIndicator(cached, session);
+      syncSessionLayoutClasses(cached, session);
     }
 
     return session;
+  }
+
+  function isViewportOwnedSession(session) {
+    if (!session) return false;
+    if (session.contentType === EXTERNAL_WEB_CONTENT_TYPE) return true;
+    if (session.contentType === 'tribex_ai_thread') return true;
+    if (session.meta && session.meta.aiView === 'thread') return true;
+    return /^ludflow_(app|documents_home|data_governance|knowledge_dex)$/.test(String(session.contentType || ''));
+  }
+
+  function syncSessionLayoutClasses(container, session) {
+    if (!container) return;
+    var viewportOwned = isViewportOwnedSession(session);
+    container.classList.toggle('session-content-viewport-owned', viewportOwned);
+    var scroll = container.querySelector('.session-scroll');
+    if (scroll) {
+      scroll.classList.toggle('session-scroll-viewport-owned', viewportOwned);
+    }
   }
 
   function updateRenderedSession(container, sessionId) {
     var session = sessions.get(sessionId);
     if (!session || !container) return false;
     syncSessionBusyIndicator(container, session);
+    syncSessionLayoutClasses(container, session);
     var scroll = container.querySelector('.session-scroll');
     if (!scroll) return false;
     var renderer = getRenderer(session.contentType);
@@ -1041,6 +1068,7 @@
     var cached = contentCache.get(sessionId);
     if (cached) {
       syncSessionBusyIndicator(cached, session);
+      syncSessionLayoutClasses(cached, session);
       cached.classList.add('active');
       return;
     }
@@ -1053,6 +1081,7 @@
     var scroll = document.createElement('div');
     scroll.className = 'session-scroll';
     container.appendChild(scroll);
+    syncSessionLayoutClasses(container, session);
 
     contentArea.appendChild(container);
     contentCache.set(sessionId, container);

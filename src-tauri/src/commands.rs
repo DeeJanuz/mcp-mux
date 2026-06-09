@@ -69,6 +69,10 @@ pub struct NativeAppPanelBounds {
     visible: Option<bool>,
 }
 
+const NATIVE_APP_PANEL_HIDDEN_X: f64 = -10_000.0;
+const NATIVE_APP_PANEL_HIDDEN_Y: f64 = -10_000.0;
+const NATIVE_APP_PANEL_HIDDEN_SIZE: f64 = 1.0;
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeAppPanelUpdateResult {
@@ -596,15 +600,14 @@ fn apply_native_app_panel_bounds<R: tauri::Runtime>(
     webview: &tauri::Webview<R>,
     bounds: NativeAppPanelBounds,
 ) -> Result<bool, String> {
-    let bounds = sanitize_native_app_panel_bounds(bounds)?;
-    let visible = bounds.visible.unwrap_or(true) && bounds.width >= 2.0 && bounds.height >= 2.0;
+    let (bounds, visible) = effective_native_app_panel_bounds(bounds)?;
 
     webview
-        .set_position(tauri::LogicalPosition::new(bounds.x, bounds.y))
-        .map_err(|err| format!("Failed to position native app panel: {}", err))?;
-    webview
-        .set_size(tauri::LogicalSize::new(bounds.width, bounds.height))
-        .map_err(|err| format!("Failed to resize native app panel: {}", err))?;
+        .set_bounds(tauri::Rect {
+            position: tauri::Position::Logical(tauri::LogicalPosition::new(bounds.x, bounds.y)),
+            size: tauri::Size::Logical(tauri::LogicalSize::new(bounds.width, bounds.height)),
+        })
+        .map_err(|err| format!("Failed to update native app panel bounds: {}", err))?;
 
     if visible {
         webview
@@ -617,6 +620,28 @@ fn apply_native_app_panel_bounds<R: tauri::Runtime>(
     }
 
     Ok(visible)
+}
+
+fn effective_native_app_panel_bounds(
+    bounds: NativeAppPanelBounds,
+) -> Result<(NativeAppPanelBounds, bool), String> {
+    let bounds = sanitize_native_app_panel_bounds(bounds)?;
+    let visible = bounds.visible.unwrap_or(true) && bounds.width >= 2.0 && bounds.height >= 2.0;
+
+    if visible {
+        return Ok((bounds, true));
+    }
+
+    Ok((
+        NativeAppPanelBounds {
+            x: NATIVE_APP_PANEL_HIDDEN_X,
+            y: NATIVE_APP_PANEL_HIDDEN_Y,
+            width: NATIVE_APP_PANEL_HIDDEN_SIZE,
+            height: NATIVE_APP_PANEL_HIDDEN_SIZE,
+            visible: Some(false),
+        },
+        false,
+    ))
 }
 
 #[tauri::command]
@@ -2340,6 +2365,63 @@ mod tests {
         .expect_err("unexpectedly allowed non-finite bounds");
 
         assert!(error.contains("finite numbers"));
+    }
+
+    #[test]
+    fn test_effective_native_app_panel_bounds_preserves_visible_bounds() {
+        let (bounds, visible) = effective_native_app_panel_bounds(NativeAppPanelBounds {
+            x: 12.0,
+            y: 24.0,
+            width: 320.0,
+            height: 240.0,
+            visible: Some(true),
+        })
+        .unwrap();
+
+        assert!(visible);
+        assert_eq!(bounds.x, 12.0);
+        assert_eq!(bounds.y, 24.0);
+        assert_eq!(bounds.width, 320.0);
+        assert_eq!(bounds.height, 240.0);
+        assert_eq!(bounds.visible, Some(true));
+    }
+
+    #[test]
+    fn test_effective_native_app_panel_bounds_moves_hidden_bounds_offscreen() {
+        let (bounds, visible) = effective_native_app_panel_bounds(NativeAppPanelBounds {
+            x: 12.0,
+            y: 24.0,
+            width: 320.0,
+            height: 240.0,
+            visible: Some(false),
+        })
+        .unwrap();
+
+        assert!(!visible);
+        assert_eq!(bounds.x, NATIVE_APP_PANEL_HIDDEN_X);
+        assert_eq!(bounds.y, NATIVE_APP_PANEL_HIDDEN_Y);
+        assert_eq!(bounds.width, NATIVE_APP_PANEL_HIDDEN_SIZE);
+        assert_eq!(bounds.height, NATIVE_APP_PANEL_HIDDEN_SIZE);
+        assert_eq!(bounds.visible, Some(false));
+    }
+
+    #[test]
+    fn test_effective_native_app_panel_bounds_moves_tiny_bounds_offscreen() {
+        let (bounds, visible) = effective_native_app_panel_bounds(NativeAppPanelBounds {
+            x: 12.0,
+            y: 24.0,
+            width: 1.0,
+            height: 240.0,
+            visible: Some(true),
+        })
+        .unwrap();
+
+        assert!(!visible);
+        assert_eq!(bounds.x, NATIVE_APP_PANEL_HIDDEN_X);
+        assert_eq!(bounds.y, NATIVE_APP_PANEL_HIDDEN_Y);
+        assert_eq!(bounds.width, NATIVE_APP_PANEL_HIDDEN_SIZE);
+        assert_eq!(bounds.height, NATIVE_APP_PANEL_HIDDEN_SIZE);
+        assert_eq!(bounds.visible, Some(false));
     }
 
     #[test]

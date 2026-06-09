@@ -606,6 +606,14 @@ body {
   box-sizing: border-box;
 }
 
+.session-content-viewport-owned .session-scroll,
+.session-scroll-viewport-owned {
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .external-web-shell {
   height: 100%;
   min-height: 0;
@@ -4838,6 +4846,11 @@ body.ai-mode-session-active .session-scroll {
   padding: 18px 28px 26px;
 }
 
+body.ai-mode-session-active .session-content-viewport-owned .session-scroll,
+body.ai-mode-session-active .session-scroll-viewport-owned {
+  padding: 0;
+}
+
 body.ai-mode-session-active .ai-view.ai-thread-view {
   width: min(100%, 1040px);
   gap: 18px;
@@ -6082,6 +6095,11 @@ body.ai-mode-active .ai-nav-collapsed-button:hover {
 
   body.ai-mode-session-active .session-scroll {
     padding: 14px 14px 22px;
+  }
+
+  body.ai-mode-session-active .session-content-viewport-owned .session-scroll,
+  body.ai-mode-session-active .session-scroll-viewport-owned {
+    padding: 0;
   }
 
   body.ai-mode-session-active .ai-thread-title-row,

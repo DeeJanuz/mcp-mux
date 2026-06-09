@@ -287,11 +287,11 @@ Call the mcpviews_setup tool to configure MCPViews for this agent.
 This does two things:
 - **Persists session-start rules** so `init_session` is called automatically in every future conversation (e.g., creates `.claude/rules/mcpviews-init.md` for Claude Code)
 - **Returns renderer documentation and behavioral rules** so the agent knows how to use the companion window
-- **Asks setup questions** when available, including optional MCPViews Gronk Speak mode/scope choices for compressed nonpublic agent output
+- **Asks setup questions** when installed plugins provide one-time preferences
 
 > **This step is required.** Without it, your agent won't know MCPViews is available or how to use its renderers.
 
-When setup returns questions, answer them one at a time. Agents should start with the MCPViews core Gronk Speak choices, explain the current question in conversational language, show what the options do with examples when available, ask only that question's options, and wait for your answer before moving on. Agents should save only the selected option's compact rule, not every option. Gronk Speak defaults to off; it is optional terse agent style for setup/status chatter, and enabling it never changes public-facing artifacts such as websites, emails, customer docs, PR descriptions, published Ludflow docs, or user-facing copy unless you explicitly ask for that.
+When setup returns questions, answer them one at a time. Agents should explain the current question in conversational language, show what the options do with examples when available, ask only that question's options, and wait for your answer before moving on. Agents should save only the selected option's compact rule, not every option. Optional style preferences such as MCPViews Gronk Speak are provided by installable plugins, so they appear only after that plugin is installed.
 
 ### 3. Verify it works
 
@@ -324,7 +324,7 @@ When you update to a new version of MCPViews:
    ```
    Call the mcpviews_setup tool to update MCPViews rules for this agent.
    ```
-   If setup questions appear, answer them again only when you want to change the persisted preference. For example, MCPViews Gronk Speak can be left off or enabled with a selected mode and scope.
+   If setup questions appear, answer them again only when you want to change the persisted preference. Plugin-provided setup preferences appear only for installed plugins.
 
 2. **Check for plugin updates** — new MCPViews versions may include plugin compatibility changes:
    ```

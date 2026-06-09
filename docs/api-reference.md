@@ -1014,7 +1014,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "20",
+  "rules_version": "21",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -1058,15 +1058,15 @@ sequenceDiagram
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
   "rules_update": {
-    "current_version": "20",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 20; run mcpviews_setup to refresh stale persisted rules because init_session is slim..."
+    "current_version": "21",
+    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 21; run mcpviews_setup to refresh stale persisted rules because init_session is slim..."
   }
 }
 ```
 
 The `rules` array now contains only built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 20 -->`) so agents can detect when persisted rules are stale. Because `init_session` is intentionally slim and returns only built-in rules, the `rules_update` object tells agents to run `mcpviews_setup` before refreshing persisted rules, and to use `get_plugin_docs` for plugin-specific details during a task. Agents should refresh an existing MCPViews rules section when installed or updated plugins add rule details missing from the persisted rules, without appending duplicate MCPViews sections.
+The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 21 -->`) so agents can detect when persisted rules are stale. Because `init_session` is intentionally slim and returns only built-in rules, the `rules_update` object tells agents to run `mcpviews_setup` before refreshing persisted rules, and to use `get_plugin_docs` for plugin-specific details during a task. Agents should refresh an existing MCPViews rules section when installed or updated plugins add rule details missing from the persisted rules, without appending duplicate MCPViews sections.
 
 The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
@@ -1278,7 +1278,7 @@ Setup or refresh MCPViews agent rules. Returns instructions for persisting a rul
 ```json
 {
   "rules": [ ... ],
-  "rules_version": "20",
+  "rules_version": "21",
   "plugin_status": [ ... ],
   "setup_questions": [ ... ],
   "setup_question_instructions": "If setup_questions is non-empty, ask exactly one setup question at a time in the returned order...",
@@ -1288,12 +1288,9 @@ Setup or refresh MCPViews agent rules. Returns instructions for persisting a rul
 }
 ```
 
-`setup_questions` includes a built-in `mcpviews-core` group before installed plugin questions. The core group asks whether to persist Gronk Speak output compression rules and, if enabled, which nonpublic outputs may use them:
+`setup_questions` contains setup-time preference questions contributed by installed plugins. Agents must ask exactly one setup question at a time in the returned order: process groups in order, process each group's questions in order, show only the current question's options, and wait for the user's answer before moving on. The prompt for the current question should be conversational: use the question `description` and optional `guidance`, summarize when to choose each option, include `example_outputs` when present, and identify the default or recommended option. Agents persist only the selected option's compact `persisted_rule` using `persist_as_rule_name`; they must not persist unselected options or the full question text.
 
-- `mcpviews_gronk_speak_mode`: `off` (default), `lite`, `full`, or `ultra`
-- `mcpviews_gronk_speak_scope`: `chat_status_only` (default), `internal_artifacts`, or `all_nonpublic`
-
-Agents must ask exactly one setup question at a time in the returned order, starting with `mcpviews-core` before installed plugin groups. For Gronk Speak, ask mode first, wait for the user's answer, then ask scope, wait again, and only then continue through plugin-provided setup questions the same way. The prompt for the current question should be conversational: explain what Gronk Speak means, use the question `description` and `guidance`, summarize when to choose each option, include `example_outputs` when present, and identify the default or recommended option. Agents must show only the options for the current question, persist only the selected option's compact `persisted_rule` using `persist_as_rule_name`, and must not persist unselected Gronk Speak options. The persisted Gronk rules exclude public-facing artifacts by default and preserve commands, paths, citations, warnings, code, JSON, schema names, and test results.
+Optional style preferences such as MCPViews Gronk Speak are plugin-provided setup questions, not built-in MCPViews core questions. If the Gronk Speak plugin is not installed, `mcpviews_setup` does not ask for Gronk mode or scope.
 
 ## MCP Prompts
 

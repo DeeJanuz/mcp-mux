@@ -866,9 +866,9 @@ Use `plugin_rules` for cross-cutting behavioral guidance that applies to the plu
 
 ### setup_questions
 
-Setup questions let a plugin capture a one-time preference during `mcpviews_setup` without loading full workflow instructions into every future session. Each question has stable `id` and `question` fields, optional `description`, `default_value`, and `persist_as_rule_name`, plus an `options` array. Each option can include `value`, `label`, optional `description`, and optional `persisted_rule`.
+Setup questions let a plugin capture a one-time preference during `mcpviews_setup` without loading full workflow instructions into every future session. Each question has stable `id` and `question` fields, optional `description`, `guidance`, `default_value`, `recommended_value`, `example_outputs`, and `persist_as_rule_name`, plus an `options` array. Each option can include `value`, `label`, optional `description`, and optional `persisted_rule`.
 
-Agents ask setup questions one at a time in returned order. MCPViews core questions are asked first, then installed plugin questions are asked sequentially; agents should explain the current question conversationally, use the question and option descriptions to help the user choose, show only the current question's options, and wait for the user's answer before moving on. Agents persist only the selected option's `persisted_rule`. Put long procedures in `prompt_definitions` and keep persisted setup rules short.
+Agents ask setup questions one at a time in returned order. Installed plugin questions are asked sequentially by group and by question order; agents should explain the current question conversationally, use the question and option descriptions to help the user choose, include `example_outputs` when present, show only the current question's options, and wait for the user's answer before moving on. Agents persist only the selected option's `persisted_rule`. Put long procedures in `prompt_definitions` and keep persisted setup rules short.
 
 ## Plugin Prompts
 

@@ -91,9 +91,15 @@ pub struct SetupQuestion {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    pub guidance: Option<String>,
+    #[serde(default)]
     pub options: Vec<SetupQuestionOption>,
     #[serde(default)]
     pub default_value: Option<String>,
+    #[serde(default)]
+    pub recommended_value: Option<String>,
+    #[serde(default)]
+    pub example_outputs: Option<HashMap<String, String>>,
     /// Suggested persisted rule name for the selected answer.
     #[serde(default)]
     pub persist_as_rule_name: Option<String>,
@@ -925,8 +931,13 @@ mod tests {
                 "id": "governance_mode",
                 "question": "Use team approvals?",
                 "description": "Choose the default governance mode.",
+                "guidance": "Explain the collaboration tradeoff.",
                 "default_value": "team",
+                "recommended_value": "team",
                 "persist_as_rule_name": "governance_mode",
+                "example_outputs": {
+                    "team": "Use approval workflow."
+                },
                 "options": [{
                     "value": "team",
                     "label": "Yes",
@@ -939,10 +950,38 @@ mod tests {
         assert_eq!(manifest.setup_questions.len(), 1);
         assert_eq!(manifest.setup_questions[0].id, "governance_mode");
         assert_eq!(manifest.setup_questions[0].default_value.as_deref(), Some("team"));
+        assert_eq!(
+            manifest.setup_questions[0].recommended_value.as_deref(),
+            Some("team")
+        );
+        assert_eq!(
+            manifest.setup_questions[0].guidance.as_deref(),
+            Some("Explain the collaboration tradeoff.")
+        );
+        assert_eq!(
+            manifest.setup_questions[0]
+                .example_outputs
+                .as_ref()
+                .and_then(|outputs| outputs.get("team"))
+                .map(String::as_str),
+            Some("Use approval workflow.")
+        );
         assert_eq!(manifest.setup_questions[0].options[0].value, "team");
 
         let serialized = serde_json::to_string(&manifest).unwrap();
         let deserialized: PluginManifest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(
+            deserialized.setup_questions[0].recommended_value.as_deref(),
+            Some("team")
+        );
+        assert_eq!(
+            deserialized.setup_questions[0]
+                .example_outputs
+                .as_ref()
+                .and_then(|outputs| outputs.get("team"))
+                .map(String::as_str),
+            Some("Use approval workflow.")
+        );
         assert_eq!(
             deserialized.setup_questions[0].options[0]
                 .persisted_rule

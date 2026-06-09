@@ -2,6 +2,12 @@
 
 This project inherits the global Codex rules from `/Users/daenonjanis/AGENTS.md` and `/Users/daenonjanis/projects/AGENTS.md`.
 
+## Windows/Tauri Cross-Platform Architecture
+
+Before changing Windows or macOS Tauri behavior, release packaging, installers, updaters, native windows, WebViews, custom protocols, capabilities, popups, native panels, external web panels, auth/browser launch, or the release workflow, read `docs/windows-tauri-build-architecture.md`.
+
+MCPViews must preserve one shared user experience across macOS and Windows while allowing platform-specific implementation behind named adapters. Do not add scattered one-off platform branches without recording the shared UX contract, the macOS implementation, the Windows implementation, and Windows runtime verification evidence. Mac-only validation, browser harness checks, and mocked Tauri tests are not proof that Windows is ready.
+
 ## Ludflow Decision Graph Planning Lifecycle
 
 Whenever an agent writes a plan for implementing a new feature, refactoring existing code, fixing a bug, updating documentation, or doing any other substantial work in this codebase, it must create a new relevant Ludflow document or update the existing relevant Ludflow document in the Tribe-X DecidR organization.

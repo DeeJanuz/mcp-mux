@@ -809,6 +809,62 @@ describe('main session routing', function () {
     expect(panelUpdates).toEqual([]);
   });
 
+  it('sizes the native apps popup to the rendered launcher rows', async function () {
+    var openArgs = null;
+    window.__TAURI__ = {
+      event: {
+        listen: vi.fn(function () {
+          return Promise.resolve(function () {});
+        }),
+      },
+      core: {
+        invoke: vi.fn(function (command, args) {
+          if (command === 'get_standalone_renderers') {
+            return Promise.resolve([
+              {
+                plugin: 'tribe-x-persona-studio',
+                label: 'TribeX AI Plugin',
+                renderers: [{ name: 'persona_lab', label: 'Persona Studio' }],
+              },
+              {
+                plugin: 'decidr',
+                label: 'DecidR',
+                renderers: [{ name: 'decidr_dashboard', label: 'Dashboard' }],
+              },
+              {
+                plugin: 'ludflow',
+                label: 'Ludflow',
+                renderers: [{ name: 'ludflow_documents_home', label: 'Documents' }],
+              },
+            ]);
+          }
+          if (command === 'open_apps_popup') {
+            openArgs = args;
+            return Promise.resolve({ opened: true });
+          }
+          if (command === 'get_plugin_renderers' || command === 'get_sessions') {
+            return Promise.resolve([]);
+          }
+          if (command === 'check_app_update') {
+            return Promise.resolve(null);
+          }
+          return Promise.resolve(null);
+        }),
+      },
+    };
+
+    loadMain();
+    document.getElementById('apps-button').click();
+    await flushPromises();
+
+    expect(openArgs).toEqual({
+      bounds: expect.objectContaining({
+        width: 220,
+        height: 142,
+      }),
+    });
+  });
+
   it('opens the DOM apps dropdown when the native apps popup declines', async function () {
     window.__renderers.ludflow_documents_home = vi.fn(function (container) {
       container.textContent = 'Documents';

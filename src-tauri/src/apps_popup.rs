@@ -25,7 +25,7 @@ pub struct AppsPopupSelection {
 const APPS_POPUP_LABEL: &str = "apps-popup";
 const APPS_POPUP_MIN_WIDTH: f64 = 180.0;
 const APPS_POPUP_MAX_WIDTH: f64 = 360.0;
-const APPS_POPUP_MIN_HEIGHT: f64 = 120.0;
+const APPS_POPUP_MIN_HEIGHT: f64 = 80.0;
 const APPS_POPUP_MAX_HEIGHT: f64 = 480.0;
 
 pub(crate) fn should_use_native_apps_popup() -> bool {

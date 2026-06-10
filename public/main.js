@@ -41,11 +41,14 @@
   const DECIDR_ONBOARDING_RENDERER = 'decidr_onboarding';
   const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:agent-configured-org-id';
   const EXTERNAL_WEB_CONTENT_TYPE = 'external_web_page';
-  const APPS_POPUP_WIDTH = 260;
+  const APPS_POPUP_WIDTH = 220;
   const APPS_POPUP_MAX_HEIGHT = 360;
   const APPS_POPUP_MIN_WIDTH = 180;
-  const APPS_POPUP_MIN_HEIGHT = 140;
+  const APPS_POPUP_MIN_HEIGHT = 96;
   const APPS_POPUP_MARGIN = 8;
+  const APPS_POPUP_VERTICAL_PADDING = 16;
+  const APPS_POPUP_HEADER_HEIGHT = 32;
+  const APPS_POPUP_RENDERER_HEIGHT = 30;
   const NATIVE_APP_OVERLAY_BOUNDS = Object.freeze({
     x: -10000,
     y: -10000,
@@ -235,14 +238,28 @@
     return applyNativeAppOverlayBounds();
   }
 
-  function appsPopupBounds(anchor) {
+  function estimateAppsPopupHeight(plugins) {
+    if (!Array.isArray(plugins) || plugins.length === 0) {
+      return APPS_POPUP_MIN_HEIGHT;
+    }
+    var firstRendererCount = Array.isArray(plugins[0] && plugins[0].renderers)
+      ? plugins[0].renderers.length
+      : 0;
+    return APPS_POPUP_VERTICAL_PADDING +
+      (plugins.length * APPS_POPUP_HEADER_HEIGHT) +
+      (firstRendererCount * APPS_POPUP_RENDERER_HEIGHT);
+  }
+
+  function appsPopupBounds(anchor, plugins) {
     var viewportWidth = Math.max(window.innerWidth || APPS_POPUP_WIDTH, APPS_POPUP_MIN_WIDTH + APPS_POPUP_MARGIN * 2);
     var viewportHeight = Math.max(window.innerHeight || APPS_POPUP_MAX_HEIGHT, APPS_POPUP_MIN_HEIGHT + APPS_POPUP_MARGIN * 2);
     var rect = anchor && typeof anchor.getBoundingClientRect === 'function'
       ? anchor.getBoundingClientRect()
       : { right: viewportWidth - APPS_POPUP_MARGIN, bottom: APPS_POPUP_MARGIN };
     var width = Math.min(APPS_POPUP_WIDTH, Math.max(APPS_POPUP_MIN_WIDTH, viewportWidth - APPS_POPUP_MARGIN * 2));
-    var height = Math.min(APPS_POPUP_MAX_HEIGHT, Math.max(APPS_POPUP_MIN_HEIGHT, viewportHeight - APPS_POPUP_MARGIN * 2));
+    var estimatedHeight = estimateAppsPopupHeight(plugins);
+    var availableHeight = Math.max(APPS_POPUP_MIN_HEIGHT, viewportHeight - APPS_POPUP_MARGIN * 2);
+    var height = Math.min(APPS_POPUP_MAX_HEIGHT, availableHeight, Math.max(APPS_POPUP_MIN_HEIGHT, estimatedHeight));
     var x = rect.right - width;
     var y = rect.bottom + APPS_POPUP_MARGIN;
     x = Math.max(APPS_POPUP_MARGIN, Math.min(x, viewportWidth - width - APPS_POPUP_MARGIN));
@@ -257,12 +274,12 @@
     };
   }
 
-  function openNativeAppsPopup(anchor) {
+  function openNativeAppsPopup(anchor, plugins) {
     if (!window.__TAURI__ || !window.__TAURI__.core || typeof window.__TAURI__.core.invoke !== 'function') {
       return Promise.resolve(false);
     }
     return window.__TAURI__.core.invoke('open_apps_popup', {
-      bounds: appsPopupBounds(anchor),
+      bounds: appsPopupBounds(anchor, plugins),
     }).then(function (result) {
       return !!(result && result.opened === true);
     }).catch(function (error) {
@@ -276,6 +293,15 @@
       return;
     }
     window.__TAURI__.core.invoke('close_apps_popup').catch(function () {});
+  }
+
+  function loadStandaloneRenderersForMenu() {
+    if (!window.__TAURI__ || !window.__TAURI__.core || typeof window.__TAURI__.core.invoke !== 'function') {
+      return Promise.reject(new Error('Tauri IPC is not available.'));
+    }
+    return window.__TAURI__.core.invoke('get_standalone_renderers').then(function (plugins) {
+      return Array.isArray(plugins) ? plugins : [];
+    });
   }
 
   window.__mcpviewsHost = window.__mcpviewsHost || {};
@@ -1893,8 +1919,8 @@
       setNativeAppOverlayActive(false, 'apps-dropdown');
     }
 
-    function openDomDropdown(generation) {
-      populateAppsDropdown(dropdown);
+    function openDomDropdown(generation, preloadedPlugins) {
+      populateAppsDropdown(dropdown, preloadedPlugins);
       Promise.resolve(setNativeAppOverlayActive(true, 'apps-dropdown')).then(function () {
         if (generation === dropdownGeneration) {
           dropdown.classList.remove('hidden');
@@ -1911,11 +1937,21 @@
       var generation = ++dropdownGeneration;
       dropdown.classList.add('hidden');
       setNativeAppOverlayActive(false, 'apps-dropdown');
-      openNativeAppsPopup(appsBtn).then(function (opened) {
+      loadStandaloneRenderersForMenu().catch(function (error) {
+        console.warn('[apps] Failed to preload apps menu before opening popup:', error);
+        return null;
+      }).then(function (plugins) {
         if (generation !== dropdownGeneration) return;
-        if (!opened) {
-          openDomDropdown(generation);
-        }
+        return openNativeAppsPopup(appsBtn, plugins).then(function (opened) {
+          if (generation !== dropdownGeneration) return;
+          if (!opened) {
+            openDomDropdown(generation, plugins);
+          }
+        });
+      }).catch(function (error) {
+        if (generation !== dropdownGeneration) return;
+        console.warn('[apps] Failed to open native apps popup:', error);
+        openDomDropdown(generation, null);
       });
     }
 
@@ -1981,7 +2017,7 @@
     refreshAiWorkspaceAvailability();
   }
 
-  function populateAppsDropdown(dropdown) {
+  function populateAppsDropdown(dropdown, preloadedPlugins) {
     if (!window.__TAURI__) {
       if (window.__mcpviewsAppsMenu && typeof window.__mcpviewsAppsMenu.setEmpty === 'function') {
         window.__mcpviewsAppsMenu.setEmpty(dropdown, 'Not available in browser mode');
@@ -1995,7 +2031,7 @@
       return;
     }
 
-    window.__TAURI__.core.invoke('get_standalone_renderers')
+    Promise.resolve(Array.isArray(preloadedPlugins) ? preloadedPlugins : loadStandaloneRenderersForMenu())
       .then(function(plugins) {
         window.__mcpviewsAppsMenu.renderAppsMenu(dropdown, plugins, {
           headerTag: 'div',

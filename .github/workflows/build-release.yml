@@ -512,6 +512,15 @@ jobs:
           key: windows-cargo-registry-${{ hashFiles('Cargo.lock') }}
           restore-keys: windows-cargo-registry-
 
+      - name: Install Edge WebDriver
+        run: |
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          $PWD.Path >> $env:GITHUB_PATH
+
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -520,6 +529,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install WebDriver smoke dependencies
+        run: npm ci --prefix e2e-tests
 
       - name: Clear bundled plugins for generic release
         if: ${{ matrix.flavor == 'generic' }}
@@ -557,34 +569,7 @@ jobs:
           if [ -z "$VERSION" ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           fi
-          export RELEASE_VERSION="$VERSION"
-          node <<'NODE'
-          const fs = require('fs');
-
-          const packageVersion = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
-          const version = process.env.RELEASE_VERSION || packageVersion;
-          const match = version.match(/^(\d+\.\d+\.\d+)(?:-([0-9A-Za-z.]+))?$/);
-          if (!match) {
-            throw new Error(`Invalid release version for Windows bundling: ${version}`);
-          }
-
-          let bundleVersion = version;
-          const prerelease = match[2];
-          if (prerelease) {
-            const numeric = prerelease.match(/(?:^|\.)(\d+)$/)?.[1];
-            if (!numeric) {
-              throw new Error(`Windows MSI prerelease version must end with a numeric identifier: ${version}`);
-            }
-            const prereleaseNumber = Number(numeric);
-            if (!Number.isInteger(prereleaseNumber) || prereleaseNumber > 65535) {
-              throw new Error(`Windows MSI prerelease number must be 0-65535: ${version}`);
-            }
-            bundleVersion = `${match[1]}-${prereleaseNumber}`;
-          }
-
-          fs.writeFileSync('tauri.windows.release.conf.json', JSON.stringify({ version: bundleVersion }, null, 2));
-          console.log(`Windows bundle version: ${bundleVersion}`);
-          NODE
+          RELEASE_VERSION="$VERSION" npm run prepare:windows-bundle-config
 
       - name: Inject updater public key
         shell: bash
@@ -646,6 +631,23 @@ jobs:
             exit 1
           fi
           echo "Updater public key embedded in Windows app"
+
+      - name: Run Windows WebDriver release smoke
+        env:
+          MCPVIEWS_E2E_APP_PATH: ${{ github.workspace }}\target\release\mcpviews.exe
+          MCPVIEWS_E2E_ARTIFACT_DIR: ${{ github.workspace }}\e2e-tests\artifacts
+          MCPVIEWS_E2E_REQUIRE_RENDERER: ${{ matrix.flavor == 'decidr' && 'true' || 'false' }}
+          MCPVIEWS_RELEASE_FLAVOR: ${{ matrix.flavor }}
+        run: npm test --prefix e2e-tests
+
+      - name: Upload Windows WebDriver smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpviews-windows-smoke-${{ matrix.flavor }}
+          if-no-files-found: warn
+          path: |
+            e2e-tests/artifacts/**
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

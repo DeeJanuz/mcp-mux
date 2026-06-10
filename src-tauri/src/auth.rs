@@ -108,7 +108,7 @@ pub async fn start_oauth_flow(
     });
 
     // Open the browser
-    open_browser(&authorization_url)?;
+    crate::auth_browser::open_system_browser(&authorization_url)?;
 
     // Wait for the authorization code with a 120-second timeout
     let code = tokio::time::timeout(std::time::Duration::from_secs(120), code_rx)
@@ -202,34 +202,6 @@ pub async fn start_oauth_flow(
         plugin_name
     );
     Ok(access_token)
-}
-
-/// Open a URL in the user's default browser using platform-specific commands
-fn open_browser(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    let result = std::process::Command::new("xdg-open").arg(url).spawn();
-
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(url).spawn();
-
-    // rundll32 takes the URL as a single argument (no shell parsing), so `&`, `%`,
-    // spaces, and other OAuth query-param characters are passed through verbatim.
-    // The previous `cmd /C start "" "{url}"` approach was double-quoted by Rust's
-    // Windows arg escaping AND truncated by cmd.exe at the first `&`, which made
-    // every plugin OAuth flow fail with "Windows cannot find '\\'".
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", url])
-        .spawn();
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let result: Result<std::process::Child, std::io::Error> = Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "Unsupported platform",
-    ));
-
-    result.map_err(|e| format!("Failed to open browser: {}", e))?;
-    Ok(())
 }
 
 /// Store an OAuth token to ~/.mcpviews/auth/{plugin_name}.json

@@ -132,6 +132,63 @@ commit notes, or the relevant architecture/design doc. Use this template.
 Do not merge a divergence that only says "Windows needed a patch." Name the
 runtime behavior, the shared UX contract, and the Windows evidence.
 
+### Platform Decision: Apps Popup Lifecycle
+
+- Identical UX required: the Apps control opens the shared menu model from the
+  same toolbar affordance, keeps labels/grouping/selection identical, closes
+  predictably, and must not block minimize, tray quit, or interaction with other
+  Windows apps.
+- Why shared implementation is unsafe or insufficient: the native always-on-top
+  `apps-popup` WebView window can survive after the main Windows window is
+  minimized, leaving a blank orphaned surface that traps interaction and
+  prevents reliable tray quit.
+- macOS implementation: continue to use the native `apps_popup` window, with
+  app-level lifecycle cleanup and non-main close requests allowed to destroy
+  auxiliary windows.
+- Windows implementation: the `apps_popup` adapter declines native popup
+  creation and the shared frontend opens the DOM Apps dropdown instead.
+- Shared tests: Apps menu rendering/model tests plus routing tests for native
+  popup selection and DOM fallback when the adapter returns `opened: false`.
+- macOS verification evidence: local Rust/frontend tests are required; macOS
+  runtime smoke remains a separate release evidence item.
+- Windows verification evidence: this decision is based on VMware Fusion
+  Windows evidence of the orphaned blank popup after minimize; the next local
+  Windows artifact must re-smoke launch, Apps dropdown, minimize, restore, and
+  tray quit.
+- Follow-up risk: reintroduce a native Windows popup only after WebView2 focus,
+  parent/minimize, close-on-blur, and tray-quit behavior pass VMware and
+  `windows-latest` WebDriver evidence.
+
+### Platform Decision: Embedded Native App Panels
+
+- Identical UX required: opening Ludflow or another embedded app from the Apps
+  menu creates a normal MCPViews tab, keeps tab switching/closing available,
+  allows the Apps launcher to reopen, and does not leave blank or orphaned
+  WebView surfaces over the shell.
+- Why shared implementation is unsafe or insufficient: Windows WebView2 child
+  panels can render blank and continue hit-testing above MCPViews shell UI,
+  blocking the DOM Apps dropdown even when the main tab bar remains partially
+  usable.
+- macOS implementation: expose `mountNativeAppView`,
+  `updateNativeAppViewBounds`, and `closeNativeAppView` so plugin renderers can
+  mount native child WebViews inside viewport-owned tabs.
+- Windows implementation: do not expose the child native panel bridge to
+  renderer code. Renderers that support both paths, including Ludflow, fall back
+  to their DOM iframe path inside the same MCPViews tab.
+- Shared tests: session routing tests assert native panel support remains
+  available on the default/macOS-like runtime and is not exposed for a Windows
+  runtime user agent.
+- macOS verification evidence: local frontend tests are required; macOS runtime
+  smoke remains a separate release evidence item.
+- Windows verification evidence: this decision is based on VMware Fusion
+  Windows evidence that opening Ludflow produced a blank surface and prevented
+  reopening the app launcher while only tab switching/closing still worked; the
+  next local Windows artifact must re-smoke Ludflow launch plus Apps dropdown
+  reopen after Ludflow is visible.
+- Follow-up risk: re-enable Windows child panels only after WebView2 child
+  WebView loading, stacking, hit-testing, focus, and bounds updates pass VMware
+  and `windows-latest` WebDriver evidence.
+
 ## VM-First Windows Validation
 
 The first Windows proof loop is the local VMware Fusion VM. Use it before any
@@ -175,10 +232,33 @@ Do not store guest usernames, passwords, or VM encryption passwords in this repo
 If `vmrun` guest automation is added later, credentials must come from local
 environment variables or a private secret manager.
 
+## Human QA Gate
+
+After the VMware Fusion smoke passes, stop and hand the artifact plus evidence
+to a human tester for an interactive Windows QA pass. CI release readiness is
+blocked until the tester signs off or every blocking issue is filed, fixed, and
+re-smoked.
+
+Human QA handoff package:
+
+- Exact artifact name, version, release flavor, installer type, and architecture
+  notes from the VMware smoke.
+- Screenshots for launch, Apps popup/dropdown, renderer launch, native/external
+  panels, auth/browser launch, and updater/manual fallback when touched.
+- App logs, WebDriver or VM notes, and any known limitations or skipped checks.
+- A checklist that asks the tester to repeat the smoke interactively, exercise
+  focus/resize/close behavior, confirm user-visible labels and errors, and
+  explicitly mark pass/fail with blocking issues.
+
+Do not replace this QA pass with macOS validation, mocked Tauri tests, or the
+browser harness. The CI WebDriver gate is the release automation gate, but the
+human QA gate remains the stop between local VM proof and release readiness.
+
 ## Later CI WebDriver Gate
 
-After the VM-first loop is stable, add Windows WebDriver to the release pipeline.
-This should become the hard gate before Windows assets are blessed.
+After the VM-first loop is stable and the human QA gate has a pass or resolved
+blocking issues, use Windows WebDriver in the release pipeline. This should
+become the hard automation gate before Windows assets are blessed.
 
 Required shape:
 

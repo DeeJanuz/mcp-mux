@@ -1,0 +1,12 @@
+{
+  "identifier": "apps-popup",
+  "description": "Minimal IPC capability for the Apps popup window.",
+  "windows": ["apps-popup"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-close",
+    "core:window:allow-set-focus"
+  ]
+}

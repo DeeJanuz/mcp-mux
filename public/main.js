@@ -54,6 +54,17 @@
     visible: false,
   });
 
+  function isWindowsRuntime() {
+    var nav = window.navigator || {};
+    var userAgent = String(nav.userAgent || '');
+    var platform = String(nav.platform || '');
+    return /Windows/i.test(userAgent) || /^Win/i.test(platform);
+  }
+
+  function supportsNativeAppPanels() {
+    return !isWindowsRuntime();
+  }
+
   /** @type {Map<string, HTMLElement>} Cached content containers per session */
   const contentCache = new Map();
 
@@ -128,6 +139,9 @@
     if (!window.__TAURI__ || !window.__TAURI__.core) {
       return Promise.reject(new Error('Native app panels are only available in MCPViews desktop.'));
     }
+    if (!supportsNativeAppPanels()) {
+      return Promise.reject(new Error('Native app panels are disabled on Windows.'));
+    }
     var requestedBounds = nativeAppBounds(options.bounds);
     return window.__TAURI__.core.invoke('mount_native_app_panel', {
       pluginName: options.pluginName || options.plugin_name || '',
@@ -145,6 +159,9 @@
     options = options || {};
     if (!window.__TAURI__ || !window.__TAURI__.core) {
       return Promise.reject(new Error('External web tabs are only available in MCPViews desktop.'));
+    }
+    if (!supportsNativeAppPanels()) {
+      return Promise.reject(new Error('External web panels are disabled on Windows.'));
     }
     var requestedBounds = nativeAppBounds(options.bounds);
     return window.__TAURI__.core.invoke('mount_external_web_panel', {
@@ -165,6 +182,9 @@
     if (!window.__TAURI__ || !window.__TAURI__.core) {
       return Promise.reject(new Error('Native app panels are only available in MCPViews desktop.'));
     }
+    if (!supportsNativeAppPanels()) {
+      return Promise.reject(new Error('Native app panels are disabled on Windows.'));
+    }
     var label = options.label || '';
     var requestedBounds = nativeAppBounds(options.bounds);
     rememberNativeAppPanel(label, requestedBounds);
@@ -178,6 +198,9 @@
     options = options || {};
     if (!window.__TAURI__ || !window.__TAURI__.core) {
       return Promise.reject(new Error('Native app panels are only available in MCPViews desktop.'));
+    }
+    if (!supportsNativeAppPanels()) {
+      return Promise.resolve({ label: options.label || '', updated: false, visible: false });
     }
     var label = options.label || '';
     forgetNativeAppPanel(label);
@@ -257,11 +280,14 @@
 
   window.__mcpviewsHost = window.__mcpviewsHost || {};
   window.__mcpviewsHost.openNativeAppView = openNativeAppView;
-  window.__mcpviewsHost.mountNativeAppView = mountNativeAppView;
-  window.__mcpviewsHost.updateNativeAppViewBounds = updateNativeAppViewBounds;
-  window.__mcpviewsHost.closeNativeAppView = closeNativeAppView;
   window.__mcpviewsHost.openExternalUrlInTab = openExternalUrlInTab;
-  window.__mcpviewsHost.mountExternalWebPanel = mountExternalWebPanel;
+  window.__mcpviewsHost.supportsNativeAppPanels = supportsNativeAppPanels;
+  if (supportsNativeAppPanels()) {
+    window.__mcpviewsHost.mountNativeAppView = mountNativeAppView;
+    window.__mcpviewsHost.updateNativeAppViewBounds = updateNativeAppViewBounds;
+    window.__mcpviewsHost.closeNativeAppView = closeNativeAppView;
+    window.__mcpviewsHost.mountExternalWebPanel = mountExternalWebPanel;
+  }
   window.__mcpviewsHost.isNativeAppOverlayActive = function () {
     return nativeAppOverlayActive;
   };
@@ -1208,6 +1234,7 @@
 
   function externalWebNativeBridge() {
     if (!window.__TAURI__ || !window.__TAURI__.core) return null;
+    if (!supportsNativeAppPanels()) return null;
     var host = window.__mcpviewsHost || {};
     var companion = window.__companionUtils || {};
     var mount = typeof host.mountExternalWebPanel === 'function'
@@ -1424,11 +1451,14 @@
   window.__companionUtils.updateSessionMetadata = updateSessionMetadata;
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
   window.__companionUtils.openNativeAppView = openNativeAppView;
-  window.__companionUtils.mountNativeAppView = mountNativeAppView;
   window.__companionUtils.openExternalUrlInTab = openExternalUrlInTab;
-  window.__companionUtils.mountExternalWebPanel = mountExternalWebPanel;
-  window.__companionUtils.updateNativeAppViewBounds = updateNativeAppViewBounds;
-  window.__companionUtils.closeNativeAppView = closeNativeAppView;
+  window.__companionUtils.supportsNativeAppPanels = supportsNativeAppPanels;
+  if (supportsNativeAppPanels()) {
+    window.__companionUtils.mountNativeAppView = mountNativeAppView;
+    window.__companionUtils.mountExternalWebPanel = mountExternalWebPanel;
+    window.__companionUtils.updateNativeAppViewBounds = updateNativeAppViewBounds;
+    window.__companionUtils.closeNativeAppView = closeNativeAppView;
+  }
   window.__companionUtils.isNativeAppOverlayActive = function () {
     return nativeAppOverlayActive;
   };
@@ -1951,109 +1981,38 @@
     refreshAiWorkspaceAvailability();
   }
 
-  function humanizePluginName(pluginName) {
-    var known = {
-      decidr: 'DecidR',
-      ludflow: 'Ludflow',
-      tribex_ai: 'TribeX AI',
-      'tribe-x-persona-studio': 'Persona Studio',
-    };
-    var key = String(pluginName || '');
-    if (known[key]) return known[key];
-    return key
-      .split(/[-_]+/)
-      .filter(Boolean)
-      .map(function(part) {
-        return part.charAt(0).toUpperCase() + part.slice(1);
-      })
-      .join(' ');
-  }
-
   function populateAppsDropdown(dropdown) {
     if (!window.__TAURI__) {
-      dropdown.innerHTML = '<div class="apps-empty">Not available in browser mode</div>';
+      if (window.__mcpviewsAppsMenu && typeof window.__mcpviewsAppsMenu.setEmpty === 'function') {
+        window.__mcpviewsAppsMenu.setEmpty(dropdown, 'Not available in browser mode');
+      } else {
+        dropdown.innerHTML = '<div class="apps-empty">Not available in browser mode</div>';
+      }
+      return;
+    }
+    if (!window.__mcpviewsAppsMenu || typeof window.__mcpviewsAppsMenu.renderAppsMenu !== 'function') {
+      dropdown.innerHTML = '<div class="apps-empty">Apps menu unavailable</div>';
       return;
     }
 
     window.__TAURI__.core.invoke('get_standalone_renderers')
       .then(function(plugins) {
-        if (!plugins || plugins.length === 0) {
-          dropdown.innerHTML = '<div class="apps-empty">No apps available</div>';
-          return;
-        }
-
-        dropdown.innerHTML = '';
-        plugins.forEach(function(plugin) {
-          var pluginName = plugin.label || humanizePluginName(plugin.plugin);
-          var entry = document.createElement('div');
-          entry.className = 'apps-plugin-entry';
-
-          var header = document.createElement('div');
-          header.className = 'apps-plugin-header';
-          header.setAttribute('data-plugin', plugin.plugin);
-          var chevron = document.createElement('span');
-          chevron.className = 'chevron';
-          chevron.textContent = '\u25B6';
-          var label = document.createElement('span');
-          label.textContent = pluginName;
-          header.appendChild(chevron);
-          header.appendChild(label);
-          entry.appendChild(header);
-
-          var rendererList = document.createElement('div');
-          rendererList.className = 'apps-renderer-list';
-          plugin.renderers.forEach(function(renderer) {
-            var item = document.createElement('div');
-            item.className = 'apps-renderer-item';
-            item.setAttribute('data-renderer', renderer.name);
-            item.setAttribute('data-plugin', plugin.plugin);
-            item.setAttribute('title', renderer.description || '');
-            item.textContent = renderer.label;
-            rendererList.appendChild(item);
-          });
-          entry.appendChild(rendererList);
-          dropdown.appendChild(entry);
-        });
-
-        // Bind expand/collapse
-        dropdown.querySelectorAll('.apps-plugin-header').forEach(function(header) {
-          header.addEventListener('click', function(e) {
-            e.stopPropagation();
-            var list = header.nextElementSibling;
-            var isExpanded = header.classList.contains('expanded');
-            // Collapse all
-            dropdown.querySelectorAll('.apps-plugin-header').forEach(function(h) {
-              h.classList.remove('expanded');
-              h.nextElementSibling.classList.remove('expanded');
-            });
-            if (!isExpanded) {
-              header.classList.add('expanded');
-              list.classList.add('expanded');
-            }
-          });
-        });
-
-        // Bind renderer clicks
-        dropdown.querySelectorAll('.apps-renderer-item').forEach(function(item) {
-          item.addEventListener('click', function() {
-            var rendererName = item.getAttribute('data-renderer');
-            var rendererLabel = item.textContent.trim();
+        window.__mcpviewsAppsMenu.renderAppsMenu(dropdown, plugins, {
+          headerTag: 'div',
+          itemTag: 'div',
+          chevronText: '\u25B6',
+          emptyText: 'No apps available',
+          onSelect: function (renderer, rendererLabel) {
+            var rendererName = renderer && renderer.name;
             dropdown.classList.add('hidden');
             setNativeAppOverlayActive(false, 'apps-dropdown');
             launchStandalone(rendererName, rendererLabel);
-          });
+          },
         });
-
-        // Auto-expand first plugin
-        var firstHeader = dropdown.querySelector('.apps-plugin-header');
-        if (firstHeader) {
-          firstHeader.classList.add('expanded');
-          firstHeader.nextElementSibling.classList.add('expanded');
-        }
       })
       .catch(function(err) {
         console.error('[apps] Failed to load standalone renderers:', err);
-        dropdown.innerHTML = '<div class="apps-empty">Failed to load apps</div>';
+        window.__mcpviewsAppsMenu.setEmpty(dropdown, 'Failed to load apps');
       });
   }
 

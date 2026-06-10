@@ -7,6 +7,8 @@
     "dev:update-test": "node scripts/dev-update-test.mjs",
     "build": "tauri build",
     "build:mac-dev-bundle": "node scripts/build-mac-dev-bundle.mjs",
+    "stage:mac-dev-bundle": "node scripts/build-mac-dev-bundle.mjs --stage-only",
+    "prepare:windows-bundle-config": "node scripts/prepare-windows-bundle-config.mjs",
     "stage:branded-bundle": "node scripts/stage-branded-bundled-plugins.mjs",
     "verify:branded-bundle": "node scripts/stage-branded-bundled-plugins.mjs --verify-only",
     "dev:frontend": "vite",

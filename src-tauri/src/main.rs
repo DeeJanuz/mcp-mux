@@ -2,18 +2,24 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_update;
+mod apps_popup;
 mod auth;
+mod auth_browser;
 mod commands;
+mod custom_protocols;
 mod datasets;
 mod desktop_relay;
+mod external_web_panel;
 mod first_party_ai;
 mod http_server;
 mod installer;
+mod installer_update;
 mod mcp;
 mod mcp_prompts;
 mod mcp_registry_tools;
 mod mcp_session;
 mod mcp_tools;
+mod native_panel;
 mod plugin;
 mod plugin_email_auth;
 mod registry;
@@ -178,31 +184,15 @@ fn main() {
         ))
         .register_uri_scheme_protocol("plugin", |_ctx, request| {
             let uri = request.uri().to_string();
-            // URI format on macOS/iOS/Linux: plugin://localhost/{plugin_name}/{path...}
-            // URI format on Windows:        https://plugin.localhost/{plugin_name}/{path...}
-            // Both forms route to this same handler — strip whichever prefix matches.
-            let path = uri
-                .strip_prefix("plugin://localhost/")
-                .or_else(|| uri.strip_prefix("plugin://localhost"))
-                .or_else(|| uri.strip_prefix("https://plugin.localhost/"))
-                .or_else(|| uri.strip_prefix("https://plugin.localhost"))
-                .unwrap_or("");
-
-            // Strip query string (e.g., ?v=123 cache-busting param)
-            let path = path.split('?').next().unwrap_or(path);
-            let mut parts = path.splitn(2, '/');
-            let plugin_name = parts.next().unwrap_or("");
-            let file_path = parts.next().unwrap_or("");
-
-            if plugin_name.is_empty() || file_path.is_empty() {
+            let Some(protocol_path) = custom_protocols::parse_plugin_protocol_uri(&uri) else {
                 return tauri::http::Response::builder()
                     .status(404)
                     .body(Vec::new())
                     .unwrap();
-            }
+            };
 
             // Path traversal protection
-            if file_path.contains("..") {
+            if protocol_path.file_path.contains("..") {
                 return tauri::http::Response::builder()
                     .status(403)
                     .body(b"Forbidden: path traversal".to_vec())
@@ -210,7 +200,9 @@ fn main() {
             }
 
             let plugins_dir = mcpviews_shared::plugins_dir();
-            let full_path = plugins_dir.join(plugin_name).join(file_path);
+            let full_path = plugins_dir
+                .join(protocol_path.plugin_name)
+                .join(protocol_path.file_path);
 
             match std::fs::read(&full_path) {
                 Ok(contents) => {
@@ -308,9 +300,14 @@ fn main() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Hide to tray instead of quitting
-                api.prevent_close();
-                let _ = window.hide();
+                if window.label() == "main" {
+                    // Hide the main window to tray, but let auxiliary windows close normally.
+                    let _ = apps_popup::close_apps_popup_window(window.app_handle());
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            } else if matches!(event, tauri::WindowEvent::Destroyed) && window.label() == "main" {
+                let _ = apps_popup::close_apps_popup_window(window.app_handle());
             }
         })
         .setup(move |app| {
@@ -432,6 +429,7 @@ fn main() {
                         }
                     }
                     "quit" => {
+                        let _ = apps_popup::close_apps_popup_window(app);
                         app.exit(0);
                     }
                     _ => {}

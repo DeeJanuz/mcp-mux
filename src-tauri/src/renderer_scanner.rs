@@ -1,6 +1,7 @@
 use mcpviews_shared::plugins_dir;
 use serde::Serialize;
 
+use crate::custom_protocols;
 use crate::state::{CURRENT_PERSONA_STUDIO_PLUGIN, LEGACY_PERSONA_STUDIO_PLUGIN};
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,23 +63,8 @@ pub fn scan_plugin_renderers() -> Vec<RendererInfo> {
                                     .as_secs()
                             })
                             .unwrap_or(0);
-                        // Tauri custom URI schemes resolve to different URL forms
-                        // per platform: macOS/iOS/Linux use scheme://localhost/path,
-                        // Windows uses https://scheme.localhost/path. The same
-                        // register_uri_scheme_protocol("plugin", ...) handler fires
-                        // in both cases — only the URL the webview must request differs.
-                        // See https://github.com/orgs/tauri-apps/discussions/5597
-                        let url = if cfg!(target_os = "windows") {
-                            format!(
-                                "https://plugin.localhost/{}/renderers/{}?v={}",
-                                plugin_name, file_name, mtime
-                            )
-                        } else {
-                            format!(
-                                "plugin://localhost/{}/renderers/{}?v={}",
-                                plugin_name, file_name, mtime
-                            )
-                        };
+                        let url =
+                            custom_protocols::plugin_renderer_url(&plugin_name, &file_name, mtime);
                         renderers.push(RendererInfo {
                             plugin_name: plugin_name.clone(),
                             file_name: file_name.clone(),

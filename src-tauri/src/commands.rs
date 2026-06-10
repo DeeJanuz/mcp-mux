@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use tauri::{Emitter, Manager, State};
+use tauri::{Emitter, State};
 use tokio::sync::Mutex as TokioMutex;
 
 use mcpviews_shared::{PluginAuth, PluginInfo, PluginManifest, RegistryEntry, RegistrySource};
 
+use crate::apps_popup::{AppsPopupBounds, AppsPopupOpenResult, AppsPopupSelection};
+use crate::native_panel::{NativeAppPanelBounds, NativeAppPanelUpdateResult, NativeAppViewResult};
 use crate::renderer_scanner::RendererInfo;
 
 use crate::http_server::AsyncAppState;
@@ -49,80 +50,6 @@ pub struct PluginPrereleaseInfo {
     installed_prerelease: bool,
     stable_version: Option<String>,
     update_available: bool,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeAppViewResult {
-    label: String,
-    url: String,
-    created: bool,
-}
-
-#[derive(serde::Deserialize, Debug, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeAppPanelBounds {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-    visible: Option<bool>,
-}
-
-#[derive(serde::Deserialize, Debug, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
-pub struct AppsPopupBounds {
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AppsPopupOpenResult {
-    opened: bool,
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct AppsPopupSelection {
-    renderer_name: String,
-    renderer_label: String,
-}
-
-const NATIVE_APP_PANEL_HIDDEN_X: f64 = -10_000.0;
-const NATIVE_APP_PANEL_HIDDEN_Y: f64 = -10_000.0;
-const NATIVE_APP_PANEL_HIDDEN_SIZE: f64 = 1.0;
-const APPS_POPUP_LABEL: &str = "apps-popup";
-const APPS_POPUP_MIN_WIDTH: f64 = 180.0;
-const APPS_POPUP_MAX_WIDTH: f64 = 360.0;
-const APPS_POPUP_MIN_HEIGHT: f64 = 120.0;
-const APPS_POPUP_MAX_HEIGHT: f64 = 480.0;
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NativeAppPanelUpdateResult {
-    label: String,
-    updated: bool,
-    visible: bool,
-}
-
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ExternalWebTabOpenRequest {
-    url: String,
-    title: Option<String>,
-    return_origins: Vec<String>,
-    source_label: Option<String>,
-}
-
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ExternalWebPanelCloseRequest {
-    label: String,
-    session_id: Option<String>,
-    url: Option<String>,
 }
 
 #[tauri::command]
@@ -299,429 +226,9 @@ pub async fn install_app_update(
     crate::app_update::install_and_relaunch(app_handle, update_json_url).await
 }
 
-fn open_system_browser(url: &str) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    let result = std::process::Command::new("xdg-open").arg(url).spawn();
-
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(url).spawn();
-
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", url])
-        .spawn();
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    let result: Result<std::process::Child, std::io::Error> = Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "Unsupported platform",
-    ));
-
-    result.map_err(|e| format!("Failed to open browser: {}", e))?;
-    Ok(())
-}
-
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
-    let parsed = url::Url::parse(&url).map_err(|e| format!("Invalid URL: {}", e))?;
-    match parsed.scheme() {
-        "http" | "https" => open_system_browser(parsed.as_str()),
-        scheme => Err(format!("Unsupported URL protocol: {}", scheme)),
-    }
-}
-
-fn parse_external_web_url(raw_url: &str) -> Result<url::Url, String> {
-    let parsed =
-        url::Url::parse(raw_url).map_err(|err| format!("Invalid external URL: {}", err))?;
-    match parsed.scheme() {
-        "http" | "https" => Ok(parsed),
-        scheme => Err(format!("Unsupported external URL protocol: {}", scheme)),
-    }
-}
-
-fn origin_for_url(url: &url::Url) -> Option<String> {
-    if !matches!(url.scheme(), "http" | "https") || url.authority().is_empty() {
-        return None;
-    }
-    Some(format!("{}://{}", url.scheme(), url.authority()))
-}
-
-fn is_url_allowed_for_plugin(url: &url::Url, allowed_origins: &[String]) -> bool {
-    let Some(origin) = origin_for_url(url) else {
-        return false;
-    };
-    allowed_origins
-        .iter()
-        .any(|allowed| allowed.eq_ignore_ascii_case(&origin))
-}
-
-fn parse_native_app_url(
-    plugin_name: &str,
-    raw_url: &str,
-    allowed_origins: &[String],
-) -> Result<url::Url, String> {
-    let parsed = url::Url::parse(raw_url).map_err(|err| format!("Invalid app URL: {}", err))?;
-    if origin_for_url(&parsed).is_none() {
-        return Err(format!(
-            "Unsupported app URL protocol for plugin '{}': {}",
-            plugin_name,
-            parsed.scheme()
-        ));
-    }
-    if !is_url_allowed_for_plugin(&parsed, allowed_origins) {
-        let origin = origin_for_url(&parsed).unwrap_or_else(|| parsed.as_str().to_string());
-        return Err(format!(
-            "App URL origin '{}' is not declared in frame_origins for plugin '{}'.",
-            origin, plugin_name
-        ));
-    }
-    Ok(parsed)
-}
-
-fn normalize_return_origins(raw_origins: Option<Vec<String>>) -> Vec<String> {
-    let mut origins = Vec::new();
-    let mut seen = HashSet::new();
-    for raw_origin in raw_origins.unwrap_or_default() {
-        let trimmed = raw_origin.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let parsed = url::Url::parse(trimmed).ok();
-        let origin = parsed.as_ref().and_then(origin_for_url).or_else(|| {
-            if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-                Some(trimmed.trim_end_matches('/').to_string())
-            } else {
-                None
-            }
-        });
-        let Some(origin) = origin else {
-            continue;
-        };
-        let key = origin.to_ascii_lowercase();
-        if seen.insert(key) {
-            origins.push(origin);
-        }
-    }
-    origins
-}
-
-fn is_stripe_web_url(url: &url::Url) -> bool {
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
-    host == "stripe.com" || host.ends_with(".stripe.com")
-}
-
-fn emit_external_web_tab_open_request(
-    app_handle: &tauri::AppHandle,
-    url: &url::Url,
-    title: Option<String>,
-    return_origins: Vec<String>,
-    source_label: Option<String>,
-) {
-    if !matches!(url.scheme(), "http" | "https") {
-        return;
-    }
-    let payload = ExternalWebTabOpenRequest {
-        url: url.to_string(),
-        title,
-        return_origins,
-        source_label,
-    };
-    if let Err(err) = app_handle.emit("external_web_tab_open_requested", payload) {
-        eprintln!("[mcpviews] Failed to request external web tab: {}", err);
-    }
-}
-
-fn emit_external_web_panel_close_request(
-    app_handle: &tauri::AppHandle,
-    label: String,
-    session_id: Option<String>,
-    url: Option<String>,
-) {
-    let payload = ExternalWebPanelCloseRequest {
-        label,
-        session_id,
-        url,
-    };
-    if let Err(err) = app_handle.emit("external_web_panel_close_requested", payload) {
-        eprintln!(
-            "[mcpviews] Failed to request external web panel close: {}",
-            err
-        );
-    }
-}
-
-fn sanitized_window_label_segment(value: &str) -> String {
-    let mut segment = String::new();
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            segment.push(ch.to_ascii_lowercase());
-        } else if ch == '-' || ch == '_' {
-            segment.push('-');
-        } else if ch.is_ascii_whitespace() || ch == '/' || ch == ':' || ch == '.' {
-            segment.push('-');
-        }
-        if segment.len() >= 48 {
-            break;
-        }
-    }
-    let segment = segment.trim_matches('-').to_string();
-    if segment.is_empty() {
-        "app".to_string()
-    } else {
-        segment
-    }
-}
-
-fn native_app_window_label(plugin_name: &str, label: Option<&str>, fallback: &str) -> String {
-    native_app_label("plugin-app", plugin_name, label, fallback)
-}
-
-fn native_app_panel_label(plugin_name: &str, label: Option<&str>, fallback: &str) -> String {
-    native_app_label("plugin-panel", plugin_name, label, fallback)
-}
-
-fn external_web_panel_label(
-    label: Option<&str>,
-    session_id: Option<&str>,
-    fallback: &str,
-) -> String {
-    let label_seed = label
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| session_id.map(str::trim).filter(|value| !value.is_empty()))
-        .unwrap_or(fallback);
-    native_app_label("external-panel", "web", Some(label_seed), fallback)
-}
-
-fn native_app_label(
-    prefix: &str,
-    plugin_name: &str,
-    label: Option<&str>,
-    fallback: &str,
-) -> String {
-    let label_seed = label
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(fallback);
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    plugin_name.hash(&mut hasher);
-    label_seed.hash(&mut hasher);
-    let hash = format!("{:x}", hasher.finish());
-    let hash_suffix = hash.get(0..8).unwrap_or(&hash);
-    format!(
-        "{}-{}-{}-{}",
-        prefix,
-        sanitized_window_label_segment(plugin_name),
-        sanitized_window_label_segment(label_seed),
-        hash_suffix
-    )
-}
-
-fn native_app_window_title(title: Option<&str>, plugin_name: &str) -> String {
-    title
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| value.chars().take(96).collect())
-        .unwrap_or_else(|| format!("{} App", plugin_name))
-}
-
-fn external_web_panel_init_script(
-    label: &str,
-    session_id: Option<&str>,
-    return_origins: &[String],
-    arm_any_non_stripe_return: bool,
-) -> String {
-    let label_json = serde_json::to_string(label).unwrap_or_else(|_| "\"\"".to_string());
-    let session_id_json =
-        serde_json::to_string(&session_id.unwrap_or("")).unwrap_or_else(|_| "\"\"".to_string());
-    let return_origins_json =
-        serde_json::to_string(return_origins).unwrap_or_else(|_| "[]".to_string());
-    let arm_any_non_stripe_return = if arm_any_non_stripe_return {
-        "true"
-    } else {
-        "false"
-    };
-
-    format!(
-        r#"(function() {{
-  var label = {label_json};
-  var sessionId = {session_id_json};
-  var returnOrigins = {return_origins_json};
-  var armAnyNonStripeReturn = {arm_any_non_stripe_return};
-  var armed = false;
-  function isStripeHost(host) {{
-    host = String(host || '').toLowerCase();
-    return host === 'stripe.com' || host.endsWith('.stripe.com');
-  }}
-  function currentOrigin() {{
-    try {{ return window.location.origin || ''; }} catch (_error) {{ return ''; }}
-  }}
-  function shouldArmCloseSentinel() {{
-    var origin = currentOrigin();
-    if (origin && returnOrigins.indexOf(origin) !== -1) return true;
-    if (!armAnyNonStripeReturn) return false;
-    try {{ return !isStripeHost(window.location.hostname); }} catch (_error) {{ return false; }}
-  }}
-  function closePanel() {{
-    var closeUrl = 'mcpviews-external-tab://close/' + encodeURIComponent(label || 'external');
-    if (sessionId) closeUrl += '?sessionId=' + encodeURIComponent(sessionId);
-    try {{ window.location.href = closeUrl; }} catch (_error) {{}}
-  }}
-  function armBackClose() {{
-    if (armed || !shouldArmCloseSentinel()) return;
-    armed = true;
-    try {{
-      var state = history.state && typeof history.state === 'object' ? Object.assign({{}}, history.state) : {{}};
-      state.__mcpviewsExternalReturnPage = true;
-      history.replaceState(state, document.title, window.location.href);
-      history.pushState({{ __mcpviewsExternalReturnSentinel: true }}, document.title, window.location.href);
-    }} catch (_error) {{}}
-  }}
-  window.addEventListener('popstate', function () {{
-    if (shouldArmCloseSentinel()) closePanel();
-  }});
-  document.addEventListener('keydown', function (event) {{
-    if (!shouldArmCloseSentinel()) return;
-    var key = event.key || '';
-    if (key === 'BrowserBack' || (key === 'ArrowLeft' && (event.metaKey || event.ctrlKey || event.altKey))) {{
-      event.preventDefault();
-      closePanel();
-    }}
-  }}, true);
-  window.addEventListener('pageshow', armBackClose);
-  window.addEventListener('load', armBackClose);
-  setTimeout(armBackClose, 0);
-}})();"#
-    )
-}
-
-fn sanitize_native_app_panel_bounds(
-    bounds: NativeAppPanelBounds,
-) -> Result<NativeAppPanelBounds, String> {
-    if !bounds.x.is_finite()
-        || !bounds.y.is_finite()
-        || !bounds.width.is_finite()
-        || !bounds.height.is_finite()
-    {
-        return Err("Native app panel bounds must be finite numbers.".to_string());
-    }
-
-    let x = bounds.x.clamp(-10_000.0, 10_000.0);
-    let y = bounds.y.clamp(-10_000.0, 10_000.0);
-    let width = bounds.width.clamp(1.0, 10_000.0);
-    let height = bounds.height.clamp(1.0, 10_000.0);
-
-    Ok(NativeAppPanelBounds {
-        x,
-        y,
-        width,
-        height,
-        visible: bounds.visible,
-    })
-}
-
-fn apply_native_app_panel_bounds<R: tauri::Runtime>(
-    webview: &tauri::Webview<R>,
-    bounds: NativeAppPanelBounds,
-) -> Result<bool, String> {
-    let (bounds, visible) = effective_native_app_panel_bounds(bounds)?;
-
-    webview
-        .set_bounds(tauri::Rect {
-            position: tauri::Position::Logical(tauri::LogicalPosition::new(bounds.x, bounds.y)),
-            size: tauri::Size::Logical(tauri::LogicalSize::new(bounds.width, bounds.height)),
-        })
-        .map_err(|err| format!("Failed to update native app panel bounds: {}", err))?;
-
-    if visible {
-        webview
-            .show()
-            .map_err(|err| format!("Failed to show native app panel: {}", err))?;
-    } else {
-        webview
-            .hide()
-            .map_err(|err| format!("Failed to hide native app panel: {}", err))?;
-    }
-
-    Ok(visible)
-}
-
-fn effective_native_app_panel_bounds(
-    bounds: NativeAppPanelBounds,
-) -> Result<(NativeAppPanelBounds, bool), String> {
-    let bounds = sanitize_native_app_panel_bounds(bounds)?;
-    let visible = bounds.visible.unwrap_or(true) && bounds.width >= 2.0 && bounds.height >= 2.0;
-
-    if visible {
-        return Ok((bounds, true));
-    }
-
-    Ok((
-        NativeAppPanelBounds {
-            x: NATIVE_APP_PANEL_HIDDEN_X,
-            y: NATIVE_APP_PANEL_HIDDEN_Y,
-            width: NATIVE_APP_PANEL_HIDDEN_SIZE,
-            height: NATIVE_APP_PANEL_HIDDEN_SIZE,
-            visible: Some(false),
-        },
-        false,
-    ))
-}
-
-fn sanitize_apps_popup_bounds(bounds: AppsPopupBounds) -> Result<AppsPopupBounds, String> {
-    if !bounds.x.is_finite()
-        || !bounds.y.is_finite()
-        || !bounds.width.is_finite()
-        || !bounds.height.is_finite()
-    {
-        return Err("Apps popup bounds must be finite numbers.".to_string());
-    }
-
-    Ok(AppsPopupBounds {
-        x: bounds.x.clamp(-10_000.0, 10_000.0),
-        y: bounds.y.clamp(-10_000.0, 10_000.0),
-        width: bounds
-            .width
-            .clamp(APPS_POPUP_MIN_WIDTH, APPS_POPUP_MAX_WIDTH),
-        height: bounds
-            .height
-            .clamp(APPS_POPUP_MIN_HEIGHT, APPS_POPUP_MAX_HEIGHT),
-    })
-}
-
-fn apps_popup_screen_bounds<R: tauri::Runtime>(
-    window: &tauri::WebviewWindow<R>,
-    bounds: AppsPopupBounds,
-) -> Result<AppsPopupBounds, String> {
-    let bounds = sanitize_apps_popup_bounds(bounds)?;
-    let scale_factor = window
-        .scale_factor()
-        .map_err(|err| format!("Failed to read MCPViews scale factor: {}", err))?;
-    let origin = window
-        .inner_position()
-        .or_else(|_| window.outer_position())
-        .map_err(|err| format!("Failed to read MCPViews window position: {}", err))?
-        .to_logical::<f64>(scale_factor);
-
-    Ok(AppsPopupBounds {
-        x: origin.x + bounds.x,
-        y: origin.y + bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-    })
-}
-
-fn close_apps_popup_window(app_handle: &tauri::AppHandle) -> Result<bool, String> {
-    let Some(window) = app_handle.get_webview_window(APPS_POPUP_LABEL) else {
-        return Ok(false);
-    };
-    window
-        .close()
-        .map_err(|err| format!("Failed to close apps popup: {}", err))?;
-    Ok(true)
+    crate::auth_browser::open_http_url(&url)
 }
 
 #[tauri::command]
@@ -730,63 +237,12 @@ pub fn open_apps_popup(
     window: tauri::WebviewWindow,
     app_handle: tauri::AppHandle,
 ) -> Result<AppsPopupOpenResult, String> {
-    let bounds = apps_popup_screen_bounds(&window, bounds)?;
-    if let Some(popup) = app_handle.get_webview_window(APPS_POPUP_LABEL) {
-        popup
-            .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                bounds.x, bounds.y,
-            )))
-            .map_err(|err| format!("Failed to move apps popup: {}", err))?;
-        popup
-            .set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                bounds.width,
-                bounds.height,
-            )))
-            .map_err(|err| format!("Failed to resize apps popup: {}", err))?;
-        let _ = popup.show();
-        let _ = popup.set_focus();
-        return Ok(AppsPopupOpenResult { opened: true });
-    }
-
-    let builder = tauri::WebviewWindowBuilder::new(
-        &app_handle,
-        APPS_POPUP_LABEL,
-        tauri::WebviewUrl::App("apps-popup.html".into()),
-    )
-    .title("Apps")
-    .inner_size(bounds.width, bounds.height)
-    .position(bounds.x, bounds.y)
-    .decorations(false)
-    .resizable(false)
-    .maximizable(false)
-    .minimizable(false)
-    .skip_taskbar(true)
-    .always_on_top(true)
-    .shadow(true)
-    .focused(true)
-    .visible(true)
-    .theme(Some(tauri::Theme::Light))
-    .use_https_scheme(true)
-    .parent(&window)
-    .map_err(|err| format!("Failed to attach apps popup to MCPViews window: {}", err))?;
-
-    let popup = builder
-        .build()
-        .map_err(|err| format!("Failed to open apps popup: {}", err))?;
-    let close_handle = app_handle.clone();
-    popup.on_window_event(move |event| {
-        if matches!(event, tauri::WindowEvent::Focused(false)) {
-            let _ = close_apps_popup_window(&close_handle);
-        }
-    });
-
-    Ok(AppsPopupOpenResult { opened: true })
+    crate::apps_popup::open_apps_popup(bounds, window, app_handle)
 }
 
 #[tauri::command]
 pub fn close_apps_popup(app_handle: tauri::AppHandle) -> Result<(), String> {
-    close_apps_popup_window(&app_handle)?;
-    Ok(())
+    crate::apps_popup::close_apps_popup(app_handle)
 }
 
 #[tauri::command]
@@ -794,14 +250,7 @@ pub fn select_apps_popup_renderer(
     selection: AppsPopupSelection,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    if selection.renderer_name.trim().is_empty() {
-        return Err("Apps popup renderer name is required.".to_string());
-    }
-    app_handle
-        .emit_to("main", "apps-popup-select", &selection)
-        .map_err(|err| format!("Failed to send apps popup selection: {}", err))?;
-    close_apps_popup_window(&app_handle)?;
-    Ok(())
+    crate::apps_popup::select_apps_popup_renderer(selection, app_handle)
 }
 
 #[tauri::command]
@@ -813,74 +262,14 @@ pub fn open_native_app_view(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
 ) -> Result<NativeAppViewResult, String> {
-    let plugin_name = plugin_name.trim();
-    if plugin_name.is_empty() {
-        return Err("Plugin name is required.".to_string());
-    }
-
-    let allowed_origins = state.plugin_frame_origins_for(plugin_name);
-    if allowed_origins.is_empty() {
-        return Err(format!(
-            "Plugin '{}' has no frame_origins app allowlist.",
-            plugin_name
-        ));
-    }
-
-    let parsed = parse_native_app_url(plugin_name, &url, &allowed_origins)?;
-    let window_label = native_app_window_label(plugin_name, label.as_deref(), parsed.as_str());
-    let window_title = native_app_window_title(title.as_deref(), plugin_name);
-
-    if let Some(window) = app_handle.get_webview_window(&window_label) {
-        window
-            .navigate(parsed.clone())
-            .map_err(|err| format!("Failed to navigate native app view: {}", err))?;
-        let _ = window.show();
-        let _ = window.set_focus();
-        return Ok(NativeAppViewResult {
-            label: window_label,
-            url: parsed.to_string(),
-            created: false,
-        });
-    }
-
-    let navigation_allowed_origins = allowed_origins.clone();
-    let navigation_plugin_name = plugin_name.to_string();
-    let navigation_app_handle = app_handle.clone();
-    let navigation_source_label = window_label.clone();
-    tauri::WebviewWindowBuilder::new(
-        &app_handle,
-        &window_label,
-        tauri::WebviewUrl::External(parsed.clone()),
+    crate::native_panel::open_native_app_view(
+        plugin_name,
+        url,
+        title,
+        label,
+        state.inner(),
+        app_handle,
     )
-    .title(window_title)
-    .inner_size(1280.0, 900.0)
-    .resizable(true)
-    .theme(Some(tauri::Theme::Light))
-    .on_navigation(move |navigation_url| {
-        let allowed = is_url_allowed_for_plugin(navigation_url, &navigation_allowed_origins);
-        if !allowed {
-            emit_external_web_tab_open_request(
-                &navigation_app_handle,
-                navigation_url,
-                None,
-                navigation_allowed_origins.clone(),
-                Some(navigation_source_label.clone()),
-            );
-            eprintln!(
-                "[mcpviews] Blocked native plugin app navigation for {}: {}",
-                navigation_plugin_name, navigation_url
-            );
-        }
-        allowed
-    })
-    .build()
-    .map_err(|err| format!("Failed to open native app view: {}", err))?;
-
-    Ok(NativeAppViewResult {
-        label: window_label,
-        url: parsed.to_string(),
-        created: true,
-    })
 }
 
 #[tauri::command]
@@ -893,88 +282,15 @@ pub fn mount_native_app_panel(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
 ) -> Result<NativeAppViewResult, String> {
-    let plugin_name = plugin_name.trim();
-    if plugin_name.is_empty() {
-        return Err("Plugin name is required.".to_string());
-    }
-
-    let allowed_origins = state.plugin_frame_origins_for(plugin_name);
-    if allowed_origins.is_empty() {
-        return Err(format!(
-            "Plugin '{}' has no frame_origins app allowlist.",
-            plugin_name
-        ));
-    }
-
-    let parsed = parse_native_app_url(plugin_name, &url, &allowed_origins)?;
-    let panel_label = native_app_panel_label(plugin_name, label.as_deref(), parsed.as_str());
-
-    if let Some(webview) = app_handle.get_webview(&panel_label) {
-        webview
-            .navigate(parsed.clone())
-            .map_err(|err| format!("Failed to navigate native app panel: {}", err))?;
-        apply_native_app_panel_bounds(&webview, bounds)?;
-        return Ok(NativeAppViewResult {
-            label: panel_label,
-            url: parsed.to_string(),
-            created: false,
-        });
-    }
-
-    let main_window = app_handle
-        .get_webview_window("main")
-        .ok_or_else(|| "Main MCPViews window is not available.".to_string())?;
-
-    let navigation_allowed_origins = allowed_origins.clone();
-    let navigation_plugin_name = plugin_name.to_string();
-    let navigation_app_handle = app_handle.clone();
-    let navigation_source_label = panel_label.clone();
-    let webview_builder = tauri::webview::WebviewBuilder::new(
-        &panel_label,
-        tauri::WebviewUrl::External(parsed.clone()),
+    crate::native_panel::mount_native_app_panel(
+        plugin_name,
+        url,
+        title,
+        label,
+        bounds,
+        state.inner(),
+        app_handle,
     )
-    .accept_first_mouse(true)
-    .on_navigation(move |navigation_url| {
-        let allowed = is_url_allowed_for_plugin(navigation_url, &navigation_allowed_origins);
-        if !allowed {
-            emit_external_web_tab_open_request(
-                &navigation_app_handle,
-                navigation_url,
-                None,
-                navigation_allowed_origins.clone(),
-                Some(navigation_source_label.clone()),
-            );
-            eprintln!(
-                "[mcpviews] Blocked native plugin app panel navigation for {}: {}",
-                navigation_plugin_name, navigation_url
-            );
-        }
-        allowed
-    });
-
-    let bounds = sanitize_native_app_panel_bounds(bounds)?;
-    let webview = main_window
-        .as_ref()
-        .window()
-        .add_child(
-            webview_builder,
-            tauri::LogicalPosition::new(bounds.x, bounds.y),
-            tauri::LogicalSize::new(bounds.width, bounds.height),
-        )
-        .map_err(|err| {
-            format!(
-                "Failed to mount native app panel '{}': {}",
-                native_app_window_title(title.as_deref(), plugin_name),
-                err
-            )
-        })?;
-    apply_native_app_panel_bounds(&webview, bounds)?;
-
-    Ok(NativeAppViewResult {
-        label: panel_label,
-        url: parsed.to_string(),
-        created: true,
-    })
 }
 
 #[tauri::command]
@@ -987,86 +303,15 @@ pub fn mount_external_web_panel(
     bounds: NativeAppPanelBounds,
     app_handle: tauri::AppHandle,
 ) -> Result<NativeAppViewResult, String> {
-    let parsed = parse_external_web_url(&url)?;
-    let normalized_return_origins = normalize_return_origins(return_origins);
-    let panel_label =
-        external_web_panel_label(label.as_deref(), session_id.as_deref(), parsed.as_str());
-
-    if let Some(webview) = app_handle.get_webview(&panel_label) {
-        webview
-            .navigate(parsed.clone())
-            .map_err(|err| format!("Failed to navigate external web panel: {}", err))?;
-        apply_native_app_panel_bounds(&webview, bounds)?;
-        return Ok(NativeAppViewResult {
-            label: panel_label,
-            url: parsed.to_string(),
-            created: false,
-        });
-    }
-
-    let main_window = app_handle
-        .get_webview_window("main")
-        .ok_or_else(|| "Main MCPViews window is not available.".to_string())?;
-
-    let navigation_app_handle = app_handle.clone();
-    let navigation_label = panel_label.clone();
-    let navigation_session_id = session_id.clone();
-    let init_script = external_web_panel_init_script(
-        &panel_label,
-        session_id.as_deref(),
-        &normalized_return_origins,
-        is_stripe_web_url(&parsed),
-    );
-
-    let webview_builder = tauri::webview::WebviewBuilder::new(
-        &panel_label,
-        tauri::WebviewUrl::External(parsed.clone()),
+    crate::external_web_panel::mount_external_web_panel(
+        url,
+        title,
+        label,
+        session_id,
+        return_origins,
+        bounds,
+        app_handle,
     )
-    .accept_first_mouse(true)
-    .initialization_script(init_script)
-    .on_navigation(move |navigation_url| match navigation_url.scheme() {
-        "http" | "https" => true,
-        "mcpviews-external-tab" => {
-            emit_external_web_panel_close_request(
-                &navigation_app_handle,
-                navigation_label.clone(),
-                navigation_session_id.clone(),
-                Some(navigation_url.to_string()),
-            );
-            false
-        }
-        scheme => {
-            eprintln!(
-                "[mcpviews] Blocked external web panel navigation with unsupported scheme '{}': {}",
-                scheme, navigation_url
-            );
-            false
-        }
-    });
-
-    let bounds = sanitize_native_app_panel_bounds(bounds)?;
-    let webview = main_window
-        .as_ref()
-        .window()
-        .add_child(
-            webview_builder,
-            tauri::LogicalPosition::new(bounds.x, bounds.y),
-            tauri::LogicalSize::new(bounds.width, bounds.height),
-        )
-        .map_err(|err| {
-            format!(
-                "Failed to mount external web panel '{}': {}",
-                native_app_window_title(title.as_deref(), "External"),
-                err
-            )
-        })?;
-    apply_native_app_panel_bounds(&webview, bounds)?;
-
-    Ok(NativeAppViewResult {
-        label: panel_label,
-        url: parsed.to_string(),
-        created: true,
-    })
 }
 
 #[tauri::command]
@@ -1075,24 +320,7 @@ pub fn update_native_app_panel_bounds(
     bounds: NativeAppPanelBounds,
     app_handle: tauri::AppHandle,
 ) -> Result<NativeAppPanelUpdateResult, String> {
-    let label = label.trim();
-    if label.is_empty() {
-        return Err("Native app panel label is required.".to_string());
-    }
-    let Some(webview) = app_handle.get_webview(label) else {
-        return Ok(NativeAppPanelUpdateResult {
-            label: label.to_string(),
-            updated: false,
-            visible: false,
-        });
-    };
-
-    let visible = apply_native_app_panel_bounds(&webview, bounds)?;
-    Ok(NativeAppPanelUpdateResult {
-        label: label.to_string(),
-        updated: true,
-        visible,
-    })
+    crate::native_panel::update_native_app_panel_bounds(label, bounds, app_handle)
 }
 
 #[tauri::command]
@@ -1100,26 +328,7 @@ pub fn close_native_app_panel(
     label: String,
     app_handle: tauri::AppHandle,
 ) -> Result<NativeAppPanelUpdateResult, String> {
-    let label = label.trim();
-    if label.is_empty() {
-        return Err("Native app panel label is required.".to_string());
-    }
-    let Some(webview) = app_handle.get_webview(label) else {
-        return Ok(NativeAppPanelUpdateResult {
-            label: label.to_string(),
-            updated: false,
-            visible: false,
-        });
-    };
-
-    webview
-        .close()
-        .map_err(|err| format!("Failed to close native app panel: {}", err))?;
-    Ok(NativeAppPanelUpdateResult {
-        label: label.to_string(),
-        updated: true,
-        visible: false,
-    })
+    crate::native_panel::close_native_app_panel(label, app_handle)
 }
 
 #[tauri::command]
@@ -2398,219 +1607,6 @@ mod tests {
         let health = get_health();
         assert_eq!(health["status"], "ok");
         assert!(health["version"].is_string());
-    }
-
-    #[test]
-    fn test_parse_native_app_url_allows_declared_origin() {
-        let origins = vec!["https://staging.app.ludflow.com".to_string()];
-        let parsed = parse_native_app_url(
-            "ludflow",
-            "https://staging.app.ludflow.com/mcpviews/embed/start?token=test",
-            &origins,
-        )
-        .unwrap();
-        assert_eq!(
-            origin_for_url(&parsed).as_deref(),
-            Some("https://staging.app.ludflow.com")
-        );
-    }
-
-    #[test]
-    fn test_parse_native_app_url_rejects_undeclared_origin() {
-        let origins = vec!["https://staging.app.ludflow.com".to_string()];
-        let error = parse_native_app_url("ludflow", "https://example.com/", &origins)
-            .expect_err("unexpectedly allowed undeclared origin");
-        assert!(error.contains("not declared in frame_origins"));
-    }
-
-    #[test]
-    fn test_parse_native_app_url_rejects_non_http_scheme() {
-        let origins = vec!["https://staging.app.ludflow.com".to_string()];
-        let error = parse_native_app_url("ludflow", "javascript:alert(1)", &origins)
-            .expect_err("unexpectedly allowed javascript URL");
-        assert!(error.contains("Unsupported app URL protocol"));
-    }
-
-    #[test]
-    fn test_parse_external_web_url_allows_http_urls() {
-        let parsed = parse_external_web_url("https://billing.stripe.com/session/test").unwrap();
-        assert_eq!(parsed.scheme(), "https");
-        assert_eq!(parsed.host_str(), Some("billing.stripe.com"));
-    }
-
-    #[test]
-    fn test_parse_external_web_url_rejects_non_http_scheme() {
-        let error = parse_external_web_url("javascript:alert(1)")
-            .expect_err("unexpectedly allowed javascript URL");
-        assert!(error.contains("Unsupported external URL protocol"));
-    }
-
-    #[test]
-    fn test_normalize_return_origins_deduplicates_and_strips_paths() {
-        let origins = normalize_return_origins(Some(vec![
-            "https://app.ludflow.com/settings/organization".to_string(),
-            "https://app.ludflow.com".to_string(),
-            "not a url".to_string(),
-            "https://app.decidr.com/billing".to_string(),
-        ]));
-
-        assert_eq!(
-            origins,
-            vec![
-                "https://app.ludflow.com".to_string(),
-                "https://app.decidr.com".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn test_external_web_panel_init_script_contains_close_sentinel() {
-        let script = external_web_panel_init_script(
-            "external-panel-test",
-            Some("session-123"),
-            &["https://app.ludflow.com".to_string()],
-            true,
-        );
-
-        assert!(script.contains("mcpviews-external-tab://close/"));
-        assert!(script.contains("session-123"));
-        assert!(script.contains("https://app.ludflow.com"));
-        assert!(script.contains("armAnyNonStripeReturn = true"));
-    }
-
-    #[test]
-    fn test_native_app_window_label_is_stable_and_sanitized() {
-        let first = native_app_window_label("ludflow", Some("Data Governance"), "/ignored");
-        let second = native_app_window_label("ludflow", Some("Data Governance"), "/other");
-        assert_eq!(first, second);
-        assert!(first.starts_with("plugin-app-ludflow-data-governance-"));
-    }
-
-    #[test]
-    fn test_native_app_panel_label_is_distinct_from_window_label() {
-        let window = native_app_window_label("ludflow", Some("Documents"), "/ignored");
-        let panel = native_app_panel_label("ludflow", Some("Documents"), "/ignored");
-
-        assert_ne!(window, panel);
-        assert!(panel.starts_with("plugin-panel-ludflow-documents-"));
-    }
-
-    #[test]
-    fn test_sanitize_native_app_panel_bounds_clamps_dimensions() {
-        let bounds = sanitize_native_app_panel_bounds(NativeAppPanelBounds {
-            x: -20_000.0,
-            y: 20_000.0,
-            width: 0.0,
-            height: 25_000.0,
-            visible: Some(true),
-        })
-        .unwrap();
-
-        assert_eq!(bounds.x, -10_000.0);
-        assert_eq!(bounds.y, 10_000.0);
-        assert_eq!(bounds.width, 1.0);
-        assert_eq!(bounds.height, 10_000.0);
-        assert_eq!(bounds.visible, Some(true));
-    }
-
-    #[test]
-    fn test_sanitize_native_app_panel_bounds_rejects_non_finite_values() {
-        let error = sanitize_native_app_panel_bounds(NativeAppPanelBounds {
-            x: f64::NAN,
-            y: 0.0,
-            width: 100.0,
-            height: 100.0,
-            visible: Some(true),
-        })
-        .expect_err("unexpectedly allowed non-finite bounds");
-
-        assert!(error.contains("finite numbers"));
-    }
-
-    #[test]
-    fn test_effective_native_app_panel_bounds_preserves_visible_bounds() {
-        let (bounds, visible) = effective_native_app_panel_bounds(NativeAppPanelBounds {
-            x: 12.0,
-            y: 24.0,
-            width: 320.0,
-            height: 240.0,
-            visible: Some(true),
-        })
-        .unwrap();
-
-        assert!(visible);
-        assert_eq!(bounds.x, 12.0);
-        assert_eq!(bounds.y, 24.0);
-        assert_eq!(bounds.width, 320.0);
-        assert_eq!(bounds.height, 240.0);
-        assert_eq!(bounds.visible, Some(true));
-    }
-
-    #[test]
-    fn test_effective_native_app_panel_bounds_moves_hidden_bounds_offscreen() {
-        let (bounds, visible) = effective_native_app_panel_bounds(NativeAppPanelBounds {
-            x: 12.0,
-            y: 24.0,
-            width: 320.0,
-            height: 240.0,
-            visible: Some(false),
-        })
-        .unwrap();
-
-        assert!(!visible);
-        assert_eq!(bounds.x, NATIVE_APP_PANEL_HIDDEN_X);
-        assert_eq!(bounds.y, NATIVE_APP_PANEL_HIDDEN_Y);
-        assert_eq!(bounds.width, NATIVE_APP_PANEL_HIDDEN_SIZE);
-        assert_eq!(bounds.height, NATIVE_APP_PANEL_HIDDEN_SIZE);
-        assert_eq!(bounds.visible, Some(false));
-    }
-
-    #[test]
-    fn test_sanitize_apps_popup_bounds_clamps_dimensions() {
-        let bounds = sanitize_apps_popup_bounds(AppsPopupBounds {
-            x: -20_000.0,
-            y: 20_000.0,
-            width: 1.0,
-            height: 10_000.0,
-        })
-        .unwrap();
-
-        assert_eq!(bounds.x, -10_000.0);
-        assert_eq!(bounds.y, 10_000.0);
-        assert_eq!(bounds.width, APPS_POPUP_MIN_WIDTH);
-        assert_eq!(bounds.height, APPS_POPUP_MAX_HEIGHT);
-    }
-
-    #[test]
-    fn test_sanitize_apps_popup_bounds_rejects_non_finite_values() {
-        let error = sanitize_apps_popup_bounds(AppsPopupBounds {
-            x: 0.0,
-            y: f64::INFINITY,
-            width: 260.0,
-            height: 360.0,
-        })
-        .expect_err("unexpectedly allowed non-finite apps popup bounds");
-
-        assert!(error.contains("finite numbers"));
-    }
-
-    #[test]
-    fn test_effective_native_app_panel_bounds_moves_tiny_bounds_offscreen() {
-        let (bounds, visible) = effective_native_app_panel_bounds(NativeAppPanelBounds {
-            x: 12.0,
-            y: 24.0,
-            width: 1.0,
-            height: 240.0,
-            visible: Some(true),
-        })
-        .unwrap();
-
-        assert!(!visible);
-        assert_eq!(bounds.x, NATIVE_APP_PANEL_HIDDEN_X);
-        assert_eq!(bounds.y, NATIVE_APP_PANEL_HIDDEN_Y);
-        assert_eq!(bounds.width, NATIVE_APP_PANEL_HIDDEN_SIZE);
-        assert_eq!(bounds.height, NATIVE_APP_PANEL_HIDDEN_SIZE);
-        assert_eq!(bounds.visible, Some(false));
     }
 
     #[test]

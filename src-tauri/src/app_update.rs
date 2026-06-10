@@ -6,12 +6,18 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_updater::UpdaterExt;
 
+#[cfg(test)]
+use crate::installer_update::ReleaseFlavor;
+use crate::installer_update::{
+    current_manual_download_platform, current_update_manifest_asset, matches_macos_download_asset,
+    matches_windows_msi_download_asset, matches_windows_setup_download_asset, release_flavor,
+    ManualDownloadPlatform,
+};
+
 const GITHUB_RELEASES_API_URL: &str = "https://api.github.com/repos/DeeJanuz/mcpviews/releases";
 const GITHUB_RELEASE_HOST: &str = "github.com";
 const GITHUB_OWNER: &str = "DeeJanuz";
 const GITHUB_REPO: &str = "mcpviews";
-const GENERIC_UPDATE_MANIFEST_ASSET: &str = "latest.json";
-const DECIDR_UPDATE_MANIFEST_ASSET: &str = "decidr-latest.json";
 const DEV_UPDATE_FLAG: &str = "MCPVIEWS_DEV_UPDATE";
 const DEV_UPDATE_VERSION_ENV: &str = "MCPVIEWS_DEV_UPDATE_VERSION";
 const DEV_UPDATE_MANIFEST_URL: &str = "mcpviews-dev://mock/latest.json";
@@ -77,13 +83,6 @@ impl InstallAvailability {
             unavailable_reason: Some(reason.into()),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ManualDownloadPlatform {
-    MacOs,
-    Windows,
-    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,7 +227,7 @@ fn update_info_from_release(
         return None;
     }
 
-    let update_manifest_asset = update_manifest_asset();
+    let update_manifest_asset = current_update_manifest_asset();
     let update_json_url = release
         .assets
         .iter()
@@ -275,21 +274,6 @@ fn current_install_availability() -> InstallAvailability {
     }
 }
 
-fn current_manual_download_platform() -> ManualDownloadPlatform {
-    #[cfg(target_os = "macos")]
-    {
-        return ManualDownloadPlatform::MacOs;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return ManualDownloadPlatform::Windows;
-    }
-
-    #[allow(unreachable_code)]
-    ManualDownloadPlatform::Other
-}
-
 fn manual_download_for_release(
     release: &GitHubRelease,
     platform: ManualDownloadPlatform,
@@ -325,52 +309,6 @@ fn manual_download_for_release(
         url: release.html_url.clone(),
         label: "Open release page".to_string(),
     })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReleaseFlavor {
-    Generic,
-    Decidr,
-}
-
-fn release_flavor() -> ReleaseFlavor {
-    match option_env!("MCPVIEWS_RELEASE_FLAVOR")
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "decidr" => ReleaseFlavor::Decidr,
-        _ => ReleaseFlavor::Generic,
-    }
-}
-
-fn update_manifest_asset() -> &'static str {
-    match release_flavor() {
-        ReleaseFlavor::Generic => GENERIC_UPDATE_MANIFEST_ASSET,
-        ReleaseFlavor::Decidr => DECIDR_UPDATE_MANIFEST_ASSET,
-    }
-}
-
-fn matches_macos_download_asset(name: &str, flavor: ReleaseFlavor) -> bool {
-    match flavor {
-        ReleaseFlavor::Generic => name.starts_with("MCPViews_") && name.ends_with("_aarch64.dmg"),
-        ReleaseFlavor::Decidr => name == "DecidR-MCPViews-macOS.dmg",
-    }
-}
-
-fn matches_windows_setup_download_asset(name: &str, flavor: ReleaseFlavor) -> bool {
-    match flavor {
-        ReleaseFlavor::Generic => name.starts_with("MCPViews_") && name.ends_with("_x64-setup.exe"),
-        ReleaseFlavor::Decidr => name == "DecidR-MCPViews-Windows-setup.exe",
-    }
-}
-
-fn matches_windows_msi_download_asset(name: &str, flavor: ReleaseFlavor) -> bool {
-    match flavor {
-        ReleaseFlavor::Generic => name.starts_with("MCPViews_") && name.ends_with("_x64_en-US.msi"),
-        ReleaseFlavor::Decidr => name == "DecidR-MCPViews-Windows.msi",
-    }
 }
 
 fn dev_update_enabled() -> bool {
@@ -501,7 +439,7 @@ fn validate_update_manifest_url(value: &str) -> Result<url::Url, String> {
         || segments[1] != GITHUB_REPO
         || segments[2] != "releases"
         || segments[3] != "download"
-        || segments.last().copied() != Some(update_manifest_asset())
+        || segments.last().copied() != Some(current_update_manifest_asset())
     {
         return Err(
             "Update manifests must be the expected flavor-specific latest asset from an MCPViews GitHub release."

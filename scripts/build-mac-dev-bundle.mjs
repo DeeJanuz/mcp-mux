@@ -23,6 +23,7 @@ const repoRoot = resolve(scriptDir, '..');
 const stageRoot = join(repoRoot, 'src-tauri', 'bundled-plugins', 'mac-dev');
 const releaseBundleRoot = join(repoRoot, 'target', 'release', 'bundle');
 const tauriConfig = readJson(join(repoRoot, 'src-tauri', 'tauri.conf.json'));
+const stageOnly = process.argv.includes('--stage-only');
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -238,10 +239,8 @@ function createDevDmg() {
   }
 }
 
-function main() {
+function stageMacDevPlugins() {
   removeGeneratedPath(stageRoot);
-  removeGeneratedPath(join(releaseBundleRoot, 'macos'));
-  removeGeneratedPath(join(releaseBundleRoot, 'dmg'));
   mkdirSync(stageRoot, { recursive: true });
 
   const staged = [
@@ -270,6 +269,14 @@ function main() {
   for (const plugin of staged) {
     console.log(`  - ${plugin}`);
   }
+}
+
+function main() {
+  stageMacDevPlugins();
+  if (stageOnly) return;
+
+  removeGeneratedPath(join(releaseBundleRoot, 'macos'));
+  removeGeneratedPath(join(releaseBundleRoot, 'dmg'));
 
   runTauriBuild();
 }

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 var __dirnameResolved = dirname(fileURLToPath(import.meta.url));
+var appsMenuModelCode = readFileSync(join(__dirnameResolved, '../public/apps-menu-model.js'), 'utf8').replace(/\r\n/g, '\n');
 var mainCode = readFileSync(join(__dirnameResolved, '../public/main.js'), 'utf8').replace(/\r\n/g, '\n');
 
 function loadMain() {
@@ -30,6 +31,7 @@ function loadMain() {
     ].join('\n'),
   );
 
+  new Function(appsMenuModelCode).call(globalThis);
   new Function(instrumented).call(globalThis);
 }
 
@@ -65,6 +67,17 @@ function installLocalStorage() {
   });
 }
 
+function setUserAgent(value, platform) {
+  Object.defineProperty(window.navigator, 'userAgent', {
+    configurable: true,
+    value: value,
+  });
+  Object.defineProperty(window.navigator, 'platform', {
+    configurable: true,
+    value: platform || '',
+  });
+}
+
 beforeEach(function () {
   document.body.innerHTML = [
     '<div id="main-title"></div>',
@@ -86,10 +99,12 @@ beforeEach(function () {
     '<div id="content-area"></div>',
   ].join('');
   document.body.className = '';
+  setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15', 'MacIntel');
 
   delete window.__mainTest;
   delete window.__companionUtils;
   delete window.__mcpviewsHost;
+  delete window.__mcpviewsAppsMenu;
   delete window.__TAURI__;
   delete window.__tribexAiShell;
   delete window.__tribexAiState;
@@ -794,6 +809,60 @@ describe('main session routing', function () {
     expect(panelUpdates).toEqual([]);
   });
 
+  it('opens the DOM apps dropdown when the native apps popup declines', async function () {
+    window.__renderers.ludflow_documents_home = vi.fn(function (container) {
+      container.textContent = 'Documents';
+    });
+    window.__TAURI__ = {
+      event: {
+        listen: vi.fn(function () {
+          return Promise.resolve(function () {});
+        }),
+      },
+      core: {
+        invoke: vi.fn(function (command) {
+          if (command === 'open_apps_popup') {
+            return Promise.resolve({
+              opened: false,
+            });
+          }
+          if (command === 'get_standalone_renderers') {
+            return Promise.resolve([{
+              plugin: 'ludflow',
+              label: 'Ludflow',
+              renderers: [{
+                name: 'ludflow_documents_home',
+                label: 'Documents',
+                description: 'Documents workspace',
+              }],
+            }]);
+          }
+          if (command === 'get_plugin_renderers' || command === 'get_sessions') {
+            return Promise.resolve([]);
+          }
+          if (command === 'check_app_update') {
+            return Promise.resolve(null);
+          }
+          return Promise.resolve(null);
+        }),
+      },
+    };
+
+    loadMain();
+    document.getElementById('apps-button').click();
+    await flushPromises();
+
+    var dropdown = document.getElementById('apps-dropdown');
+    expect(dropdown.classList.contains('hidden')).toBe(false);
+    expect(document.querySelector('.apps-renderer-item').textContent).toBe('Documents');
+    expect(window.__TAURI__.core.invoke).toHaveBeenCalledWith('open_apps_popup', {
+      bounds: expect.objectContaining({
+        width: expect.any(Number),
+        height: expect.any(Number),
+      }),
+    });
+  });
+
   it('moves native app panels offscreen when the apps dropdown falls back to DOM', async function () {
     window.__renderers.ludflow_documents_home = vi.fn(function (container) {
       container.textContent = 'Documents';
@@ -895,6 +964,40 @@ describe('main session routing', function () {
         visible: true,
       },
     });
+  });
+
+  it('does not expose child native panel mounting on Windows', async function () {
+    setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Win32');
+    window.__TAURI__ = {
+      event: {
+        listen: vi.fn(function () {
+          return Promise.resolve(function () {});
+        }),
+      },
+      core: {
+        invoke: vi.fn(function (command) {
+          if (command === 'get_plugin_renderers' || command === 'get_sessions') {
+            return Promise.resolve([]);
+          }
+          if (command === 'check_app_update') {
+            return Promise.resolve(null);
+          }
+          return Promise.resolve(null);
+        }),
+      },
+    };
+
+    loadMain();
+    await flushPromises();
+
+    expect(window.__mcpviewsHost.supportsNativeAppPanels()).toBe(false);
+    expect(window.__companionUtils.supportsNativeAppPanels()).toBe(false);
+    expect(window.__mcpviewsHost.openNativeAppView).toEqual(expect.any(Function));
+    expect(window.__mcpviewsHost.mountNativeAppView).toBeUndefined();
+    expect(window.__mcpviewsHost.updateNativeAppViewBounds).toBeUndefined();
+    expect(window.__mcpviewsHost.closeNativeAppView).toBeUndefined();
+    expect(window.__companionUtils.mountNativeAppView).toBeUndefined();
+    expect(window.__companionUtils.mountExternalWebPanel).toBeUndefined();
   });
 
   it('shows DecidR Setup under the DecidR app group', async function () {

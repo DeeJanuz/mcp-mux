@@ -514,7 +514,7 @@ sequenceDiagram
 
 ### Rules-Only Plugin Structure
 
-Use a rules-only plugin when you want shared operating procedures, review workflows, implementation skills, governance policies, or customer-specific runbooks, but you do not need a custom renderer.
+Use a rules-only plugin when you want shared operating procedures, review workflows, implementation skills, governance policies, or customer-specific runbooks, but you do not need a custom renderer. Put global workflow discovery in `plugin_rules`, scoped workflow discovery in `plugin_rule_definitions`, and full instructions in `prompt_definitions`; put true first-turn behavior in `startup_rules`.
 
 ```
 team-workflows/
@@ -542,6 +542,15 @@ There is no `renderers/` directory in this example. The plugin exists to adverti
   "plugin_rules": [
     "Use this plugin when the task mentions frontend review, release governance, billing safety, incident response, or team workflow standards.",
     "Fetch the specific prompt with get_plugin_prompt before applying a workflow. Do not load every workflow up front."
+  ],
+  "startup_rules": [
+    {
+      "id": "team_status_style",
+      "version": "1",
+      "title": "Team status update style",
+      "description": "Loaded by the agent harness before a new session starts.",
+      "rule": "When writing internal status updates, lead with current state, blockers, and next action."
+    }
   ],
   "prompt_definitions": [
     {
@@ -608,13 +617,15 @@ Agents discover this skill from the `prompt_definitions` breadcrumb in `init_ses
 |-------|---------|------------------|
 | `registry_index.summary` | One-line description that helps the agent decide whether the plugin is relevant. | Yes |
 | `registry_index.tags` | Searchable concepts such as `rules`, `skills`, `release`, `frontend`, or `billing`. | Yes |
-| `plugin_rules` | Always-visible routing rules and safety constraints for the plugin. | Yes |
+| `plugin_rules` | Always-visible global workflow breadcrumbs and routing rules for the plugin. | Yes |
+| `plugin_rule_definitions` | Filterable plugin-level workflow breadcrumbs scoped to tools or groups. | Yes |
+| `startup_rules` | Agent-native rules that must be loaded before `init_session` can run. | Yes |
 | `prompt_definitions[].description` | Breadcrumb for a specific skill or workflow, including when to fetch it. | Yes |
 | `prompts/*.md` | Full task instructions, examples, checklists, verification steps, and output format. | No, but keep it task-focused |
 | `tool_rules` | Behavioral instructions for a specific MCP tool. | Yes |
 | `renderer_definitions[].rule` | Behavioral instructions for a renderer or display workflow. | Yes |
 
-The important boundary is that breadcrumbs should help the agent choose, not perform. Put the full procedure in the prompt file so the agent only loads it when the current task calls for it.
+The important boundary is that breadcrumbs should help the agent choose, not perform. Put the full procedure in the prompt file so the agent only loads it when the current task calls for it. If behavior must affect the first assistant message in a new session, use `startup_rules` and let MCPViews reconcile those through project-local `mcpviews-init.json`.
 
 ### Combining Rules, Tools, and Renderers
 
@@ -622,6 +633,7 @@ Rules repository plugins can start without tools or renderers, then grow into ri
 
 - Add MCP tools when a skill needs live data, search, validation, or external mutations.
 - Add `tool_rules` when a tool has non-obvious safety, ordering, or formatting requirements.
+- Add `plugin_rule_definitions` when a workflow rule spans multiple tools or a tool group but should stay out of `init_session` unless explicitly marked `always_include`.
 - Add renderers when the workflow benefits from a visual review surface, dashboard, graph, or approval table.
 - Add `renderer_definitions` when agents need to construct `push_content` or `push_review` payloads for those renderers.
 
@@ -630,12 +642,13 @@ For example, a release-governance skill might begin as one prompt. Later it coul
 ### Best Practices
 
 - Write breadcrumb descriptions in trigger language: "Use when the task mentions..." or "Fetch before..."
-- Keep `plugin_rules` small and stable; put long checklists in prompt markdown.
+- Keep `plugin_rules` small and stable; put scoped workflow breadcrumbs in `plugin_rule_definitions` and long checklists in prompt markdown.
+- Use `startup_rules` sparingly for true session-start behavior such as style, always-on safety constraints, or setup preferences that must apply before `init_session` returns.
 - Make each prompt self-contained enough to work across agent harnesses.
 - Include verification and output expectations in every skill prompt.
 - Use arguments for task-specific inputs such as `target_url`, `project_path`, `ticket_id`, or `environment`.
 - Version and distribute the plugin like code so rule updates happen in one place.
-- Do not use breadcrumbs as hidden policy. If a rule must govern behavior, make the routing condition clear in `plugin_rules` or the prompt description.
+- Do not use breadcrumbs as hidden policy. If a rule must govern behavior, make the routing condition clear in `plugin_rules`, `plugin_rule_definitions`, or the prompt description.
 
 ### registry_index (Optional)
 
@@ -705,7 +718,7 @@ Every renderer in your `renderers` map should have a corresponding entry in `ren
 | `scope` | No | `"universal"` = any agent can use it directly. `"tool"` = tied to specific MCP tools (default). |
 | `tools` | No | For tool-scoped renderers: which unprefixed tool names produce output for this renderer. |
 | `data_hint` | **Yes** | JSON schema hint showing the expected shape of the `data` payload. This is what agents use to construct correct `push_content` calls. Without it, agents cannot format payloads. |
-| `rule` | No | Behavioral rule text returned by `get_plugin_docs`/`mcpviews_setup` for agent persistence. |
+| `rule` | No | Behavioral rule text returned by `get_plugin_docs`/`mcpviews_setup` for runtime guidance. |
 | `display_mode` | No | Preferred display mode when invoked by another renderer: `"drawer"` (slide-out panel, default), `"modal"`, or `"replace"`. |
 | `invoke_schema` | No | JSON schema hint for invocation parameters (e.g., `"{ id: string }"`). Setting this marks the renderer as invocable — it will appear in the frontend invocation registry and can be linked to via `mcpview://` URIs. |
 | `url_patterns` | No | Array of glob patterns for auto-detecting URLs in rendered content to convert to invocation links (e.g., `["/decisions/*", "/api/decisions/*"]`). Supports `*` (single segment) and `**` (any path). |
@@ -849,7 +862,7 @@ Per-tool behavioral rules (tool names are auto-prefixed):
 
 ### plugin_rules
 
-High-level behavioral rules for the plugin that agents can see every session as compact breadcrumbs. Unlike `tool_rules` (which are per-tool and only returned when that tool's docs are requested), `plugin_rules` are included in the `init_session` `plugin_registry` entry and are returned as full rules by `mcpviews_setup` and `get_plugin_docs` regardless of any tool/renderer filters.
+High-level workflow rules for the plugin that agents can see every session as compact global breadcrumbs. Unlike `tool_rules` and `plugin_rule_definitions`, legacy `plugin_rules` are included in the `init_session` `plugin_registry` entry and are returned as full rules by `mcpviews_setup` and `get_plugin_docs` regardless of tool/renderer filters.
 
 ```json
 {
@@ -862,7 +875,48 @@ High-level behavioral rules for the plugin that agents can see every session as 
 
 Each rule is a plain string. In `mcpviews_setup` and `get_plugin_docs`, plugin rules are returned in the `rules` array with `"category": "plugin"` and `"source": "<plugin-name>"`. They also appear in the `plugin_registry` compact index returned by `init_session`, so agents can see routing guidance without calling `get_plugin_docs`.
 
-Use `plugin_rules` for cross-cutting behavioral guidance that applies to the plugin as a whole. Use `tool_rules` for tool-specific instructions.
+Use `plugin_rules` for workflow routing, runbook triggers, and compact breadcrumbs. Do not copy `plugin_rules` into `AGENTS.md`, `.claude/rules`, `.cursor/rules`, `.windsurfrules`, or other native startup files. Use `startup_rules` for behavior that must exist in agent-native project rules before a session starts. Use `tool_rules` for tool-specific instructions.
+
+### plugin_rule_definitions
+
+Use `plugin_rule_definitions` for plugin-level workflow guidance that should be fetched only for relevant tools or groups. This keeps `init_session` compact while letting `get_plugin_docs({ plugin, tools: [...] })` return the right cross-tool runbook pointers.
+
+```json
+{
+  "plugin_rule_definitions": [{
+    "id": "decision_lifecycle",
+    "rule": "Fetch governance_lifecycle before moving standard decisions through PLAN/STAGED/IMPLEMENTED.",
+    "tools": ["update_decision", "save_decision_document_version"],
+    "groups": ["Create & Update", "Documents"],
+    "tags": ["governance"]
+  }]
+}
+```
+
+Set `always_include: true` only for short guidance that must appear in the compact `init_session` plugin registry. When `get_plugin_docs` is called without filters, all structured plugin rule definitions are returned.
+
+### startup_rules
+
+Startup rules are explicit agent-native rules contributed by MCPViews core or by a plugin. MCPViews evaluates them only when `init_session` or `mcpviews_setup` receives `project_path`; it creates or reads `<project_path>/mcpviews-init.json`, compares installed rule version/hash state, and returns `startup_rule_actions`.
+
+Agents remain responsible for how each harness installs rules. For example, Codex may update an `AGENTS.md` startup-rules section, Claude Code may update `.claude/rules/*.md`, and Cursor may update `.cursor/rules/*.mdc`. After installing, updating, or declining a startup rule, the agent calls `save_startup_rule_state` so MCPViews records locations and opt-out flags. Native rule files must contain startup rules only; runtime `rules`, `plugin_rules`, renderer docs, DecidR/Ludflow workflow guidance, setup questions, plugin docs, and tool docs remain runtime breadcrumbs.
+
+```json
+{
+  "startup_rules": [
+    {
+      "id": "gronk_mode",
+      "version": "1",
+      "title": "Gronk Speak mode",
+      "source": {
+        "type": "setup_question",
+        "question_id": "mcpviews_gronk_speak_mode",
+        "skip_install_values": ["off"]
+      }
+    }
+  ]
+}
+```
 
 ### setup_questions
 

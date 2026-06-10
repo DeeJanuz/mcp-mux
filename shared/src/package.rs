@@ -9,8 +9,7 @@ const MAX_DOWNLOAD_SIZE: u64 = 50 * 1024 * 1024; // 50MB
 /// - Verify manifest.json exists in extracted contents
 /// - Clean up dest_dir on failure
 pub fn extract_plugin_zip(zip_path: &Path, dest_dir: &Path) -> Result<PluginManifest, String> {
-    let file =
-        std::fs::File::open(zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("Failed to open zip: {}", e))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("Failed to read zip archive: {}", e))?;
 
@@ -155,8 +154,7 @@ pub async fn download_and_install_plugin(
         ));
     }
 
-    std::fs::write(&temp_path, &bytes)
-        .map_err(|e| format!("Failed to write temp file: {}", e))?;
+    std::fs::write(&temp_path, &bytes).map_err(|e| format!("Failed to write temp file: {}", e))?;
 
     // Extract to temp dir first to read manifest name
     let temp_extract = cache.join("plugin-extract-temp");
@@ -215,9 +213,7 @@ pub fn install_from_local_zip(
 /// Recursively copy a directory (fallback when rename fails across filesystems)
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dst).map_err(|e| format!("Failed to create directory: {}", e))?;
-    for entry in
-        std::fs::read_dir(src).map_err(|e| format!("Failed to read directory: {}", e))?
-    {
+    for entry in std::fs::read_dir(src).map_err(|e| format!("Failed to read directory: {}", e))? {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
@@ -360,7 +356,10 @@ mod tests {
 
         let manifest = install_from_local_zip(&zip_path, &plugins_dir).unwrap();
         assert_eq!(manifest.name, "test-plugin");
-        assert!(plugins_dir.join("test-plugin").join("manifest.json").exists());
+        assert!(plugins_dir
+            .join("test-plugin")
+            .join("manifest.json")
+            .exists());
     }
 
     #[test]

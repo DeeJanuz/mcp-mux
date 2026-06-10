@@ -48,14 +48,11 @@ pub(crate) fn oauth_token_needs_preemptive_refresh(oauth_info: &OAuthRefreshInfo
             OAUTH_REFRESH_LEEWAY_SECONDS,
         );
     }
-    mcpviews_shared::token_store::load_stored_token_unvalidated(
-        &auth_dir,
-        &oauth_info.plugin_name,
-    )
-    .map(|token| {
-        token.refresh_token.is_some() && token.expires_within(OAUTH_REFRESH_LEEWAY_SECONDS)
-    })
-    .unwrap_or(false)
+    mcpviews_shared::token_store::load_stored_token_unvalidated(&auth_dir, &oauth_info.plugin_name)
+        .map(|token| {
+            token.refresh_token.is_some() && token.expires_within(OAUTH_REFRESH_LEEWAY_SECONDS)
+        })
+        .unwrap_or(false)
 }
 
 fn current_oauth_bearer_if_fresh(oauth_info: &OAuthRefreshInfo) -> Option<String> {

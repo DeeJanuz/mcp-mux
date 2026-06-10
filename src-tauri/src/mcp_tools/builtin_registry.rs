@@ -309,13 +309,17 @@ fn describe_tool_definition(_: &[RendererDef]) -> Value {
 fn init_session_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "init_session",
-        "description": "Initialize MCPViews for this session. Returns current renderer definitions, behavioral rules, plugin auth status, and persistence instructions. Should be called at the start of every new agent session.",
+        "description": "Initialize MCPViews for this session. Returns runtime breadcrumbs, plugin auth status, and startup-rule reconciliation actions. Call at the start of every new agent session; pass project_path so MCPViews can evaluate mcpviews-init.json.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "agent_type": {
                     "type": "string",
                     "description": "The agent platform calling this tool. Supported: 'claude_code', 'claude_desktop', 'codex', 'cursor', 'windsurf', 'opencode', 'antigravity'. If omitted or unrecognized, returns instructions that ask the user how to persist rules."
+                },
+                "project_path": {
+                    "type": "string",
+                    "description": "Optional absolute path to the current project root. When provided, MCPViews creates/loads mcpviews-init.json there and returns startup rule install/update actions."
                 }
             }
         }
@@ -325,13 +329,17 @@ fn init_session_definition(_: &[RendererDef]) -> Value {
 fn mcpviews_setup_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "mcpviews_setup",
-        "description": "Setup or refresh MCPViews agent rules. Returns instructions for persisting a session-start rule that ensures init_session is called automatically in every new session, and for updating an existing MCPViews rules section when installed or updated plugins add missing rule details. Also returns current rules and plugin status.",
+        "description": "Setup or refresh MCPViews startup rules. Returns runtime breadcrumbs plus startup-rule actions; only startup_rule_actions should be persisted into native rule files.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "agent_type": {
                     "type": "string",
                     "description": "The agent platform calling this tool. Supported: 'claude_code', 'claude_desktop', 'codex', 'cursor', 'windsurf', 'opencode', 'antigravity'. If omitted or unrecognized, returns generic instructions."
+                },
+                "project_path": {
+                    "type": "string",
+                    "description": "Optional absolute path to the current project root. When provided, MCPViews creates/loads mcpviews-init.json there and returns startup rule install/update actions."
                 }
             }
         }
@@ -519,6 +527,60 @@ fn save_setup_preference_definition(_: &[RendererDef]) -> Value {
     })
 }
 
+fn save_startup_rule_state_definition(_: &[RendererDef]) -> Value {
+    serde_json::json!({
+        "name": "save_startup_rule_state",
+        "description": "Record project-local startup rule install/update/opt-out state in mcpviews-init.json. MCPViews does not write agent-native rule files; callers install or update those first, then record the result here.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_path": {
+                    "type": "string",
+                    "description": "Absolute path to the project root containing mcpviews-init.json."
+                },
+                "plugin": {
+                    "type": "string",
+                    "description": "Plugin name that owns the startup rule."
+                },
+                "rule_id": {
+                    "type": "string",
+                    "description": "Startup rule id from the plugin manifest."
+                },
+                "rule_version": {
+                    "type": "string",
+                    "description": "Startup rule version from the plugin manifest."
+                },
+                "rule_hash": {
+                    "type": "string",
+                    "description": "sha256:... hash returned by startup_rule_actions for the rule text that was installed or declined."
+                },
+                "locations": {
+                    "type": "array",
+                    "description": "Agent-native rule file locations that were updated, relative to the project when possible.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "agent_type": { "type": "string" },
+                            "path": { "type": "string" },
+                            "label": { "type": "string" }
+                        },
+                        "required": ["agent_type", "path", "label"]
+                    }
+                },
+                "do_not_install": {
+                    "type": "boolean",
+                    "description": "Set true when the user declined installing a missing startup rule. MCPViews will not ask again until explicitly changed."
+                },
+                "do_not_update": {
+                    "type": "boolean",
+                    "description": "Set true when the user declined updating an already installed startup rule. MCPViews will not auto-update that project rule until explicitly changed."
+                }
+            },
+            "required": ["project_path", "plugin", "rule_id", "rule_version", "rule_hash"]
+        }
+    })
+}
+
 fn direct_renderer_handler<'a>(
     renderer_name: &'static str,
     arguments: Value,
@@ -686,6 +748,15 @@ fn save_setup_preference_handler<'a>(
     ))
 }
 
+fn save_startup_rule_state_handler<'a>(
+    arguments: Value,
+    state: &'a Arc<TokioMutex<AsyncAppState>>,
+) -> BuiltinToolFuture<'a> {
+    Box::pin(super::lifecycle::call_save_startup_rule_state(
+        arguments, state,
+    ))
+}
+
 pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
     let presentation_group = CoreConnectorGroupMeta {
         name: "Presentation",
@@ -841,6 +912,13 @@ pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
             name: "save_setup_preference",
             definition: save_setup_preference_definition,
             handler: save_setup_preference_handler,
+            hosted_visibility: HostedVisibility::HostedModelFacing,
+            core_connector_group: None,
+        },
+        BuiltinToolSpec {
+            name: "save_startup_rule_state",
+            definition: save_startup_rule_state_definition,
+            handler: save_startup_rule_state_handler,
             hosted_visibility: HostedVisibility::HostedModelFacing,
             core_connector_group: None,
         },

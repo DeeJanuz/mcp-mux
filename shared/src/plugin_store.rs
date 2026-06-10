@@ -9,9 +9,7 @@ pub struct PluginStore {
 impl PluginStore {
     /// Create a new PluginStore using the default plugins directory (~/.mcpviews/plugins/)
     pub fn new() -> Self {
-        Self {
-            dir: plugins_dir(),
-        }
+        Self { dir: plugins_dir() }
     }
 
     /// Create a PluginStore with a custom directory (useful for testing)
@@ -50,11 +48,17 @@ impl PluginStore {
                         Ok(content) => match serde_json::from_str::<PluginManifest>(&content) {
                             Ok(manifest) => plugins.push(manifest),
                             Err(e) => {
-                                eprintln!("[mcpviews] Failed to parse plugin {:?}: {}", manifest_path, e);
+                                eprintln!(
+                                    "[mcpviews] Failed to parse plugin {:?}: {}",
+                                    manifest_path, e
+                                );
                             }
                         },
                         Err(e) => {
-                            eprintln!("[mcpviews] Failed to read plugin {:?}: {}", manifest_path, e);
+                            eprintln!(
+                                "[mcpviews] Failed to read plugin {:?}: {}",
+                                manifest_path, e
+                            );
                         }
                     }
                 }
@@ -106,8 +110,7 @@ impl PluginStore {
         let path = plugin_dir.join("manifest.json");
         let json = serde_json::to_string_pretty(manifest)
             .map_err(|e| format!("Failed to serialize manifest: {}", e))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write plugin file: {}", e))?;
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write plugin file: {}", e))?;
 
         Ok(())
     }
@@ -134,10 +137,18 @@ impl PluginStore {
     }
 
     /// Read a prompt source file from a plugin's directory
-    pub fn read_prompt_source(&self, plugin_name: &str, source_path: &str) -> Result<String, String> {
+    pub fn read_prompt_source(
+        &self,
+        plugin_name: &str,
+        source_path: &str,
+    ) -> Result<String, String> {
         let path = self.dir.join(plugin_name).join(source_path);
-        std::fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read prompt '{}' from plugin '{}': {}", source_path, plugin_name, e))
+        std::fs::read_to_string(&path).map_err(|e| {
+            format!(
+                "Failed to read prompt '{}' from plugin '{}': {}",
+                source_path, plugin_name, e
+            )
+        })
     }
 
     /// Load plugin preferences from disk. Returns defaults if file doesn't exist.
@@ -147,24 +158,33 @@ impl PluginStore {
             match std::fs::read_to_string(&path) {
                 Ok(content) => match serde_json::from_str(&content) {
                     Ok(prefs) => return prefs,
-                    Err(e) => eprintln!("[mcpviews] Failed to parse preferences for '{}': {}", name, e),
+                    Err(e) => eprintln!(
+                        "[mcpviews] Failed to parse preferences for '{}': {}",
+                        name, e
+                    ),
                 },
-                Err(e) => eprintln!("[mcpviews] Failed to read preferences for '{}': {}", name, e),
+                Err(e) => eprintln!(
+                    "[mcpviews] Failed to read preferences for '{}': {}",
+                    name, e
+                ),
             }
         }
         crate::PluginPreferences::default()
     }
 
     /// Save plugin preferences to disk.
-    pub fn save_preferences(&self, name: &str, prefs: &crate::PluginPreferences) -> Result<(), String> {
+    pub fn save_preferences(
+        &self,
+        name: &str,
+        prefs: &crate::PluginPreferences,
+    ) -> Result<(), String> {
         let plugin_dir = self.dir.join(name);
         std::fs::create_dir_all(&plugin_dir)
             .map_err(|e| format!("Failed to create plugin directory: {}", e))?;
         let path = plugin_dir.join("preferences.json");
         let json = serde_json::to_string_pretty(prefs)
             .map_err(|e| format!("Failed to serialize preferences: {}", e))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write preferences: {}", e))?;
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write preferences: {}", e))?;
         Ok(())
     }
 
@@ -199,8 +219,9 @@ impl PluginStore {
                     continue;
                 }
 
-                std::fs::create_dir_all(&plugin_dir)
-                    .map_err(|e| format!("Failed to create directory for plugin '{}': {}", name, e))?;
+                std::fs::create_dir_all(&plugin_dir).map_err(|e| {
+                    format!("Failed to create directory for plugin '{}': {}", name, e)
+                })?;
 
                 std::fs::rename(&path, &new_path)
                     .map_err(|e| format!("Failed to migrate plugin '{}': {}", name, e))?;
@@ -234,6 +255,8 @@ mod tests {
             download_url: None,
             prompt_definitions: vec![],
             plugin_rules: vec![],
+            plugin_rule_definitions: vec![],
+            startup_rules: vec![],
             setup_questions: vec![],
         }
     }
@@ -462,6 +485,10 @@ mod tests {
         let store = PluginStore::with_dir(dir.path().to_path_buf());
         let prefs = crate::PluginPreferences::default();
         store.save_preferences("new-plugin", &prefs).unwrap();
-        assert!(dir.path().join("new-plugin").join("preferences.json").exists());
+        assert!(dir
+            .path()
+            .join("new-plugin")
+            .join("preferences.json")
+            .exists());
     }
 }

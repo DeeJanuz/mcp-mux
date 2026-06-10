@@ -106,6 +106,43 @@ pub struct SetupQuestion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupRuleSource {
+    #[serde(rename = "type")]
+    pub source_type: String,
+    pub question_id: String,
+    /// Source answer values that should not create a fresh install prompt.
+    /// Existing installed rules are still evaluated for current/stale state.
+    #[serde(default)]
+    pub skip_install_values: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupRuleCondition {
+    pub question_id: String,
+    #[serde(default)]
+    pub values: Vec<String>,
+    #[serde(default)]
+    pub not_values: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupRule {
+    pub id: String,
+    pub version: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub rule: Option<String>,
+    #[serde(default)]
+    pub source: Option<StartupRuleSource>,
+    /// Optional setup-answer gates for rules that should only prompt when a
+    /// companion setup preference enables the behavior.
+    #[serde(default)]
+    pub conditions: Vec<StartupRuleCondition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolGroupEntry {
     pub name: String,
     pub hint: String,
@@ -118,6 +155,20 @@ pub struct PluginRegistryIndex {
     pub tags: Vec<String>,
     pub tool_groups: Vec<ToolGroupEntry>,
     pub renderer_names: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginRuleDefinition {
+    pub id: String,
+    pub rule: String,
+    #[serde(default)]
+    pub tools: Vec<String>,
+    #[serde(default)]
+    pub groups: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub always_include: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -157,6 +208,10 @@ pub struct PluginManifest {
     pub prompt_definitions: Vec<PromptDef>,
     #[serde(default)]
     pub plugin_rules: Vec<String>,
+    #[serde(default)]
+    pub plugin_rule_definitions: Vec<PluginRuleDefinition>,
+    #[serde(default)]
+    pub startup_rules: Vec<StartupRule>,
     #[serde(default)]
     pub setup_questions: Vec<SetupQuestion>,
 }
@@ -319,12 +374,10 @@ impl PluginAuth {
         // For Bearer/ApiKey: also check env var as fallback
         match self {
             PluginAuth::Bearer { token_env } => std::env::var(token_env).is_ok(),
-            PluginAuth::ApiKey { key_env, .. } => {
-                key_env
-                    .as_ref()
-                    .map(|e| std::env::var(e).is_ok())
-                    .unwrap_or(false)
-            }
+            PluginAuth::ApiKey { key_env, .. } => key_env
+                .as_ref()
+                .map(|e| std::env::var(e).is_ok())
+                .unwrap_or(false),
             PluginAuth::OAuth { .. } => false, // OAuth only uses stored tokens
         }
     }
@@ -402,18 +455,15 @@ impl PluginAuth {
     ) -> Option<String> {
         match self {
             PluginAuth::Bearer { .. } => {
-                let stored =
-                    token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
+                let stored = token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
                 Some(format!("Bearer {}", stored.access_token))
             }
             PluginAuth::ApiKey { header_name, .. } => {
-                let stored =
-                    token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
+                let stored = token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
                 Some(format!("{}:{}", header_name, stored.access_token))
             }
             PluginAuth::OAuth { .. } => {
-                let stored =
-                    token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
+                let stored = token_store::load_stored_token_for_org(dir, plugin_name, org_id)?;
                 Some(format!("Bearer {}", stored.access_token))
             }
         }
@@ -503,7 +553,11 @@ pub struct PluginInfo {
 pub fn newer_version(installed: &str, available: &str) -> Option<String> {
     let iv = semver::Version::parse(installed).ok()?;
     let av = semver::Version::parse(available).ok()?;
-    if av > iv { Some(available.to_string()) } else { None }
+    if av > iv {
+        Some(available.to_string())
+    } else {
+        None
+    }
 }
 
 pub fn plugins_dir() -> PathBuf {
@@ -819,10 +873,7 @@ mod tests {
 
         assert!(auth.supports_email_code());
         let email_code = auth.email_code_auth().unwrap();
-        assert_eq!(
-            email_code.send_path,
-            "/api/mcpviews/auth/email-code/send"
-        );
+        assert_eq!(email_code.send_path, "/api/mcpviews/auth/email-code/send");
         assert_eq!(
             email_code.verify_path,
             "/api/mcpviews/auth/email-code/verify"
@@ -881,7 +932,10 @@ mod tests {
         let parsed: RendererDef = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.display_mode, Some(DisplayMode::Drawer));
         assert_eq!(parsed.invoke_schema, Some("{ id: string }".to_string()));
-        assert_eq!(parsed.url_patterns, vec!["/decisions/*", "/api/decisions/*"]);
+        assert_eq!(
+            parsed.url_patterns,
+            vec!["/decisions/*", "/api/decisions/*"]
+        );
     }
 
     #[test]
@@ -954,6 +1008,145 @@ mod tests {
     }
 
     #[test]
+    fn test_plugin_manifest_startup_rules_default_to_empty_vec() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0"
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.startup_rules.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_manifest_plugin_rule_definitions_default_to_empty_vec() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0"
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.plugin_rule_definitions.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_manifest_plugin_rule_definitions_roundtrip() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0",
+            "plugin_rule_definitions": [{
+                "id": "decision_lifecycle",
+                "rule": "Fetch governance_lifecycle before moving decisions.",
+                "tools": ["update_decision", "save_decision_document_version"],
+                "groups": ["Create & Update", "Documents"],
+                "tags": ["governance"],
+                "always_include": true
+            }]
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.plugin_rule_definitions.len(), 1);
+        assert_eq!(manifest.plugin_rule_definitions[0].id, "decision_lifecycle");
+        assert_eq!(
+            manifest.plugin_rule_definitions[0].tools,
+            vec![
+                "update_decision".to_string(),
+                "save_decision_document_version".to_string()
+            ]
+        );
+        assert_eq!(
+            manifest.plugin_rule_definitions[0].groups,
+            vec!["Create & Update".to_string(), "Documents".to_string()]
+        );
+        assert_eq!(
+            manifest.plugin_rule_definitions[0].tags,
+            vec!["governance".to_string()]
+        );
+        assert!(manifest.plugin_rule_definitions[0].always_include);
+
+        let serialized = serde_json::to_string(&manifest).unwrap();
+        let deserialized: PluginManifest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.plugin_rule_definitions.len(), 1);
+        assert_eq!(
+            deserialized.plugin_rule_definitions[0].rule,
+            "Fetch governance_lifecycle before moving decisions."
+        );
+    }
+
+    #[test]
+    fn test_plugin_manifest_startup_rules_roundtrip() {
+        let json = r#"{
+            "name": "test-plugin",
+            "version": "1.0.0",
+            "startup_rules": [
+                {
+                    "id": "always_use_workspace",
+                    "version": "1",
+                    "title": "Always use workspace",
+                    "description": "Loaded before the first assistant response.",
+                    "rule": "Always inspect the workspace before editing."
+                },
+                {
+                    "id": "gronk_mode",
+                    "version": "2",
+                    "title": "Gronk Speak mode",
+                    "source": {
+                        "type": "setup_question",
+                        "question_id": "mcpviews_gronk_speak_mode",
+                        "skip_install_values": ["off"]
+                    },
+                    "conditions": [{
+                        "question_id": "mcpviews_gronk_speak_mode",
+                        "not_values": ["off"]
+                    }]
+                }
+            ]
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.startup_rules.len(), 2);
+        assert_eq!(manifest.startup_rules[0].id, "always_use_workspace");
+        assert_eq!(
+            manifest.startup_rules[0].rule.as_deref(),
+            Some("Always inspect the workspace before editing.")
+        );
+        assert_eq!(manifest.startup_rules[1].id, "gronk_mode");
+        assert_eq!(
+            manifest.startup_rules[1]
+                .source
+                .as_ref()
+                .map(|source| source.source_type.as_str()),
+            Some("setup_question")
+        );
+        assert_eq!(
+            manifest.startup_rules[1]
+                .source
+                .as_ref()
+                .map(|source| source.question_id.as_str()),
+            Some("mcpviews_gronk_speak_mode")
+        );
+        assert_eq!(
+            manifest.startup_rules[1]
+                .source
+                .as_ref()
+                .map(|source| source.skip_install_values.as_slice()),
+            Some(&["off".to_string()][..])
+        );
+        assert_eq!(
+            manifest.startup_rules[1].conditions[0].not_values,
+            vec!["off".to_string()]
+        );
+
+        let serialized = serde_json::to_string(&manifest).unwrap();
+        let deserialized: PluginManifest = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.startup_rules.len(), 2);
+        assert_eq!(
+            deserialized.startup_rules[1]
+                .source
+                .as_ref()
+                .unwrap()
+                .skip_install_values,
+            vec!["off".to_string()]
+        );
+    }
+
+    #[test]
     fn test_plugin_manifest_setup_questions_roundtrip() {
         let json = r#"{
             "name": "test-plugin",
@@ -980,7 +1173,10 @@ mod tests {
         let manifest: PluginManifest = serde_json::from_str(json).unwrap();
         assert_eq!(manifest.setup_questions.len(), 1);
         assert_eq!(manifest.setup_questions[0].id, "governance_mode");
-        assert_eq!(manifest.setup_questions[0].default_value.as_deref(), Some("team"));
+        assert_eq!(
+            manifest.setup_questions[0].default_value.as_deref(),
+            Some("team")
+        );
         assert_eq!(
             manifest.setup_questions[0].recommended_value.as_deref(),
             Some("team")
@@ -1031,7 +1227,9 @@ mod tests {
         let manifest: PluginManifest = serde_json::from_str(json).unwrap();
         assert_eq!(
             manifest.download_url,
-            Some("https://github.com/org/repo/releases/download/v1.0.0/test-plugin.zip".to_string())
+            Some(
+                "https://github.com/org/repo/releases/download/v1.0.0/test-plugin.zip".to_string()
+            )
         );
     }
 
@@ -1054,7 +1252,10 @@ mod tests {
         let entry: RegistryEntry = serde_json::from_str(json).unwrap();
         assert_eq!(
             entry.manifest_url,
-            Some("https://raw.githubusercontent.com/org/repo/master/plugin/manifest.json".to_string())
+            Some(
+                "https://raw.githubusercontent.com/org/repo/master/plugin/manifest.json"
+                    .to_string()
+            )
         );
     }
 
@@ -1085,7 +1286,10 @@ mod tests {
         assert_eq!(mode, DisplayMode::Replace);
 
         // Roundtrip
-        assert_eq!(serde_json::to_string(&DisplayMode::Drawer).unwrap(), r#""drawer""#);
+        assert_eq!(
+            serde_json::to_string(&DisplayMode::Drawer).unwrap(),
+            r#""drawer""#
+        );
     }
 
     #[test]
@@ -1121,12 +1325,18 @@ mod tests {
             "no_auto_push": ["write_document", "manage_data_draft"]
         }"#;
         let manifest: PluginManifest = serde_json::from_str(json).unwrap();
-        assert_eq!(manifest.no_auto_push, vec!["write_document", "manage_data_draft"]);
+        assert_eq!(
+            manifest.no_auto_push,
+            vec!["write_document", "manage_data_draft"]
+        );
 
         // Roundtrip through serialize/deserialize
         let serialized = serde_json::to_string(&manifest).unwrap();
         let deserialized: PluginManifest = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.no_auto_push, vec!["write_document", "manage_data_draft"]);
+        assert_eq!(
+            deserialized.no_auto_push,
+            vec!["write_document", "manage_data_draft"]
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1150,8 +1360,7 @@ mod tests {
         let auth = PluginAuth::Bearer {
             token_env: "NONEXISTENT_VAR".to_string(),
         };
-        let header =
-            auth.resolve_header_for_org_with_auth_dir("plug", "org_1", dir.path());
+        let header = auth.resolve_header_for_org_with_auth_dir("plug", "org_1", dir.path());
         assert_eq!(header, Some("Bearer bearer-tok-1".to_string()));
     }
 
@@ -1164,8 +1373,7 @@ mod tests {
             header_name: "X-Custom".to_string(),
             key_env: None,
         };
-        let header =
-            auth.resolve_header_for_org_with_auth_dir("plug", "org_2", dir.path());
+        let header = auth.resolve_header_for_org_with_auth_dir("plug", "org_2", dir.path());
         assert_eq!(header, Some("X-Custom:key-val".to_string()));
     }
 
@@ -1181,8 +1389,7 @@ mod tests {
             scopes: vec![],
             email_code_auth: None,
         };
-        let header =
-            auth.resolve_header_for_org_with_auth_dir("plug", "org_3", dir.path());
+        let header = auth.resolve_header_for_org_with_auth_dir("plug", "org_3", dir.path());
         assert_eq!(header, Some("Bearer oauth-tok".to_string()));
     }
 
@@ -1192,8 +1399,7 @@ mod tests {
         let auth = PluginAuth::Bearer {
             token_env: "NONEXISTENT_VAR".to_string(),
         };
-        let header =
-            auth.resolve_header_for_org_with_auth_dir("plug", "no_org", dir.path());
+        let header = auth.resolve_header_for_org_with_auth_dir("plug", "no_org", dir.path());
         assert!(header.is_none());
     }
 

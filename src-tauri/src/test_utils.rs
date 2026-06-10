@@ -20,6 +20,8 @@ pub fn test_manifest(name: &str) -> mcpviews_shared::PluginManifest {
         download_url: None,
         prompt_definitions: vec![],
         plugin_rules: vec![],
+        plugin_rule_definitions: vec![],
+        startup_rules: vec![],
         setup_questions: vec![],
     }
 }

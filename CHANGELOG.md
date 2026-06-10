@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Added plugin `startup_rules`, project-local `mcpviews-init.json` reconciliation, and the `save_startup_rule_state` MCP tool so true session-start behavior can be installed into agent-native rule files without overloading workflow breadcrumbs.
+- Added a core MCPViews startup rule for project-specific `init_session` calls and Codex-style startup-rule block metadata for native rule files.
+- Added Codex `AGENTS.md` context diagnostics so setup/init responses identify the exact startup-rule target file and warn when parent-only or nested `AGENTS.md` files can make rules look installed in the wrong project root.
+- Added `plugin_rule_definitions` for filterable plugin-level workflow breadcrumbs scoped by tools/groups while preserving legacy global `plugin_rules`.
+
+### Changed
+- Replaced broad runtime-rule persistence instructions with startup-only installation guidance; `plugin_rules`, renderer guidance, DecidR/Ludflow workflow guidance, setup questions, plugin docs, and tool docs now remain runtime breadcrumbs only.
+- Updated the bundled GronkSpeak plugin to v0.1.4 with rule v4, keeping ordinary final answers, directory summaries, repo reports, test summaries, and internal reports in GronkSpeak unless the user asks for public/polished prose.
+- Kept `init_session` plugin registry breadcrumbs compact by including only legacy global `plugin_rules` and structured rules marked `always_include`; detailed structured plugin rules are returned by `get_plugin_docs` only when relevant to requested tools/groups.
+
+### Fixed
+- Made missing `project_path` a loud `project_path_required` startup-rule status so agents rerun init/setup before treating startup rules as reconciled.
+
 ## [0.2.29] - 2026-06-10
 
 ### Changed

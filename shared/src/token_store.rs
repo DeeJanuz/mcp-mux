@@ -611,8 +611,7 @@ mod tests {
         store_token_for_org(dir.path(), "myplugin", "org_exp2", &token).unwrap();
 
         // unvalidated load still returns the token
-        let loaded =
-            load_stored_token_for_org_unvalidated(dir.path(), "myplugin", "org_exp2");
+        let loaded = load_stored_token_for_org_unvalidated(dir.path(), "myplugin", "org_exp2");
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().access_token, "expired-unval");
     }
@@ -736,8 +735,7 @@ mod tests {
             load_default_org(dir.path(), "myplugin"),
             Some("default".to_string())
         );
-        let loaded =
-            load_stored_token_for_org(dir.path(), "myplugin", "default").unwrap();
+        let loaded = load_stored_token_for_org(dir.path(), "myplugin", "default").unwrap();
         assert_eq!(loaded.access_token, "legacy-tok");
     }
 
@@ -808,8 +806,7 @@ mod tests {
         let updated = make_valid_token("updated");
         store_token(dir.path(), "plug", &updated).unwrap();
 
-        let loaded =
-            load_stored_token_for_org(dir.path(), "plug", "org_a").unwrap();
+        let loaded = load_stored_token_for_org(dir.path(), "plug", "org_a").unwrap();
         assert_eq!(loaded.access_token, "updated");
     }
 
@@ -849,8 +846,11 @@ mod tests {
     fn test_remove_token_legacy_layout() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("flat-plug.json");
-        std::fs::write(&path, r#"{"access_token":"t","refresh_token":null,"expires_at":null}"#)
-            .unwrap();
+        std::fs::write(
+            &path,
+            r#"{"access_token":"t","refresh_token":null,"expires_at":null}"#,
+        )
+        .unwrap();
 
         remove_token(dir.path(), "flat-plug").unwrap();
         assert!(!path.exists());

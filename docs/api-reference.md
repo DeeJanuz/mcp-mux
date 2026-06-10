@@ -961,7 +961,7 @@ Non-blocking status check for a review session. Returns the current status witho
 
 ### `init_session`
 
-Initialize MCPViews for the current session. Returns current renderer definitions, behavioral rules, plugin auth status, hosted breadcrumb discovery, and persistence instructions. Must be called at the start of every conversation, chat session, or interaction -- not just once.
+Initialize MCPViews for the current session. Returns runtime breadcrumbs, plugin auth status, hosted discovery, and startup-rule reconciliation actions. Must be called at the start of every conversation, chat session, or interaction -- not just once. Pass `project_path` so startup rules can be evaluated against the project ledger.
 
 The following diagram shows the two-tier lazy-loading approach for plugin documentation plus hosted breadcrumb discovery for core renderer tools.
 
@@ -984,7 +984,8 @@ sequenceDiagram
 **Parameters:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `agent_type` | string | No | The agent platform calling this tool. Supported: `claude_code`, `claude_desktop`, `codex`, `cursor`, `windsurf`, `opencode`, `antigravity`. Tailors the persistence instructions in the response. If omitted or unrecognized, returns instructions that ask the user how to persist rules. |
+| `agent_type` | string | No | The agent platform calling this tool. Supported: `claude_code`, `claude_desktop`, `codex`, `cursor`, `windsurf`, `opencode`, `antigravity`. Tailors startup-rule installation instructions. |
+| `project_path` | string | No | Absolute path to the current project root. When supplied, MCPViews creates/loads `<project_path>/mcpviews-init.json` and returns `startup_rule_actions` for core and plugin startup rule reconciliation. |
 
 **Response:**
 ```json
@@ -1014,7 +1015,7 @@ sequenceDiagram
       "rule": "When presenting implementation plans..."
     }
   ],
-  "rules_version": "21",
+  "rules_version": "24",
   "plugin_status": [
     {
       "plugin": "my-plugin",
@@ -1024,7 +1025,7 @@ sequenceDiagram
       "message": "Plugin 'my-plugin' requires re-authentication..."
     }
   ],
-  "persistence_instructions": "Persist each rule as a memory file...",
+  "persistence_instructions": "Install/update only startup rules returned in startup_rule_actions...",
   "plugin_registry": [
     {
       "name": "my-plugin",
@@ -1057,26 +1058,56 @@ sequenceDiagram
     ],
     "instruction": "For plugins in auto_update: call update_plugins immediately..."
   },
+  "startup_rule_actions": {
+    "status": "needs_install",
+    "project_path": "/path/to/project",
+    "config_path": "/path/to/project/mcpviews-init.json",
+    "needs_install": [
+      {
+        "key": "mcpviews-core:init_session_project_path",
+        "plugin": "mcpviews-core",
+        "rule_id": "init_session_project_path",
+        "title": "MCPViews Session Init",
+        "rule_version": "1",
+        "rule_hash": "sha256:...",
+        "rule": "At the start of every new agent session..."
+      }
+    ],
+    "auto_update": [],
+    "suppressed": [],
+    "current": [],
+    "orphaned": [],
+    "native_rule_file": "AGENTS.md",
+    "native_rule_file_path": "/path/to/project/AGENTS.md",
+    "codex_rule_file_context": {
+      "target_rule_file": "/path/to/project/AGENTS.md",
+      "warnings": []
+    },
+    "native_rule_block": "## MCPViews Startup Rules\n\n<!-- mcpviews-startup-rules-schema: 1 -->\n...",
+    "instruction": "Install or update only startup_rule_actions.needs_install and startup_rule_actions.auto_update..."
+  },
   "rules_update": {
-    "current_version": "21",
-    "instruction": "Check if your persisted MCPViews rules file contains mcpviews-rules-version: 21; run mcpviews_setup to refresh stale persisted rules because init_session is slim..."
+    "current_version": "24",
+    "instruction": "Runtime MCPViews rules are session breadcrumbs only. Do not persist the rules array..."
   }
 }
 ```
 
 The `rules` array now contains built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers -- and saved setup preference rules for installed plugins. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
-The `rules_version` string tracks the current version of built-in rules. Persistence instructions include a version marker (e.g., `<!-- mcpviews-rules-version: 21 -->`) so agents can detect when persisted rules are stale. Because `init_session` is intentionally slim and returns only built-in rules plus saved setup preference rules, the `rules_update` object tells agents to run `mcpviews_setup` before refreshing persisted rules, and to use `get_plugin_docs` for plugin-specific details during a task. Agents should refresh an existing MCPViews rules section when installed or updated plugins add rule details missing from the persisted rules, without appending duplicate MCPViews sections.
+The `rules_version` string tracks the current runtime breadcrumb set. Runtime `rules`, `plugin_rules`, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, and tool docs must not be written into native startup rule files. Native rule files should contain only explicit `startup_rules` returned through `startup_rule_actions`.
 
-The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, and tags. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
+The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, tags, legacy global `plugin_rules`, and structured plugin rules marked `always_include`. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
 The `plugin_updates` array lists plugins that have newer versions available in the registry. Each entry includes the plugin name, installed version, and available version. Call `update_plugins` to apply updates.
 
 The `plugin_update_actions` object evaluates each pending update against the plugin's stored update preferences (from `preferences.json`). Plugins with `"always"` policy go into `auto_update` (proceed immediately); plugins with `"ask"` policy go into `ask_user` (prompt user for consent); plugins with `"skip"` policy for the specific available version are excluded from both lists. The `instruction` field guides the agent on how to handle each category.
 
+The `startup_rule_actions` object evaluates MCPViews core startup rules plus plugin `startup_rules` against project-local `mcpviews-init.json` only when `project_path` is provided. `needs_install` rules should be installed through the current agent's native project rule mechanism, then recorded with `save_startup_rule_state`. `auto_update` rules are stale installed rules that can be updated unless the project state has `do_not_update`. `suppressed` includes declined installs/updates and setup-answer-suppressed rules. `orphaned` reports ledger entries that no current startup rule returns, such as old split Gronk mode/scope keys. When `project_path` is omitted, `status` is `project_path_required` and the agent should rerun init/setup with `project_path` before treating startup rules as reconciled. For Codex-style agents, `native_rule_file_path` is the exact `AGENTS.md` target for the supplied project root, and `codex_rule_file_context.warnings` flags parent-only or nested `AGENTS.md` situations where startup rules may not load in fresh sessions.
+
 ### `get_plugin_docs`
 
-Fetch detailed usage docs for a plugin's tools and renderers. Call after `init_session` identifies which plugin you need. Returns plugin-specific renderer rules and tool rules, optionally filtered by group, tool, or renderer name.
+Fetch detailed usage docs for a plugin's tools and renderers. Call after `init_session` identifies which plugin you need. Returns plugin-specific renderer rules, tool rules, global plugin breadcrumbs, and matching structured plugin breadcrumbs, optionally filtered by group, tool, or renderer name.
 
 **Parameters:**
 | Field | Type | Required | Description |
@@ -1153,7 +1184,7 @@ Save the user's update preference for a plugin after asking them about a pending
 {
   "content": [{
     "type": "text",
-    "text": "{ \"status\": \"saved\", \"plugin\": \"my-plugin\", \"policy\": \"always\", \"message\": \"Auto-update enabled for 'my-plugin'. Proceed with update_plugins, then call mcpviews_setup to re-persist rules.\" }"
+    "text": "{ \"status\": \"saved\", \"plugin\": \"my-plugin\", \"policy\": \"always\", \"message\": \"Auto-update enabled for 'my-plugin'. Proceed with update_plugins, then call mcpviews_setup with project_path to reconcile startup_rule_actions.\" }"
   }]
 }
 ```
@@ -1187,6 +1218,32 @@ Save the user's selected answer for an installed plugin setup question. Used by 
   "content": [{
     "type": "text",
     "text": "{ \"status\": \"saved\", \"plugin\": \"my-plugin\", \"question_id\": \"mode\", \"value\": \"full\", \"persist_as_rule_name\": \"my_plugin_mode\", \"message\": \"Setup preference saved...\" }"
+  }]
+}
+```
+
+### `save_startup_rule_state`
+
+Record project-local startup rule state after an agent installs, updates, or declines a plugin startup rule. MCPViews writes only `<project_path>/mcpviews-init.json`; it does not write `AGENTS.md`, `.claude/rules`, `.cursor/rules`, `.windsurfrules`, or any other agent-native rule file.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `project_path` | string | Yes | Absolute path to the project root containing `mcpviews-init.json`. |
+| `plugin` | string | Yes | Plugin name that owns the startup rule. |
+| `rule_id` | string | Yes | Startup rule id from the plugin manifest. |
+| `rule_version` | string | Yes | Startup rule version returned in `startup_rule_actions`. |
+| `rule_hash` | string | Yes | Startup rule hash returned in `startup_rule_actions`. |
+| `locations` | array | No | Agent-native rule file locations that were updated, each with `agent_type`, `path`, and `label`. |
+| `do_not_install` | boolean | No | Set true when the user declined installing a missing rule. MCPViews will not ask again until this project state is explicitly changed. |
+| `do_not_update` | boolean | No | Set true when the user declined updating an installed stale rule. |
+
+**Response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{ \"status\": \"saved\", \"key\": \"plugin-name:rule-id\", \"message\": \"Startup rule state saved...\" }"
   }]
 }
 ```
@@ -1295,30 +1352,32 @@ Fetch a prompt from a plugin. Returns the prompt content with optional template 
 
 ### `mcpviews_setup`
 
-Setup or refresh MCPViews agent rules. Returns instructions for persisting a rule that ensures `init_session` is called automatically at the start of every conversation, chat session, or interaction, and for updating an existing MCPViews rules section when installed or updated plugins add missing rule details. Also returns current rules and plugin status.
+Setup or refresh MCPViews startup rules. Returns runtime breadcrumbs plus startup-rule actions; only `startup_rule_actions` should be persisted into native startup files.
 
 **Parameters:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `agent_type` | string | No | The agent platform calling this tool. Supported: `claude_code`, `claude_desktop`, `codex`, `cursor`, `windsurf`, `opencode`, `antigravity`. Determines the platform-specific setup instructions. If omitted or unrecognized, returns generic instructions. |
+| `project_path` | string | No | Absolute path to the current project root. When supplied, MCPViews creates/loads `<project_path>/mcpviews-init.json` and returns `startup_rule_actions`. |
 
 **Response:**
 ```json
 {
   "rules": [ ... ],
-  "rules_version": "21",
+  "rules_version": "24",
   "plugin_status": [ ... ],
   "setup_questions": [ ... ],
   "setup_question_instructions": "If setup_questions is non-empty, ask exactly one setup question at a time in the returned order...",
-  "persistence_instructions": "Persist each rule as a memory file...",
-  "setup_instructions": "Add or update a rule in `.claude/rules/mcpviews-init.md` containing: ...",
+  "startup_rule_actions": { ... },
+  "persistence_instructions": "Install/update only startup rules returned in startup_rule_actions...",
+  "setup_instructions": "Install or update only entries returned in startup_rule_actions...",
   "rules_update": { ... }
 }
 ```
 
 `setup_questions` contains unanswered setup-time preference questions contributed by installed plugins. Agents must ask exactly one setup question at a time in the returned order: process groups in order, process each group's questions in order, show only the current question's options, and wait for the user's answer before moving on. The prompt for the current question should be conversational: use the question `description` and optional `guidance`, summarize when to choose each option, include `example_outputs` when present, and identify the default or recommended option. After the user answers, agents call `save_setup_preference` with the plugin, question id, and selected option value. MCPViews persists only the selected option's compact manifest-defined `persisted_rule`; agents must not persist unselected options, arbitrary rule text, or the full question text.
 
-Optional style preferences such as MCPViews Gronk Speak are plugin-provided setup questions, not built-in MCPViews core questions. If the Gronk Speak plugin is not installed, `mcpviews_setup` does not ask for Gronk mode or scope.
+Optional style preferences such as MCPViews Gronk Speak are plugin-provided setup-gated startup rules, not built-in MCPViews core questions. If the Gronk Speak plugin is installed and its setup question is unanswered, `mcpviews_setup` asks whether to enable it with examples and scope guidance. After the user chooses Enable, `startup_rule_actions` can return the single `GronkSpeak` startup rule for agent-native installation. Choosing Off suppresses fresh installs.
 
 ## MCP Prompts
 

@@ -38,14 +38,30 @@ A plugin manifest is a JSON file with the following structure:
 | `renderers` | object | No | Map of MCP tool names to frontend renderer names. When a tool result arrives, MCPViews uses this mapping to select the correct renderer. If a tool is not listed, the default `rich_content` renderer is used. |
 | `frame_origins` | string[] | No | HTTP(S) origins that plugin renderer iframes may embed. MCPViews normalizes each entry to `scheme://host[:port]` and appends it to the webview CSP `frame-src` directive. Use this only for trusted app origins that the renderer intentionally frames. |
 | `renderer_definitions` | RendererDef[] | **Recommended** | Structured renderer definitions with payload schemas for agent discovery. Each entry defines a renderer's name, description, scope, associated tools, data schema hint, and optional behavioral rule. Without these, agents can discover renderer names (via auto-discovery from the `renderers` map) but won't know how to construct payloads. See [Agent Discovery](#agent-discovery) below. |
-| `tool_rules` | object | No | Map of tool names to behavioral rule strings. These rules are returned by the `get_plugin_docs` and `mcpviews_setup` MCP tools so agents can persist them for guided tool usage. Tool names are automatically prefixed with the plugin's `tool_prefix`. |
+| `tool_rules` | object | No | Map of tool names to behavioral rule strings. These rules are returned by `get_plugin_docs` and `mcpviews_setup` for guided tool usage; they are runtime breadcrumbs, not native startup rules. Tool names are automatically prefixed with the plugin's `tool_prefix`. |
 | `no_auto_push` | string[] | No | **Deprecated.** Previously controlled which tools skipped auto-push. Auto-push has been removed entirely -- pushes now only happen via explicit `push_content`/`push_review` calls. Field is still accepted for backward compatibility but has no effect. |
 | `registry_index` | object | No | Pre-authored compact index for the `init_session` plugin registry. Contains `summary` (string), `tags` (string[]), `tool_groups` (ToolGroupEntry[]), and `renderer_names` (string[]). If omitted, MCPViews auto-derives the index from the `renderers` map and tool cache. |
 | `mcp` | object | No | MCP server connection configuration. If omitted, the plugin provides renderers only (no remote tools). |
 | `prompt_definitions` | PromptDef[] | No | Plugin prompt definitions for guided workflows. Each entry defines a prompt that can be discovered via the MCP `prompts/list` protocol and fetched via `get_plugin_prompt` or `prompts/get`. Prompts are markdown files bundled with the plugin that support `{{arg}}` template substitution. |
-| `plugin_rules` | string[] | No | High-level behavioral rules for this plugin. These are returned by `init_session`, `mcpviews_setup`, and `get_plugin_docs` so agents see them every session. Each string is a rule that agents should follow when working with this plugin. Rules are always included regardless of tool/renderer filters in `get_plugin_docs`. Also included in the `plugin_registry` compact index returned by `init_session`. |
+| `plugin_rules` | string[] | No | Compact global workflow breadcrumbs for this plugin. These are returned by `init_session`, `mcpviews_setup`, and `get_plugin_docs` so agents can decide when to fetch prompts or plugin docs. Keep these short and broadly useful. Use `plugin_rule_definitions` for detailed tool/group-specific workflow guidance. |
+| `plugin_rule_definitions` | PluginRuleDefinition[] | No | Filterable plugin-level workflow breadcrumbs. Each entry has `id`, `rule`, optional `tools`, optional `groups`, optional `tags`, and optional `always_include`. `get_plugin_docs` includes matching entries when called with tool or group filters; `init_session` includes only entries marked `always_include`. |
+| `startup_rules` | StartupRule[] | No | Agent-native startup rules that should be installed into the current project's harness-specific rule files before the next session starts. `init_session`/`mcpviews_setup` evaluate these against project-local `mcpviews-init.json` when called with `project_path`, then return `startup_rule_actions` for install/update/skip handling. |
 | `setup_questions` | SetupQuestion[] | No | Optional setup-time questions returned by `mcpviews_setup` when unanswered. Questions can include optional `guidance`, `recommended_value`, and `example_outputs` fields for richer setup prompts. Agents should ask exactly one question at a time in returned order, explain the current choice using the question and option descriptions, then call `save_setup_preference` with the plugin, question id, and selected option value. MCPViews persists only the selected option's compact manifest-defined `persisted_rule`, not every option or the full workflow. |
 | `download_url` | string | No | URL to a ZIP package for this plugin version. Used by `manifest_url`-based registry entries and the `update_plugins` tool. |
+
+### StartupRule
+
+Startup rules are for behavior that must be loaded by an agent harness before the first assistant message in a new session. Each startup rule has a stable `id`, a `version`, a human-readable `title`, optional `description`, and either static `rule` text or a `source` that points at a saved setup answer.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | Yes | Stable rule id unique within the plugin. Project ledgers store rules as `<plugin>:<id>`. |
+| `version` | string | Yes | Plugin-owned startup rule version. Bump when the intended installed rule text or activation semantics change. |
+| `title` | string | Yes | Human-readable rule label shown to agents/users when installation or update is needed. |
+| `description` | string | No | Short explanation of why this rule needs startup-time installation. |
+| `rule` | string | Conditional | Static startup rule text. Use this when the rule does not depend on setup preferences. |
+| `source` | object | Conditional | `{ "type": "setup_question", "question_id": "..." }` to use the selected setup option's `persisted_rule` as startup rule text. Optional `skip_install_values` suppresses fresh install prompts for values like `"off"` while still allowing installed stale rules to update. |
+| `conditions` | object[] | No | Optional setup-answer gates with `question_id`, `values`, and/or `not_values`. Use when a companion rule should only activate if another setup answer enables it. |
 
 ### RendererDef
 
@@ -74,7 +90,7 @@ Structured renderer definition used for agent rule bootstrapping via the `get_pl
 | `scope` | string | No | `"universal"` (any agent can use it) or `"tool"` (tied to specific MCP tools). Defaults to `"tool"`. |
 | `tools` | string[] | No | For tool-scoped renderers: which tool names trigger this renderer. |
 | `data_hint` | string | No | Data schema hint for agents (e.g., `"{ title: string, body: markdown }"`). |
-| `rule` | string | No | Behavioral rule text returned by `get_plugin_docs`/`mcpviews_setup` for agent persistence. |
+| `rule` | string | No | Behavioral rule text returned by `get_plugin_docs`/`mcpviews_setup` for runtime guidance. |
 | `display_mode` | string | No | Preferred invocation presentation for invocable renderers: `"drawer"`, `"modal"`, or `"replace"`. |
 | `invoke_schema` | string | No | Human-readable JSON/schema hint for renderer invocation params. When present, the renderer appears in the frontend invocation registry. |
 | `url_patterns` | string[] | No | URL or path glob patterns the frontend can auto-convert into renderer invocation links. |
@@ -472,6 +488,36 @@ Preferences are managed via:
 - The `save_setup_preference` MCP tool (for durable setup-question answers during chat)
 - The `set_plugin_update_policy` / `get_plugin_update_policy` Tauri IPC commands (for the Plugin Manager UI auto-update toggle)
 - The `PluginStore::load_preferences()` / `save_preferences()` methods in the shared crate
+
+### Project Startup Rule State
+
+When `init_session` or `mcpviews_setup` receives `project_path`, MCPViews creates or loads `<project_path>/mcpviews-init.json`. This file is a project-local ledger for MCPViews core startup rules and startup rules contributed by installed plugins. It records rule versions, hashes, agent-native rule file locations, and permanent opt-out flags.
+
+MCPViews does not write native rule files. Agents install or update only the rules returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` using the correct mechanism for their harness, then call `save_startup_rule_state` to record the result. Runtime `rules`, `plugin_rules`, renderer guidance, DecidR/Ludflow workflow guidance, setup questions, plugin docs, and tool docs stay in init/docs responses and must not be copied into `AGENTS.md` or equivalent startup files.
+
+For Codex-style agents, the managed native block is `## MCPViews Startup Rules` with `<!-- mcpviews-startup-rules-schema: 1 -->` and one `<!-- mcpviews-startup-rule: plugin=... rule_id=... version=... hash=... -->` marker per installed startup rule. If an old managed MCPViews rules-version block exists, agents should replace that managed block with startup rules only while preserving user-authored content outside the block.
+
+If a user declines installation, agents record `do_not_install: true`; if they decline updating an installed rule, agents record `do_not_update: true`.
+
+```json
+{
+  "schema_version": 1,
+  "startup_rules": {
+    "plugin-name:rule-id": {
+      "plugin": "plugin-name",
+      "rule_id": "rule-id",
+      "rule_version": "1",
+      "rule_hash": "sha256:...",
+      "locations": [
+        { "agent_type": "codex", "path": "AGENTS.md", "label": "MCPViews startup rule" }
+      ],
+      "do_not_install": false,
+      "do_not_update": false,
+      "updated_at": "2026-06-10T00:00:00Z"
+    }
+  }
+}
+```
 
 ### Plugin Updates
 

@@ -8,18 +8,6 @@ Before changing Windows or macOS Tauri behavior, release packaging, installers, 
 
 MCPViews must preserve one shared user experience across macOS and Windows while allowing platform-specific implementation behind named adapters. Do not add scattered one-off platform branches without recording the shared UX contract, the macOS implementation, the Windows implementation, and Windows runtime verification evidence. Mac-only validation, browser harness checks, and mocked Tauri tests are not proof that Windows is ready.
 
-## Ludflow Decision Graph Planning Lifecycle
-
-Whenever an agent writes a plan for implementing a new feature, refactoring existing code, fixing a bug, updating documentation, or doing any other substantial work in this codebase, it must create a new relevant Ludflow document or update the existing relevant Ludflow document in the Tribe-X DecidR organization.
-
-The Ludflow document should be linked to the relevant DecidR project or decision so the decision graph stays current. Prefer updating an existing document when one already captures the same project, decision, or workstream; create a new document only when no relevant document exists.
-
-Plan documents should capture the intent, scope, affected systems, important decisions, implementation steps, validation approach, and current status. If the work changes direction, update the same document rather than letting the decision graph drift.
-
-When the planned work is complete, update the Ludflow document with a new version that records what was implemented, final decisions, validation results, and any follow-up work. Mark or publish the document as implemented and published so the Tribe-X DecidR project or decision reflects the completed state.
-
-When updating an existing Ludflow document that is linked to a DecidR decision whose work is already implemented, or when the Ludflow document is already published, treat the current content as the historical implementation record. Fetch the existing document content first, preserve it, and append new findings, validation notes, follow-up decisions, or corrections as a dated addendum. Do not replace, compress, or restructure the implemented content unless the user explicitly asks for a rewrite. If the document was published before the update, publish the appended version after the required review flow.
-
 ## Native Build AI Visual Debug Workflow
 
 When debugging or validating the MCPViews AI chat surface, prefer a local native build from the current dirty working tree. The dirty branch is the source of truth because it contains the code actively under development. Do not stash, reset, checkout, clean, or otherwise normalize the tree before building unless the user explicitly asks for that.

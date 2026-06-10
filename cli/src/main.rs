@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
-use mcpviews_shared::*;
 use mcpviews_shared::plugin_store::PluginStore;
 use mcpviews_shared::registry;
+use mcpviews_shared::*;
 
 #[derive(Parser)]
 #[command(name = "mcpviews-cli", about = "MCPViews plugin manager CLI")]
@@ -61,7 +61,12 @@ fn plugin_list() {
     }
 
     // Calculate column widths
-    let name_width = plugins.iter().map(|p| p.name.len()).max().unwrap_or(4).max(4);
+    let name_width = plugins
+        .iter()
+        .map(|p| p.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
     let version_width = plugins
         .iter()
         .map(|p| p.version.len())
@@ -78,11 +83,7 @@ fn plugin_list() {
             },
             None => "no mcp".to_string(),
         };
-        let mcp_url = plugin
-            .mcp
-            .as_ref()
-            .map(|m| m.url.as_str())
-            .unwrap_or("-");
+        let mcp_url = plugin.mcp.as_ref().map(|m| m.url.as_str()).unwrap_or("-");
 
         println!(
             "  {:<name_width$}  {:<version_width$}  {:<14}  {}",

@@ -14,8 +14,9 @@ mod lifecycle;
 mod plugin_proxy;
 mod presentation;
 mod session;
+mod startup_rules;
 
-const RULES_VERSION: &str = "21"; // Bump when built-in rules change
+const RULES_VERSION: &str = "24"; // Bump when built-in rules change
 pub(crate) const SETUP_QUESTION_INSTRUCTIONS: &str = concat!(
     "If setup_questions is non-empty, ask exactly one setup question at a time in the returned order. ",
     "Process setup question groups in the returned order, and process each group's questions in order. ",
@@ -24,15 +25,14 @@ pub(crate) const SETUP_QUESTION_INSTRUCTIONS: &str = concat!(
     "Show only the options for the current question, not every configuration option across groups at once. ",
     "After asking the question, stop and wait for the user's answer before persisting the selected setup answer or asking the next question. ",
     "Call save_setup_preference with the plugin, question id, and selected option value; MCPViews will persist only the selected option's manifest-defined persisted_rule. ",
-    "Do not persist unselected options, arbitrary rule text, or the full question text. Agent-native rules files may mirror the saved rule for compatibility, but MCPViews preferences are the source of truth."
+    "Do not persist unselected options, arbitrary rule text, or the full question text. If a setup answer backs a startup_rule, reconcile that through startup_rule_actions rather than mirroring setup rules directly."
 );
 const RULES_REFRESH_INSTRUCTION: &str = concat!(
-    "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: ",
-    "replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules. ",
-    "If `mcpviews_setup` returns `setup_questions`, follow `setup_question_instructions`: ask one setup question at a time in the returned order, ",
-    "explain the current question conversationally, including unfamiliar terms, when each option fits, and any example_outputs; ",
-    "then wait for the user's answer and call `save_setup_preference` with the plugin, question id, and selected option value. ",
-    "MCPViews stores the selected manifest-defined rule and injects it into future `init_session` responses while the plugin is installed; agent-native rule files are only a compatibility mirror."
+    "If an old MCPViews managed rules file, section, or memory exists, migrate it to startup rules only. ",
+    "For Codex-style agents, replace a managed legacy MCPViews rules-version block with `## MCPViews Startup Rules` in the AGENTS.md at the supplied project_path. ",
+    "Use `startup_rule_actions.native_rule_file_path` as the exact Codex target; do not assume a parent AGENTS.md install covers nested saved projects. ",
+    "Do not persist runtime `rules`, plugin_rules, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, or tool docs into native startup files. ",
+    "Install/update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update`, then call `save_startup_rule_state` with the recorded native file locations."
 );
 
 /// Return all tool definitions (built-in + plugin tools)
@@ -2236,6 +2236,9 @@ pub(crate) fn collect_rules(
                 "rule": rule,
             }));
         }
+        for rule_def in &manifest.plugin_rule_definitions {
+            rules.push(plugin_rule_definition_json(manifest, rule_def));
+        }
     }
 
     rules
@@ -2292,12 +2295,29 @@ pub(crate) fn collect_saved_setup_rules(
             let Some(answer) = prefs.setup_answers.get(&question.id) else {
                 continue;
             };
-            let Some(rule) = answer
+            let current_option_rule = question
+                .options
+                .iter()
+                .find(|option| option.value == answer.value)
+                .and_then(|option| option.persisted_rule.as_deref())
+                .filter(|rule| !rule.trim().is_empty());
+            let stored_rule = answer
                 .persisted_rule
                 .as_deref()
-                .filter(|rule| !rule.trim().is_empty())
+                .filter(|rule| !rule.trim().is_empty());
+            let stored_version_current =
+                answer.plugin_version.as_deref() == Some(manifest.version.as_str());
+            let Some(rule) = current_option_rule
+                .filter(|_| !stored_version_current)
+                .or(stored_rule)
+                .or(current_option_rule)
             else {
                 continue;
+            };
+            let plugin_version = if !stored_version_current && current_option_rule.is_some() {
+                Some(manifest.version.clone())
+            } else {
+                answer.plugin_version.clone()
             };
 
             let name = answer
@@ -2314,7 +2334,7 @@ pub(crate) fn collect_saved_setup_rules(
                 "question_id": question.id.clone(),
                 "value": answer.value.clone(),
                 "rule": rule,
-                "plugin_version": answer.plugin_version.clone(),
+                "plugin_version": plugin_version,
                 "updated_at": answer.updated_at.clone(),
             }));
         }
@@ -2376,6 +2396,7 @@ pub(crate) fn collect_plugin_rules(
     all_renderers: &[RendererDef],
     manifest: &mcpviews_shared::PluginManifest,
     tool_filter: Option<&[String]>,
+    group_filter: Option<&[String]>,
     renderer_filter: Option<&[String]>,
 ) -> Vec<Value> {
     let mut rules: Vec<Value> = Vec::new();
@@ -2402,7 +2423,7 @@ pub(crate) fn collect_plugin_rules(
         }
     }
 
-    let has_filter = tool_filter.is_some() || renderer_filter.is_some();
+    let has_filter = tool_filter.is_some() || group_filter.is_some() || renderer_filter.is_some();
 
     // Renderer rules — only non-universal (plugin) renderers
     for renderer in all_renderers {
@@ -2474,6 +2495,76 @@ pub(crate) fn collect_plugin_rules(
         }));
     }
 
+    for rule_def in &manifest.plugin_rule_definitions {
+        if should_include_plugin_rule_definition(rule_def, tool_filter, group_filter, has_filter) {
+            rules.push(plugin_rule_definition_json(manifest, rule_def));
+        }
+    }
+
+    rules
+}
+
+fn should_include_plugin_rule_definition(
+    rule_def: &mcpviews_shared::PluginRuleDefinition,
+    tool_filter: Option<&[String]>,
+    group_filter: Option<&[String]>,
+    has_filter: bool,
+) -> bool {
+    if !has_filter || rule_def.always_include {
+        return true;
+    }
+
+    if let Some(tools) = tool_filter {
+        if tools.iter().any(|tool| {
+            rule_def
+                .tools
+                .iter()
+                .any(|rule_tool| rule_tool.eq_ignore_ascii_case(tool))
+        }) {
+            return true;
+        }
+    }
+
+    if let Some(groups) = group_filter {
+        if groups.iter().any(|group| {
+            rule_def
+                .groups
+                .iter()
+                .any(|rule_group| rule_group.eq_ignore_ascii_case(group))
+        }) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn plugin_rule_definition_json(
+    manifest: &mcpviews_shared::PluginManifest,
+    rule_def: &mcpviews_shared::PluginRuleDefinition,
+) -> Value {
+    serde_json::json!({
+        "name": format!("{}_plugin_rule_{}", manifest.name, rule_def.id),
+        "category": "plugin",
+        "source": &manifest.name,
+        "id": &rule_def.id,
+        "tools": &rule_def.tools,
+        "groups": &rule_def.groups,
+        "tags": &rule_def.tags,
+        "always_include": rule_def.always_include,
+        "rule": &rule_def.rule,
+    })
+}
+
+fn compact_plugin_registry_rules(manifest: &mcpviews_shared::PluginManifest) -> Vec<String> {
+    let mut rules = manifest.plugin_rules.clone();
+    rules.extend(
+        manifest
+            .plugin_rule_definitions
+            .iter()
+            .filter(|rule| rule.always_include)
+            .map(|rule| rule.rule.clone()),
+    );
     rules
 }
 
@@ -2576,21 +2667,17 @@ pub(crate) fn collect_plugin_auth_status(
 /// Return agent-type-specific persistence instructions.
 pub(crate) fn persistence_instructions(agent_type: &str) -> String {
     match agent_type {
-        "claude_code" => format!("Create or update `.claude/rules/mcpviews.md` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line. This file will be automatically loaded by Claude Code as project-level rules. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
+        "claude_code" => format!("Create or update `.claude/rules/mcpviews-startup.md` in the project root with only startup rules returned in `startup_rule_actions`. Each startup rule should be a separate section with its title as a heading and its rule text as the body. After updating the native rule file, call `save_startup_rule_state`. {}", RULES_REFRESH_INSTRUCTION),
 
-        "claude_desktop" => format!("For each rule below, create or update an individual memory using your memory capability. Use the title `mcpviews: <rule name>` and the rule text as the content. Include `mcpviews-rules-version: {}` in a separate memory titled `mcpviews: version`. Creating individual memories (rather than one combined memory) ensures each rule is retrievable independently and survives context window limits. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
+        "claude_desktop" => format!("For each startup rule returned in `startup_rule_actions`, create or update an individual memory using your memory capability. Use the title `mcpviews startup: <rule title>` and the startup rule text as the content. After updating memory, call `save_startup_rule_state`. {}", RULES_REFRESH_INSTRUCTION),
 
-        "codex" | "opencode" | "antigravity" => format!("Add or update the MCPViews section in `AGENTS.md` in the project root with all rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line of the MCPViews section. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
+        "codex" | "opencode" | "antigravity" => format!("Add or update the managed `## MCPViews Startup Rules` block in the `AGENTS.md` at the supplied `project_path` with only startup rules returned in `startup_rule_actions`. Use `startup_rule_actions.native_rule_file_path` as the exact file to edit. Include `<!-- mcpviews-startup-rules-schema: 1 -->` and one `<!-- mcpviews-startup-rule: plugin=... rule_id=... version=... hash=... -->` marker per startup rule. If `startup_rule_actions.codex_rule_file_context.warnings` reports parent-only or nested AGENTS files, follow that guidance before recording rules as installed. After updating `AGENTS.md`, call `save_startup_rule_state`. {}", RULES_REFRESH_INSTRUCTION),
 
-        "cursor" => format!("Create or update `.cursor/rules/mcpviews.mdc` in the project root containing all the rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line. This file is read by Cursor as project-level rules. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
+        "cursor" => format!("Create or update `.cursor/rules/mcpviews-startup.mdc` in the project root with only startup rules returned in `startup_rule_actions`. Each startup rule should be a separate section with its title as a heading and its rule text as the body. After updating the native rule file, call `save_startup_rule_state`. {}", RULES_REFRESH_INSTRUCTION),
 
-        "windsurf" => format!("Add or update the MCPViews section in `.windsurfrules` in the project root with all rules below. Each rule should be a separate section with its name as a heading and its rule text as the body. Include `<!-- mcpviews-rules-version: {} -->` as the first line of the MCPViews section. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
+        "windsurf" => format!("Add or update the MCPViews startup-rules section in `.windsurfrules` in the project root with only startup rules returned in `startup_rule_actions`. Each startup rule should be a separate section with its title as a heading and its rule text as the body. After updating the native rule file, call `save_startup_rule_state`. {}", RULES_REFRESH_INSTRUCTION),
 
-        _ => format!("These rules should be persisted so they guide your behavior in future conversations. \
-              Ask the user: \"I have received behavioral rules from MCPViews for its renderers and tools. \
-              How would you like me to persist them? I can write them to a rules file in this project, \
-              create memories, or use another method your platform supports.\" \
-              Then follow the user's direction to commit the rules. Include version marker `mcpviews-rules-version: {}` so updates can be detected. {}", RULES_VERSION, RULES_REFRESH_INSTRUCTION),
+        _ => format!("Ask the user which native startup-rule mechanism this agent supports, then install/update only startup rules returned in `startup_rule_actions` and call `save_startup_rule_state`. {}", RULES_REFRESH_INSTRUCTION),
     }
 }
 
@@ -2991,7 +3078,7 @@ fn build_plugin_registry(
                     "description": p.description,
                     "arguments": p.arguments,
                 })).collect::<Vec<Value>>(),
-                "plugin_rules": manifest.plugin_rules,
+                "plugin_rules": compact_plugin_registry_rules(manifest),
             }))
         })
         .collect()
@@ -3059,7 +3146,7 @@ fn evaluate_update_preferences(
     serde_json::json!({
         "auto_update": auto_update,
         "ask_user": ask_user,
-        "instruction": "For plugins in auto_update: call update_plugins immediately, then call mcpviews_setup to re-persist rules. For plugins in ask_user: ask the user with three options: (1) Yes, update this time (2) Yes, always auto-update (3) Skip this update. Then call save_update_preference with the user's choice before proceeding."
+        "instruction": "For plugins in auto_update: call update_plugins immediately, then call mcpviews_setup with project_path to reconcile startup_rule_actions. For plugins in ask_user: ask the user with three options: (1) Yes, update this time (2) Yes, always auto-update (3) Skip this update. Then call save_update_preference with the user's choice before proceeding."
     })
 }
 
@@ -3793,7 +3880,10 @@ fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
 mod tests {
     use super::*;
     use crate::test_utils::test_app_state;
-    use mcpviews_shared::{PluginAuth, PluginManifest, PluginMcpConfig};
+    use mcpviews_shared::{
+        PluginAuth, PluginManifest, PluginMcpConfig, PluginRegistryIndex, PluginRuleDefinition,
+        ToolGroupEntry,
+    };
 
     #[test]
     fn test_plugin_auth_http_error_detector_includes_permission_failures() {
@@ -3826,6 +3916,8 @@ mod tests {
             download_url: None,
             prompt_definitions: vec![],
             plugin_rules: vec![],
+            plugin_rule_definitions: vec![],
+            startup_rules: vec![],
             setup_questions: vec![],
         }
     }
@@ -4307,6 +4399,54 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_saved_setup_rules_uses_manifest_rule_when_plugin_version_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
+        let mut manifest = make_manifest(
+            "setup-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
+        manifest.version = "2.0.0".to_string();
+        manifest.setup_questions = vec![mcpviews_shared::SetupQuestion {
+            id: "mode".to_string(),
+            question: "Choose mode?".to_string(),
+            description: None,
+            guidance: None,
+            options: vec![mcpviews_shared::SetupQuestionOption {
+                value: "full".to_string(),
+                label: "Full".to_string(),
+                description: None,
+                persisted_rule: Some("Mode is compact now.".to_string()),
+            }],
+            default_value: None,
+            recommended_value: None,
+            example_outputs: None,
+            persist_as_rule_name: Some("setup_mode".to_string()),
+        }];
+        let mut prefs = mcpviews_shared::PluginPreferences::default();
+        prefs.setup_answers.insert(
+            "mode".to_string(),
+            mcpviews_shared::SetupPreferenceAnswer {
+                value: "full".to_string(),
+                persist_as_rule_name: Some("setup_mode".to_string()),
+                persisted_rule: Some("Old verbose mode rule.".to_string()),
+                source: "chat".to_string(),
+                plugin_version: Some("1.0.0".to_string()),
+                updated_at: Some("2026-06-10T00:00:00Z".to_string()),
+            },
+        );
+        store.save_preferences("setup-plugin", &prefs).unwrap();
+
+        let rules = collect_saved_setup_rules(&[manifest], &store);
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["rule"], "Mode is compact now.");
+        assert_eq!(rules[0]["plugin_version"], "2.0.0");
+    }
+
+    #[test]
     fn test_setup_question_instructions_require_sequential_questions() {
         assert!(SETUP_QUESTION_INSTRUCTIONS.contains("exactly one setup question at a time"));
         assert!(SETUP_QUESTION_INSTRUCTIONS.contains("Process setup question groups"));
@@ -4417,57 +4557,75 @@ mod tests {
     fn test_persistence_instructions_claude_code() {
         let instr = persistence_instructions("claude_code");
         assert!(instr.contains(".claude/rules"));
+        assert!(instr.contains("mcpviews-startup.md"));
+        assert!(instr.contains("startup_rule_actions"));
+        assert!(!instr.contains("all the rules below"));
     }
 
     #[test]
     fn test_persistence_instructions_claude_desktop() {
         let instr = persistence_instructions("claude_desktop");
         assert!(instr.contains("memory"));
+        assert!(instr.contains("startup rule"));
+        assert!(!instr.contains("mcpviews-rules-version"));
     }
 
     #[test]
     fn test_persistence_instructions_codex() {
         let instr = persistence_instructions("codex");
         assert!(instr.contains("AGENTS.md"));
-        assert!(instr.contains("setup_questions"));
-        assert!(instr.contains("ask one setup question at a time"));
-        assert!(instr.contains("unfamiliar terms"));
+        assert!(instr.contains("MCPViews Startup Rules"));
+        assert!(instr.contains("mcpviews-startup-rules-schema: 1"));
+        assert!(instr.contains("save_startup_rule_state"));
+        assert!(instr.contains("plugin_rules"));
+        assert!(!instr.contains("all rules below"));
+        assert!(!instr.contains("mcpviews-rules-version"));
+        assert!(instr.contains("Do not persist runtime `rules`"));
+        assert!(instr.contains("DecidR/Ludflow workflow guidance"));
     }
 
     #[test]
     fn test_persistence_instructions_cursor() {
         let instr = persistence_instructions("cursor");
         assert!(instr.contains(".cursor/rules"));
+        assert!(instr.contains("mcpviews-startup.mdc"));
+        assert!(!instr.contains("all the rules below"));
     }
 
     #[test]
     fn test_persistence_instructions_windsurf() {
         let instr = persistence_instructions("windsurf");
         assert!(instr.contains(".windsurfrules"));
+        assert!(instr.contains("startup-rules"));
+        assert!(!instr.contains("mcpviews-rules-version"));
     }
 
     #[test]
     fn test_persistence_instructions_opencode() {
         let instr = persistence_instructions("opencode");
         assert!(instr.contains("AGENTS.md"));
+        assert!(instr.contains("MCPViews Startup Rules"));
     }
 
     #[test]
     fn test_persistence_instructions_antigravity() {
         let instr = persistence_instructions("antigravity");
         assert!(instr.contains("AGENTS.md"));
+        assert!(instr.contains("MCPViews Startup Rules"));
     }
 
     #[test]
     fn test_persistence_instructions_generic() {
         let instr = persistence_instructions("generic");
         assert!(instr.contains("Ask the user"));
+        assert!(instr.contains("startup-rule mechanism"));
     }
 
     #[test]
     fn test_persistence_instructions_unknown() {
         let instr = persistence_instructions("some_unknown_agent");
         assert!(instr.contains("Ask the user"));
+        assert!(instr.contains("Do not persist runtime `rules`"));
     }
 
     // ─── synthesize_renderer_defs tests ───
@@ -4496,6 +4654,8 @@ mod tests {
             download_url: None,
             prompt_definitions: vec![],
             plugin_rules: vec![],
+            plugin_rule_definitions: vec![],
+            startup_rules: vec![],
             setup_questions: vec![],
         }
     }
@@ -4564,49 +4724,51 @@ mod tests {
     #[test]
     fn test_setup_instructions_claude_code() {
         let instr = setup_instructions("claude_code");
-        assert!(instr.contains("init_session"));
+        assert!(instr.contains("startup_rule_actions"));
         assert!(instr.contains(".claude/rules"));
+        assert!(instr.contains("save_startup_rule_state"));
     }
 
     #[test]
     fn test_setup_instructions_claude_desktop() {
         let instr = setup_instructions("claude_desktop");
-        assert!(instr.contains("init_session"));
-        assert!(instr.contains("memory"));
+        assert!(instr.contains("startup-rule memories"));
+        assert!(instr.contains("memories"));
     }
 
     #[test]
     fn test_setup_instructions_cursor() {
         let instr = setup_instructions("cursor");
-        assert!(instr.contains("init_session"));
+        assert!(instr.contains("startup_rule_actions"));
         assert!(instr.contains(".cursor/rules"));
     }
 
     #[test]
     fn test_setup_instructions_codex() {
         let instr = setup_instructions("codex");
-        assert!(instr.contains("init_session"));
         assert!(instr.contains("AGENTS.md"));
-        assert!(instr.contains("update it rather than adding a duplicate"));
+        assert!(instr.contains("MCPViews Startup Rules"));
+        assert!(instr.contains("startup_rule_actions"));
+        assert!(!instr.contains("all rules"));
     }
 
     #[test]
     fn test_setup_instructions_windsurf() {
         let instr = setup_instructions("windsurf");
-        assert!(instr.contains("init_session"));
+        assert!(instr.contains("startup_rule_actions"));
         assert!(instr.contains(".windsurfrules"));
     }
 
     #[test]
     fn test_setup_instructions_generic() {
         let instr = setup_instructions("generic");
-        assert!(instr.contains("init_session"));
+        assert!(instr.contains("native startup-rule mechanism"));
     }
 
     #[test]
     fn test_setup_instructions_unknown() {
         let instr = setup_instructions("some_unknown_agent");
-        assert!(instr.contains("init_session"));
+        assert!(instr.contains("native startup-rule mechanism"));
     }
 
     // ─── synthesize_renderer_defs tests ───
@@ -4759,11 +4921,15 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "21");
+        assert_eq!(RULES_VERSION, "24");
         let instructions = persistence_instructions("codex");
-        assert!(instructions.contains("mcpviews-rules-version: 21"));
-        assert!(instructions.contains("Add or update the MCPViews section in `AGENTS.md`"));
-        assert!(instructions.contains("missing from the persisted rules"));
+        assert!(instructions.contains("mcpviews-startup-rules-schema: 1"));
+        assert!(
+            instructions.contains("Add or update the managed `## MCPViews Startup Rules` block")
+        );
+        assert!(instructions.contains("startup_rule_actions.needs_install"));
+        assert!(!instructions.contains("mcpviews-rules-version: 22"));
+        assert!(!instructions.contains("missing from the persisted rules"));
     }
 
     #[test]
@@ -5146,7 +5312,7 @@ mod tests {
                 tool_prefix: "tp".into(),
             }),
         );
-        let rules = collect_plugin_rules(&renderers, &manifest, None, None);
+        let rules = collect_plugin_rules(&renderers, &manifest, None, None, None);
         // search_results renderer + search_codebase tool rule
         assert_eq!(rules.len(), 2);
     }
@@ -5188,7 +5354,7 @@ mod tests {
             None,
         );
         let renderer_filter = vec!["search_results".to_string()];
-        let rules = collect_plugin_rules(&renderers, &manifest, None, Some(&renderer_filter));
+        let rules = collect_plugin_rules(&renderers, &manifest, None, None, Some(&renderer_filter));
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0]["renderer"], "search_results");
     }
@@ -5214,8 +5380,145 @@ mod tests {
             std::collections::HashMap::new(),
             None,
         );
-        let rules = collect_plugin_rules(&renderers, &manifest, None, None);
+        let rules = collect_plugin_rules(&renderers, &manifest, None, None, None);
         assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_collect_plugin_rules_filters_structured_plugin_rules_by_tool() {
+        let mut manifest = make_manifest(
+            "decidr",
+            vec![],
+            std::collections::HashMap::new(),
+            Some(PluginMcpConfig {
+                url: "http://localhost:8080".into(),
+                auth: None,
+                tool_prefix: "decidr__".into(),
+            }),
+        );
+        manifest.plugin_rules = vec!["Global breadcrumb.".to_string()];
+        manifest.plugin_rule_definitions = vec![
+            PluginRuleDefinition {
+                id: "decision_lifecycle".to_string(),
+                rule: "Use governance_lifecycle for update_decision.".to_string(),
+                tools: vec!["update_decision".to_string()],
+                groups: vec!["Create & Update".to_string()],
+                tags: vec!["governance".to_string()],
+                always_include: false,
+            },
+            PluginRuleDefinition {
+                id: "github_lifecycle".to_string(),
+                rule: "Use github_pr_lifecycle for PR work.".to_string(),
+                tools: vec!["create_pr".to_string()],
+                groups: vec!["GitHub".to_string()],
+                tags: vec!["github".to_string()],
+                always_include: false,
+            },
+        ];
+
+        let tools = vec!["update_decision".to_string()];
+        let rules = collect_plugin_rules(&[], &manifest, Some(&tools), None, None);
+        let rendered = serde_json::to_string(&rules).unwrap();
+
+        assert!(rendered.contains("Global breadcrumb."));
+        assert!(rendered.contains("Use governance_lifecycle for update_decision."));
+        assert!(!rendered.contains("Use github_pr_lifecycle for PR work."));
+    }
+
+    #[test]
+    fn test_collect_plugin_rules_filters_structured_plugin_rules_by_group() {
+        let mut manifest = make_manifest("decidr", vec![], std::collections::HashMap::new(), None);
+        manifest.plugin_rule_definitions = vec![PluginRuleDefinition {
+            id: "documents".to_string(),
+            rule: "Use save_decision_document_version for lifecycle docs.".to_string(),
+            tools: vec!["save_decision_document_version".to_string()],
+            groups: vec!["Documents".to_string()],
+            tags: vec!["governance".to_string()],
+            always_include: false,
+        }];
+
+        let groups = vec!["documents".to_string()];
+        let rules = collect_plugin_rules(&[], &manifest, None, Some(&groups), None);
+        let rendered = serde_json::to_string(&rules).unwrap();
+
+        assert!(rendered.contains("Use save_decision_document_version"));
+    }
+
+    #[test]
+    fn test_collect_plugin_rules_includes_always_include_with_filters() {
+        let mut manifest = make_manifest("decidr", vec![], std::collections::HashMap::new(), None);
+        manifest.plugin_rule_definitions = vec![PluginRuleDefinition {
+            id: "auth".to_string(),
+            rule: "Refresh DecidR auth before retrying expired org calls.".to_string(),
+            tools: vec![],
+            groups: vec![],
+            tags: vec!["auth".to_string()],
+            always_include: true,
+        }];
+
+        let tools = vec!["update_decision".to_string()];
+        let rules = collect_plugin_rules(&[], &manifest, Some(&tools), None, None);
+        let rendered = serde_json::to_string(&rules).unwrap();
+
+        assert!(rendered.contains("Refresh DecidR auth"));
+    }
+
+    #[test]
+    fn test_build_plugin_registry_includes_only_compact_plugin_rules() {
+        let mut manifest = make_manifest("decidr", vec![], std::collections::HashMap::new(), None);
+        manifest.registry_index = Some(PluginRegistryIndex {
+            summary: "Decision governance".to_string(),
+            tags: vec!["governance".to_string()],
+            tool_groups: vec![ToolGroupEntry {
+                name: "Create & Update".to_string(),
+                hint: "Update decisions.".to_string(),
+                tools: vec!["update_decision".to_string()],
+            }],
+            renderer_names: vec!["decidr_list".to_string()],
+        });
+        manifest.plugin_rules = vec!["Global breadcrumb.".to_string()];
+        manifest.plugin_rule_definitions = vec![
+            PluginRuleDefinition {
+                id: "global_auth".to_string(),
+                rule: "Global structured breadcrumb.".to_string(),
+                tools: vec![],
+                groups: vec![],
+                tags: vec!["auth".to_string()],
+                always_include: true,
+            },
+            PluginRuleDefinition {
+                id: "tool_detail".to_string(),
+                rule: "Detailed tool-only breadcrumb.".to_string(),
+                tools: vec!["update_decision".to_string()],
+                groups: vec!["Create & Update".to_string()],
+                tags: vec!["governance".to_string()],
+                always_include: false,
+            },
+        ];
+
+        let registry = build_plugin_registry(&[manifest], &crate::tool_cache::ToolCache::new(1));
+        let rendered = serde_json::to_string(&registry).unwrap();
+
+        assert!(rendered.contains("Global breadcrumb."));
+        assert!(rendered.contains("Global structured breadcrumb."));
+        assert!(!rendered.contains("Detailed tool-only breadcrumb."));
+    }
+
+    #[test]
+    fn test_bundled_decidr_update_decision_docs_are_focused() {
+        let manifest: PluginManifest = serde_json::from_str(include_str!(
+            "../bundled-plugins/mac-dev/decidr/manifest.json"
+        ))
+        .unwrap();
+        let tools = vec!["update_decision".to_string()];
+        let rules = collect_plugin_rules(&[], &manifest, Some(&tools), None, None);
+        let rendered = serde_json::to_string(&rules).unwrap();
+
+        assert!(rendered.contains("governance_lifecycle"));
+        assert!(rendered.contains("save_decision_document_version"));
+        assert!(rendered.contains("update_decision_usage"));
+        assert!(!rendered.contains("github_pr_lifecycle"));
+        assert!(!rendered.contains("Archive and restore tools are soft-delete workflows"));
     }
 
     // ─── auto_derive_registry_index tests ───
@@ -5396,6 +5699,28 @@ mod tests {
         );
         let schema = &update_tool.unwrap()["inputSchema"];
         assert!(schema["properties"]["plugin_name"].is_object());
+    }
+
+    #[test]
+    fn test_save_startup_rule_state_tool_defined() {
+        let tools = builtin_tool_definitions(&[]);
+        let tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "save_startup_rule_state")
+            .expect("save_startup_rule_state tool should be defined");
+        let schema = &tool["inputSchema"];
+        assert!(schema["properties"]["project_path"].is_object());
+        assert!(schema["properties"]["locations"].is_object());
+        assert_eq!(
+            schema["required"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("project_path"),
+                serde_json::json!("plugin"),
+                serde_json::json!("rule_id"),
+                serde_json::json!("rule_version"),
+                serde_json::json!("rule_hash"),
+            ]
+        );
     }
 
     // ─── M-028: tool definition tests ───

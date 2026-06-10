@@ -67,8 +67,13 @@ pub(super) async fn call_install_plugin(
             let is_oauth = status["auth_type"].as_str() == Some("oauth");
             let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
             if is_oauth && !is_configured {
-                match crate::mcp_registry_tools::trigger_plugin_oauth(&plugin_name, None, None, state)
-                    .await
+                match crate::mcp_registry_tools::trigger_plugin_oauth(
+                    &plugin_name,
+                    None,
+                    None,
+                    state,
+                )
+                .await
                 {
                     Ok(msg) => Some(msg),
                     Err(e) => Some(format!("Auth trigger failed: {}", e)),
@@ -211,8 +216,13 @@ pub(super) async fn call_update_plugins(
             let is_configured = status["auth_configured"].as_bool().unwrap_or(false);
 
             if trigger_auth && is_oauth && !is_configured {
-                match crate::mcp_registry_tools::trigger_plugin_oauth(updated_name, None, None, state)
-                    .await
+                match crate::mcp_registry_tools::trigger_plugin_oauth(
+                    updated_name,
+                    None,
+                    None,
+                    state,
+                )
+                .await
                 {
                     Ok(msg) => auth_results.push(serde_json::json!({
                         "plugin": updated_name,
@@ -297,11 +307,11 @@ pub(super) async fn call_save_update_preference(
 
     let message = match policy {
         "once" => format!(
-            "Preference saved for '{}'. Proceed with update_plugins, then call mcpviews_setup to re-persist rules.",
+            "Preference saved for '{}'. Proceed with update_plugins, then call mcpviews_setup with project_path to reconcile startup_rule_actions.",
             plugin
         ),
         "always" => format!(
-            "Auto-update enabled for '{}'. Proceed with update_plugins, then call mcpviews_setup to re-persist rules.",
+            "Auto-update enabled for '{}'. Proceed with update_plugins, then call mcpviews_setup with project_path to reconcile startup_rule_actions.",
             plugin
         ),
         "skip" => format!("Update to version {} skipped for '{}'.", version, plugin),
@@ -428,6 +438,20 @@ pub(super) async fn call_save_setup_preference(
     }))
 }
 
+pub(super) async fn call_save_startup_rule_state(
+    arguments: Value,
+    _state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let result = super::startup_rules::save_startup_rule_state_from_args(arguments)?;
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&result).unwrap()
+        }]
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,6 +472,8 @@ mod tests {
             download_url: None,
             prompt_definitions: vec![],
             plugin_rules: vec![],
+            plugin_rule_definitions: vec![],
+            startup_rules: vec![],
             setup_questions: vec![mcpviews_shared::SetupQuestion {
                 id: "mode".to_string(),
                 question: "Choose mode?".to_string(),

@@ -494,6 +494,31 @@ fn save_update_preference_definition(_: &[RendererDef]) -> Value {
     })
 }
 
+fn save_setup_preference_definition(_: &[RendererDef]) -> Value {
+    serde_json::json!({
+        "name": "save_setup_preference",
+        "description": "Save the user's selected setup answer for an installed plugin. The persisted rule text is derived from the plugin manifest; callers provide only plugin, question_id, and option value.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "plugin": {
+                    "type": "string",
+                    "description": "Installed plugin name"
+                },
+                "question_id": {
+                    "type": "string",
+                    "description": "Stable setup question id from the plugin manifest"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Selected option value from the setup question"
+                }
+            },
+            "required": ["plugin", "question_id", "value"]
+        }
+    })
+}
+
 fn direct_renderer_handler<'a>(
     renderer_name: &'static str,
     arguments: Value,
@@ -652,6 +677,15 @@ fn save_update_preference_handler<'a>(
     ))
 }
 
+fn save_setup_preference_handler<'a>(
+    arguments: Value,
+    state: &'a Arc<TokioMutex<AsyncAppState>>,
+) -> BuiltinToolFuture<'a> {
+    Box::pin(super::lifecycle::call_save_setup_preference(
+        arguments, state,
+    ))
+}
+
 pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
     let presentation_group = CoreConnectorGroupMeta {
         name: "Presentation",
@@ -800,6 +834,13 @@ pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
             name: "save_update_preference",
             definition: save_update_preference_definition,
             handler: save_update_preference_handler,
+            hosted_visibility: HostedVisibility::HostedModelFacing,
+            core_connector_group: None,
+        },
+        BuiltinToolSpec {
+            name: "save_setup_preference",
+            definition: save_setup_preference_definition,
+            handler: save_setup_preference_handler,
             hosted_visibility: HostedVisibility::HostedModelFacing,
             core_connector_group: None,
         },

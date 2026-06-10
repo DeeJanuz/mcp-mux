@@ -414,12 +414,46 @@ mod tests {
             update_policy: "always".to_string(),
             update_policy_version: None,
             update_policy_source: "ui".to_string(),
+            setup_answers: std::collections::HashMap::new(),
         };
         store.save_preferences("my-plugin", &prefs).unwrap();
 
         let loaded = store.load_preferences("my-plugin");
         assert_eq!(loaded.update_policy, "always");
         assert_eq!(loaded.update_policy_source, "ui");
+    }
+
+    #[test]
+    fn test_save_and_load_preferences_with_setup_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().to_path_buf());
+        store.save(&test_manifest("my-plugin")).unwrap();
+
+        let mut prefs = crate::PluginPreferences::default();
+        prefs.setup_answers.insert(
+            "mode".to_string(),
+            crate::SetupPreferenceAnswer {
+                value: "full".to_string(),
+                persist_as_rule_name: Some("mcpviews_gronk_speak_mode".to_string()),
+                persisted_rule: Some("MCPViews Gronk Speak mode is full.".to_string()),
+                source: "chat".to_string(),
+                plugin_version: Some("0.1.0".to_string()),
+                updated_at: Some("2026-06-10T00:00:00Z".to_string()),
+            },
+        );
+        store.save_preferences("my-plugin", &prefs).unwrap();
+
+        let loaded = store.load_preferences("my-plugin");
+        let answer = loaded.setup_answers.get("mode").unwrap();
+        assert_eq!(answer.value, "full");
+        assert_eq!(
+            answer.persist_as_rule_name.as_deref(),
+            Some("mcpviews_gronk_speak_mode")
+        );
+        assert_eq!(
+            answer.persisted_rule.as_deref(),
+            Some("MCPViews Gronk Speak mode is full.")
+        );
     }
 
     #[test]

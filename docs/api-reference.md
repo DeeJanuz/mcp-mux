@@ -1163,6 +1163,34 @@ Save the user's update preference for a plugin after asking them about a pending
 - `"always"` — Saves policy as `"always"`. Future updates for this plugin will appear in `auto_update` instead of `ask_user`. Agent should proceed with `update_plugins`.
 - `"skip"` — Saves policy as `"skip"` with the specific version. This version will not appear in future `plugin_update_actions`. A newer version beyond the skipped one will re-prompt.
 
+### `save_setup_preference`
+
+Save the user's selected answer for an installed plugin setup question. Used by agents after `mcpviews_setup` returns `setup_questions` and the user chooses one option. The caller passes only the plugin name, setup question id, and selected option value; MCPViews validates those against the installed manifest and persists the manifest-defined `persisted_rule`.
+
+**Parameters:**
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `plugin` | string | Yes | Installed plugin name. |
+| `question_id` | string | Yes | Stable setup question id from the plugin manifest. |
+| `value` | string | Yes | Selected option value from the setup question. |
+
+**Behavior:**
+- Rejects unknown plugins, unknown setup questions, unknown option values, and options without `persisted_rule`.
+- Stores the selected value and selected rule snapshot in `~/.mcpviews/plugins/{plugin-name}/preferences.json`.
+- Future `init_session` calls include the saved setup rule while the plugin remains installed.
+- `mcpviews_setup` skips already answered setup questions by default, so users are not asked the same question every setup run.
+- Agent-native rule files may mirror the selected rule for compatibility, but the MCPViews preference store is the product source of truth.
+
+**Response:**
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "{ \"status\": \"saved\", \"plugin\": \"my-plugin\", \"question_id\": \"mode\", \"value\": \"full\", \"persist_as_rule_name\": \"my_plugin_mode\", \"message\": \"Setup preference saved...\" }"
+  }]
+}
+```
+
 ### `mcpviews_install_plugin`
 
 Install a plugin into MCPViews programmatically. Accepts a plugin manifest as JSON and optionally a download URL for a ZIP package containing renderer assets. If a plugin with the same name already exists, it is replaced. After installation, connected MCP clients are notified via `notifications/tools/list_changed` and the GUI receives a `reload_renderers` event.
@@ -1288,7 +1316,7 @@ Setup or refresh MCPViews agent rules. Returns instructions for persisting a rul
 }
 ```
 
-`setup_questions` contains setup-time preference questions contributed by installed plugins. Agents must ask exactly one setup question at a time in the returned order: process groups in order, process each group's questions in order, show only the current question's options, and wait for the user's answer before moving on. The prompt for the current question should be conversational: use the question `description` and optional `guidance`, summarize when to choose each option, include `example_outputs` when present, and identify the default or recommended option. Agents persist only the selected option's compact `persisted_rule` using `persist_as_rule_name`; they must not persist unselected options or the full question text.
+`setup_questions` contains unanswered setup-time preference questions contributed by installed plugins. Agents must ask exactly one setup question at a time in the returned order: process groups in order, process each group's questions in order, show only the current question's options, and wait for the user's answer before moving on. The prompt for the current question should be conversational: use the question `description` and optional `guidance`, summarize when to choose each option, include `example_outputs` when present, and identify the default or recommended option. After the user answers, agents call `save_setup_preference` with the plugin, question id, and selected option value. MCPViews persists only the selected option's compact manifest-defined `persisted_rule`; agents must not persist unselected options, arbitrary rule text, or the full question text.
 
 Optional style preferences such as MCPViews Gronk Speak are plugin-provided setup questions, not built-in MCPViews core questions. If the Gronk Speak plugin is not installed, `mcpviews_setup` does not ask for Gronk mode or scope.
 

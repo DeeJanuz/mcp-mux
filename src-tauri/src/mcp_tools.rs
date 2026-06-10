@@ -22,15 +22,17 @@ pub(crate) const SETUP_QUESTION_INSTRUCTIONS: &str = concat!(
     "For each current question, write a brief conversational setup prompt that uses the question description, explains any unfamiliar term, ",
     "summarizes when to choose each option, includes example_outputs when present, and identifies the default or recommended option. ",
     "Show only the options for the current question, not every configuration option across groups at once. ",
-    "After asking the question, stop and wait for the user's answer before writing files, persisting the selected setup rule, or asking the next question. ",
-    "Persist only the selected option's persisted_rule using persist_as_rule_name when present; do not persist unselected options or the full question text."
+    "After asking the question, stop and wait for the user's answer before persisting the selected setup answer or asking the next question. ",
+    "Call save_setup_preference with the plugin, question id, and selected option value; MCPViews will persist only the selected option's manifest-defined persisted_rule. ",
+    "Do not persist unselected options, arbitrary rule text, or the full question text. Agent-native rules files may mirror the saved rule for compatibility, but MCPViews preferences are the source of truth."
 );
 const RULES_REFRESH_INSTRUCTION: &str = concat!(
     "If an MCPViews rules file, section, or memory already exists, update that existing MCPViews entry instead of appending a duplicate: ",
     "replace it when the version marker is missing or different, and also refresh it when installed or updated plugins add rule details that are missing from the persisted rules. ",
     "If `mcpviews_setup` returns `setup_questions`, follow `setup_question_instructions`: ask one setup question at a time in the returned order, ",
     "explain the current question conversationally, including unfamiliar terms, when each option fits, and any example_outputs; ",
-    "then wait for the user's answer and persist only the selected option's compact `persisted_rule` using `persist_as_rule_name` when present."
+    "then wait for the user's answer and call `save_setup_preference` with the plugin, question id, and selected option value. ",
+    "MCPViews stores the selected manifest-defined rule and injects it into future `init_session` responses while the plugin is installed; agent-native rule files are only a compatibility mirror."
 );
 
 /// Return all tool definitions (built-in + plugin tools)
@@ -2239,20 +2241,86 @@ pub(crate) fn collect_rules(
     rules
 }
 
-pub(crate) fn collect_setup_questions(manifests: &[mcpviews_shared::PluginManifest]) -> Vec<Value> {
+pub(crate) fn collect_setup_questions(
+    manifests: &[mcpviews_shared::PluginManifest],
+    store: &mcpviews_shared::plugin_store::PluginStore,
+) -> Vec<Value> {
     let mut seen_plugins: HashSet<&str> = HashSet::new();
-    let questions = manifests.iter().filter_map(|manifest| {
-        if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty() {
-            return None;
-        }
+    let questions = manifests
+        .iter()
+        .filter_map(|manifest| {
+            if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty() {
+                return None;
+            }
 
-        Some(serde_json::json!({
-            "plugin": manifest.name,
-            "questions": manifest.setup_questions,
-        }))
-    }).collect();
+            let prefs = store.load_preferences(&manifest.name);
+            let unanswered_questions: Vec<_> = manifest
+                .setup_questions
+                .iter()
+                .filter(|question| !prefs.setup_answers.contains_key(&question.id))
+                .cloned()
+                .collect();
+
+            if unanswered_questions.is_empty() {
+                return None;
+            }
+
+            Some(serde_json::json!({
+                "plugin": manifest.name.clone(),
+                "questions": unanswered_questions,
+            }))
+        })
+        .collect();
 
     questions
+}
+
+pub(crate) fn collect_saved_setup_rules(
+    manifests: &[mcpviews_shared::PluginManifest],
+    store: &mcpviews_shared::plugin_store::PluginStore,
+) -> Vec<Value> {
+    let mut seen_plugins: HashSet<&str> = HashSet::new();
+    let mut rules = Vec::new();
+
+    for manifest in manifests {
+        if !seen_plugins.insert(manifest.name.as_str()) || manifest.setup_questions.is_empty() {
+            continue;
+        }
+
+        let prefs = store.load_preferences(&manifest.name);
+        for question in &manifest.setup_questions {
+            let Some(answer) = prefs.setup_answers.get(&question.id) else {
+                continue;
+            };
+            let Some(rule) = answer
+                .persisted_rule
+                .as_deref()
+                .filter(|rule| !rule.trim().is_empty())
+            else {
+                continue;
+            };
+
+            let name = answer
+                .persist_as_rule_name
+                .as_deref()
+                .or(question.persist_as_rule_name.as_deref())
+                .unwrap_or(question.id.as_str());
+
+            rules.push(serde_json::json!({
+                "name": name,
+                "category": "plugin_setup",
+                "source": manifest.name.clone(),
+                "plugin": manifest.name.clone(),
+                "question_id": question.id.clone(),
+                "value": answer.value.clone(),
+                "rule": rule,
+                "plugin_version": answer.plugin_version.clone(),
+                "updated_at": answer.updated_at.clone(),
+            }));
+        }
+    }
+
+    rules
 }
 
 /// Collect only built-in (universal) rules — renderer_selection + universal renderer rules.
@@ -4023,7 +4091,9 @@ mod tests {
 
     #[test]
     fn test_collect_setup_questions_is_empty_without_plugin_questions() {
-        let questions = collect_setup_questions(&[]);
+        let dir = tempfile::tempdir().unwrap();
+        let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
+        let questions = collect_setup_questions(&[], &store);
 
         assert!(questions.is_empty());
     }
@@ -4062,7 +4132,9 @@ mod tests {
             None,
         );
 
-        let questions = collect_setup_questions(&[manifest, empty_manifest]);
+        let dir = tempfile::tempdir().unwrap();
+        let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
+        let questions = collect_setup_questions(&[manifest, empty_manifest], &store);
 
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0]["plugin"], "governance-plugin");
@@ -4079,6 +4151,162 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_setup_questions_skips_answered_questions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
+        let mut manifest = make_manifest(
+            "setup-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
+        manifest.setup_questions = vec![
+            mcpviews_shared::SetupQuestion {
+                id: "mode".to_string(),
+                question: "Choose mode?".to_string(),
+                description: None,
+                guidance: None,
+                options: vec![mcpviews_shared::SetupQuestionOption {
+                    value: "full".to_string(),
+                    label: "Full".to_string(),
+                    description: None,
+                    persisted_rule: Some("Mode is full.".to_string()),
+                }],
+                default_value: None,
+                recommended_value: None,
+                example_outputs: None,
+                persist_as_rule_name: Some("setup_mode".to_string()),
+            },
+            mcpviews_shared::SetupQuestion {
+                id: "scope".to_string(),
+                question: "Choose scope?".to_string(),
+                description: None,
+                guidance: None,
+                options: vec![mcpviews_shared::SetupQuestionOption {
+                    value: "chat".to_string(),
+                    label: "Chat".to_string(),
+                    description: None,
+                    persisted_rule: Some("Scope is chat.".to_string()),
+                }],
+                default_value: None,
+                recommended_value: None,
+                example_outputs: None,
+                persist_as_rule_name: Some("setup_scope".to_string()),
+            },
+        ];
+        let mut prefs = mcpviews_shared::PluginPreferences::default();
+        prefs.setup_answers.insert(
+            "mode".to_string(),
+            mcpviews_shared::SetupPreferenceAnswer {
+                value: "full".to_string(),
+                persist_as_rule_name: Some("setup_mode".to_string()),
+                persisted_rule: Some("Mode is full.".to_string()),
+                source: "chat".to_string(),
+                plugin_version: Some("1.0.0".to_string()),
+                updated_at: Some("2026-06-10T00:00:00Z".to_string()),
+            },
+        );
+        store.save_preferences("setup-plugin", &prefs).unwrap();
+
+        let questions = collect_setup_questions(&[manifest], &store);
+
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0]["questions"].as_array().unwrap().len(), 1);
+        assert_eq!(questions[0]["questions"][0]["id"], "scope");
+    }
+
+    #[test]
+    fn test_collect_setup_questions_omits_plugin_when_all_questions_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
+        let mut manifest = make_manifest(
+            "setup-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
+        manifest.setup_questions = vec![mcpviews_shared::SetupQuestion {
+            id: "mode".to_string(),
+            question: "Choose mode?".to_string(),
+            description: None,
+            guidance: None,
+            options: vec![mcpviews_shared::SetupQuestionOption {
+                value: "full".to_string(),
+                label: "Full".to_string(),
+                description: None,
+                persisted_rule: Some("Mode is full.".to_string()),
+            }],
+            default_value: None,
+            recommended_value: None,
+            example_outputs: None,
+            persist_as_rule_name: Some("setup_mode".to_string()),
+        }];
+        let mut prefs = mcpviews_shared::PluginPreferences::default();
+        prefs.setup_answers.insert(
+            "mode".to_string(),
+            mcpviews_shared::SetupPreferenceAnswer {
+                value: "full".to_string(),
+                persist_as_rule_name: Some("setup_mode".to_string()),
+                persisted_rule: Some("Mode is full.".to_string()),
+                source: "chat".to_string(),
+                plugin_version: Some("1.0.0".to_string()),
+                updated_at: Some("2026-06-10T00:00:00Z".to_string()),
+            },
+        );
+        store.save_preferences("setup-plugin", &prefs).unwrap();
+
+        let questions = collect_setup_questions(&[manifest], &store);
+
+        assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_collect_saved_setup_rules_includes_installed_plugin_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().to_path_buf());
+        let mut manifest = make_manifest(
+            "setup-plugin",
+            vec![],
+            std::collections::HashMap::new(),
+            None,
+        );
+        manifest.setup_questions = vec![mcpviews_shared::SetupQuestion {
+            id: "mode".to_string(),
+            question: "Choose mode?".to_string(),
+            description: None,
+            guidance: None,
+            options: vec![],
+            default_value: None,
+            recommended_value: None,
+            example_outputs: None,
+            persist_as_rule_name: Some("setup_mode".to_string()),
+        }];
+        let mut prefs = mcpviews_shared::PluginPreferences::default();
+        prefs.setup_answers.insert(
+            "mode".to_string(),
+            mcpviews_shared::SetupPreferenceAnswer {
+                value: "full".to_string(),
+                persist_as_rule_name: Some("setup_mode".to_string()),
+                persisted_rule: Some("Mode is full.".to_string()),
+                source: "chat".to_string(),
+                plugin_version: Some("1.0.0".to_string()),
+                updated_at: Some("2026-06-10T00:00:00Z".to_string()),
+            },
+        );
+        store.save_preferences("setup-plugin", &prefs).unwrap();
+
+        let rules = collect_saved_setup_rules(&[manifest], &store);
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0]["name"], "setup_mode");
+        assert_eq!(rules[0]["category"], "plugin_setup");
+        assert_eq!(rules[0]["source"], "setup-plugin");
+        assert_eq!(rules[0]["question_id"], "mode");
+        assert_eq!(rules[0]["value"], "full");
+        assert_eq!(rules[0]["rule"], "Mode is full.");
+    }
+
+    #[test]
     fn test_setup_question_instructions_require_sequential_questions() {
         assert!(SETUP_QUESTION_INSTRUCTIONS.contains("exactly one setup question at a time"));
         assert!(SETUP_QUESTION_INSTRUCTIONS.contains("Process setup question groups"));
@@ -4088,6 +4316,7 @@ mod tests {
         assert!(SETUP_QUESTION_INSTRUCTIONS.contains("when to choose each option"));
         assert!(SETUP_QUESTION_INSTRUCTIONS.contains("example_outputs"));
         assert!(SETUP_QUESTION_INSTRUCTIONS.contains("stop and wait"));
+        assert!(SETUP_QUESTION_INSTRUCTIONS.contains("save_setup_preference"));
         assert!(!SETUP_QUESTION_INSTRUCTIONS.contains("Gronk Speak mode first"));
     }
 
@@ -5393,6 +5622,7 @@ mod tests {
                     update_policy: "always".to_string(),
                     update_policy_version: None,
                     update_policy_source: "chat".to_string(),
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -5419,6 +5649,7 @@ mod tests {
                     update_policy: "skip".to_string(),
                     update_policy_version: Some("2.0.0".to_string()),
                     update_policy_source: "chat".to_string(),
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -5444,6 +5675,7 @@ mod tests {
                     update_policy: "skip".to_string(),
                     update_policy_version: Some("2.0.0".to_string()),
                     update_policy_source: "chat".to_string(),
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -5471,6 +5703,7 @@ mod tests {
                     update_policy: "always".to_string(),
                     update_policy_version: None,
                     update_policy_source: "chat".to_string(),
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -5481,6 +5714,7 @@ mod tests {
                     update_policy: "skip".to_string(),
                     update_policy_version: Some("2.0.0".to_string()),
                     update_policy_source: "chat".to_string(),
+                    ..Default::default()
                 },
             )
             .unwrap();

@@ -13,9 +13,10 @@ async fn gather_session_data(
     let state_guard = state.lock().await;
     let all_renderers = super::available_renderers(&state_guard.inner);
     let registry = state_guard.inner.plugin_registry.lock().unwrap();
+    let store = state_guard.inner.plugin_store();
     let rules = super::collect_rules(&all_renderers, &registry.manifests);
     let plugin_status = super::collect_plugin_auth_status(&registry.manifests);
-    let setup_questions = super::collect_setup_questions(&registry.manifests);
+    let setup_questions = super::collect_setup_questions(&registry.manifests, store);
     (rules, plugin_status, available_tools, setup_questions)
 }
 
@@ -28,13 +29,14 @@ async fn gather_slim_session_data(
     let all_renderers = super::available_renderers(&state_guard.inner);
     let registry = state_guard.inner.plugin_registry.lock().unwrap();
     let cached_registry = state_guard.inner.latest_registry.lock().unwrap();
-    let rules = super::collect_builtin_rules(&all_renderers);
+    let store = state_guard.inner.plugin_store();
+    let mut rules = super::collect_builtin_rules(&all_renderers);
+    rules.extend(super::collect_saved_setup_rules(&registry.manifests, store));
     let plugin_status = super::collect_plugin_auth_status(&registry.manifests);
     let org_tokens = super::collect_org_tokens(&registry.manifests);
     let plugin_registry = super::build_plugin_registry(&registry.manifests, &registry.tool_cache);
     let plugin_updates = super::collect_plugin_updates(&registry.manifests, &cached_registry);
 
-    let store = state_guard.inner.plugin_store();
     let plugin_update_actions = super::evaluate_update_preferences(&plugin_updates, store);
 
     (
@@ -77,8 +79,8 @@ pub(super) async fn call_init_session(
             "instruction": format!(
                 "Check if your persisted MCPViews rules file contains `mcpviews-rules-version: {}`. \
                  If the version is missing or different, refresh persisted rules by running `mcpviews_setup` \
-                 for the current agent type, because this slim init_session response only includes built-in \
-                 rules. Use `get_plugin_docs` for plugin-specific details during a task, or `mcpviews_setup` \
+                 for the current agent type, because this slim init_session response includes only built-in \
+                 rules plus saved setup preference rules. Use `get_plugin_docs` for plugin-specific details during a task, or `mcpviews_setup` \
                  when installed or updated plugins add rule details that are missing from persisted rules. \
                  Update the existing MCPViews rules section rather than appending a duplicate.",
                 super::RULES_VERSION

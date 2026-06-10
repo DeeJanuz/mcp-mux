@@ -174,6 +174,36 @@ pub struct PluginPreferences {
     /// Source of the preference: "chat" or "ui"
     #[serde(default = "default_preference_source")]
     pub update_policy_source: String,
+
+    /// Setup question answers keyed by setup question id.
+    #[serde(default)]
+    pub setup_answers: HashMap<String, SetupPreferenceAnswer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SetupPreferenceAnswer {
+    /// Selected option value from the plugin manifest.
+    pub value: String,
+
+    /// Rule name agents should use if mirroring this setting to native rule storage.
+    #[serde(default)]
+    pub persist_as_rule_name: Option<String>,
+
+    /// Snapshot of the manifest-defined persisted rule selected by the user.
+    #[serde(default)]
+    pub persisted_rule: Option<String>,
+
+    /// Source of the preference: "chat", "ui", or a future setup surface.
+    #[serde(default = "default_preference_source")]
+    pub source: String,
+
+    /// Plugin version installed when this answer was saved.
+    #[serde(default)]
+    pub plugin_version: Option<String>,
+
+    /// RFC3339 timestamp for the most recent update.
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 impl Default for PluginPreferences {
@@ -182,6 +212,7 @@ impl Default for PluginPreferences {
             update_policy: "ask".to_string(),
             update_policy_version: None,
             update_policy_source: "chat".to_string(),
+            setup_answers: HashMap::new(),
         }
     }
 }

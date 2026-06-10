@@ -287,11 +287,11 @@ Call the mcpviews_setup tool to configure MCPViews for this agent.
 This does two things:
 - **Persists session-start rules** so `init_session` is called automatically in every future conversation (e.g., creates `.claude/rules/mcpviews-init.md` for Claude Code)
 - **Returns renderer documentation and behavioral rules** so the agent knows how to use the companion window
-- **Asks setup questions** when installed plugins provide one-time preferences
+- **Asks setup questions** when installed plugins provide unanswered durable preferences
 
 > **This step is required.** Without it, your agent won't know MCPViews is available or how to use its renderers.
 
-When setup returns questions, answer them one at a time. Agents should explain the current question in conversational language, show what the options do with examples when available, ask only that question's options, and wait for your answer before moving on. Agents should save only the selected option's compact rule, not every option. Optional style preferences such as MCPViews Gronk Speak are provided by installable plugins, so they appear only after that plugin is installed.
+When setup returns questions, answer them one at a time. Agents should explain the current question in conversational language, show what the options do with examples when available, ask only that question's options, and wait for your answer before moving on. Agents should call `save_setup_preference` so MCPViews saves only the selected option's compact manifest-defined rule, not every option. Optional style preferences such as MCPViews Gronk Speak are provided by installable plugins, so they appear only after that plugin is installed.
 
 ### 3. Verify it works
 
@@ -324,7 +324,7 @@ When you update to a new version of MCPViews:
    ```
    Call the mcpviews_setup tool to update MCPViews rules for this agent.
    ```
-   If setup questions appear, answer them again only when you want to change the persisted preference. Plugin-provided setup preferences appear only for installed plugins.
+   Already answered setup questions are skipped by default. If setup questions appear, answer them when you want to save a missing or changed preference. Plugin-provided setup preferences appear only for installed plugins.
 
 2. **Check for plugin updates** — new MCPViews versions may include plugin compatibility changes:
    ```

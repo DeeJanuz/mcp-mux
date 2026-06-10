@@ -265,22 +265,26 @@ pub(super) async fn call_save_update_preference(
         .and_then(|v| v.as_str())
         .ok_or("Missing required parameter: version")?;
 
-    let prefs = match policy {
-        "once" => mcpviews_shared::PluginPreferences {
-            update_policy: "ask".to_string(),
-            update_policy_version: None,
-            update_policy_source: "chat".to_string(),
-        },
-        "always" => mcpviews_shared::PluginPreferences {
-            update_policy: "always".to_string(),
-            update_policy_version: None,
-            update_policy_source: "chat".to_string(),
-        },
-        "skip" => mcpviews_shared::PluginPreferences {
-            update_policy: "skip".to_string(),
-            update_policy_version: Some(version.to_string()),
-            update_policy_source: "chat".to_string(),
-        },
+    let state_guard = state.lock().await;
+    let store = state_guard.inner.plugin_store();
+    let mut prefs = store.load_preferences(plugin);
+
+    match policy {
+        "once" => {
+            prefs.update_policy = "ask".to_string();
+            prefs.update_policy_version = None;
+            prefs.update_policy_source = "chat".to_string();
+        }
+        "always" => {
+            prefs.update_policy = "always".to_string();
+            prefs.update_policy_version = None;
+            prefs.update_policy_source = "chat".to_string();
+        }
+        "skip" => {
+            prefs.update_policy = "skip".to_string();
+            prefs.update_policy_version = Some(version.to_string());
+            prefs.update_policy_source = "chat".to_string();
+        }
         _ => {
             return Err(format!(
                 "Invalid policy '{}'. Must be 'once', 'always', or 'skip'.",
@@ -289,8 +293,6 @@ pub(super) async fn call_save_update_preference(
         }
     };
 
-    let state_guard = state.lock().await;
-    let store = state_guard.inner.plugin_store();
     store.save_preferences(plugin, &prefs)?;
 
     let message = match policy {
@@ -317,4 +319,227 @@ pub(super) async fn call_save_update_preference(
             })).unwrap()
         }]
     }))
+}
+
+fn setup_preference_answer_from_manifest(
+    manifest: &mcpviews_shared::PluginManifest,
+    question_id: &str,
+    value: &str,
+    source: &str,
+    updated_at: String,
+) -> Result<(String, mcpviews_shared::SetupPreferenceAnswer), String> {
+    let question = manifest
+        .setup_questions
+        .iter()
+        .find(|question| question.id == question_id)
+        .ok_or_else(|| {
+            format!(
+                "Plugin '{}' does not define setup question '{}'.",
+                manifest.name, question_id
+            )
+        })?;
+    let option = question
+        .options
+        .iter()
+        .find(|option| option.value == value)
+        .ok_or_else(|| {
+            format!(
+                "Setup question '{}' for plugin '{}' does not define option '{}'.",
+                question_id, manifest.name, value
+            )
+        })?;
+    let persisted_rule = option
+        .persisted_rule
+        .as_deref()
+        .filter(|rule| !rule.trim().is_empty())
+        .ok_or_else(|| {
+            format!(
+                "Setup option '{}' for plugin '{}' question '{}' does not define a persisted_rule.",
+                value, manifest.name, question_id
+            )
+        })?;
+    let rule_name = question
+        .persist_as_rule_name
+        .as_deref()
+        .unwrap_or(question_id)
+        .to_string();
+
+    Ok((
+        rule_name.clone(),
+        mcpviews_shared::SetupPreferenceAnswer {
+            value: value.to_string(),
+            persist_as_rule_name: Some(rule_name),
+            persisted_rule: Some(persisted_rule.to_string()),
+            source: source.to_string(),
+            plugin_version: Some(manifest.version.clone()),
+            updated_at: Some(updated_at),
+        },
+    ))
+}
+
+pub(super) async fn call_save_setup_preference(
+    arguments: Value,
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> Result<Value, String> {
+    let plugin = arguments
+        .get("plugin")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: plugin")?;
+    let question_id = arguments
+        .get("question_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: question_id")?;
+    let value = arguments
+        .get("value")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing required parameter: value")?;
+
+    let state_guard = state.lock().await;
+    let store = state_guard.inner.plugin_store();
+    let manifest = store.load(plugin)?;
+    let (rule_name, answer) = setup_preference_answer_from_manifest(
+        &manifest,
+        question_id,
+        value,
+        "chat",
+        chrono::Utc::now().to_rfc3339(),
+    )?;
+
+    let mut prefs = store.load_preferences(plugin);
+    prefs.setup_answers.insert(question_id.to_string(), answer);
+    store.save_preferences(plugin, &prefs)?;
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&serde_json::json!({
+                "status": "saved",
+                "plugin": plugin,
+                "question_id": question_id,
+                "value": value,
+                "persist_as_rule_name": rule_name,
+                "message": format!(
+                    "Setup preference saved for '{}' question '{}'. Future init_session calls will include the saved setup rule while the plugin is installed.",
+                    plugin,
+                    question_id
+                ),
+            })).unwrap()
+        }]
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest_with_setup_question() -> mcpviews_shared::PluginManifest {
+        mcpviews_shared::PluginManifest {
+            name: "setup-plugin".to_string(),
+            version: "1.2.3".to_string(),
+            standalone_group: None,
+            standalone_group_label: None,
+            renderers: std::collections::HashMap::new(),
+            frame_origins: vec![],
+            mcp: None,
+            renderer_definitions: vec![],
+            tool_rules: std::collections::HashMap::new(),
+            no_auto_push: vec![],
+            registry_index: None,
+            download_url: None,
+            prompt_definitions: vec![],
+            plugin_rules: vec![],
+            setup_questions: vec![mcpviews_shared::SetupQuestion {
+                id: "mode".to_string(),
+                question: "Choose mode?".to_string(),
+                description: None,
+                guidance: None,
+                options: vec![
+                    mcpviews_shared::SetupQuestionOption {
+                        value: "full".to_string(),
+                        label: "Full".to_string(),
+                        description: None,
+                        persisted_rule: Some("Mode is full.".to_string()),
+                    },
+                    mcpviews_shared::SetupQuestionOption {
+                        value: "empty".to_string(),
+                        label: "Empty".to_string(),
+                        description: None,
+                        persisted_rule: None,
+                    },
+                ],
+                default_value: None,
+                recommended_value: None,
+                example_outputs: None,
+                persist_as_rule_name: Some("setup_mode".to_string()),
+            }],
+        }
+    }
+
+    #[test]
+    fn test_setup_preference_answer_from_manifest_validates_and_snapshots_rule() {
+        let manifest = manifest_with_setup_question();
+
+        let (rule_name, answer) = setup_preference_answer_from_manifest(
+            &manifest,
+            "mode",
+            "full",
+            "chat",
+            "2026-06-10T00:00:00Z".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(rule_name, "setup_mode");
+        assert_eq!(answer.value, "full");
+        assert_eq!(answer.persisted_rule.as_deref(), Some("Mode is full."));
+        assert_eq!(answer.plugin_version.as_deref(), Some("1.2.3"));
+        assert_eq!(answer.updated_at.as_deref(), Some("2026-06-10T00:00:00Z"));
+    }
+
+    #[test]
+    fn test_setup_preference_answer_from_manifest_rejects_unknown_question() {
+        let manifest = manifest_with_setup_question();
+
+        let err = setup_preference_answer_from_manifest(
+            &manifest,
+            "missing",
+            "full",
+            "chat",
+            "2026-06-10T00:00:00Z".to_string(),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("does not define setup question"));
+    }
+
+    #[test]
+    fn test_setup_preference_answer_from_manifest_rejects_unknown_option() {
+        let manifest = manifest_with_setup_question();
+
+        let err = setup_preference_answer_from_manifest(
+            &manifest,
+            "mode",
+            "missing",
+            "chat",
+            "2026-06-10T00:00:00Z".to_string(),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("does not define option"));
+    }
+
+    #[test]
+    fn test_setup_preference_answer_from_manifest_rejects_missing_rule() {
+        let manifest = manifest_with_setup_question();
+
+        let err = setup_preference_answer_from_manifest(
+            &manifest,
+            "mode",
+            "empty",
+            "chat",
+            "2026-06-10T00:00:00Z".to_string(),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("does not define a persisted_rule"));
+    }
 }

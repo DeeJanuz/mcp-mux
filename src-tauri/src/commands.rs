@@ -1549,11 +1549,10 @@ pub fn set_plugin_update_policy(
     state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let store = state.plugin_store();
-    let prefs = mcpviews_shared::PluginPreferences {
-        update_policy: policy,
-        update_policy_version: None,
-        update_policy_source: "ui".to_string(),
-    };
+    let mut prefs = store.load_preferences(&plugin_name);
+    prefs.update_policy = policy;
+    prefs.update_policy_version = None;
+    prefs.update_policy_source = "ui".to_string();
     store.save_preferences(&plugin_name, &prefs)
 }
 

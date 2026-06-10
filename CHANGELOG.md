@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.29] - 2026-06-10
+
 ### Changed
 - Removed the mandatory Windows WebDriver release smoke from CI and moved
   `tauri-driver` automation to backlog discovery after VMware and human Windows

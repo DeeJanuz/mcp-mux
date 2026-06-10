@@ -115,7 +115,7 @@ Each `PromptArg` has:
 
 MCPViews uses a two-tier lazy-loading approach for plugin documentation:
 
-1. **`init_session`** returns only built-in (universal) rules and a compact `plugin_registry` index listing each plugin's name, summary, tags, tool groups, and renderer names. This keeps session-start token usage minimal.
+1. **`init_session`** returns built-in (universal) rules, saved setup preference rules for installed plugins, and a compact `plugin_registry` index listing each plugin's name, summary, tags, tool groups, and renderer names. This keeps session-start token usage minimal.
 
 2. **`get_plugin_docs`** fetches detailed rules for a specific plugin on-demand, with optional filters by tool group, tool name, or renderer name. Agents call this when they need to use a plugin's tools or renderers.
 

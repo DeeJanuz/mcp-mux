@@ -466,7 +466,7 @@ sequenceDiagram
 
 MCPViews uses a two-tier lazy-loading approach for plugin documentation, reducing session-start token usage:
 
-1. **`init_session`** — Returns only built-in (universal) rules and a compact `plugin_registry` index. Each plugin entry lists its name, summary, tags, tool groups (with tool names and short hints), renderer names, prompt breadcrumbs, and high-level plugin rules. Agents use this index to identify which plugin provides the tools, renderers, rules, or skills they need.
+1. **`init_session`** — Returns built-in (universal) rules, saved setup preference rules for installed plugins, and a compact `plugin_registry` index. Each plugin entry lists its name, summary, tags, tool groups (with tool names and short hints), renderer names, prompt breadcrumbs, and high-level plugin rules. Agents use this index to identify which plugin provides the tools, renderers, rules, or skills they need.
 
 2. **`get_plugin_docs`** — Agents call this to fetch detailed rules for a specific plugin on-demand. Supports filtering by tool group name, individual tool name, or renderer name, so agents can request only the docs they need.
 

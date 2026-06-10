@@ -107,9 +107,9 @@ small patch unless the decision is recorded.
 - WebView2 is a runtime dependency. Windows 11 normally includes the Evergreen
   runtime, but installer policy must still document whether MCPViews uses the
   default bootstrapper, minimum WebView2 version, fixed runtime, or skip mode.
-- Windows 11 ARM in VMware Fusion is valuable for interactive proof, but it is
-  not the same as release-grade x64 proof. x64 Windows behavior still needs a
-  real x64 environment or GitHub `windows-latest` WebDriver validation.
+- Windows 11 ARM in VMware Fusion is valuable for interactive proof. When a
+  change is sensitive to x64-only behavior, add targeted x64 validation or make
+  a specific platform decision before claiming coverage.
 
 ## Platform Divergence Record
 
@@ -152,12 +152,13 @@ runtime behavior, the shared UX contract, and the Windows evidence.
 - macOS verification evidence: local Rust/frontend tests are required; macOS
   runtime smoke remains a separate release evidence item.
 - Windows verification evidence: this decision is based on VMware Fusion
-  Windows evidence of the orphaned blank popup after minimize; the next local
-  Windows artifact must re-smoke launch, Apps dropdown, minimize, restore, and
-  tray quit.
+  Windows evidence of the orphaned blank popup after minimize, followed by a
+  later VMware and human Windows QA pass confirming the release candidate no
+  longer blocks interaction.
 - Follow-up risk: reintroduce a native Windows popup only after WebView2 focus,
-  parent/minimize, close-on-blur, and tray-quit behavior pass VMware and
-  `windows-latest` WebDriver evidence.
+  parent/minimize, close-on-blur, and tray-quit behavior pass VMware and human
+  Windows QA evidence. WebDriver automation is a backlogged discovery item, not
+  a current hard gate.
 
 ### Platform Decision: Embedded Native App Panels
 
@@ -182,12 +183,13 @@ runtime behavior, the shared UX contract, and the Windows evidence.
   smoke remains a separate release evidence item.
 - Windows verification evidence: this decision is based on VMware Fusion
   Windows evidence that opening Ludflow produced a blank surface and prevented
-  reopening the app launcher while only tab switching/closing still worked; the
-  next local Windows artifact must re-smoke Ludflow launch plus Apps dropdown
-  reopen after Ludflow is visible.
+  reopening the app launcher while only tab switching/closing still worked,
+  followed by a later VMware and human Windows QA pass confirming Ludflow opens
+  and the Apps launcher remains reachable.
 - Follow-up risk: re-enable Windows child panels only after WebView2 child
   WebView loading, stacking, hit-testing, focus, and bounds updates pass VMware
-  and `windows-latest` WebDriver evidence.
+  and human Windows QA evidence. WebDriver automation is a backlogged discovery
+  item, not a current hard gate.
 
 ## VM-First Windows Validation
 
@@ -245,39 +247,36 @@ Human QA handoff package:
   notes from the VMware smoke.
 - Screenshots for launch, Apps popup/dropdown, renderer launch, native/external
   panels, auth/browser launch, and updater/manual fallback when touched.
-- App logs, WebDriver or VM notes, and any known limitations or skipped checks.
+- App logs, VM notes, and any known limitations or skipped checks.
 - A checklist that asks the tester to repeat the smoke interactively, exercise
   focus/resize/close behavior, confirm user-visible labels and errors, and
   explicitly mark pass/fail with blocking issues.
 
 Do not replace this QA pass with macOS validation, mocked Tauri tests, or the
-browser harness. The CI WebDriver gate is the release automation gate, but the
-human QA gate remains the stop between local VM proof and release readiness.
+browser harness. macOS validation remains a separate regression check; Windows
+readiness needs Windows runtime evidence.
 
-## Later CI WebDriver Gate
+## Backlogged CI WebDriver Discovery
 
-After the VM-first loop is stable and the human QA gate has a pass or resolved
-blocking issues, use Windows WebDriver in the release pipeline. This should
-become the hard automation gate before Windows assets are blessed.
+Windows WebDriver automation with `tauri-driver` and Edge Driver is a
+backlogged discovery item, not a mandatory release gate. Revisit it when the
+team needs more Windows automation than VMware plus human QA can provide, or
+when x64-specific behavior needs repeatable CI coverage.
 
-Required shape:
+Discovery should answer:
 
-- Run on GitHub `windows-latest` so the test executes in a real Windows x64
-  runtime.
-- Install the Windows WebDriver dependency such as Edge WebDriver, following
-  Tauri's WebDriver CI guidance.
-- Build or install the same MCPViews artifact shape that release users receive.
-- Launch the real Tauri app with `tauri-driver`; do not substitute the Vite
-  browser harness for native WebView2 behavior.
-- Run smoke/parity tests for launch, Apps popup/dropdown, renderer selection,
-  plugin manager, mounted external panel, updater banner/manual fallback, and
-  auth/browser URL launch where feasible.
-- Upload screenshots, app logs, WebDriver logs, and artifact metadata.
-- Fail the Windows release lane when the runtime smoke path fails. macOS success
-  alone must not publish or bless Windows artifacts.
+- What paid CI/runtime cost does WebDriver add per release?
+- Which bugs would it catch that VMware plus human QA would likely miss?
+- Can it run only on demand or nightly instead of every release build?
+- Which smoke paths are stable enough to avoid false release blockers?
+- What artifacts would it upload, and who would review them?
 
-The existing browser harness and mocked frontend tests remain useful for fast
-regressions, but they do not prove Windows Tauri/WebView2 behavior.
+If adopted later, the automation should build or install the same MCPViews
+artifact shape that release users receive, launch the real Tauri app with
+`tauri-driver`, and retain screenshots, app logs, WebDriver logs, and artifact
+metadata. Until then, the existing browser harness and mocked frontend tests
+remain useful for fast regressions, but they do not prove Windows Tauri/WebView2
+behavior.
 
 ## Architecture Findings For The Next Refactor
 

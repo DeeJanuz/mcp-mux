@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Removed the mandatory Windows WebDriver release smoke from CI and moved
+  `tauri-driver` automation to backlog discovery after VMware and human Windows
+  QA passed.
+- Hardened Windows/Tauri release readiness around adapter-owned platform
+  behavior, VMware smoke evidence, human QA sign-off, and Mac regression smoke.
+
+### Fixed
+- Resolved the Windows Apps launcher and Ludflow interaction regressions by
+  avoiding native child-panel/popup paths that could leave blank or blocking
+  WebView surfaces on Windows.
+
 ## [0.2.28] - 2026-06-09
 
 ## [0.2.27] - 2026-06-09

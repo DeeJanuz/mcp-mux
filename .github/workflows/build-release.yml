@@ -512,15 +512,6 @@ jobs:
           key: windows-cargo-registry-${{ hashFiles('Cargo.lock') }}
           restore-keys: windows-cargo-registry-
 
-      - name: Install Edge WebDriver
-        run: |
-          cargo install --git https://github.com/chippers/msedgedriver-tool
-          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
-          $PWD.Path >> $env:GITHUB_PATH
-
-      - name: Install tauri-driver
-        run: cargo install tauri-driver --locked
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -529,9 +520,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Install WebDriver smoke dependencies
-        run: npm ci --prefix e2e-tests
 
       - name: Clear bundled plugins for generic release
         if: ${{ matrix.flavor == 'generic' }}
@@ -631,23 +619,6 @@ jobs:
             exit 1
           fi
           echo "Updater public key embedded in Windows app"
-
-      - name: Run Windows WebDriver release smoke
-        env:
-          MCPVIEWS_E2E_APP_PATH: ${{ github.workspace }}\target\release\mcpviews.exe
-          MCPVIEWS_E2E_ARTIFACT_DIR: ${{ github.workspace }}\e2e-tests\artifacts
-          MCPVIEWS_E2E_REQUIRE_RENDERER: ${{ matrix.flavor == 'decidr' && 'true' || 'false' }}
-          MCPVIEWS_RELEASE_FLAVOR: ${{ matrix.flavor }}
-        run: npm test --prefix e2e-tests
-
-      - name: Upload Windows WebDriver smoke artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mcpviews-windows-smoke-${{ matrix.flavor }}
-          if-no-files-found: warn
-          path: |
-            e2e-tests/artifacts/**
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -1,7 +1,9 @@
 # MCPViews Windows Release QA Checklist
 
-Use this checklist after the VMware Fusion smoke passes and before treating the
-Windows CI release lane as ready.
+Use this checklist before treating a Windows release as ready. The current
+release gate is local automated validation, VMware Fusion smoke evidence, and a
+human interactive Windows QA pass. CI WebDriver automation is not a mandatory
+release gate unless a future decision adopts it after cost/benefit discovery.
 
 ## VMware Smoke Evidence
 
@@ -107,9 +109,16 @@ Blocking issue links:
 - Reopen the app after close/hide and confirm window lifecycle behavior is
   stable.
 
-## CI Release Gate
+## Release Readiness
 
-After human QA passes or blocking issues are resolved, the Windows release lane
-must still pass the `windows-latest` WebDriver smoke against the real Tauri app.
-Upload and retain screenshots, `tauri-driver` logs, WebDriver logs, and artifact
-metadata with the release run.
+After human QA passes or blocking issues are resolved and re-smoked, the Windows
+release lane may build and publish Windows assets. Upload and retain installer
+artifacts, release metadata, screenshots, app logs, and QA notes with the
+release record.
+
+## Backlogged Automation Discovery
+
+Windows WebDriver automation with `tauri-driver` and Edge Driver remains a
+candidate future gate, but it is backlogged until the team decides whether the
+added CI cost and maintenance load are worth the incremental coverage beyond
+VMware plus human Windows QA.

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.30] - 2026-06-10
+
+### Changed
+- Rebuilt the DecidR-branded installer bundle after DeeJanuz/decidr-plugin@0.1.39, staging the latest stable bundled plugin releases.
+
+
 ### Added
 - Added plugin `startup_rules`, project-local `mcpviews-init.json` reconciliation, and the `save_startup_rule_state` MCP tool so true session-start behavior can be installed into agent-native rule files without overloading workflow breadcrumbs.
 - Added a core MCPViews startup rule for project-specific `init_session` calls and Codex-style startup-rule block metadata for native rule files.

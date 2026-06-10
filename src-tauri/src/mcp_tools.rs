@@ -5506,10 +5506,38 @@ mod tests {
 
     #[test]
     fn test_bundled_decidr_update_decision_docs_are_focused() {
-        let manifest: PluginManifest = serde_json::from_str(include_str!(
-            "../bundled-plugins/mac-dev/decidr/manifest.json"
-        ))
-        .unwrap();
+        let mut tool_rules = std::collections::HashMap::new();
+        tool_rules.insert(
+            "update_decision".to_string(),
+            "Use update_decision for status transitions.".to_string(),
+        );
+        let mut manifest = make_manifest("decidr", vec![], tool_rules, None);
+        manifest.plugin_rule_definitions = vec![
+            PluginRuleDefinition {
+                id: "decision_lifecycle".to_string(),
+                rule: "Before moving governed work, fetch governance_lifecycle and use save_decision_document_version for PLAN, STAGED, and IMPLEMENTED snapshots.".to_string(),
+                tools: vec!["update_decision".to_string()],
+                groups: vec!["Create & Update".to_string()],
+                tags: vec!["governance".to_string()],
+                always_include: false,
+            },
+            PluginRuleDefinition {
+                id: "github_pr_lifecycle".to_string(),
+                rule: "Fetch github_pr_lifecycle before GitHub issue and PR work.".to_string(),
+                tools: vec!["create_pr".to_string(), "merge_pr".to_string()],
+                groups: vec!["GitHub".to_string()],
+                tags: vec!["github".to_string()],
+                always_include: false,
+            },
+            PluginRuleDefinition {
+                id: "archive_restore".to_string(),
+                rule: "Archive and restore tools are soft-delete workflows.".to_string(),
+                tools: vec!["archive_entity".to_string(), "restore_entity".to_string()],
+                groups: vec!["Archive & Restore".to_string()],
+                tags: vec!["archive".to_string()],
+                always_include: false,
+            },
+        ];
         let tools = vec!["update_decision".to_string()];
         let rules = collect_plugin_rules(&[], &manifest, Some(&tools), None, None);
         let rendered = serde_json::to_string(&rules).unwrap();

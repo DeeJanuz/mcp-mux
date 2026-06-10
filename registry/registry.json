@@ -8,7 +8,12 @@
       "author": "Ludflow",
       "homepage": "https://ludflow.com",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/ludflow-mcpviews/master/manifest.json",
-      "tags": ["code-analysis", "search", "data-governance", "knowledge-management"],
+      "tags": [
+        "code-analysis",
+        "search",
+        "data-governance",
+        "knowledge-management"
+      ],
       "manifest": {
         "name": "ludflow",
         "version": "0.5.0",
@@ -47,7 +52,9 @@
             "client_id": "fc99d041-1923-416c-8173-a4c02ae9b3a7",
             "auth_url": "https://app.ludflow.com/oauth/authorize",
             "token_url": "https://app.ludflow.com/oauth/token",
-            "scopes": ["mcp:tools"]
+            "scopes": [
+              "mcp:tools"
+            ]
           },
           "tool_prefix": "ludflow__"
         }
@@ -55,25 +62,376 @@
     },
     {
       "name": "decidr",
-      "version": "0.1.4",
+      "version": "0.1.39",
       "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/decidr-plugin/master/manifest.json",
-      "tags": ["governance", "decisions", "project-management", "approvals"],
+      "tags": [
+        "governance",
+        "decisions",
+        "project-management",
+        "approvals"
+      ],
       "manifest": {
         "name": "decidr",
-        "version": "0.1.4",
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.4/decidr.zip",
+        "version": "0.1.39",
+        "prompt_definitions": [
+          {
+            "name": "initiative_planning",
+            "description": "Guided strategic interview to plan and scaffold a new initiative with projects, bridges, decisions, tasks, and documents. Acts as a professional strategist helping extract maximum value.",
+            "arguments": [
+              {
+                "name": "initiative_idea",
+                "description": "Optional starting description of the initiative idea",
+                "required": false
+              }
+            ],
+            "source": "prompts/initiative-planning.md"
+          },
+          {
+            "name": "fix_generation",
+            "description": "Generate a code fix prompt from a GitHub issue with full DecidR context. Provides project, task, and decision context for the issue.",
+            "arguments": [
+              {
+                "name": "issue_ref_id",
+                "description": "The issue ref ID to generate a fix prompt for",
+                "required": true
+              }
+            ],
+            "source": "prompts/fix-generation.md"
+          },
+          {
+            "name": "review_generation",
+            "description": "Generate a PR review prompt with full DecidR context. Provides issue, project, and decision context for reviewing external PRs.",
+            "arguments": [
+              {
+                "name": "pr_artifact_id",
+                "description": "The PR artifact ID to generate a review prompt for",
+                "required": true
+              }
+            ],
+            "source": "prompts/review-generation.md"
+          },
+          {
+            "name": "github_pr_lifecycle",
+            "description": "Behavioral runbook for agents participating in the GitHub PR lifecycle governed by DecidR. Covers coder and reviewer role paths, failure modes, and scope boundaries. Fetch and follow before taking any action on a GitHub issue or PR linked to a DecidR entity.",
+            "arguments": [],
+            "source": "prompts/github-pr-lifecycle.md"
+          },
+          {
+            "name": "governance_lifecycle",
+            "description": "Canonical DecidR governance lifecycle runbook. Fetch before creating, proposing, approving, staging, implementing, leaving discovery/planning for implementation, or otherwise moving governed decisions through solo-builder or team workflows.",
+            "arguments": [
+              {
+                "name": "mode",
+                "description": "Optional governance mode: solo_builder or team",
+                "required": false
+              }
+            ],
+            "source": "prompts/governance-lifecycle.md"
+          },
+          {
+            "name": "governance_checkin",
+            "description": "Manual DecidR governance check-in workflow for pending approvals, assigned reviews, action items, and staged deployment review reminders.",
+            "arguments": [],
+            "source": "prompts/governance-checkin.md"
+          },
+          {
+            "name": "planning_decision_governance",
+            "description": "Compatibility alias for the DecidR governance lifecycle runbook. Prefer governance_lifecycle for new workflows.",
+            "arguments": [],
+            "source": "prompts/governance-lifecycle.md"
+          }
+        ],
+        "plugin_rules": [
+          "When the user asks for action items, to-do items, pending work, or what needs attention: call my_action_items and push to decidr_list. Never open decidr_dashboard for these requests.",
+          "When the user asks for a DecidR governance check-in, pending approvals, approval reminders, or assigned decision reviews, fetch governance_checkin and follow it.",
+          "When creating, updating, approving, staging, implementing, or logging DecidR-governed decision work, call get_plugin_docs for the relevant DecidR tool or group, then fetch governance_lifecycle when instructed.",
+          "When using DecidR search, list, or detail tools only for agent discovery, keep results private. Push decidr_list only when the user explicitly asks to see results or details.",
+          "When the user asks for a timeline, roadmap, schedule, portfolio timing, or how initiatives shape up over time: push decidr_timeline directly. Do not call list tools first; the renderer fetches its own data."
+        ],
+        "setup_questions": [
+          {
+            "id": "decidr_governance_mode",
+            "question": "Do you plan to use DecidR to collaborate with and get approvals from shared decisions with other teammates?",
+            "description": "This chooses the default lifecycle mode agents use when DecidR governance work does not specify a mode.",
+            "default_value": "team",
+            "persist_as_rule_name": "decidr_governance_mode",
+            "options": [
+              {
+                "value": "team",
+                "label": "Yes - team approvals",
+                "description": "Use discovery -> PROPOSED -> APPROVED -> implementation -> STAGED for testing/non-prod validation -> IMPLEMENTED after production-equivalent push, merge, deployment, or release.",
+                "persisted_rule": "Default DecidR governance mode is team. For governed DecidR decision lifecycle work, fetch governance_lifecycle with mode=team before implementation or status transitions. Use save_decision_document_version for PLAN, STAGED, and IMPLEMENTED snapshots; STAGED means built and validating, IMPLEMENTED means live or production-equivalent release."
+              },
+              {
+                "value": "solo_builder",
+                "label": "No - solo builder",
+                "description": "Use discovery -> accepted decision artifact -> implementation -> STAGED for testing/non-prod validation -> IMPLEMENTED after production-equivalent push, merge, deployment, or release.",
+                "persisted_rule": "Default DecidR governance mode is solo_builder. For governed DecidR decision lifecycle work, fetch governance_lifecycle with mode=solo_builder before implementation or status transitions. Use save_decision_document_version for PLAN, STAGED, and IMPLEMENTED snapshots; STAGED means built and validating, IMPLEMENTED means live or production-equivalent release."
+              }
+            ]
+          }
+        ],
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.39/decidr.zip",
+        "registry_index": {
+          "summary": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
+          "tags": [
+            "governance",
+            "decisions",
+            "project-management",
+            "audit",
+            "approvals"
+          ],
+          "tool_groups": [
+            {
+              "name": "Action Items",
+              "hint": "Prioritized action items: pending approvals, assigned tasks, stalled decisions. BACKLOG decisions/tasks are intentionally non-actionable and stay out of Next Steps. Push results to decidr_list.",
+              "tools": [
+                "my_action_items"
+              ]
+            },
+            {
+              "name": "Browse",
+              "hint": "List and search initiatives, projects, decisions, tasks, bridges, and audit ledger events. Filter by BACKLOG to inspect future/non-actionable work. Use private discovery before implementation starts and before commit governance; update matching work to STAGED only after built/tested work exists, and to IMPLEMENTED only after production-equivalent release.",
+              "tools": [
+                "list_initiatives",
+                "list_projects",
+                "list_decisions",
+                "list_audit_events",
+                "list_audit_categories",
+                "list_tasks",
+                "list_bridges",
+                "search"
+              ]
+            },
+            {
+              "name": "Details",
+              "hint": "Get full entity details including status, approvals, linked documents, audit links, and revision history",
+              "tools": [
+                "get_initiative",
+                "get_project",
+                "get_decision",
+                "get_audit_event",
+                "get_task",
+                "get_bridge"
+              ]
+            },
+            {
+              "name": "Create & Update",
+              "hint": "Create and modify initiatives, projects, decisions, tasks, bridges, audit events, and audit categories. Before implementation starts after discovery/planning, fetch governance_lifecycle and verify or propose the governing decision/task. Clear low-risk decision/doc/task updates can proceed directly; use MCPViews review for significant, ambiguous, destructive, high-impact, or hard-to-undo changes.",
+              "tools": [
+                "create_initiative",
+                "create_project",
+                "create_decision",
+                "create_catch_up_decision",
+                "create_audit_event",
+                "create_task",
+                "create_bridge",
+                "update_initiative",
+                "update_project",
+                "update_decision",
+                "mark_decision_as_catch_up",
+                "update_decision_stage_time",
+                "update_audit_event",
+                "update_task",
+                "update_task_stage_time",
+                "update_bridge",
+                "manage_audit_category",
+                "link_decision_audit_event",
+                "replace_decisions"
+              ]
+            },
+            {
+              "name": "Organization",
+              "hint": "Create organizations and manage members. Use list_members before assigning people; invite missing people by email.",
+              "tools": [
+                "create_organization",
+                "list_organizations",
+                "list_members",
+                "list_member_invites",
+                "invite_member",
+                "manage_member"
+              ]
+            },
+            {
+              "name": "Documents",
+              "hint": "Link and unlink documents on projects, decisions, and tasks; search LudFlow docs; save decision lifecycle document versions; find entities by document",
+              "tools": [
+                "link_document",
+                "list_entity_documents",
+                "unlink_document",
+                "search_ludflow_documents",
+                "find_entities_by_ludflow_document",
+                "save_decision_document_version"
+              ]
+            },
+            {
+              "name": "Archive & Restore",
+              "hint": "Soft-delete (archive) entities or restore previously archived ones",
+              "tools": [
+                "archive_entity",
+                "restore_entity"
+              ]
+            },
+            {
+              "name": "GitHub",
+              "hint": "GitHub integration — Ludflow-backed inbound sync plus DecidR PAT-backed outbound writes",
+              "tools": [
+                "connect_github",
+                "disconnect_github",
+                "list_repos",
+                "get_repo_last_sync",
+                "refresh_repo_metadata",
+                "link_repo_to_project",
+                "create_issue",
+                "list_issues",
+                "link_issue",
+                "unlink_issue",
+                "list_issue_links",
+                "create_pr",
+                "list_prs",
+                "review_pr",
+                "merge_pr",
+                "generate_fix_prompt",
+                "generate_review_prompt",
+                "manage_repo_admin"
+              ]
+            }
+          ],
+          "renderer_names": [
+            "decidr_list",
+            "decidr_dashboard",
+            "decidr_timeline",
+            "decidr_github_auth"
+          ]
+        },
+        "tool_rules": {
+          "my_action_items": "Returns prioritized action items as entity refs. ALWAYS push results to decidr_list — the renderer fetches full data from the API. Never use decidr_dashboard for action item requests. Drill into individual items with get_decision/get_task.",
+          "list_initiatives": "Use to discover all initiatives. Push to decidr_list. Use format=compact to save tokens. The standalone graph view is currently hidden from this plugin line.",
+          "list_projects": "Use to discover projects. Push to decidr_list. Filter by status to find active work. Use initiative_id to filter by initiative.",
+          "list_decisions": "Use to discover decisions. Filter status=BACKLOG to inspect future/non-actionable decisions. No auto-push: keep discovery-only calls private. Push to decidr_list only when the user explicitly asked to see/list/browse decisions. Call get_decision for full details including approval progress.",
+          "list_audit_events": "Use to review a project's universal audit ledger, especially for 'what happened' questions. Push to decidr_list when the user explicitly asked to see the ledger or audit trail.",
+          "list_audit_categories": "Use to discover or autocomplete audit event categories. No auto-push unless the user asked to see categories.",
+          "list_tasks": "Use to discover tasks. Filter status=BACKLOG to inspect future/non-actionable tasks. Push to decidr_list. Filter by assigned_to_me=true for the user's work.",
+          "list_bridges": "Use to discover project and decision bridges. Push to decidr_list.",
+          "get_initiative": "Get full initiative details. Push to decidr_list for detail view.",
+          "get_project": "Get full project details including task/decision/bridge counts. Push to decidr_list.",
+          "get_decision": "Get full decision details including approval progress and linked documents. No auto-push: keep discovery-only calls private. Push to decidr_list only when the user explicitly asked to see/open the decision details. Use BACKLOG for future/non-actionable decisions that should stay out of Next Steps. Draft standard decisions need a linked Ludflow document with a PLAN version before leaving DRAFT. STAGED is only for already-built/configured work in test/review or non-production validation, not for accepted plans, and requires a STAGED document version. Check list_entity_documents for supporting context and use allowedTransitions to choose the next valid status. For standard decisions, IMPLEMENTED is reserved for live or production-equivalent release and requires an IMPLEMENTED document version: production deployment, deployment-codebase migration, push/merge to the repo live release branch (main/master/prod/production when applicable), or an installable versioned release. CATCH_UP decisions are the exception and are directly IMPLEMENTED for post-implementation capture.",
+          "get_audit_event": "Get a full audit event with payload, source context, linked decisions, URL links, and visible revision history. Push to decidr_list when the user asked to inspect the audit record.",
+          "get_task": "Get full task details. BACKLOG tasks are future/non-actionable and should stay out of Next Steps. If status is TODO or IN_PROGRESS, user can use update_task with status: DONE. Push to decidr_list.",
+          "get_bridge": "Get full bridge details including project or decision endpoints and linked decisions. Push to decidr_list.",
+          "search": "Use when user describes something by name or keyword. No auto-push: keep agent-discovery searches private. Push results to decidr_list only when the user explicitly asked to see/search/browse matching decisions or entities. Offer to drill into specific results with get_* tools.",
+          "create_initiative": "Create a new initiative. Returns full created entity. Consider creating projects under it next.",
+          "create_project": "Create a new project. Pass initiative_id to link to an initiative. Before passing owner_id or member_ids, call list_members and use only active member user IDs; pending invitation IDs are not assignable. Returns full created entity. Consider adding decisions or tasks next.",
+          "create_decision": "Create a new standard decision. Requires entity_type and matching parent ID. Decisions default to DRAFT status and owner_id defaults to the creator when omitted; before passing owner_id or implementer_id, call list_members and use only active member user IDs. Pass status BACKLOG for future/non-actionable decisions that should stay out of Next Steps. After human-accepted discovery, create/update the decision and link the discovery artifact, then transition to PROPOSED for review when needed. Use STAGED only when recording already-built/configured work that is in test/review or non-production validation, not for accepted plans. Use create_catch_up_decision instead for small already-implemented work that needs post-implementation rationale capture without the full standard workflow. Use IMPLEMENTED only after live or production-equivalent release: production deployment, deployment-codebase migration, push/merge to the repo live release branch (main/master/prod/production when applicable), or an installable versioned release. When creating a missing governance record from implementation discovery, proceed directly for clear low-risk single decisions and accompanying doc links/edits after search/context checks; use MCPViews review only for significant, ambiguous, destructive, high-impact, or hard-to-undo changes.",
+          "create_catch_up_decision": "Create an IMPLEMENTED catch-up decision for small work that already happened and needs governance/rationale captured after the fact. Requires title, description/rationale, entity_type, and matching parent ID. Optional implemented_at records when the work actually happened. Do not use for active approval workflow or live status transitions.",
+          "create_audit_event": "Create a factual project-ledger audit event. Admins may create new free-form categories. external_reference_id plus created_by_client is idempotent.",
+          "create_task": "Create a new task. Returns full created entity. Before passing assignee_id, call list_members and use only an active member user ID; pending invitation IDs are not assignable. Pass status BACKLOG for future/non-actionable work that should stay out of Next Steps. Use for lightweight implementation follow-up that did not need a decision approval flow, under the relevant project or existing decision. When creating a missing task from implementation discovery, proceed directly for clear low-risk tasks after search/context checks; use MCPViews review only for significant, ambiguous, destructive, high-impact, or hard-to-undo changes.",
+          "create_bridge": "Create a bridge between two projects or two decisions. Returns full created entity.",
+          "update_initiative": "Update initiative fields. Returns full updated entity.",
+          "update_project": "Update project fields and/or transition status. Before changing owner_id or project members, call list_members and use only active member user IDs; pending invitation IDs are not assignable. Returns full updated entity.",
+          "update_decision": "Update standard decision fields, responsibilities, and/or transition status. Before changing owner_id or implementer_id, call list_members and use only active member user IDs. Use action param for approve/reject/supersede/unsupersede. Use BACKLOG for future/non-actionable decisions that should stay out of Next Steps. Draft decisions require a linked Ludflow PLAN document version before transitioning to PROPOSED or STAGED. Before implementation starts after discovery/planning, verify or propose the governing decision/task; do not mark accepted plans as STAGED. Move matching decisions to STAGED only after the work is built/configured and in test/review or non-production validation and a STAGED document version has been saved. Move matching STAGED decisions to IMPLEMENTED only after live or production-equivalent release and an IMPLEMENTED document version has been saved: production deployment, deployment-codebase migration, push/merge to the repo live release branch (main/master/prod/production when applicable), or an installable versioned release. If a draft/backlog decision is actually small already-implemented catch-up work, use mark_decision_as_catch_up instead. Returns the full updated entity. Field updates are applied before status transition.",
+          "mark_decision_as_catch_up": "Convert an existing DRAFT or BACKLOG decision into an IMPLEMENTED catch-up decision. Use when the record captures small already-implemented work after the fact and a full standard document-gated workflow would add noise. Provide description if the existing decision lacks rationale, and optional implemented_at for the actual implementation time.",
+          "update_decision_stage_time": "Correct when a decision stage/status actually occurred without changing live decision status. Provide id, status, occurred_at ISO timestamp, and optional reason. Updates the matching STATUS_CHANGED timeline event occurred_at while preserving createdAt as the write/correction audit timestamp. For v1, only the decision creator or organization admins/owners may correct timing.",
+          "update_audit_event": "Edit an audit event and create visible revision history. Only admins can change occurred_at.",
+          "update_task": "Update task fields and/or transition status. Before changing assignee_id, call list_members and use only an active member user ID; pending invitation IDs are not assignable. Use BACKLOG for future/non-actionable work that should stay out of Next Steps. Set status to DONE to complete a task. Returns full updated entity.",
+          "update_task_stage_time": "Correct when a task stage/status actually occurred without changing live task status. Provide id, status, occurred_at ISO timestamp, and optional reason. Updates the matching STATUS_CHANGED timeline event occurred_at while preserving createdAt as the write/correction audit timestamp. For v1, only the task creator or organization admins/owners may correct timing.",
+          "update_bridge": "Update bridge fields and/or transition status. Returns full updated entity.",
+          "create_organization": "Create a new organization. The caller becomes OWNER. Use invite_member to invite others. DecidR setup/onboarding agents must pass creation_source: \"DECIDR_ONBOARDING\" so the starter initiative, project, decision, and Ludflow document are seeded. Other callers should omit creation_source or pass GENERIC.",
+          "list_organizations": "List organizations the current user belongs to.",
+          "list_members": "List all active members of the current organization. Use returned active member user IDs for owner_id, implementer_id, member_ids, assignee_id, and reviewer_id fields.",
+          "list_member_invites": "List pending member invitations for the current organization. Pending invitation IDs are not assignable user IDs; call list_members after acceptance before assigning the person to records.",
+          "invite_member": "Invite a new team member to the current organization by email. Creates a pending invitation and sends the invite email. Owners/admins only. Defaults role to MEMBER and target_product to DECIDR. When inviting a referenced person, leave owner/assignee/reviewer/member fields unset until they accept unless the user chooses an active member.",
+          "manage_member": "Invite, update role, or remove organization members. Prefer invite_member for new invitations. Use action: add with email to send an invite, update_role with user_id+role to change role, remove with user_id to remove a member, cancel_invite with invitation_id to cancel a pending invite, or resend_invite with invitation_id to resend the email. Pending invitation IDs are not assignable user IDs.",
+          "manage_audit_category": "Admin-only audit category management. Categories can be created, disabled, or merged; they are not hard-deleted after use.",
+          "link_decision_audit_event": "Link or unlink an audit event and decision. Linked audit events appear in decision slideouts and linked decisions appear in audit event slideouts.",
+          "replace_decisions": "Approve a replacement decision, reject one or more originals, record replacement relationships, and copy linked audit events forward.",
+          "link_document": "Attach a document to any entity. Use type URL for external links, LUDFLOW for LudFlow documents. Search LudFlow docs first with search_ludflow_documents.",
+          "list_entity_documents": "List all documents linked to an entity. Essential context before approving decisions.",
+          "unlink_document": "Unlink a document/file from a project, decision, or task. Use list_entity_documents first to get the document_id.",
+          "search_ludflow_documents": "Search LudFlow documents by title. Use results with link_document to attach to DecidR entities.",
+          "find_entities_by_ludflow_document": "Find all DecidR entities linked to a LudFlow document. Enables bidirectional navigation.",
+          "save_decision_document_version": "Save a lifecycle-tagged Ludflow document version for a DecidR decision. Use PLAN after accepted discovery/planning, STAGED when implementation is built and validating, and IMPLEMENTED when the live implemented state is captured. Creates and links the first PLAN document when no linked Ludflow document exists; provide document_id when multiple Ludflow docs are linked.",
+          "archive_entity": "Soft-delete (archive) an entity. Archived entities are hidden from default lists but can be restored. Use when the user wants to remove or delete an entity.",
+          "restore_entity": "Restore a previously archived entity. Use when the user wants to undelete or bring back an archived entity.",
+          "connect_github": "Do NOT call this tool directly with a user-supplied PAT — that leaks the token through the chat. Instead push the decidr_github_auth renderer so the user enters their PAT in the companion's secure form. This PAT is only for outbound GitHub write actions such as create_issue/create_pr/review_pr/merge_pr.",
+          "disconnect_github": "Disconnect GitHub account from the current org. No auto-push.",
+          "list_repos": "List DecidR-linked GitHub repos. Push to decidr_list.",
+          "get_repo_last_sync": "Get Ludflow-backed metadata sync state for a linked repo, including the last sync timestamp. Push to decidr_list.",
+          "refresh_repo_metadata": "Ask Ludflow to refresh GitHub metadata for a linked repo. Use when the user wants a fresh inbound sync. No auto-push.",
+          "link_repo_to_project": "Link a GitHub repo to a project so Ludflow-synced issues and pull requests appear on that project. No auto-push.",
+          "create_issue": "Create a GitHub issue using the caller's DecidR PAT connection and record the created issue in DecidR. No auto-push.",
+          "list_issues": "List synced GitHub issues. Push to decidr_list.",
+          "link_issue": "Link a GitHub issue to a DecidR entity. No auto-push.",
+          "unlink_issue": "Unlink a GitHub issue from a DecidR entity. No auto-push.",
+          "list_issue_links": "List entity links for a GitHub issue. Push to decidr_list.",
+          "create_pr": "Create a GitHub pull request using the caller's DecidR PAT connection and record the resulting PR artifact in DecidR. Before passing reviewer_id, call list_members and use only an active member user ID; pending invitation IDs are not assignable. No auto-push.",
+          "list_prs": "List PR artifacts. Push to decidr_list.",
+          "review_pr": "Record the current user as reviewer in DecidR and, for APPROVED/CHANGES_REQUESTED, post the corresponding review to GitHub. No auto-push.",
+          "merge_pr": "Merge a GitHub pull request and mark the DecidR PR artifact as MERGED. No auto-push.",
+          "generate_fix_prompt": "Generate a code fix prompt from issue context. Returns text. No auto-push.",
+          "generate_review_prompt": "Generate a PR review prompt. Returns text. No auto-push.",
+          "manage_repo_admin": "Add or remove repo admin. No auto-push."
+        },
+        "no_auto_push": [
+          "list_decisions",
+          "get_decision",
+          "search",
+          "create_initiative",
+          "create_project",
+          "create_decision",
+          "create_catch_up_decision",
+          "create_audit_event",
+          "create_task",
+          "create_bridge",
+          "update_initiative",
+          "update_project",
+          "update_decision",
+          "mark_decision_as_catch_up",
+          "update_decision_stage_time",
+          "update_audit_event",
+          "update_task",
+          "update_task_stage_time",
+          "update_bridge",
+          "create_organization",
+          "invite_member",
+          "manage_member",
+          "manage_audit_category",
+          "link_decision_audit_event",
+          "replace_decisions",
+          "link_document",
+          "save_decision_document_version",
+          "unlink_document",
+          "archive_entity",
+          "restore_entity",
+          "connect_github",
+          "disconnect_github",
+          "link_repo_to_project",
+          "refresh_repo_metadata",
+          "create_issue",
+          "link_issue",
+          "unlink_issue",
+          "create_pr",
+          "review_pr",
+          "merge_pr",
+          "generate_fix_prompt",
+          "generate_review_prompt",
+          "manage_repo_admin"
+        ],
         "renderers": {
           "list_initiatives": "decidr_list",
           "list_projects": "decidr_list",
           "list_decisions": "decidr_list",
+          "list_audit_events": "decidr_list",
+          "list_audit_categories": "decidr_list",
           "list_tasks": "decidr_list",
           "list_bridges": "decidr_list",
           "get_initiative": "decidr_list",
           "get_project": "decidr_list",
           "get_decision": "decidr_list",
+          "get_audit_event": "decidr_list",
           "get_task": "decidr_list",
           "get_bridge": "decidr_list",
           "search": "decidr_list",
@@ -81,36 +439,159 @@
           "create_organization": "decidr_list",
           "list_organizations": "decidr_list",
           "list_members": "decidr_list",
+          "list_member_invites": "decidr_list",
+          "invite_member": "decidr_list",
           "manage_member": "decidr_list",
           "create_initiative": "decidr_list",
           "create_project": "decidr_list",
           "create_decision": "decidr_list",
+          "create_catch_up_decision": "decidr_list",
+          "create_audit_event": "decidr_list",
           "create_task": "decidr_list",
           "create_bridge": "decidr_list",
           "update_initiative": "decidr_list",
           "update_project": "decidr_list",
           "update_decision": "decidr_list",
+          "mark_decision_as_catch_up": "decidr_list",
+          "update_decision_stage_time": "decidr_list",
+          "update_audit_event": "decidr_list",
           "update_task": "decidr_list",
+          "update_task_stage_time": "decidr_list",
           "update_bridge": "decidr_list",
+          "manage_audit_category": "decidr_list",
+          "link_decision_audit_event": "decidr_list",
+          "replace_decisions": "decidr_list",
           "link_document": "decidr_list",
           "list_entity_documents": "decidr_list",
+          "unlink_document": "decidr_list",
           "search_ludflow_documents": "decidr_list",
-          "find_entities_by_ludflow_document": "decidr_list"
+          "find_entities_by_ludflow_document": "decidr_list",
+          "save_decision_document_version": "decidr_list",
+          "archive_entity": "decidr_list",
+          "restore_entity": "decidr_list",
+          "connect_github": "decidr_github_auth",
+          "disconnect_github": "decidr_list",
+          "list_repos": "decidr_list",
+          "get_repo_last_sync": "decidr_list",
+          "refresh_repo_metadata": "decidr_list",
+          "link_repo_to_project": "decidr_list",
+          "create_issue": "decidr_list",
+          "list_issues": "decidr_list",
+          "link_issue": "decidr_list",
+          "unlink_issue": "decidr_list",
+          "list_issue_links": "decidr_list",
+          "create_pr": "decidr_list",
+          "list_prs": "decidr_list",
+          "review_pr": "decidr_list",
+          "merge_pr": "decidr_list",
+          "generate_fix_prompt": "decidr_list",
+          "generate_review_prompt": "decidr_list",
+          "manage_repo_admin": "decidr_list"
         },
-        "no_auto_push": [
-          "create_initiative",
-          "create_project",
-          "create_decision",
-          "create_task",
-          "create_bridge",
-          "update_initiative",
-          "update_project",
-          "update_decision",
-          "update_task",
-          "update_bridge",
-          "create_organization",
-          "manage_member",
-          "link_document"
+        "renderer_definitions": [
+          {
+            "name": "decidr_list",
+            "description": "Universal entity renderer — displays lists, details, search results, and action items with slide-out panels for navigation",
+            "scope": "tool",
+            "rule": "Use for user-facing entity list, detail, and search views. Do not push for agent-only discovery calls. Always use ref-only mode — pass entity type + ID, never full payloads.",
+            "tools": [
+              "list_initiatives",
+              "list_projects",
+              "list_decisions",
+              "list_audit_events",
+              "list_audit_categories",
+              "list_tasks",
+              "list_bridges",
+              "get_initiative",
+              "get_project",
+              "get_decision",
+              "get_audit_event",
+              "get_task",
+              "get_bridge",
+              "search",
+              "create_initiative",
+              "create_project",
+              "create_decision",
+              "create_catch_up_decision",
+              "create_audit_event",
+              "create_task",
+              "create_bridge",
+              "update_initiative",
+              "update_project",
+              "update_decision",
+              "mark_decision_as_catch_up",
+              "update_decision_stage_time",
+              "update_audit_event",
+              "update_task",
+              "update_task_stage_time",
+              "update_bridge",
+              "create_organization",
+              "list_organizations",
+              "list_members",
+              "list_member_invites",
+              "invite_member",
+              "manage_member",
+              "manage_audit_category",
+              "link_decision_audit_event",
+              "replace_decisions",
+              "link_document",
+              "list_entity_documents",
+              "unlink_document",
+              "search_ludflow_documents",
+              "find_entities_by_ludflow_document",
+              "save_decision_document_version",
+              "archive_entity",
+              "restore_entity",
+              "connect_github",
+              "disconnect_github",
+              "list_repos",
+              "get_repo_last_sync",
+              "refresh_repo_metadata",
+              "link_repo_to_project",
+              "create_issue",
+              "list_issues",
+              "link_issue",
+              "unlink_issue",
+              "list_issue_links",
+              "create_pr",
+              "list_prs",
+              "review_pr",
+              "merge_pr",
+              "generate_fix_prompt",
+              "generate_review_prompt",
+              "manage_repo_admin"
+            ],
+            "data_hint": "IMPORTANT: Prefer ref-only mode. Pass entity references — the renderer fetches full data from the API. Format: { entities: [{ type: 'initiative'|'project'|'decision'|'audit_event'|'task'|'bridge'|'issue'|'pull_request'|'repo', id: string }], meta: { organization_id: string, result_count: number, tool_name: string } }. The tool_name determines rendering mode: 'list_decisions' or 'list_audit_events' for list view, 'get_decision' or 'get_audit_event' for detail view, 'my_action_items' for action items, 'search' for search results. Entity type names are singular lowercase."
+          },
+          {
+            "name": "decidr_dashboard",
+            "description": "User Dashboard with initiative grouping, health bars, project cards, and prioritized action items",
+            "scope": "universal",
+            "rule": "Push directly to show the User Dashboard — do NOT call my_action_items or any other tool first. The renderer fetches all data from the API. Only pass organization_id. For fast access, push immediately when user asks for the User Dashboard, dashboard, or overview.",
+            "data_hint": "{ organization_id: string }",
+            "standalone": true,
+            "standalone_label": "User Dashboard"
+          },
+          {
+            "name": "decidr_timeline",
+            "description": "Executive timeline view showing planned initiative trajectory, task due dates, lifecycle milestones, and actual activity over time",
+            "scope": "universal",
+            "rule": "Push directly when the user asks for a timeline, roadmap, schedule, portfolio timing, or how initiatives shape up over time. Do NOT call list tools first. The renderer fetches all data from the API. Optionally pass organization_id, initiative_ids, and view.",
+            "invoke_schema": "{ \"type\": \"object\", \"properties\": { \"initiative_ids\": { \"type\": \"array\", \"items\": { \"type\": \"string\" }, \"description\": \"Initiative IDs to scope the timeline view. Omit for all initiatives.\" }, \"view\": { \"type\": \"string\", \"enum\": [\"all\", \"initiative\"], \"description\": \"Initial timeline scope. Defaults to all.\" } } }",
+            "data_hint": "{ organization_id?: string, initiative_ids?: string[], view?: \"all\"|\"initiative\" }",
+            "standalone": true,
+            "standalone_label": "Timeline"
+          },
+          {
+            "name": "decidr_github_auth",
+            "description": "Secure GitHub authentication form — enter PAT directly in the companion without passing through the AI agent",
+            "scope": "tool",
+            "rule": "Push whenever the user needs to connect a GitHub PAT for outbound GitHub writes OR when a write tool fails with 'GitHub connection not found'. Renders a secure form in the companion — the user's PAT goes straight to DecidR and never passes through the agent. Never ask the user to paste a PAT in chat; push this renderer instead.",
+            "tools": [
+              "connect_github"
+            ],
+            "data_hint": "{ github_username?: string } — push with empty data for a blank form, or pre-fill the username field. The renderer POSTs the PAT directly to DecidR's /github/connections endpoint; no follow-up connect_github call is needed."
+          }
         ],
         "mcp": {
           "url": "https://app.decidrmcp.com/api/mcp",
@@ -119,27 +600,340 @@
             "client_id": "fc99d041-1923-416c-8173-a4c02ae9b3a7",
             "auth_url": "https://app.ludflow.com/oauth/authorize",
             "token_url": "https://app.ludflow.com/oauth/token",
-            "scopes": ["mcp:tools"]
+            "email_code_auth": {
+              "enabled": true
+            },
+            "scopes": [
+              "mcp:tools"
+            ]
           },
           "tool_prefix": "decidr__"
-        }
-      }
+        },
+        "plugin_rule_definitions": [
+          {
+            "id": "decidr_auth_status",
+            "rule": "DecidR MCPViews auth uses in-app six-digit email-code authentication by default. Use init_session org_tokens to inspect org auth. If target org auth is missing or expired_unrefreshable, call start_plugin_auth with plugin_name 'decidr' and organization_id before retrying. Treat expired_refreshable as connected while MCPViews refreshes it; use auth_flow 'browser' only for advanced OAuth recovery.",
+            "tags": [
+              "auth",
+              "organization"
+            ],
+            "always_include": true
+          },
+          {
+            "id": "backlog_non_actionable",
+            "rule": "Use BACKLOG status for future or intentionally non-actionable decisions and tasks. BACKLOG records should not be treated as Next Steps or immediate action items.",
+            "tools": [
+              "list_decisions",
+              "list_tasks",
+              "create_decision",
+              "create_task",
+              "update_decision",
+              "update_task",
+              "my_action_items"
+            ],
+            "groups": [
+              "Action Items",
+              "Browse",
+              "Create & Update"
+            ],
+            "tags": [
+              "status",
+              "governance"
+            ]
+          },
+          {
+            "id": "member_resolution",
+            "rule": "When a user references people by name or email while creating or updating DecidR records, resolve them with list_members before setting user ID fields such as owner_id, implementer_id, member_ids, assignee_id, or reviewer_id. If no active member matches and an email is known, call invite_member and leave assignment fields unset until that invite is accepted unless the user chooses an existing member. Pending invitation IDs are not assignable user IDs. If no email is known, ask for the email or ask which active member should own the work.",
+            "tools": [
+              "create_project",
+              "update_project",
+              "create_decision",
+              "update_decision",
+              "create_task",
+              "update_task",
+              "create_pr",
+              "list_members",
+              "invite_member",
+              "manage_member"
+            ],
+            "groups": [
+              "Create & Update",
+              "Organization",
+              "GitHub"
+            ],
+            "tags": [
+              "members",
+              "assignment"
+            ]
+          },
+          {
+            "id": "detail_renderer_routing",
+            "rule": "When the user asks to see entity details from get_initiative, get_project, get_decision, get_task, or get_bridge, push to decidr_list. Only open decidr_dashboard when the user explicitly asks for the User Dashboard, dashboard, or overview.",
+            "tools": [
+              "get_initiative",
+              "get_project",
+              "get_decision",
+              "get_task",
+              "get_bridge"
+            ],
+            "groups": [
+              "Details"
+            ],
+            "tags": [
+              "renderer",
+              "details"
+            ]
+          },
+          {
+            "id": "governance_lifecycle_gate",
+            "rule": "When creating, updating, approving, staging, implementing, or logging DecidR-governed decision work, fetch governance_lifecycle and use the persisted governance mode unless the user explicitly chooses another mode. When leaving discovery or planning for governed feature/process implementation, fetch governance_lifecycle before the first repo edit, packaging command, deployment prep, or external write.",
+            "tools": [
+              "create_decision",
+              "update_decision",
+              "replace_decisions",
+              "create_task",
+              "update_task",
+              "create_project",
+              "update_project",
+              "create_bridge",
+              "update_bridge",
+              "mark_decision_as_catch_up",
+              "create_catch_up_decision",
+              "save_decision_document_version",
+              "list_decisions",
+              "get_decision",
+              "search"
+            ],
+            "groups": [
+              "Browse",
+              "Details",
+              "Create & Update",
+              "Documents"
+            ],
+            "tags": [
+              "governance",
+              "lifecycle"
+            ]
+          },
+          {
+            "id": "release_status_transitions",
+            "rule": "When a workflow successfully pushes or merges work to the repository live release branch such as main, master, prod, or production, or publishes an installable versioned release, tag, or package, move confident matching STAGED decisions to IMPLEMENTED. If that target is staging, QA, preview, or pre-production only, keep them STAGED.",
+            "tools": [
+              "update_decision",
+              "save_decision_document_version",
+              "get_decision",
+              "list_decisions"
+            ],
+            "groups": [
+              "Browse",
+              "Details",
+              "Create & Update",
+              "Documents"
+            ],
+            "tags": [
+              "governance",
+              "release"
+            ]
+          },
+          {
+            "id": "missing_governance_record",
+            "rule": "When governed implementation work has no confident matching DecidR decision or task, fetch governance_lifecycle and choose the right path: create clear low-risk records directly after search/context checks, but use MCPViews review for significant, ambiguous, destructive, high-impact, or hard-to-undo mutations.",
+            "tools": [
+              "search",
+              "list_decisions",
+              "list_tasks",
+              "create_decision",
+              "create_task"
+            ],
+            "groups": [
+              "Browse",
+              "Create & Update"
+            ],
+            "tags": [
+              "governance",
+              "review"
+            ]
+          },
+          {
+            "id": "catch_up_decisions",
+            "rule": "Use create_catch_up_decision or mark_decision_as_catch_up for small already-implemented work that needs post-implementation rationale capture without the full standard decision workflow. Catch-up decisions are directly IMPLEMENTED, require a rationale, and should not be used for active approval/status transitions.",
+            "tools": [
+              "create_catch_up_decision",
+              "mark_decision_as_catch_up",
+              "create_decision",
+              "update_decision"
+            ],
+            "groups": [
+              "Create & Update"
+            ],
+            "tags": [
+              "governance",
+              "catch-up"
+            ]
+          },
+          {
+            "id": "decision_lifecycle_documents",
+            "rule": "For standard decision lifecycle documents, use save_decision_document_version: save accepted plans as PLAN versions, staged implementation state as STAGED versions, and live implemented state as IMPLEMENTED versions. Approval remains DecidR status/progress, not Ludflow version metadata. When creating supporting LudFlow documents for DecidR work, place them in an existing relevant folder structure or, if none exists, in a folder named for the DecidR project; fetch governance_lifecycle for details.",
+            "tools": [
+              "save_decision_document_version",
+              "link_document",
+              "list_entity_documents",
+              "search_ludflow_documents",
+              "find_entities_by_ludflow_document",
+              "create_decision",
+              "update_decision",
+              "get_decision"
+            ],
+            "groups": [
+              "Documents",
+              "Create & Update",
+              "Details"
+            ],
+            "tags": [
+              "documents",
+              "governance"
+            ]
+          },
+          {
+            "id": "implemented_document_addendum",
+            "rule": "When updating a LudFlow document linked to an implemented DecidR decision, or a LudFlow document that is already published, preserve the existing implemented content and append new findings as a dated addendum unless the user explicitly asks for a rewrite.",
+            "tools": [
+              "save_decision_document_version",
+              "link_document",
+              "list_entity_documents",
+              "find_entities_by_ludflow_document"
+            ],
+            "groups": [
+              "Documents"
+            ],
+            "tags": [
+              "documents",
+              "implemented"
+            ]
+          },
+          {
+            "id": "github_pr_lifecycle",
+            "rule": "Before taking any action on a GitHub issue or PR linked to DecidR with create_issue, create_pr, review_pr, merge_pr, or prompt generation, fetch github_pr_lifecycle and follow it. Inbound GitHub sync is automatic through Ludflow-backed metadata. Use get_repo_last_sync or refresh_repo_metadata when the user asks about freshness, and never reintroduce manual sync or reconciliation instructions.",
+            "tools": [
+              "create_issue",
+              "create_pr",
+              "review_pr",
+              "merge_pr",
+              "generate_fix_prompt",
+              "generate_review_prompt",
+              "get_repo_last_sync",
+              "refresh_repo_metadata",
+              "list_repos",
+              "list_issues",
+              "list_prs",
+              "link_issue",
+              "unlink_issue",
+              "list_issue_links"
+            ],
+            "groups": [
+              "GitHub"
+            ],
+            "tags": [
+              "github",
+              "governance"
+            ]
+          },
+          {
+            "id": "github_auth_renderer",
+            "rule": "When a GitHub write tool fails with 'GitHub connection not found' or the user asks to connect a GitHub PAT for outbound writes, push the decidr_github_auth renderer. Do not call connect_github with a PAT collected in chat. For org-level GitHub connection and metadata-sync settings, use the organization settings GitHub section backed by Ludflow, not the PAT flow.",
+            "tools": [
+              "connect_github",
+              "disconnect_github",
+              "create_issue",
+              "create_pr",
+              "review_pr",
+              "merge_pr"
+            ],
+            "groups": [
+              "GitHub"
+            ],
+            "tags": [
+              "github",
+              "auth"
+            ]
+          },
+          {
+            "id": "audit_ledger_visibility",
+            "rule": "When the user asks what happened on a project or needs an auditable project ledger, use list_audit_events or get_audit_event and push to decidr_list when the user asked to see the results. Audit dashboard, audit report, and graph renderers are currently hidden from this DecidR plugin line; use list/get tools with decidr_list for audit ledger and relationship visibility until those renderers move to future plugin lines.",
+            "tools": [
+              "list_audit_events",
+              "get_audit_event",
+              "create_audit_event",
+              "update_audit_event",
+              "manage_audit_category",
+              "link_decision_audit_event"
+            ],
+            "groups": [
+              "Browse",
+              "Details",
+              "Create & Update"
+            ],
+            "tags": [
+              "audit",
+              "renderer"
+            ]
+          },
+          {
+            "id": "stage_time_corrections",
+            "rule": "Use update_decision_stage_time and update_task_stage_time only to correct historical stage occurrence timestamps. They must not be used to transition live status; use update_decision or update_task for actual status changes.",
+            "tools": [
+              "update_decision_stage_time",
+              "update_task_stage_time",
+              "update_decision",
+              "update_task"
+            ],
+            "groups": [
+              "Create & Update"
+            ],
+            "tags": [
+              "status",
+              "timeline"
+            ]
+          },
+          {
+            "id": "archive_restore",
+            "rule": "Archive and restore tools are soft-delete workflows. Use them only when the user clearly wants an entity removed or restored, and prefer MCPViews review for destructive, ambiguous, high-impact, or hard-to-undo batches.",
+            "tools": [
+              "archive_entity",
+              "restore_entity"
+            ],
+            "groups": [
+              "Archive & Restore"
+            ],
+            "tags": [
+              "archive",
+              "review"
+            ]
+          }
+        ]
+      },
+      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.39/decidr.zip"
     },
     {
       "name": "mcpviews-gronk-speak",
-      "version": "0.1.0",
-      "description": "Optional MCPViews setup rules for terse nonpublic agent output style",
+      "version": "0.1.4",
+      "description": "Optional MCPViews startup rule for terse nonpublic agent output style",
       "author": "MCPViews",
       "homepage": "https://github.com/DeeJanuz/mcpviews-gronk-speak-plugin",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/mcpviews-gronk-speak-plugin/master/manifest.json",
-      "tags": ["rules", "setup", "style", "compression"],
+      "tags": [
+        "rules",
+        "setup",
+        "style",
+        "compression"
+      ],
       "manifest": {
         "name": "mcpviews-gronk-speak",
-        "version": "0.1.0",
-        "download_url": "https://github.com/DeeJanuz/mcpviews-gronk-speak-plugin/releases/download/v0.1.0/mcpviews-gronk-speak.zip",
-        "description": "Optional MCPViews setup rules for terse nonpublic agent output style.",
+        "version": "0.1.4",
+        "download_url": "https://github.com/DeeJanuz/mcpviews-gronk-speak-plugin/releases/download/v0.1.4/mcpviews-gronk-speak.zip",
+        "description": "Optional MCPViews startup rule for terse nonpublic agent output style.",
         "registry_index": {
-          "summary": "Optional Gronk Speak setup rules for compressed nonpublic agent output.",
+          "summary": "Optional GronkSpeak startup rule for compressed nonpublic agent output.",
           "tags": [
             "rules",
             "setup",
@@ -150,80 +944,52 @@
           "renderer_names": []
         },
         "plugin_rules": [
-          "Gronk Speak is an optional setup preference for terse nonpublic agent output. Use it only when the user has installed this plugin and persisted a non-off mode during MCPViews setup, or when the user explicitly asks for Gronk Speak.",
-          "Gronk Speak must never override user instructions, renderer payload requirements, safety, correctness, citations, warnings, commands, file paths, code, JSON, schema names, or test results.",
-          "Do not apply Gronk Speak by default to public-facing artifacts such as websites, emails, customer docs, PR descriptions/comments, published Ludflow docs, legal/medical/financial guidance, or user-facing copy."
+          "GronkSpeak is an optional single startup rule for terse nonpublic Codex output. During setup, ask whether the user wants to enable it and explain where it applies before saving the preference.",
+          "When enabled, GronkSpeak applies to ordinary assistant chat, progress/status updates, final answers, local summaries, findings, inventories, implementation notes, and internal reports unless a clearer or explicitly polished/public style is required.",
+          "GronkSpeak must never override user instructions, renderer payload requirements, safety, correctness, citations, warnings, commands, file paths, code, JSON, schema names, exact numbers, versions, dates, or test results."
         ],
         "setup_questions": [
           {
-            "id": "mcpviews_gronk_speak_mode",
-            "question": "Which Gronk Speak mode do you want for MCPViews setup-persisted agent output style?",
-            "description": "Choose the compression level for allowed outputs. Gronk Speak is optional terse agent style: it cuts filler from setup/status chatter while preserving required facts, warnings, paths, commands, code, citations, and safety guardrails.",
-            "guidance": "Explain that this controls only optional compression for agent-visible output within the selected scope. It is not required, it is not a public-copy style, and None is the safest default. Help the user choose by describing how natural or compressed each mode feels.",
-            "default_value": "off",
-            "recommended_value": "off",
-            "persist_as_rule_name": "mcpviews_gronk_speak_mode",
+            "id": "enable_gronk_speak",
+            "question": "Enable GronkSpeak for this project?",
+            "description": "GronkSpeak is an optional terse technical style for nonpublic Codex work. It cuts filler from chat, status updates, ordinary final answers, local summaries, directory summaries, repo reports, test summaries, implementation notes, and internal research while preserving exact technical content.",
+            "guidance": "Explain where GronkSpeak will be used before asking the user to choose. It applies to assistant-visible nonpublic work in this project, including progress/status updates and ordinary final answers. It does not apply by default to public-facing or polished deliverables such as websites, emails, customer docs, PR descriptions/comments, published docs, or legal/medical/financial guidance. Show the examples so the user can feel the style.",
+            "default_value": "enabled",
+            "recommended_value": "enabled",
+            "persist_as_rule_name": "GronkSpeak",
             "example_outputs": {
-              "off": "I will check the setup state, update the MCPViews rules if needed, and then ask the remaining setup preferences.",
-              "lite": "Checking setup state, then updating only missing MCPViews rules.",
-              "full": "Setup check -> patch missing MCPViews rules -> ask next preference.",
-              "ultra": "Check setup -> patch rules -> ask next."
+              "enabled": "Normal: Here is a summary of the projects directory.\nGronkSpeak: Projects summary.\n\nNormal: The repository has 26 modified files and one new startup rules module.\nGronkSpeak: Repo state: 26 modified, 1 new startup rules module.\n\nNormal: I will inspect the installed plugin manifest and then verify the running host.\nGronkSpeak: Checking manifest + running host.",
+              "off": "Normal assistant style stays active. GronkSpeak is not installed for fresh sessions."
             },
             "options": [
               {
+                "value": "enabled",
+                "label": "Enable",
+                "description": "Use terse GronkSpeak for nonpublic Codex chat, status, ordinary final answers, local summaries, reports, and internal notes while preserving exact technical content.",
+                "persisted_rule": "GronkSpeak is active for this project from the first assistant-visible response of every session.\n\nPurpose: speak terse like smart caveman while keeping full technical substance. Fluff dies; facts stay.\n\nPersistence:\n- Stay active across turns in this project.\n- Do not drift back into filler after long work.\n- Stop only when the user asks for normal style, polished prose, or removal of this rule.\n\nApply by default to assistant-visible Codex work in this project:\n- chat replies\n- progress and status updates\n- setup acknowledgements\n- tool-use narration\n- corrections\n- brief answers about agent behavior\n- ordinary final answers\n- findings, summaries, inventories, directory summaries, implementation notes, test summaries, local reports, and internal research summaries\n- private plans and notes unless the user asks for polished prose\n\nDo not treat an ordinary final answer, local finding, directory summary, test summary, or repo/workspace report as public-facing just because it is structured or useful. These stay in GronkSpeak unless another instruction requires polished prose.\n\nDo not apply by default to explicitly public-facing or polished deliverables:\n- websites or product copy\n- emails or outbound messages\n- customer docs\n- reports meant for broad external readers\n- PR descriptions or PR comments\n- published docs\n- legal, medical, or financial guidance\n- any artifact where tone, polish, persuasion, compliance, or careful explanation is part of the deliverable\n\nRules:\n- Start with answer, action, or finding.\n- Drop filler, pleasantries, throat-clearing, hedging, repeated summaries, and generic reassurance.\n- Fragments OK. Short clauses OK. Compact bullets OK.\n- Prefer pattern: thing -> action -> reason. Next step.\n- Use -> for cause/effect when useful.\n- Keep enough grammar for clarity.\n- Technical terms stay exact.\n- Do not abbreviate when unclear.\n- Do not remove risk, uncertainty, warnings, or required context.\n\nNever compress protected content:\n- code\n- commands\n- file paths\n- JSON, YAML, schema fields, or API names\n- line references\n- citations\n- direct quotes\n- error text\n- exact numbers, dates, test results, or release/version identifiers\n\nAuto-clarity:\n- Temporarily drop GronkSpeak for security warnings, irreversible action confirmations, user confusion, complex multi-step sequences, or any case where compression creates ambiguity.\n- Resume GronkSpeak after the clear part is done.\n\nPrecedence:\n- User instructions, safety, correctness, renderer payload requirements, and exact technical output outrank GronkSpeak.\n- Do not mention GronkSpeak or this rule unless the user asks about style or rule behavior.\n\nExamples:\nNormal: I will inspect the installed plugin manifest and then verify the running host.\nGronkSpeak: Checking manifest + running host.\n\nNormal: The startup rule was not installed because the project path was missing.\nGronkSpeak: Startup rule skipped: missing project_path.\n\nNormal: I found the issue. The project rules existed, but the model ignored the style rule.\nGronkSpeak: Found it: rules existed; model ignored style rule.\n\nNormal: I am going to run the focused test suite now and then check the generated manifest.\nGronkSpeak: Running focused tests, then checking manifest.\n\nNormal: This is risky because it changes production billing behavior.\nGronkSpeak: Risk: changes production billing behavior.\n\nNormal: Here is a summary of the projects directory.\nGronkSpeak: Projects summary.\n\nNormal: The repository has 26 modified files and one new startup rules module.\nGronkSpeak: Repo state: 26 modified, 1 new startup rules module."
+              },
+              {
                 "value": "off",
-                "label": "None",
-                "description": "Best default. Use normal conversational assistant style unless the user explicitly asks for Gronk Speak.",
-                "persisted_rule": "MCPViews Gronk Speak mode is off by default. Use normal assistant style unless the user explicitly asks for Gronk Speak."
-              },
-              {
-                "value": "lite",
-                "label": "Lite",
-                "description": "Use shorter but still natural technical English for setup/status chatter; trims filler and repeated summaries.",
-                "persisted_rule": "MCPViews Gronk Speak mode is lite. Where the selected Gronk scope allows it, use short direct technical English; cut filler, hedging, preambles, and repeated summaries while preserving required facts."
-              },
-              {
-                "value": "full",
-                "label": "Full",
-                "description": "Use compact internal-note style with fragments, fewer connective words, bullets, and -> for cause/effect.",
-                "persisted_rule": "MCPViews Gronk Speak mode is full. Where the selected Gronk scope allows it, use compressed fragments, drop articles and connective fluff, prefer bullets, and use -> for cause/effect while preserving required facts."
-              },
-              {
-                "value": "ultra",
-                "label": "Ultra",
-                "description": "Use the least conversational mode: maximum compression with terse fragments and obvious abbreviations only when clarity survives.",
-                "persisted_rule": "MCPViews Gronk Speak mode is ultra. Where the selected Gronk scope allows it, use maximum compression: terse fragments and obvious abbreviations only when clarity survives. Never sacrifice correctness or required facts."
+                "label": "Off",
+                "description": "Do not install GronkSpeak for fresh project sessions. Use normal assistant style unless the user explicitly asks for terse output.",
+                "persisted_rule": "GronkSpeak is disabled for this project. Use normal assistant style unless the user explicitly asks for terse output. If a previous GronkSpeak startup rule is installed, update or remove it so fresh sessions do not apply GronkSpeak by default."
               }
             ]
-          },
+          }
+        ],
+        "startup_rules": [
           {
-            "id": "mcpviews_gronk_speak_scope",
-            "question": "Where should Gronk Speak apply when the mode is enabled?",
-            "description": "Choose which nonpublic outputs may use Gronk compression. This scope is the safety boundary that keeps customer-facing or polished artifacts in normal prose unless the user explicitly asks otherwise.",
-            "guidance": "Explain that scope decides where compression is allowed after a non-None mode is selected. Recommend Chat/status only for most users because it keeps durable docs and public-facing work polished.",
-            "default_value": "chat_status_only",
-            "recommended_value": "chat_status_only",
-            "persist_as_rule_name": "mcpviews_gronk_speak_scope",
-            "options": [
-              {
-                "value": "chat_status_only",
-                "label": "Chat/status only",
-                "description": "Best default. Apply only to assistant chat responses and progress updates.",
-                "persisted_rule": "MCPViews Gronk Speak scope is chat_status_only. When Gronk Speak mode is enabled, apply it only to assistant chat responses and progress updates. Never apply by default to public-facing artifacts: websites, emails, customer docs, PR descriptions/comments, published Ludflow docs, legal/medical/financial guidance, or user-facing copy. Preserve commands, file paths, line refs, citations, error text, warnings, uncertainty, API names, schema fields, code, JSON, and test results. User style instructions, renderer payload requirements, safety, and correctness outrank compression. Do not promise hidden reasoning-token savings; Gronk Speak mainly targets visible output and persisted context size."
-              },
-              {
-                "value": "internal_artifacts",
-                "label": "Internal artifacts",
-                "description": "Apply to chat/status plus private plans, specs, incident notes, and research docs.",
-                "persisted_rule": "MCPViews Gronk Speak scope is internal_artifacts. When Gronk Speak mode is enabled, apply it to assistant chat responses, progress updates, and private/internal plans, specs, incident notes, and research docs. Never apply by default to public-facing artifacts: websites, emails, customer docs, PR descriptions/comments, published Ludflow docs, legal/medical/financial guidance, or user-facing copy. Preserve commands, file paths, line refs, citations, error text, warnings, uncertainty, API names, schema fields, code, JSON, and test results. User style instructions, renderer payload requirements, safety, and correctness outrank compression. Do not promise hidden reasoning-token savings; Gronk Speak mainly targets visible output and persisted context size."
-              },
-              {
-                "value": "all_nonpublic",
-                "label": "All nonpublic",
-                "description": "Apply to any nonpublic output unless the user asks for polished prose.",
-                "persisted_rule": "MCPViews Gronk Speak scope is all_nonpublic. When Gronk Speak mode is enabled, apply it to any nonpublic output unless the user asks for polished prose. Never apply by default to public-facing artifacts: websites, emails, customer docs, PR descriptions/comments, published Ludflow docs, legal/medical/financial guidance, or user-facing copy. Preserve commands, file paths, line refs, citations, error text, warnings, uncertainty, API names, schema fields, code, JSON, and test results. User style instructions, renderer payload requirements, safety, and correctness outrank compression. Do not promise hidden reasoning-token savings; Gronk Speak mainly targets visible output and persisted context size."
-              }
-            ]
+            "id": "GronkSpeak",
+            "version": "4",
+            "title": "GronkSpeak",
+            "description": "Single self-contained agent-native startup rule for terse nonpublic assistant output. Setup asks whether to enable it; enabled installs this one project rule.",
+            "source": {
+              "type": "setup_question",
+              "question_id": "enable_gronk_speak",
+              "skip_install_values": [
+                "off"
+              ]
+            }
           }
         ]
       }
@@ -235,7 +1001,13 @@
       "author": "TribeX AI",
       "homepage": "https://github.com/DeeJanuz/tribe-x-persona-studio",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/tribe-x-persona-studio/master/manifest.json",
-      "tags": ["persona", "ai", "testing", "cloudflare-dev", "consultants"],
+      "tags": [
+        "persona",
+        "ai",
+        "testing",
+        "cloudflare-dev",
+        "consultants"
+      ],
       "manifest": {
         "name": "tribe-x-persona-studio",
         "version": "0.1.0",
@@ -298,7 +1070,15 @@
       "author": "TribeX AI",
       "homepage": "https://github.com/DeeJanuz/mcpviews-email-deliverability-plugin",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/mcpviews-email-deliverability-plugin/master/manifest.json",
-      "tags": ["email", "deliverability", "templates", "campaigns", "audience-filtering", "workspace", "persona"],
+      "tags": [
+        "email",
+        "deliverability",
+        "templates",
+        "campaigns",
+        "audience-filtering",
+        "workspace",
+        "persona"
+      ],
       "manifest": {
         "name": "email-deliverability",
         "version": "0.1.1",

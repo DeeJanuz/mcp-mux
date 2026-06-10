@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.33] - 2026-06-10
+
+### Changed
+- Published the plugin registry entries for DecidR v0.1.39 and GronkSpeak v0.1.4 after their release assets became available.
+- Corrected the release line after the DecidR plugin dispatch created v0.2.30 from the previously published release baseline.
+
 ## [0.2.30] - 2026-06-10
 
 ### Changed

@@ -91,7 +91,7 @@
           : '<button class="btn btn-primary install-btn">Install</button>';
       var betaButtonHtml = isBetaInstalled
         ? '<button class="btn btn-beta beta-btn" disabled>Checking beta...</button>' +
-          '<button class="btn btn-secondary rollback-btn">Rollback to stable</button>'
+          '<button class="btn btn-secondary public-reset-btn">Reset to public</button>'
         : '<button class="btn btn-beta beta-btn" disabled>Checking beta...</button>';
 
       card.innerHTML =
@@ -121,10 +121,10 @@
         });
       }
 
-      var rollbackBtn = card.querySelector('.rollback-btn');
-      if (rollbackBtn) {
-        rollbackBtn.addEventListener('click', function () {
-          rollbackPlugin(name);
+      var publicResetBtn = card.querySelector('.public-reset-btn');
+      if (publicResetBtn) {
+        publicResetBtn.addEventListener('click', function () {
+          resetPluginToPublic(name);
         });
       }
 
@@ -197,6 +197,7 @@
         }
         if (isBetaInstalled) {
           actionsHtml += '<button class="btn btn-beta beta-update-btn" disabled>Checking beta...</button>';
+          actionsHtml += '<button class="btn btn-secondary public-reset-btn">Reset to public</button>';
         }
         if (hasAuth) {
           actionsHtml += '<button class="btn btn-secondary reauth-btn">' +
@@ -251,7 +252,14 @@
           betaUpdateBtn.addEventListener('click', function () {
             installBetaPlugin(plugin.name);
           });
-          hydrateInstalledBetaUpdate(row, plugin.name, plugin.version || '');
+          hydrateInstalledBetaState(row, plugin.name, plugin.version || '');
+        }
+
+        var publicResetBtn = row.querySelector('.public-reset-btn');
+        if (publicResetBtn) {
+          publicResetBtn.addEventListener('click', function () {
+            resetPluginToPublic(plugin.name);
+          });
         }
 
         var autoUpdateCheckbox = row.querySelector('.auto-update-checkbox');
@@ -372,26 +380,26 @@
     }
   }
 
-  async function rollbackPlugin(name) {
+  async function resetPluginToPublic(name) {
     try {
       var info = await window.__TAURI__.core.invoke('check_plugin_prerelease', { name: name }).catch(function () { return null; });
-      var stableLabel = info && info.stableVersion ? ' v' + info.stableVersion : '';
-      var ok = confirm('Roll back ' + name + ' to the latest stable release' + stableLabel + '?');
+      var publicLabel = info && info.stableVersion ? ' v' + info.stableVersion : '';
+      var ok = confirm('Reset ' + name + ' to the latest public release' + publicLabel + '?');
       if (!ok) return;
       await window.__TAURI__.core.invoke('rollback_plugin_to_stable', { name: name });
-      showNotification('Plugin ' + name + ' rolled back to stable' + stableLabel);
+      showNotification('Plugin ' + name + ' reset to public' + publicLabel);
       loadInstalled();
       loadRegistry();
     } catch (e) {
-      showNotification('Failed to roll back plugin: ' + e, true);
+      showNotification('Failed to reset plugin to public: ' + e, true);
     }
   }
 
   async function hydrateBetaInfo(card, name, installedVersion, isInstalled) {
     var meta = card.querySelector('.beta-meta');
     var betaBtn = card.querySelector('.beta-btn');
-    var rollbackBtn = card.querySelector('.rollback-btn');
-    if (!meta && !betaBtn && !rollbackBtn) return;
+    var publicResetBtn = card.querySelector('.public-reset-btn');
+    if (!meta && !betaBtn && !publicResetBtn) return;
     var isBetaInstalled = isPrereleaseVersion(installedVersion || '');
 
     try {
@@ -434,8 +442,8 @@
         }
       }
 
-      if (rollbackBtn && info.stableVersion) {
-        rollbackBtn.textContent = 'Rollback to v' + info.stableVersion;
+      if (publicResetBtn && info.stableVersion) {
+        publicResetBtn.textContent = 'Reset to public v' + info.stableVersion;
       }
     } catch (e) {
       if (meta) meta.textContent = 'Unable to check beta release';
@@ -470,29 +478,39 @@
     }
   }
 
-  async function hydrateInstalledBetaUpdate(row, name, installedVersion) {
+  async function hydrateInstalledBetaState(row, name, installedVersion) {
     var badge = row.querySelector('.beta-update-badge');
     var btn = row.querySelector('.beta-update-btn');
-    if (!btn) return;
+    var publicResetBtn = row.querySelector('.public-reset-btn');
+    if (!btn && !publicResetBtn) return;
 
     try {
       var info = await window.__TAURI__.core.invoke('check_plugin_prerelease', { name: name });
+      if (publicResetBtn && info && info.stableVersion) {
+        publicResetBtn.textContent = 'Reset to public v' + info.stableVersion;
+      }
       if (info && info.updateAvailable) {
         if (badge) {
           badge.style.display = '';
           badge.textContent = 'beta v' + info.version + ' available';
         }
-        btn.disabled = false;
-        btn.textContent = 'Update beta';
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Update beta';
+        }
       } else {
         if (badge) badge.style.display = 'none';
-        btn.disabled = true;
-        btn.textContent = installedVersion ? 'Beta current' : 'No beta';
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = installedVersion ? 'Beta current' : 'No beta';
+        }
       }
     } catch (e) {
       if (badge) badge.style.display = 'none';
-      btn.disabled = true;
-      btn.textContent = 'Beta unavailable';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Beta unavailable';
+      }
     }
   }
 

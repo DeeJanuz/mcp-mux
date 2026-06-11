@@ -1872,21 +1872,13 @@
     function closeDropdown() {
       dropdownGeneration += 1;
       dropdown.classList.add('hidden');
-      setNativeAppOverlayActive(false, 'apps-dropdown');
     }
 
     function openDomDropdown(generation, preloadedPlugins) {
       populateAppsDropdown(dropdown, preloadedPlugins);
-      Promise.resolve(setNativeAppOverlayActive(true, 'apps-dropdown')).then(function () {
-        if (generation === dropdownGeneration) {
-          dropdown.classList.remove('hidden');
-        }
-      }).catch(function (error) {
-        console.warn('Failed to prepare native app overlay before opening apps dropdown:', error);
-        if (generation === dropdownGeneration) {
-          dropdown.classList.remove('hidden');
-        }
-      });
+      if (generation === dropdownGeneration) {
+        dropdown.classList.remove('hidden');
+      }
     }
 
     function openDropdown() {
@@ -1966,7 +1958,6 @@
           onSelect: function (renderer, rendererLabel) {
             var rendererName = renderer && renderer.name;
             dropdown.classList.add('hidden');
-            setNativeAppOverlayActive(false, 'apps-dropdown');
             launchStandalone(rendererName, rendererLabel);
           },
         });

@@ -768,7 +768,7 @@ describe('main session routing', function () {
     expect(window.__TAURI__.core.invoke).not.toHaveBeenCalledWith('close_apps_popup');
   });
 
-  it('moves native app panels offscreen while the apps dropdown is open', async function () {
+  it('keeps native app panels visible while the apps dropdown is open', async function () {
     window.__renderers.ludflow_documents_home = vi.fn(function (container) {
       container.textContent = 'Documents';
     });
@@ -843,16 +843,7 @@ describe('main session routing', function () {
 
     var dropdown = document.getElementById('apps-dropdown');
     expect(dropdown.classList.contains('hidden')).toBe(false);
-    expect(panelUpdates[0]).toMatchObject({
-      label: 'plugin-panel-ludflow-app',
-      bounds: {
-        x: -10000,
-        y: -10000,
-        width: 1,
-        height: 1,
-        visible: false,
-      },
-    });
+    expect(panelUpdates).toEqual([]);
     expect(window.__TAURI__.core.invoke).not.toHaveBeenCalledWith('open_apps_popup', expect.anything());
 
     var rendererItem = document.querySelector('.apps-renderer-item');
@@ -869,16 +860,7 @@ describe('main session routing', function () {
         headerTitle: 'Documents',
       }),
     });
-    expect(panelUpdates[panelUpdates.length - 1]).toMatchObject({
-      label: 'plugin-panel-ludflow-app',
-      bounds: {
-        x: 48,
-        y: 124,
-        width: 640,
-        height: 392,
-        visible: true,
-      },
-    });
+    expect(panelUpdates).toEqual([]);
   });
 
   it('does not expose child native panel mounting on Windows', async function () {

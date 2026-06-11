@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.39] - 2026-06-11
+
 ### Fixed
 - Keep the Apps launcher on the shared in-window DOM dropdown path without moving embedded app panels when the menu opens.
 - Restore Ludflow embedded app renderers to the authenticated iframe handoff path so the launcher remains in front without hiding the Ludflow tab.

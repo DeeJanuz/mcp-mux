@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.37] - 2026-06-11
+
 ### Fixed
 - Keep embedded Ludflow native panels visible while the Apps launcher is open instead of moving them offscreen.
 

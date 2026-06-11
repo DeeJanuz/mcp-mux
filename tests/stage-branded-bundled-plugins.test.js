@@ -9,6 +9,7 @@ var stageBrandedBundledPlugins;
 var stageLocalSetupPlugin;
 var verifyBrandedAuthOrigins;
 var verifyBrandedBundle;
+var verifyLudflowIframeRenderer;
 var verifySetupEmailCodeAuth;
 var describeIfScriptImportSupported = process.platform === 'win32' ? describe.skip : describe;
 
@@ -76,7 +77,16 @@ function writeSetupPlugin(root, withDuplicateEmailCodeRenderer = false, onboardi
 function zipPlugin(name, version) {
   var zip = new AdmZip();
   zip.addFile('manifest.json', Buffer.from(JSON.stringify(pluginManifest(name, version), null, 2)));
-  zip.addFile('renderers/index.js', Buffer.from('window.__renderers = window.__renderers || {};'));
+  if (name === 'ludflow') {
+    zip.addFile(
+      'renderers/ludflow-pages.js',
+      Buffer.from(
+        "callTool('create_app_embed_session'); var iframe = document.createElement('iframe'); iframe.setAttribute('sandbox', 'allow-storage-access-by-user-activation');",
+      ),
+    );
+  } else {
+    zip.addFile('renderers/index.js', Buffer.from('window.__renderers = window.__renderers || {};'));
+  }
   return zip.toBuffer();
 }
 
@@ -104,6 +114,7 @@ beforeAll(async function () {
   stageLocalSetupPlugin = helpers.stageLocalSetupPlugin;
   verifyBrandedAuthOrigins = helpers.verifyBrandedAuthOrigins;
   verifyBrandedBundle = helpers.verifyBrandedBundle;
+  verifyLudflowIframeRenderer = helpers.verifyLudflowIframeRenderer;
   verifySetupEmailCodeAuth = helpers.verifySetupEmailCodeAuth;
 });
 
@@ -260,5 +271,41 @@ describeIfScriptImportSupported('stage branded bundled plugins', function () {
     expect(function () {
       verifyBrandedAuthOrigins({ stageRoot: stageRoot });
     }).toThrow('email_code_auth.enabled=true');
+  });
+
+  it('fails branded bundle verification when Ludflow renderer uses a native panel path', function () {
+    var root = tempDir();
+    var stageRoot = join(root, 'stage');
+    mkdirSync(join(stageRoot, 'ludflow', 'renderers'), { recursive: true });
+    writeFileSync(
+      join(stageRoot, 'ludflow', 'manifest.json'),
+      JSON.stringify(pluginManifestWithAuth('ludflow', '1.0.0', 'https://app.ludflow.com'), null, 2)
+    );
+    writeFileSync(
+      join(stageRoot, 'ludflow', 'renderers', 'ludflow-pages.js'),
+      "callTool('create_app_embed_session'); var iframe = document.createElement('iframe'); iframe.setAttribute('sandbox', 'allow-storage-access-by-user-activation'); window.__mcpviewsHost.mountNativeAppView({ url: 'https://app.ludflow.com' });",
+    );
+
+    expect(function () {
+      verifyLudflowIframeRenderer({ stageRoot: stageRoot });
+    }).toThrow('mountNativeAppView');
+  });
+
+  it('fails branded bundle verification when Ludflow renderer retains iframe priming or close sentinels', function () {
+    var root = tempDir();
+    var stageRoot = join(root, 'stage');
+    mkdirSync(join(stageRoot, 'ludflow', 'renderers'), { recursive: true });
+    writeFileSync(
+      join(stageRoot, 'ludflow', 'manifest.json'),
+      JSON.stringify(pluginManifestWithAuth('ludflow', '1.0.0', 'https://app.ludflow.com'), null, 2)
+    );
+    writeFileSync(
+      join(stageRoot, 'ludflow', 'renderers', 'ludflow-pages.js'),
+      "callTool('create_app_embed_session'); var iframe = document.createElement('iframe'); iframe.setAttribute('sandbox', 'allow-storage-access-by-user-activation'); primeMcpviewsWebSession();",
+    );
+
+    expect(function () {
+      verifyLudflowIframeRenderer({ stageRoot: stageRoot });
+    }).toThrow('primeMcpviewsWebSession');
   });
 });

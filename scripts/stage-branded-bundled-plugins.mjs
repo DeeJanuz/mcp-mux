@@ -340,6 +340,40 @@ export function verifySetupEmailCodeAuth(options = {}) {
   }
 }
 
+export function verifyLudflowIframeRenderer(options = {}) {
+  const stageRoot = options.stageRoot || defaultStageRoot;
+  const ludflowDir = join(stageRoot, 'ludflow');
+  const rendererPath = join(ludflowDir, 'renderers', 'ludflow-pages.js');
+  if (!existsSync(rendererPath)) {
+    throw new Error('ludflow bundled plugin is missing renderers/ludflow-pages.js');
+  }
+
+  const source = readFileSync(rendererPath, 'utf8');
+  const requiredSnippets = [
+    'create_app_embed_session',
+    "document.createElement('iframe')",
+    'allow-storage-access-by-user-activation',
+  ];
+  for (const snippet of requiredSnippets) {
+    if (!source.includes(snippet)) {
+      throw new Error(`ludflow renderer must include ${snippet}`);
+    }
+  }
+
+  const forbiddenSnippets = [
+    'mountNativeAppView',
+    'mountNativePanel',
+    'primeMcpviewsWebSession',
+    'openExternalUrlInTab',
+    'mcpviews_close',
+  ];
+  for (const snippet of forbiddenSnippets) {
+    if (source.includes(snippet)) {
+      throw new Error(`ludflow renderer must not include ${snippet}`);
+    }
+  }
+}
+
 export async function stageBrandedBundledPlugins(options = {}) {
   const stageRoot = options.stageRoot || defaultStageRoot;
   const workRoot = options.workRoot || join(stageRoot, '.downloads');
@@ -397,6 +431,7 @@ export function verifyBrandedBundle(options = {}) {
     authOrigin: options.authOrigin,
   });
   verifySetupEmailCodeAuth({ stageRoot });
+  verifyLudflowIframeRenderer({ stageRoot });
   return found;
 }
 

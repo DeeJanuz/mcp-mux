@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.38] - 2026-06-11
+
+### Changed
+- Rebuilt the DecidR-branded installer bundle after DeeJanuz/ludflow-mcpviews@v0.5.16, staging the latest stable bundled plugin releases.
+
+
 ## [0.2.37] - 2026-06-11
 
 ### Fixed

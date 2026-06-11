@@ -59,4 +59,30 @@ describeMacDevBundle('mac-dev bundled plugin auth contract', function () {
     expect(onboardingSource).toContain('verify_plugin_email_code');
     expect(onboardingSource).not.toContain('start_plugin_auth');
   });
+
+  it('keeps Ludflow embedded app renderers on the authenticated iframe path', function () {
+    var source = readFileSync(
+      join(macDevBundleRoot, 'ludflow', 'renderers', 'ludflow-pages.js'),
+      'utf8',
+    );
+
+    expect(source).toContain('create_app_embed_session');
+    expect(source).toContain("document.createElement('iframe')");
+    expect(source).toContain('allow-storage-access-by-user-activation');
+    expect(source).not.toContain('mountNativeAppView');
+    expect(source).not.toContain('mountNativePanel');
+  });
+
+  it('keeps Ludflow plugin auth separate from iframe web-session handoff', function () {
+    var ludflow = readManifest('ludflow');
+    var source = readFileSync(
+      join(macDevBundleRoot, 'ludflow', 'renderers', 'ludflow-pages.js'),
+      'utf8',
+    );
+
+    expect(ludflow.mcp.auth.email_code_auth).toEqual({ enabled: true });
+    expect(source).toContain('create_app_embed_session');
+    expect(source).not.toContain('better-auth.session.token');
+    expect(source).not.toContain('__Secure-better-auth.session.token');
+  });
 });

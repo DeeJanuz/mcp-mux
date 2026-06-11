@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Keep the Apps launcher on the shared in-window DOM dropdown path without moving embedded app panels when the menu opens.
+- Restore Ludflow embedded app renderers to the authenticated iframe handoff path so the launcher remains in front without hiding the Ludflow tab.
+
 ## [0.2.38] - 2026-06-11
 
 ### Changed
 - Rebuilt the DecidR-branded installer bundle after DeeJanuz/ludflow-mcpviews@v0.5.16, staging the latest stable bundled plugin releases.
-
 
 ## [0.2.37] - 2026-06-11
 

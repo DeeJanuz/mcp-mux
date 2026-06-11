@@ -142,13 +142,17 @@ runtime behavior, the shared UX contract, and the Windows evidence.
   `apps-popup` WebView window can survive after the main Windows window is
   minimized, leaving a blank orphaned surface that traps interaction and
   prevents reliable tray quit.
-- macOS implementation: continue to use the native `apps_popup` window, with
-  app-level lifecycle cleanup and non-main close requests allowed to destroy
-  auxiliary windows.
+- macOS implementation: use the in-window DOM Apps dropdown for the main toolbar
+  launcher. Embedded Ludflow app tabs must use the authenticated DOM iframe
+  embed path instead of a child native WebView, because child WebViews sit above
+  parent DOM and cannot be z-indexed under the launcher without hiding the app.
+  Plugin Manager `AUTH OK` only proves MCP/plugin auth; Ludflow iframe tabs also
+  require the Ludflow app's Better Auth web-session handoff to complete.
 - Windows implementation: the `apps_popup` adapter declines native popup
   creation and the shared frontend opens the DOM Apps dropdown instead.
-- Shared tests: Apps menu rendering/model tests plus routing tests for native
-  popup selection and DOM fallback when the adapter returns `opened: false`.
+- Shared tests: Apps menu rendering/model tests plus routing tests that assert
+  the main-window dropdown opens without native popup IPC and does not mutate
+  native app panel bounds while opening.
 - macOS verification evidence: local Rust/frontend tests are required; macOS
   runtime smoke remains a separate release evidence item.
 - Windows verification evidence: this decision is based on VMware Fusion
@@ -172,20 +176,23 @@ runtime behavior, the shared UX contract, and the Windows evidence.
   usable.
 - macOS implementation: expose `mountNativeAppView`,
   `updateNativeAppViewBounds`, and `closeNativeAppView` so plugin renderers can
-  mount native child WebViews inside viewport-owned tabs.
+  mount native child WebViews inside viewport-owned tabs when that surface is
+  appropriate. Ludflow app renderers intentionally avoid this bridge in normal
+  tab views and use their authenticated DOM iframe handoff instead, preserving
+  launcher stacking without exposing Better Auth tokens to plugin JavaScript.
 - Windows implementation: do not expose the child native panel bridge to
-  renderer code. Renderers that support both paths, including Ludflow, fall back
-  to their DOM iframe path inside the same MCPViews tab.
+  renderer code. Ludflow uses the same authenticated DOM iframe handoff as
+  macOS, so Windows does not need child native panels for the launcher-safe
+  embedded app path.
 - Shared tests: session routing tests assert native panel support remains
   available on the default/macOS-like runtime and is not exposed for a Windows
   runtime user agent.
 - macOS verification evidence: local frontend tests are required; macOS runtime
   smoke remains a separate release evidence item.
-- Windows verification evidence: this decision is based on VMware Fusion
-  Windows evidence that opening Ludflow produced a blank surface and prevented
-  reopening the app launcher while only tab switching/closing still worked,
-  followed by a later VMware and human Windows QA pass confirming Ludflow opens
-  and the Apps launcher remains reachable.
+- Windows verification evidence: prior VMware Fusion Windows evidence showed
+  child WebView panels could render blank and block the Apps launcher while only
+  tab switching/closing still worked. That keeps Windows native panels disabled
+  for Ludflow until a native-panel-capable adapter passes VM-first validation.
 - Follow-up risk: re-enable Windows child panels only after WebView2 child
   WebView loading, stacking, hit-testing, focus, and bounds updates pass VMware
   and human Windows QA evidence. WebDriver automation is a backlogged discovery

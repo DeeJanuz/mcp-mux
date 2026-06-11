@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Keep mounted native app panels below the MCPViews session tab bar so embedded Ludflow content does not cover tab labels.
+
 ## [0.2.35] - 2026-06-11
 
 ## [0.2.34] - 2026-06-10

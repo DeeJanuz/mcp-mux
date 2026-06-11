@@ -87,7 +87,29 @@
   function nativeAppBoundsForOverlay(bounds) {
     var normalized = nativeAppBounds(bounds);
     if (nativeAppOverlayActive) return Object.assign({}, NATIVE_APP_OVERLAY_BOUNDS);
-    return normalized;
+    return nativeAppBoundsBelowSessionTabs(normalized);
+  }
+
+  function nativeAppSessionTabInset() {
+    if (!tabBar || typeof tabBar.getBoundingClientRect !== 'function') return 0;
+    var style = window.getComputedStyle ? window.getComputedStyle(tabBar) : null;
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) return 0;
+    var rect = tabBar.getBoundingClientRect();
+    var height = rect && Number.isFinite(rect.height) ? rect.height : 0;
+    return Math.max(0, Math.round(height));
+  }
+
+  function nativeAppBoundsBelowSessionTabs(bounds) {
+    var inset = nativeAppSessionTabInset();
+    if (!inset || bounds.visible === false) return bounds;
+    var height = Math.max(1, bounds.height - inset);
+    return {
+      x: bounds.x,
+      y: bounds.y + inset,
+      width: bounds.width,
+      height: height,
+      visible: bounds.visible && height >= 2,
+    };
   }
 
   function rememberNativeAppPanel(label, bounds) {

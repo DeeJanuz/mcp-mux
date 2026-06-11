@@ -819,6 +819,18 @@ describe('main session routing', function () {
     };
 
     loadMain();
+    var tabBar = document.getElementById('tab-bar');
+    tabBar.style.display = 'flex';
+    tabBar.getBoundingClientRect = function () {
+      return {
+        left: 0,
+        top: 64,
+        right: 800,
+        bottom: 92,
+        width: 800,
+        height: 28,
+      };
+    };
     await window.__mcpviewsHost.mountNativeAppView({
       pluginName: 'ludflow',
       url: 'https://app.ludflow.com/mcpviews/embed/start?token=test',
@@ -861,9 +873,9 @@ describe('main session routing', function () {
       label: 'plugin-panel-ludflow-app',
       bounds: {
         x: 48,
-        y: 96,
+        y: 124,
         width: 640,
-        height: 420,
+        height: 392,
         visible: true,
       },
     });

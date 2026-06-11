@@ -41,14 +41,6 @@
   const DECIDR_ONBOARDING_RENDERER = 'decidr_onboarding';
   const DECIDR_ONBOARDING_COMPLETED_KEY = 'decidr-onboarding:agent-configured-org-id';
   const EXTERNAL_WEB_CONTENT_TYPE = 'external_web_page';
-  const APPS_POPUP_WIDTH = 220;
-  const APPS_POPUP_MAX_HEIGHT = 360;
-  const APPS_POPUP_MIN_WIDTH = 180;
-  const APPS_POPUP_MIN_HEIGHT = 96;
-  const APPS_POPUP_MARGIN = 8;
-  const APPS_POPUP_VERTICAL_PADDING = 16;
-  const APPS_POPUP_HEADER_HEIGHT = 32;
-  const APPS_POPUP_RENDERER_HEIGHT = 30;
   const NATIVE_APP_OVERLAY_BOUNDS = Object.freeze({
     x: -10000,
     y: -10000,
@@ -92,8 +84,54 @@
     };
   }
 
-  function nativeAppBoundsForOverlay(bounds) {
+  function contentAreaBounds() {
+    if (!contentArea || typeof contentArea.getBoundingClientRect !== 'function') {
+      return null;
+    }
+    var rect = contentArea.getBoundingClientRect();
+    if (
+      !rect ||
+      !Number.isFinite(rect.left) ||
+      !Number.isFinite(rect.top) ||
+      !Number.isFinite(rect.right) ||
+      !Number.isFinite(rect.bottom) ||
+      rect.right <= rect.left ||
+      rect.bottom <= rect.top
+    ) {
+      return null;
+    }
+    return rect;
+  }
+
+  function clampNativeAppBoundsToContentArea(bounds) {
     var normalized = nativeAppBounds(bounds);
+    if (normalized.visible === false) return normalized;
+
+    var rect = contentAreaBounds();
+    if (!rect) return normalized;
+
+    var left = Math.max(normalized.x, rect.left);
+    var top = Math.max(normalized.y, rect.top);
+    var right = Math.min(normalized.x + normalized.width, rect.right);
+    var bottom = Math.min(normalized.y + normalized.height, rect.bottom);
+    var width = right - left;
+    var height = bottom - top;
+
+    if (width < 2 || height < 2) {
+      return Object.assign({}, normalized, { visible: false });
+    }
+
+    return {
+      x: Math.round(left),
+      y: Math.round(top),
+      width: Math.round(width),
+      height: Math.round(height),
+      visible: true,
+    };
+  }
+
+  function nativeAppBoundsForOverlay(bounds) {
+    var normalized = clampNativeAppBoundsToContentArea(bounds);
     if (nativeAppOverlayActive) return Object.assign({}, NATIVE_APP_OVERLAY_BOUNDS);
     return normalized;
   }
@@ -145,7 +183,7 @@
     if (!supportsNativeAppPanels()) {
       return Promise.reject(new Error('Native app panels are disabled on Windows.'));
     }
-    var requestedBounds = nativeAppBounds(options.bounds);
+    var requestedBounds = clampNativeAppBoundsToContentArea(options.bounds);
     return window.__TAURI__.core.invoke('mount_native_app_panel', {
       pluginName: options.pluginName || options.plugin_name || '',
       url: options.url || '',
@@ -166,7 +204,7 @@
     if (!supportsNativeAppPanels()) {
       return Promise.reject(new Error('External web panels are disabled on Windows.'));
     }
-    var requestedBounds = nativeAppBounds(options.bounds);
+    var requestedBounds = clampNativeAppBoundsToContentArea(options.bounds);
     return window.__TAURI__.core.invoke('mount_external_web_panel', {
       url: options.url || '',
       title: options.title || null,
@@ -189,7 +227,7 @@
       return Promise.reject(new Error('Native app panels are disabled on Windows.'));
     }
     var label = options.label || '';
-    var requestedBounds = nativeAppBounds(options.bounds);
+    var requestedBounds = clampNativeAppBoundsToContentArea(options.bounds);
     rememberNativeAppPanel(label, requestedBounds);
     return window.__TAURI__.core.invoke('update_native_app_panel_bounds', {
       label: label,
@@ -236,63 +274,6 @@
       } catch (_error) {}
     }
     return applyNativeAppOverlayBounds();
-  }
-
-  function estimateAppsPopupHeight(plugins) {
-    if (!Array.isArray(plugins) || plugins.length === 0) {
-      return APPS_POPUP_MIN_HEIGHT;
-    }
-    var firstRendererCount = Array.isArray(plugins[0] && plugins[0].renderers)
-      ? plugins[0].renderers.length
-      : 0;
-    return APPS_POPUP_VERTICAL_PADDING +
-      (plugins.length * APPS_POPUP_HEADER_HEIGHT) +
-      (firstRendererCount * APPS_POPUP_RENDERER_HEIGHT);
-  }
-
-  function appsPopupBounds(anchor, plugins) {
-    var viewportWidth = Math.max(window.innerWidth || APPS_POPUP_WIDTH, APPS_POPUP_MIN_WIDTH + APPS_POPUP_MARGIN * 2);
-    var viewportHeight = Math.max(window.innerHeight || APPS_POPUP_MAX_HEIGHT, APPS_POPUP_MIN_HEIGHT + APPS_POPUP_MARGIN * 2);
-    var rect = anchor && typeof anchor.getBoundingClientRect === 'function'
-      ? anchor.getBoundingClientRect()
-      : { right: viewportWidth - APPS_POPUP_MARGIN, bottom: APPS_POPUP_MARGIN };
-    var width = Math.min(APPS_POPUP_WIDTH, Math.max(APPS_POPUP_MIN_WIDTH, viewportWidth - APPS_POPUP_MARGIN * 2));
-    var estimatedHeight = estimateAppsPopupHeight(plugins);
-    var availableHeight = Math.max(APPS_POPUP_MIN_HEIGHT, viewportHeight - APPS_POPUP_MARGIN * 2);
-    var height = Math.min(APPS_POPUP_MAX_HEIGHT, availableHeight, Math.max(APPS_POPUP_MIN_HEIGHT, estimatedHeight));
-    var x = rect.right - width;
-    var y = rect.bottom + APPS_POPUP_MARGIN;
-    x = Math.max(APPS_POPUP_MARGIN, Math.min(x, viewportWidth - width - APPS_POPUP_MARGIN));
-    if (y + height > viewportHeight - APPS_POPUP_MARGIN) {
-      y = Math.max(APPS_POPUP_MARGIN, viewportHeight - height - APPS_POPUP_MARGIN);
-    }
-    return {
-      x: Math.round(x),
-      y: Math.round(y),
-      width: Math.round(width),
-      height: Math.round(height),
-    };
-  }
-
-  function openNativeAppsPopup(anchor, plugins) {
-    if (!window.__TAURI__ || !window.__TAURI__.core || typeof window.__TAURI__.core.invoke !== 'function') {
-      return Promise.resolve(false);
-    }
-    return window.__TAURI__.core.invoke('open_apps_popup', {
-      bounds: appsPopupBounds(anchor, plugins),
-    }).then(function (result) {
-      return !!(result && result.opened === true);
-    }).catch(function (error) {
-      console.warn('[apps] Falling back to DOM apps dropdown:', error);
-      return false;
-    });
-  }
-
-  function closeNativeAppsPopup() {
-    if (!window.__TAURI__ || !window.__TAURI__.core || typeof window.__TAURI__.core.invoke !== 'function') {
-      return;
-    }
-    window.__TAURI__.core.invoke('close_apps_popup').catch(function () {});
   }
 
   function loadStandaloneRenderersForMenu() {
@@ -1915,7 +1896,6 @@
     function closeDropdown() {
       dropdownGeneration += 1;
       dropdown.classList.add('hidden');
-      closeNativeAppsPopup();
       setNativeAppOverlayActive(false, 'apps-dropdown');
     }
 
@@ -1936,38 +1916,7 @@
     function openDropdown() {
       var generation = ++dropdownGeneration;
       dropdown.classList.add('hidden');
-      setNativeAppOverlayActive(false, 'apps-dropdown');
-      loadStandaloneRenderersForMenu().catch(function (error) {
-        console.warn('[apps] Failed to preload apps menu before opening popup:', error);
-        return null;
-      }).then(function (plugins) {
-        if (generation !== dropdownGeneration) return;
-        return openNativeAppsPopup(appsBtn, plugins).then(function (opened) {
-          if (generation !== dropdownGeneration) return;
-          if (!opened) {
-            openDomDropdown(generation, plugins);
-          }
-        });
-      }).catch(function (error) {
-        if (generation !== dropdownGeneration) return;
-        console.warn('[apps] Failed to open native apps popup:', error);
-        openDomDropdown(generation, null);
-      });
-    }
-
-    if (window.__TAURI__ && window.__TAURI__.event && typeof window.__TAURI__.event.listen === 'function') {
-      window.__TAURI__.event.listen('apps-popup-select', function (event) {
-        var payload = event && event.payload ? event.payload : {};
-        var rendererName = payload.rendererName || payload.renderer_name || '';
-        var rendererLabel = payload.rendererLabel || payload.renderer_label || rendererName;
-        if (!rendererName) return;
-        dropdownGeneration += 1;
-        dropdown.classList.add('hidden');
-        setNativeAppOverlayActive(false, 'apps-popup-select');
-        launchStandalone(rendererName, rendererLabel);
-      }).catch(function (error) {
-        console.warn('[apps] Failed to listen for native apps popup selections:', error);
-      });
+      openDomDropdown(generation, null);
     }
 
     appsBtn.addEventListener('click', function(e) {

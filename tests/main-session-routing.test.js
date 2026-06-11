@@ -722,150 +722,7 @@ describe('main session routing', function () {
     expect(document.getElementById('main-title').textContent).toBe('Persona Studio');
   });
 
-  it('opens the native apps popup over mounted panels without hiding them', async function () {
-    window.__renderers.ludflow_documents_home = vi.fn(function (container) {
-      container.textContent = 'Documents';
-    });
-    var panelUpdates = [];
-    var listeners = {};
-    window.__TAURI__ = {
-      event: {
-        listen: vi.fn(function (eventName, callback) {
-          listeners[eventName] = callback;
-          return Promise.resolve(function () {});
-        }),
-      },
-      core: {
-        invoke: vi.fn(function (command, args) {
-          if (command === 'open_apps_popup') {
-            return Promise.resolve({
-              opened: true,
-            });
-          }
-          if (command === 'mount_native_app_panel') {
-            return Promise.resolve({
-              label: 'plugin-panel-ludflow-app',
-              url: args.url,
-              created: true,
-            });
-          }
-          if (command === 'update_native_app_panel_bounds') {
-            panelUpdates.push(args);
-            return Promise.resolve({
-              label: args.label,
-              updated: true,
-              visible: args.bounds.visible !== false,
-            });
-          }
-          if (command === 'get_plugin_renderers' || command === 'get_sessions') {
-            return Promise.resolve([]);
-          }
-          if (command === 'check_app_update') {
-            return Promise.resolve(null);
-          }
-          return Promise.resolve(null);
-        }),
-      },
-    };
-
-    loadMain();
-    await window.__mcpviewsHost.mountNativeAppView({
-      pluginName: 'ludflow',
-      url: 'https://app.ludflow.com/mcpviews/embed/start?token=test',
-      label: 'ludflow-app',
-      bounds: { x: 48, y: 96, width: 640, height: 420, visible: true },
-    });
-
-    document.getElementById('apps-button').click();
-    await flushPromises();
-
-    expect(window.__TAURI__.core.invoke).toHaveBeenCalledWith('open_apps_popup', {
-      bounds: expect.objectContaining({
-        width: expect.any(Number),
-        height: expect.any(Number),
-      }),
-    });
-    expect(document.getElementById('apps-dropdown').classList.contains('hidden')).toBe(true);
-    expect(panelUpdates).toEqual([]);
-
-    expect(listeners['apps-popup-select']).toEqual(expect.any(Function));
-    listeners['apps-popup-select']({
-      payload: {
-        rendererName: 'ludflow_documents_home',
-        rendererLabel: 'Documents',
-      },
-    });
-    await flushPromises();
-
-    var sessionId = window.__mainTest.getSessionIds()[0];
-    expect(window.__mainTest.getSession(sessionId)).toMatchObject({
-      toolName: 'standalone_launch',
-      contentType: 'ludflow_documents_home',
-      meta: expect.objectContaining({
-        standalone: true,
-        headerTitle: 'Documents',
-      }),
-    });
-    expect(panelUpdates).toEqual([]);
-  });
-
-  it('sizes the native apps popup to the rendered launcher rows', async function () {
-    var openArgs = null;
-    window.__TAURI__ = {
-      event: {
-        listen: vi.fn(function () {
-          return Promise.resolve(function () {});
-        }),
-      },
-      core: {
-        invoke: vi.fn(function (command, args) {
-          if (command === 'get_standalone_renderers') {
-            return Promise.resolve([
-              {
-                plugin: 'tribe-x-persona-studio',
-                label: 'TribeX AI Plugin',
-                renderers: [{ name: 'persona_lab', label: 'Persona Studio' }],
-              },
-              {
-                plugin: 'decidr',
-                label: 'DecidR',
-                renderers: [{ name: 'decidr_dashboard', label: 'Dashboard' }],
-              },
-              {
-                plugin: 'ludflow',
-                label: 'Ludflow',
-                renderers: [{ name: 'ludflow_documents_home', label: 'Documents' }],
-              },
-            ]);
-          }
-          if (command === 'open_apps_popup') {
-            openArgs = args;
-            return Promise.resolve({ opened: true });
-          }
-          if (command === 'get_plugin_renderers' || command === 'get_sessions') {
-            return Promise.resolve([]);
-          }
-          if (command === 'check_app_update') {
-            return Promise.resolve(null);
-          }
-          return Promise.resolve(null);
-        }),
-      },
-    };
-
-    loadMain();
-    document.getElementById('apps-button').click();
-    await flushPromises();
-
-    expect(openArgs).toEqual({
-      bounds: expect.objectContaining({
-        width: 220,
-        height: 142,
-      }),
-    });
-  });
-
-  it('opens the DOM apps dropdown when the native apps popup declines', async function () {
+  it('opens the apps dropdown in the main window without native popup IPC', async function () {
     window.__renderers.ludflow_documents_home = vi.fn(function (container) {
       container.textContent = 'Documents';
     });
@@ -877,11 +734,6 @@ describe('main session routing', function () {
       },
       core: {
         invoke: vi.fn(function (command) {
-          if (command === 'open_apps_popup') {
-            return Promise.resolve({
-              opened: false,
-            });
-          }
           if (command === 'get_standalone_renderers') {
             return Promise.resolve([{
               plugin: 'ludflow',
@@ -910,16 +762,13 @@ describe('main session routing', function () {
 
     var dropdown = document.getElementById('apps-dropdown');
     expect(dropdown.classList.contains('hidden')).toBe(false);
+    expect(document.querySelector('.apps-plugin-header').textContent).toContain('Ludflow');
     expect(document.querySelector('.apps-renderer-item').textContent).toBe('Documents');
-    expect(window.__TAURI__.core.invoke).toHaveBeenCalledWith('open_apps_popup', {
-      bounds: expect.objectContaining({
-        width: expect.any(Number),
-        height: expect.any(Number),
-      }),
-    });
+    expect(window.__TAURI__.core.invoke).not.toHaveBeenCalledWith('open_apps_popup', expect.anything());
+    expect(window.__TAURI__.core.invoke).not.toHaveBeenCalledWith('close_apps_popup');
   });
 
-  it('moves native app panels offscreen when the apps dropdown falls back to DOM', async function () {
+  it('moves native app panels offscreen while the apps dropdown is open', async function () {
     window.__renderers.ludflow_documents_home = vi.fn(function (container) {
       container.textContent = 'Documents';
     });
@@ -932,9 +781,6 @@ describe('main session routing', function () {
       },
       core: {
         invoke: vi.fn(function (command, args) {
-          if (command === 'open_apps_popup') {
-            return Promise.reject(new Error('native popup unavailable'));
-          }
           if (command === 'get_standalone_renderers') {
             return Promise.resolve([{
               plugin: 'ludflow',
@@ -995,6 +841,7 @@ describe('main session routing', function () {
         visible: false,
       },
     });
+    expect(window.__TAURI__.core.invoke).not.toHaveBeenCalledWith('open_apps_popup', expect.anything());
 
     var rendererItem = document.querySelector('.apps-renderer-item');
     expect(rendererItem).not.toBeNull();
@@ -1019,6 +866,85 @@ describe('main session routing', function () {
         height: 420,
         visible: true,
       },
+    });
+  });
+
+  it('clamps native app panel bounds to the content area', async function () {
+    var mountArgs = null;
+    var updateArgs = null;
+    window.__TAURI__ = {
+      event: {
+        listen: vi.fn(function () {
+          return Promise.resolve(function () {});
+        }),
+      },
+      core: {
+        invoke: vi.fn(function (command, args) {
+          if (command === 'mount_native_app_panel') {
+            mountArgs = args;
+            return Promise.resolve({
+              label: 'plugin-panel-ludflow-app',
+              url: args.url,
+              created: true,
+            });
+          }
+          if (command === 'update_native_app_panel_bounds') {
+            updateArgs = args;
+            return Promise.resolve({
+              label: args.label,
+              updated: true,
+              visible: args.bounds.visible !== false,
+            });
+          }
+          if (command === 'get_plugin_renderers' || command === 'get_sessions') {
+            return Promise.resolve([]);
+          }
+          if (command === 'check_app_update') {
+            return Promise.resolve(null);
+          }
+          return Promise.resolve(null);
+        }),
+      },
+    };
+
+    loadMain();
+    document.getElementById('content-area').getBoundingClientRect = function () {
+      return {
+        left: 12,
+        top: 88,
+        right: 1012,
+        bottom: 688,
+        width: 1000,
+        height: 600,
+      };
+    };
+
+    await window.__mcpviewsHost.mountNativeAppView({
+      pluginName: 'ludflow',
+      url: 'https://app.ludflow.com/mcpviews/embed/start?token=test',
+      label: 'ludflow-app',
+      bounds: { x: 0, y: 40, width: 1200, height: 800, visible: true },
+    });
+
+    expect(mountArgs.bounds).toEqual({
+      x: 12,
+      y: 88,
+      width: 1000,
+      height: 600,
+      visible: true,
+    });
+
+    await window.__mcpviewsHost.updateNativeAppViewBounds({
+      label: 'plugin-panel-ludflow-app',
+      bounds: { x: 24, y: 72, width: 400, height: 240, visible: true },
+    });
+
+    expect(updateArgs.bounds).toEqual({
+      x: 24,
+      y: 88,
+      width: 400,
+      height: 224,
+      visible: true,
     });
   });
 

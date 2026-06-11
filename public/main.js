@@ -84,54 +84,8 @@
     };
   }
 
-  function contentAreaBounds() {
-    if (!contentArea || typeof contentArea.getBoundingClientRect !== 'function') {
-      return null;
-    }
-    var rect = contentArea.getBoundingClientRect();
-    if (
-      !rect ||
-      !Number.isFinite(rect.left) ||
-      !Number.isFinite(rect.top) ||
-      !Number.isFinite(rect.right) ||
-      !Number.isFinite(rect.bottom) ||
-      rect.right <= rect.left ||
-      rect.bottom <= rect.top
-    ) {
-      return null;
-    }
-    return rect;
-  }
-
-  function clampNativeAppBoundsToContentArea(bounds) {
-    var normalized = nativeAppBounds(bounds);
-    if (normalized.visible === false) return normalized;
-
-    var rect = contentAreaBounds();
-    if (!rect) return normalized;
-
-    var left = Math.max(normalized.x, rect.left);
-    var top = Math.max(normalized.y, rect.top);
-    var right = Math.min(normalized.x + normalized.width, rect.right);
-    var bottom = Math.min(normalized.y + normalized.height, rect.bottom);
-    var width = right - left;
-    var height = bottom - top;
-
-    if (width < 2 || height < 2) {
-      return Object.assign({}, normalized, { visible: false });
-    }
-
-    return {
-      x: Math.round(left),
-      y: Math.round(top),
-      width: Math.round(width),
-      height: Math.round(height),
-      visible: true,
-    };
-  }
-
   function nativeAppBoundsForOverlay(bounds) {
-    var normalized = clampNativeAppBoundsToContentArea(bounds);
+    var normalized = nativeAppBounds(bounds);
     if (nativeAppOverlayActive) return Object.assign({}, NATIVE_APP_OVERLAY_BOUNDS);
     return normalized;
   }
@@ -183,7 +137,7 @@
     if (!supportsNativeAppPanels()) {
       return Promise.reject(new Error('Native app panels are disabled on Windows.'));
     }
-    var requestedBounds = clampNativeAppBoundsToContentArea(options.bounds);
+    var requestedBounds = nativeAppBounds(options.bounds);
     return window.__TAURI__.core.invoke('mount_native_app_panel', {
       pluginName: options.pluginName || options.plugin_name || '',
       url: options.url || '',
@@ -204,7 +158,7 @@
     if (!supportsNativeAppPanels()) {
       return Promise.reject(new Error('External web panels are disabled on Windows.'));
     }
-    var requestedBounds = clampNativeAppBoundsToContentArea(options.bounds);
+    var requestedBounds = nativeAppBounds(options.bounds);
     return window.__TAURI__.core.invoke('mount_external_web_panel', {
       url: options.url || '',
       title: options.title || null,
@@ -227,7 +181,7 @@
       return Promise.reject(new Error('Native app panels are disabled on Windows.'));
     }
     var label = options.label || '';
-    var requestedBounds = clampNativeAppBoundsToContentArea(options.bounds);
+    var requestedBounds = nativeAppBounds(options.bounds);
     rememberNativeAppPanel(label, requestedBounds);
     return window.__TAURI__.core.invoke('update_native_app_panel_bounds', {
       label: label,

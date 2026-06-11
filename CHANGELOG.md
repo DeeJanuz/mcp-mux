@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.36] - 2026-06-11
+
+### Changed
+- Rebuilt the DecidR-branded installer bundle after DeeJanuz/ludflow-mcpviews@v0.5.15, staging the latest stable bundled plugin releases.
+
+
 ### Fixed
 - Keep mounted native app panels below the MCPViews session tab bar so embedded Ludflow content does not cover tab labels.
 

@@ -505,13 +505,14 @@ async fn collect_decidr_plugin_context_inner(state: &Arc<TokioMutex<AsyncAppStat
 }
 
 pub(crate) fn setup_instructions(agent_type: &str) -> String {
+    const REPORT_CURRENT_RULES: &str = " When startup_rule_actions.status is current, report the active startup_rule_actions.current titles and rule_ids so the user can verify which startup rules are loaded; do not summarize this as only no changes needed.";
     match agent_type {
-        "claude_code" => "Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` into `.claude/rules/mcpviews-startup.md`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.".to_string(),
-        "claude_desktop" => "Create or update only startup-rule memories for entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.".to_string(),
-        "cursor" => "Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` into `.cursor/rules/mcpviews-startup.mdc`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.".to_string(),
-        "codex" | "opencode" | "antigravity" => "Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` in the managed `## MCPViews Startup Rules` block of the `AGENTS.md` at the supplied `project_path`, then call `save_startup_rule_state`. Use `startup_rule_actions.native_rule_file_path` as the exact target. If an old `<!-- mcpviews-rules-version: ... -->` MCPViews block exists, replace that managed block with startup rules only. If `startup_rule_actions.codex_rule_file_context.warnings` mentions parent-only or nested AGENTS files, follow that warning before treating rules as installed. Do not persist runtime MCPViews rules or plugin_rules.".to_string(),
-        "windsurf" => "Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` in `.windsurfrules`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.".to_string(),
-        _ => "Ask the user which native startup-rule mechanism to use for entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.".to_string(),
+        "claude_code" => format!("Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` into `.claude/rules/mcpviews-startup.md`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.{REPORT_CURRENT_RULES}"),
+        "claude_desktop" => format!("Create or update only startup-rule memories for entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.{REPORT_CURRENT_RULES}"),
+        "cursor" => format!("Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` into `.cursor/rules/mcpviews-startup.mdc`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.{REPORT_CURRENT_RULES}"),
+        "codex" | "opencode" | "antigravity" => format!("Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` in the managed `## MCPViews Startup Rules` block of the `AGENTS.md` at the supplied `project_path`, then call `save_startup_rule_state`. Use `startup_rule_actions.native_rule_file_path` as the exact target. If an old `<!-- mcpviews-rules-version: ... -->` MCPViews block exists, replace that managed block with startup rules only. If `startup_rule_actions.codex_rule_file_context.warnings` mentions parent-only or nested AGENTS files, follow that warning before treating rules as installed. Do not persist runtime MCPViews rules or plugin_rules.{REPORT_CURRENT_RULES}"),
+        "windsurf" => format!("Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` in `.windsurfrules`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.{REPORT_CURRENT_RULES}"),
+        _ => format!("Ask the user which native startup-rule mechanism to use for entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.{REPORT_CURRENT_RULES}"),
     }
 }
 
@@ -602,7 +603,7 @@ async fn startup_rule_actions_for_project(
         } else {
             actions["native_rule_block_omitted"] = serde_json::json!({
                 "reason": "startup_rules_current",
-                "instruction": "Native startup rules are already current for this project. MCPViews omits native_rule_block in current state to reduce init_session context."
+                "instruction": "Native startup rules are already current for this project. MCPViews omits native_rule_block in current state to reduce init_session context. Report the active startup_rule_actions.current titles and rule_ids so the user can verify which startup rules are loaded."
             });
         }
         actions["codex_rule_file_context"] = codex_context;
@@ -842,6 +843,7 @@ mod tests {
         assert!(instructions.contains("MCPViews Startup Rules"));
         assert!(instructions.contains("native_rule_file_path"));
         assert!(instructions.contains("save_startup_rule_state"));
+        assert!(instructions.contains("startup_rule_actions.current titles"));
         assert!(!instructions.contains("renderer rules"));
         assert!(!instructions.contains("all rules below"));
     }

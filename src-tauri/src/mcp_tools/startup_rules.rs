@@ -361,7 +361,7 @@ pub(crate) fn evaluate_startup_rule_actions(
         "suppressed": suppressed,
         "current": current,
         "orphaned": orphaned,
-        "instruction": "Install or update only startup_rule_actions.needs_install and startup_rule_actions.auto_update using the agent-native rule mechanism for the current harness, then call save_startup_rule_state with recorded file locations. Do not persist runtime rules, plugin_rules, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, or tool docs into native startup rule files. If a user declines installation, call save_startup_rule_state with do_not_install=true so MCPViews does not ask again. If a user declines updates for an installed rule, call save_startup_rule_state with do_not_update=true."
+        "instruction": "Install or update only startup_rule_actions.needs_install and startup_rule_actions.auto_update using the agent-native rule mechanism for the current harness, then call save_startup_rule_state with recorded file locations. When status is current, report the active startup_rule_actions.current titles and rule_ids so the user can verify which startup rules are loaded; do not summarize this as only no changes needed. Do not persist runtime rules, plugin_rules, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, or tool docs into native startup rule files. If a user declines installation, call save_startup_rule_state with do_not_install=true so MCPViews does not ask again. If a user declines updates for an installed rule, call save_startup_rule_state with do_not_update=true."
     })
 }
 

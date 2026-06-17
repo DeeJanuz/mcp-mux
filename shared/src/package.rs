@@ -1,7 +1,10 @@
 use crate::{cache_dir, PluginManifest};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_DOWNLOAD_SIZE: u64 = 50 * 1024 * 1024; // 50MB
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Extract a plugin zip to dest_dir, returning the parsed manifest.
 /// - Zip-slip protection: reject paths containing ".."
@@ -119,7 +122,7 @@ pub async fn download_and_install_plugin(
     let cache = cache_dir();
     std::fs::create_dir_all(&cache)
         .map_err(|e| format!("Failed to create cache directory: {}", e))?;
-    let temp_path = cache.join("plugin-download.zip");
+    let temp_path = unique_cache_path(&cache, "plugin-download", Some("zip"));
 
     let resp = client
         .get(download_url)
@@ -157,23 +160,14 @@ pub async fn download_and_install_plugin(
     std::fs::write(&temp_path, &bytes).map_err(|e| format!("Failed to write temp file: {}", e))?;
 
     // Extract to temp dir first to read manifest name
-    let temp_extract = cache.join("plugin-extract-temp");
+    let temp_extract = unique_cache_path(&cache, "plugin-extract-temp", None);
     let _ = std::fs::remove_dir_all(&temp_extract);
 
     let manifest = extract_plugin_zip(&temp_path, &temp_extract)?;
 
     // Move to final location
     let final_dir = plugins_dir.join(&manifest.name);
-    if final_dir.exists() {
-        std::fs::remove_dir_all(&final_dir)
-            .map_err(|e| format!("Failed to remove existing plugin: {}", e))?;
-    }
-    std::fs::rename(&temp_extract, &final_dir).or_else(|_| {
-        // rename can fail across filesystems, fall back to copy
-        copy_dir_recursive(&temp_extract, &final_dir)?;
-        std::fs::remove_dir_all(&temp_extract)
-            .map_err(|e| format!("Failed to clean up temp dir: {}", e))
-    })?;
+    replace_plugin_dir(&temp_extract, &final_dir)?;
 
     // Clean up temp zip
     let _ = std::fs::remove_file(&temp_path);
@@ -190,24 +184,59 @@ pub fn install_from_local_zip(
     let cache = cache_dir();
     std::fs::create_dir_all(&cache)
         .map_err(|e| format!("Failed to create cache directory: {}", e))?;
-    let temp_extract = cache.join("plugin-local-extract-temp");
+    let temp_extract = unique_cache_path(&cache, "plugin-local-extract-temp", None);
     let _ = std::fs::remove_dir_all(&temp_extract);
 
     let manifest = extract_plugin_zip(zip_path, &temp_extract)?;
 
     // Move to final location
     let final_dir = plugins_dir.join(&manifest.name);
+    replace_plugin_dir(&temp_extract, &final_dir)?;
+
+    Ok(manifest)
+}
+
+fn replace_plugin_dir(temp_extract: &Path, final_dir: &Path) -> Result<(), String> {
+    let preserved_preferences = std::fs::read(final_dir.join("preferences.json")).ok();
+
+    if let Some(parent) = final_dir.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create plugins directory: {}", e))?;
+    }
+
     if final_dir.exists() {
-        std::fs::remove_dir_all(&final_dir)
+        std::fs::remove_dir_all(final_dir)
             .map_err(|e| format!("Failed to remove existing plugin: {}", e))?;
     }
-    std::fs::rename(&temp_extract, &final_dir).or_else(|_| {
-        copy_dir_recursive(&temp_extract, &final_dir)?;
-        std::fs::remove_dir_all(&temp_extract)
+
+    std::fs::rename(temp_extract, final_dir).or_else(|_| {
+        copy_dir_recursive(temp_extract, final_dir)?;
+        std::fs::remove_dir_all(temp_extract)
             .map_err(|e| format!("Failed to clean up temp dir: {}", e))
     })?;
 
-    Ok(manifest)
+    if let Some(preferences) = preserved_preferences {
+        std::fs::write(final_dir.join("preferences.json"), preferences)
+            .map_err(|e| format!("Failed to restore plugin preferences: {}", e))?;
+    }
+
+    Ok(())
+}
+
+fn unique_cache_path(cache: &Path, prefix: &str, extension: Option<&str>) -> PathBuf {
+    let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let file_name = match extension {
+        Some(extension) => format!(
+            "{prefix}-{}-{nanos}-{counter}.{extension}",
+            std::process::id()
+        ),
+        None => format!("{prefix}-{}-{nanos}-{counter}", std::process::id()),
+    };
+    cache.join(file_name)
 }
 
 /// Recursively copy a directory (fallback when rename fails across filesystems)
@@ -360,6 +389,29 @@ mod tests {
             .join("test-plugin")
             .join("manifest.json")
             .exists());
+    }
+
+    #[test]
+    fn test_install_from_local_zip_preserves_preferences() {
+        let tmp = tempfile::tempdir().unwrap();
+        let zip_path = create_zip_with_manifest(tmp.path());
+        let plugins_dir = tmp.path().join("plugins");
+        let plugin_dir = plugins_dir.join("test-plugin");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("preferences.json"),
+            r#"{"setup_answers":{"decidr_governance_mode":"team"}}"#,
+        )
+        .unwrap();
+
+        let manifest = install_from_local_zip(&zip_path, &plugins_dir).unwrap();
+
+        assert_eq!(manifest.name, "test-plugin");
+        assert_eq!(
+            std::fs::read_to_string(plugin_dir.join("preferences.json")).unwrap(),
+            r#"{"setup_answers":{"decidr_governance_mode":"team"}}"#
+        );
+        assert!(plugin_dir.join("readme.txt").exists());
     }
 
     #[test]

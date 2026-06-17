@@ -1047,6 +1047,8 @@ sequenceDiagram
     "full_context_request": {
       "tool": "init_session",
       "arguments": {
+        "agent_type": "codex",
+        "project_path": "/path/to/project",
         "include_runtime_context": true
       }
     },

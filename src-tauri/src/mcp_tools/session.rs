@@ -88,12 +88,31 @@ fn include_runtime_context(arguments: &Value) -> bool {
         .unwrap_or(false)
 }
 
-fn runtime_context_status(include_runtime_context: bool) -> Value {
+fn runtime_context_status(
+    include_runtime_context: bool,
+    agent_type: &str,
+    project_path: Option<&str>,
+) -> Value {
     if include_runtime_context {
         return serde_json::json!({
             "mode": "full",
             "instruction": "Full runtime breadcrumbs were included because include_runtime_context was true. For task-specific details, still prefer describe_connector, describe_tool, get_plugin_docs, and get_plugin_prompt over carrying unrelated docs."
         });
+    }
+
+    let mut full_context_arguments = serde_json::Map::new();
+    full_context_arguments.insert("include_runtime_context".to_string(), Value::Bool(true));
+    if agent_type != "generic" {
+        full_context_arguments.insert(
+            "agent_type".to_string(),
+            Value::String(agent_type.to_string()),
+        );
+    }
+    if let Some(project_path) = project_path {
+        full_context_arguments.insert(
+            "project_path".to_string(),
+            Value::String(project_path.to_string()),
+        );
     }
 
     serde_json::json!({
@@ -102,9 +121,7 @@ fn runtime_context_status(include_runtime_context: bool) -> Value {
         "instruction": "Default init_session is lean: startup-rule reconciliation, auth/update status, org token summary, and compact ephemeral plugin context only. Lazy-load broader runtime/plugin context when needed.",
         "full_context_request": {
             "tool": "init_session",
-            "arguments": {
-                "include_runtime_context": true
-            }
+            "arguments": Value::Object(full_context_arguments)
         },
         "lazy_tools": ["describe_connector", "describe_tool", "describe_tool_group", "get_plugin_docs", "get_plugin_prompt"]
     })
@@ -146,7 +163,7 @@ pub(super) async fn call_init_session(
             "plugin_updates": plugin_updates,
             "plugin_update_actions": plugin_update_actions,
         });
-        response["runtime_context"] = runtime_context_status(true);
+        response["runtime_context"] = runtime_context_status(true, agent_type, project_path);
         response
     } else {
         let (plugin_status, plugin_updates, plugin_update_actions, org_tokens) =
@@ -157,7 +174,7 @@ pub(super) async fn call_init_session(
             "plugin_updates": plugin_updates,
             "plugin_update_actions": plugin_update_actions,
         });
-        response["runtime_context"] = runtime_context_status(false);
+        response["runtime_context"] = runtime_context_status(false, agent_type, project_path);
         response
     };
 
@@ -751,7 +768,7 @@ mod tests {
             "include_runtime_context": true
         })));
 
-        let lean = runtime_context_status(false);
+        let lean = runtime_context_status(false, "codex", Some("/tmp/project"));
         assert_eq!(lean["mode"], "lean");
         assert!(lean["omitted"]
             .as_array()
@@ -761,8 +778,16 @@ mod tests {
             lean["full_context_request"]["arguments"]["include_runtime_context"],
             true
         );
+        assert_eq!(
+            lean["full_context_request"]["arguments"]["agent_type"],
+            "codex"
+        );
+        assert_eq!(
+            lean["full_context_request"]["arguments"]["project_path"],
+            "/tmp/project"
+        );
 
-        let full = runtime_context_status(true);
+        let full = runtime_context_status(true, "codex", Some("/tmp/project"));
         assert_eq!(full["mode"], "full");
     }
 

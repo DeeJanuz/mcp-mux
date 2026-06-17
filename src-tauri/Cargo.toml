@@ -1,6 +1,6 @@
 [package]
 name = "mcpviews"
-version = "0.2.43"
+version = "0.2.44"
 edition = "2021"
 description = "Rich display for AI agents"
 

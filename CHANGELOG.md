@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Preserve plugin setup answers and update preferences during ZIP installs, updates, and reinstalls, so setup-sourced startup rules keep their configured policy across plugin upgrades.
+- Clean up unique plugin download temp files and extraction directories on failed installs.
+
 ## [0.2.44] - 2026-06-17
 
 ### Changed

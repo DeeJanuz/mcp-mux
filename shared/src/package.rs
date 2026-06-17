@@ -118,61 +118,59 @@ pub async fn download_and_install_plugin(
     download_url: &str,
     plugins_dir: &Path,
 ) -> Result<PluginManifest, String> {
-    // Download to temp file in cache dir
     let cache = cache_dir();
     std::fs::create_dir_all(&cache)
         .map_err(|e| format!("Failed to create cache directory: {}", e))?;
     let temp_path = unique_cache_path(&cache, "plugin-download", Some("zip"));
+    let temp_extract = unique_cache_path(&cache, "plugin-extract-temp", None);
 
-    let resp = client
-        .get(download_url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to download plugin: {}", e))?;
+    let result = async {
+        let resp = client
+            .get(download_url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download plugin: {}", e))?;
 
-    if !resp.status().is_success() {
-        return Err(format!("Download returned HTTP {}", resp.status()));
-    }
+        if !resp.status().is_success() {
+            return Err(format!("Download returned HTTP {}", resp.status()));
+        }
 
-    // Check content-length if available
-    if let Some(len) = resp.content_length() {
-        if len > MAX_DOWNLOAD_SIZE {
+        if let Some(len) = resp.content_length() {
+            if len > MAX_DOWNLOAD_SIZE {
+                return Err(format!(
+                    "Plugin package too large: {} bytes (max {})",
+                    len, MAX_DOWNLOAD_SIZE
+                ));
+            }
+        }
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read download: {}", e))?;
+
+        if bytes.len() as u64 > MAX_DOWNLOAD_SIZE {
             return Err(format!(
                 "Plugin package too large: {} bytes (max {})",
-                len, MAX_DOWNLOAD_SIZE
+                bytes.len(),
+                MAX_DOWNLOAD_SIZE
             ));
         }
+
+        std::fs::write(&temp_path, &bytes)
+            .map_err(|e| format!("Failed to write temp file: {}", e))?;
+
+        let manifest = extract_plugin_zip(&temp_path, &temp_extract)?;
+        let final_dir = plugins_dir.join(&manifest.name);
+        replace_plugin_dir(&temp_extract, &final_dir)?;
+
+        Ok(manifest)
     }
+    .await;
 
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read download: {}", e))?;
+    cleanup_temp_artifacts(Some(&temp_path), &temp_extract);
 
-    if bytes.len() as u64 > MAX_DOWNLOAD_SIZE {
-        return Err(format!(
-            "Plugin package too large: {} bytes (max {})",
-            bytes.len(),
-            MAX_DOWNLOAD_SIZE
-        ));
-    }
-
-    std::fs::write(&temp_path, &bytes).map_err(|e| format!("Failed to write temp file: {}", e))?;
-
-    // Extract to temp dir first to read manifest name
-    let temp_extract = unique_cache_path(&cache, "plugin-extract-temp", None);
-    let _ = std::fs::remove_dir_all(&temp_extract);
-
-    let manifest = extract_plugin_zip(&temp_path, &temp_extract)?;
-
-    // Move to final location
-    let final_dir = plugins_dir.join(&manifest.name);
-    replace_plugin_dir(&temp_extract, &final_dir)?;
-
-    // Clean up temp zip
-    let _ = std::fs::remove_file(&temp_path);
-
-    Ok(manifest)
+    result
 }
 
 /// Install plugin from a local zip file.
@@ -185,15 +183,18 @@ pub fn install_from_local_zip(
     std::fs::create_dir_all(&cache)
         .map_err(|e| format!("Failed to create cache directory: {}", e))?;
     let temp_extract = unique_cache_path(&cache, "plugin-local-extract-temp", None);
-    let _ = std::fs::remove_dir_all(&temp_extract);
 
-    let manifest = extract_plugin_zip(zip_path, &temp_extract)?;
+    let result = (|| {
+        let manifest = extract_plugin_zip(zip_path, &temp_extract)?;
+        let final_dir = plugins_dir.join(&manifest.name);
+        replace_plugin_dir(&temp_extract, &final_dir)?;
 
-    // Move to final location
-    let final_dir = plugins_dir.join(&manifest.name);
-    replace_plugin_dir(&temp_extract, &final_dir)?;
+        Ok(manifest)
+    })();
 
-    Ok(manifest)
+    cleanup_temp_artifacts(None, &temp_extract);
+
+    result
 }
 
 fn replace_plugin_dir(temp_extract: &Path, final_dir: &Path) -> Result<(), String> {
@@ -237,6 +238,13 @@ fn unique_cache_path(cache: &Path, prefix: &str, extension: Option<&str>) -> Pat
         None => format!("{prefix}-{}-{nanos}-{counter}", std::process::id()),
     };
     cache.join(file_name)
+}
+
+fn cleanup_temp_artifacts(temp_path: Option<&Path>, temp_extract: &Path) {
+    if let Some(temp_path) = temp_path {
+        let _ = std::fs::remove_file(temp_path);
+    }
+    let _ = std::fs::remove_dir_all(temp_extract);
 }
 
 /// Recursively copy a directory (fallback when rename fails across filesystems)
@@ -412,6 +420,21 @@ mod tests {
             r#"{"setup_answers":{"decidr_governance_mode":"team"}}"#
         );
         assert!(plugin_dir.join("readme.txt").exists());
+    }
+
+    #[test]
+    fn test_cleanup_temp_artifacts_removes_file_and_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let temp_path = tmp.path().join("plugin-download.zip");
+        let temp_extract = tmp.path().join("plugin-extract-temp");
+        std::fs::write(&temp_path, b"zip").unwrap();
+        std::fs::create_dir_all(&temp_extract).unwrap();
+        std::fs::write(temp_extract.join("leftover.txt"), b"temp").unwrap();
+
+        cleanup_temp_artifacts(Some(&temp_path), &temp_extract);
+
+        assert!(!temp_path.exists());
+        assert!(!temp_extract.exists());
     }
 
     #[test]

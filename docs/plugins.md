@@ -521,13 +521,13 @@ If a user declines installation, agents record `do_not_install: true`; if they d
 
 ### Plugin Updates
 
-The `list_plugins` command now compares installed plugin versions against the cached registry and returns an `update_available` field with the new version string when an update exists. The `update_plugin` command downloads and installs the latest version from the registry, replacing the existing plugin.
+The `list_plugins` command now compares installed plugin versions against the cached registry and returns an `update_available` field with the new version string when an update exists. The `update_plugin` command downloads and installs the latest version from the registry, replacing the plugin package contents while preserving the plugin's local `preferences.json` file.
 
 During `init_session`, MCPViews evaluates each pending update against the plugin's update preferences and returns a `plugin_update_actions` object with `auto_update` (proceed immediately) and `ask_user` (prompt user for consent) lists. For `ask_user` plugins, agents present three options: update this time only (`once`), always auto-update (`always`), or skip this version (`skip`), then persist the choice via `save_update_preference`.
 
 ### Plugin Reinstall
 
-Installed plugins can be reinstalled from the registry via the "Reinstall" button in the Plugin Manager or the `reinstall_plugin` IPC command. For registry plugins, this re-downloads and installs the current registry version, replacing the local copy. For local-only plugins (not in any registry), the command verifies the plugin exists but does not re-download.
+Installed plugins can be reinstalled from the registry via the "Reinstall" button in the Plugin Manager or the `reinstall_plugin` IPC command. For registry plugins, this re-downloads and installs the current registry version, replacing the package files while preserving local plugin preferences such as setup answers and update policy. For local-only plugins (not in any registry), the command verifies the plugin exists but does not re-download.
 
 ### Re-authentication
 

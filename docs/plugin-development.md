@@ -454,8 +454,8 @@ sequenceDiagram
     participant MV as MCPViews
 
     Note over Agent,MV: Session Start
-    Agent->>MV: init_session
-    MV->>Agent: Compact plugin_registry index
+    Agent->>MV: init_session(project_path)
+    MV->>Agent: Startup actions + auth/update status + compact context
 
     Note over Agent: Agent needs plugin tools
     Agent->>MV: get_plugin_docs(plugin, filters)
@@ -466,7 +466,7 @@ sequenceDiagram
 
 MCPViews uses a two-tier lazy-loading approach for plugin documentation, reducing session-start token usage:
 
-1. **`init_session`** — Returns built-in (universal) rules, saved setup preference rules for installed plugins, and a compact `plugin_registry` index. Each plugin entry lists its name, summary, tags, tool groups (with tool names and short hints), renderer names, prompt breadcrumbs, and high-level plugin rules. Agents use this index to identify which plugin provides the tools, renderers, rules, or skills they need.
+1. **`init_session`** — Defaults to a lean startup payload with startup-rule reconciliation, plugin auth/update status, organization token status, and compact plugin context. Agents lazy-load core renderer details with `describe_connector`/`describe_tool` and plugin guidance with `get_plugin_docs`/`get_plugin_prompt`. When a legacy full startup catalog is needed, pass `include_runtime_context: true` to include built-in rules, saved setup preference rules, and the compact `plugin_registry` index.
 
 2. **`get_plugin_docs`** — Agents call this to fetch detailed rules for a specific plugin on-demand. Supports filtering by tool group name, individual tool name, or renderer name, so agents can request only the docs they need.
 
@@ -486,7 +486,7 @@ This pattern is useful when you want the same team workflows to work across Code
 
 Traditional agent rules are usually loaded up front from files like `AGENTS.md`, `.cursor/rules`, Claude rules, local skill directories, or project workflow docs. That works, but it means every session pays context for instructions that may be irrelevant.
 
-With MCPViews, `init_session` returns a compact plugin breadcrumb catalog:
+With MCPViews, `init_session` stays lean by default and agents fetch plugin breadcrumbs only when the current task needs them. The opt-in full runtime context includes:
 
 - plugin name, summary, and tags
 - tool group names and short hints
@@ -502,7 +502,9 @@ sequenceDiagram
     participant MCPViews
     participant Plugin as Rules Plugin
 
-    Agent->>MCPViews: init_session
+    Agent->>MCPViews: init_session(project_path)
+    MCPViews-->>Agent: startup_rule_actions + auth/update status
+    Agent->>MCPViews: get_plugin_docs(plugin, filters)
     MCPViews-->>Agent: Compact plugin breadcrumbs
     Agent->>Agent: Match task to prompt or rule summary
     Agent->>MCPViews: get_plugin_prompt(plugin, prompt)
@@ -804,19 +806,23 @@ After adding `renderer_definitions`:
 
 ### What changed
 
-As of commit `ce2de40`, `init_session` no longer returns plugin-specific rules, tool summaries, or renderer definitions. Instead it returns:
+`init_session` no longer returns broader runtime/plugin breadcrumbs by default. The default response returns:
 
-- Built-in (universal) renderer rules (`rich_content`, `structured_data`, `universal_graph`)
-- A compact `plugin_registry` index listing each installed plugin with its name, summary, tags, tool groups, and renderer names
+- Startup-rule reconciliation
+- Plugin auth/update status
+- Organization token status
+- Compact plugin context, such as DecidR active work-session summaries when available
 
-Plugin-specific rules are now fetched on-demand via the new `get_plugin_docs` tool. This keeps session-start token usage minimal and avoids loading documentation for plugins the agent never uses in a given conversation.
+Core renderer and plugin-specific rules are fetched on-demand via `describe_connector`, `describe_tool`, `get_plugin_docs`, and `get_plugin_prompt`. This keeps session-start token usage minimal and avoids loading documentation the agent never uses in a given conversation.
 
 ### What plugin providers need to update
 
-If your agent prompts or instructions tell agents to get all rules from `init_session`, you need to update them to use the two-step flow:
+If your agent prompts or instructions tell agents to get all rules from `init_session`, update them to use the lazy flow:
 
-1. **`init_session`** -- Scan the `plugin_registry` in the response to find the relevant plugin by name or tags.
-2. **`get_plugin_docs`** -- Fetch detailed rules for that plugin, with optional filters for specific tool groups, tools, or renderers.
+1. **`init_session`** -- Reconcile startup rules and inspect auth/update status plus compact plugin context.
+2. **`describe_connector` / `describe_tool`** -- Fetch core renderer and review guidance only when needed.
+3. **`get_plugin_docs` / `get_plugin_prompt`** -- Fetch detailed plugin rules or runbooks only for the plugin/tool/renderer involved in the current task.
+4. **`init_session({ include_runtime_context: true })`** -- Use only when a legacy full startup catalog is needed.
 
 ### Before/After agent prompt example
 
@@ -829,9 +835,12 @@ renderer rules, data hints, and tool rules for all installed plugins.
 **After (new -- lazy-load):**
 ```
 Call init_session at the start of every conversation. The response contains:
-- Built-in renderer rules (rich_content, structured_data, universal_graph)
-- A plugin_registry index listing installed plugins with their tool groups and renderer names
+- Startup-rule reconciliation
+- Plugin auth/update status
+- Organization token status
+- Compact plugin context
 
+When you need core renderer docs, call describe_connector or describe_tool.
 When you need to use a plugin's tools or renderers, call get_plugin_docs with the
 plugin name to fetch detailed rules. You can filter by:
 - groups: ["Search", "Code Analysis"] — fetch rules for a tool group
@@ -841,7 +850,7 @@ plugin name to fetch detailed rules. You can filter by:
 
 ### Note about `mcpviews_setup`
 
-`mcpviews_setup` (the one-time setup tool for first-time users) still returns all rules including plugin rules via the older `gather_session_data` path. First-time setup flows continue to get everything in a single call. Only the per-session `init_session` is slimmed down.
+`mcpviews_setup` (the one-time setup tool for first-time users) still returns all rules including plugin rules via the older `gather_session_data` path. First-time setup flows continue to get everything in a single call. Per-session `init_session` is lean by default, with full runtime context available only by opt-in.
 
 ### Backward compatibility
 
@@ -862,7 +871,7 @@ Per-tool behavioral rules (tool names are auto-prefixed):
 
 ### plugin_rules
 
-High-level workflow rules for the plugin that agents can see every session as compact global breadcrumbs. Unlike `tool_rules` and `plugin_rule_definitions`, legacy `plugin_rules` are included in the `init_session` `plugin_registry` entry and are returned as full rules by `mcpviews_setup` and `get_plugin_docs` regardless of tool/renderer filters.
+High-level workflow rules for the plugin that agents can fetch as compact global breadcrumbs. Unlike `tool_rules` and `plugin_rule_definitions`, legacy `plugin_rules` are included in the opt-in `init_session` full runtime `plugin_registry` entry and are returned as full rules by `mcpviews_setup` and `get_plugin_docs` regardless of tool/renderer filters.
 
 ```json
 {
@@ -873,7 +882,7 @@ High-level workflow rules for the plugin that agents can see every session as co
 }
 ```
 
-Each rule is a plain string. In `mcpviews_setup` and `get_plugin_docs`, plugin rules are returned in the `rules` array with `"category": "plugin"` and `"source": "<plugin-name>"`. They also appear in the `plugin_registry` compact index returned by `init_session`, so agents can see routing guidance without calling `get_plugin_docs`.
+Each rule is a plain string. In `mcpviews_setup` and `get_plugin_docs`, plugin rules are returned in the `rules` array with `"category": "plugin"` and `"source": "<plugin-name>"`. They also appear in the `plugin_registry` compact index returned by `init_session` when `include_runtime_context` is true, but the default startup path expects agents to call `get_plugin_docs` for routing guidance only when a plugin is relevant.
 
 Use `plugin_rules` for workflow routing, runbook triggers, and compact breadcrumbs. Do not copy `plugin_rules` into `AGENTS.md`, `.claude/rules`, `.cursor/rules`, `.windsurfrules`, or other native startup files. Use `startup_rules` for behavior that must exist in agent-native project rules before a session starts. Use `tool_rules` for tool-specific instructions.
 
@@ -922,7 +931,7 @@ Agents remain responsible for how each harness installs rules. For example, Code
 
 Setup questions let a plugin capture a durable preference during `mcpviews_setup` without loading full workflow instructions into every future session. Each question has stable `id` and `question` fields, optional `description`, `guidance`, `default_value`, `recommended_value`, `example_outputs`, and `persist_as_rule_name`, plus an `options` array. Each option can include `value`, `label`, optional `description`, and optional `persisted_rule`.
 
-Agents ask unanswered setup questions one at a time in returned order. Installed plugin questions are asked sequentially by group and by question order; agents should explain the current question conversationally, use the question and option descriptions to help the user choose, include `example_outputs` when present, show only the current question's options, and wait for the user's answer before moving on. After the user answers, agents call `save_setup_preference` with the plugin, question id, and selected option value. MCPViews validates the option against the installed manifest, stores the selected manifest-defined `persisted_rule` in the plugin preference file, and injects saved setup rules into future `init_session` responses while the plugin is installed. Put long procedures in `prompt_definitions` and keep persisted setup rules short.
+Agents ask unanswered setup questions one at a time in returned order. Installed plugin questions are asked sequentially by group and by question order; agents should explain the current question conversationally, use the question and option descriptions to help the user choose, include `example_outputs` when present, show only the current question's options, and wait for the user's answer before moving on. After the user answers, agents call `save_setup_preference` with the plugin, question id, and selected option value. MCPViews validates the option against the installed manifest, stores the selected manifest-defined `persisted_rule` in the plugin preference file, and injects saved setup rules into future `mcpviews_setup` responses and `init_session` full runtime context while the plugin is installed. Put long procedures in `prompt_definitions` and keep persisted setup rules short.
 
 ## Plugin Prompts
 

@@ -86,7 +86,7 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
             }
             instructions.push_str("\n");
         }
-        instructions.push_str("\n**Quick selection guide:** Use `rich_content` for prose, diagrams, simple tables, and read-only embedded universal_graph charts. Use `structured_data` for standalone interactive tables with explicit `tables[] -> columns[]/rows[] -> cells/children` structure. Use `universal_graph` for standalone read-only graph packs and dashboards; call `describe_tool(\"universal_graph\")` for the current graph schema before complex payloads. Use `push_content` with a renderer name for compatibility when direct renderer tools are unavailable. Use `push_review` with `structured_data` when the user must approve row/column/cell changes; rich_content review payloads may include read-only graph context. **For substantive or risky MCP mutation batches, such as high-impact, destructive, ambiguous, hard-to-undo, production/customer-visible, or row-level approval workflows, use `structured_data` with `push_review` to let the user accept/reject each action individually. Routine low-risk creates and minor edits do not need review when targets and changes are clear; count alone is not a review trigger.** In every push_review payload, visible targets must use human-readable names, titles, paths, or display labels rather than opaque backend IDs. `push_review` returns immediately with a `session_id` — call `await_review(session_id)` to wait for the user's decision. If `await_review` returns pending before the user decides, call it again — the session persists on the server. Call `init_session` for full renderer documentation, hosted breadcrumb discovery, and examples.\n");
+        instructions.push_str("\n**Quick selection guide:** Use `rich_content` for prose, diagrams, simple tables, and read-only embedded universal_graph charts. Use `structured_data` for standalone interactive tables with explicit `tables[] -> columns[]/rows[] -> cells/children` structure. Use `universal_graph` for standalone read-only graph packs and dashboards; call `describe_tool(\"universal_graph\")` for the current graph schema before complex payloads. Use `push_content` with a renderer name for compatibility when direct renderer tools are unavailable. Use `push_review` with `structured_data` when the user must approve row/column/cell changes; rich_content review payloads may include read-only graph context. **For substantive or risky MCP mutation batches, such as high-impact, destructive, ambiguous, hard-to-undo, production/customer-visible, or row-level approval workflows, use `structured_data` with `push_review` to let the user accept/reject each action individually. Routine low-risk creates and minor edits do not need review when targets and changes are clear; count alone is not a review trigger.** In every push_review payload, visible targets must use human-readable names, titles, paths, or display labels rather than opaque backend IDs. `push_review` returns immediately with a `session_id` — call `await_review(session_id)` to wait for the user's decision. If `await_review` returns pending before the user decides, call it again — the session persists on the server. Call `init_session` for lean startup verification, then lazy-load renderer details with `describe_connector`/`describe_tool` when needed.\n");
     }
 
     instructions.push_str("\n## Sub-Agent Restriction\n\n");
@@ -101,19 +101,21 @@ async fn build_instructions(state: &Arc<TokioMutex<AsyncAppState>>) -> String {
     instructions.push_str(
         "Push complex explanations to the companion window instead of explaining \
          them inline in chat. Call `init_session` at the start of every conversation, \
-         chat session, or interaction to get renderer rules, plugin status, and the \
-         list of available tools.\n",
+         chat session, or interaction to reconcile startup rules and get plugin status; \
+         use `describe_connector`, `describe_tool`, `get_plugin_docs`, or \
+         `include_runtime_context=true` only when broader runtime details are needed.\n",
     );
 
     instructions.push_str("\n## Session Initialization\n\n");
     instructions.push_str(
         "IMPORTANT: You MUST call `init_session` at the start of every conversation to receive \
-         full renderer documentation, payload examples, behavioral rules, plugin status, and hosted \
-         breadcrumb discovery. The brief descriptions above are insufficient for correct usage — \
-         `init_session` returns the complete reference. For renderer discovery, inspect \
+         startup-rule reconciliation, plugin auth/update status, and compact plugin context. \
+         The default response is intentionally lean. For renderer discovery, inspect \
          `describe_connector` with key `mcpviews-core` and `describe_tool` for tools such as \
-         `universal_graph`. If this is your first time using MCPViews, call `mcpviews_setup` \
-         to configure automatic session initialization for your platform.\n"
+         `universal_graph`; for plugin guidance, call `get_plugin_docs` or `get_plugin_prompt`; \
+         for legacy full session breadcrumbs, call `init_session` with \
+         `include_runtime_context=true`. If this is your first time using MCPViews, call \
+         `mcpviews_setup` to configure automatic session initialization for your platform.\n",
     );
 
     // Check for plugins needing authentication

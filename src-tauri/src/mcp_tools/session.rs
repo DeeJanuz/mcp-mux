@@ -59,6 +59,57 @@ async fn gather_slim_session_data(
     )
 }
 
+async fn gather_startup_session_data(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+) -> (Vec<Value>, Vec<Value>, Value, Value) {
+    super::ensure_registry_fresh(state).await;
+
+    let state_guard = state.lock().await;
+    let registry = state_guard.inner.plugin_registry.lock().unwrap();
+    let cached_registry = state_guard.inner.latest_registry.lock().unwrap();
+    let store = state_guard.inner.plugin_store();
+    let plugin_status = super::collect_plugin_auth_status(&registry.manifests);
+    let org_tokens = super::collect_org_tokens(&registry.manifests);
+    let plugin_updates = super::collect_plugin_updates(&registry.manifests, &cached_registry);
+    let plugin_update_actions = super::evaluate_update_preferences(&plugin_updates, store);
+
+    (
+        plugin_status,
+        plugin_updates,
+        plugin_update_actions,
+        org_tokens,
+    )
+}
+
+fn include_runtime_context(arguments: &Value) -> bool {
+    arguments
+        .get("include_runtime_context")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn runtime_context_status(include_runtime_context: bool) -> Value {
+    if include_runtime_context {
+        return serde_json::json!({
+            "mode": "full",
+            "instruction": "Full runtime breadcrumbs were included because include_runtime_context was true. For task-specific details, still prefer describe_connector, describe_tool, get_plugin_docs, and get_plugin_prompt over carrying unrelated docs."
+        });
+    }
+
+    serde_json::json!({
+        "mode": "lean",
+        "omitted": ["rules", "plugin_registry"],
+        "instruction": "Default init_session is lean: startup-rule reconciliation, auth/update status, org token summary, and compact ephemeral plugin context only. Lazy-load broader runtime/plugin context when needed.",
+        "full_context_request": {
+            "tool": "init_session",
+            "arguments": {
+                "include_runtime_context": true
+            }
+        },
+        "lazy_tools": ["describe_connector", "describe_tool", "describe_tool_group", "get_plugin_docs", "get_plugin_prompt"]
+    })
+}
+
 pub(super) async fn call_init_session(
     arguments: Value,
     state: &Arc<TokioMutex<AsyncAppState>>,
@@ -68,33 +119,62 @@ pub(super) async fn call_init_session(
         .and_then(|v| v.as_str())
         .unwrap_or("generic");
     let project_path = arguments.get("project_path").and_then(|v| v.as_str());
+    let include_runtime_context = include_runtime_context(&arguments);
 
-    let (rules, plugin_status, plugin_registry, plugin_updates, plugin_update_actions, org_tokens) =
-        gather_slim_session_data(state).await;
     let startup_rule_actions =
         startup_rule_actions_for_project(agent_type, project_path, state).await?;
     let decidr_context = collect_decidr_plugin_context(state).await;
 
-    let mut response = serde_json::json!({
-        "rules": rules,
-        "rules_version": super::RULES_VERSION,
-        "plugin_status": plugin_status,
-        "org_tokens": org_tokens,
-        "persistence_instructions": super::persistence_instructions(agent_type),
-        "plugin_registry": plugin_registry,
-        "plugin_updates": plugin_updates,
-        "plugin_update_actions": plugin_update_actions,
-        "startup_rule_actions": startup_rule_actions,
-        "plugin_contexts": {
-            "decidr": decidr_context,
-        },
-    });
+    let mut response = if include_runtime_context {
+        let (
+            rules,
+            plugin_status,
+            plugin_registry,
+            plugin_updates,
+            plugin_update_actions,
+            org_tokens,
+        ) = gather_slim_session_data(state).await;
+        let mut response = serde_json::json!({
+            "rules": rules,
+            "plugin_registry": plugin_registry,
+            "rules_update": {
+                "current_version": super::RULES_VERSION,
+                "instruction": "Runtime MCPViews rules are session breadcrumbs only. Do not persist the `rules` array, plugin_rules, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, or tool docs into native startup rule files. Reconcile only `startup_rule_actions` into harness-native startup rules, then record state with save_startup_rule_state."
+            },
+            "plugin_status": plugin_status,
+            "org_tokens": org_tokens,
+            "plugin_updates": plugin_updates,
+            "plugin_update_actions": plugin_update_actions,
+        });
+        response["runtime_context"] = runtime_context_status(true);
+        response
+    } else {
+        let (plugin_status, plugin_updates, plugin_update_actions, org_tokens) =
+            gather_startup_session_data(state).await;
+        let mut response = serde_json::json!({
+            "plugin_status": plugin_status,
+            "org_tokens": org_tokens,
+            "plugin_updates": plugin_updates,
+            "plugin_update_actions": plugin_update_actions,
+        });
+        response["runtime_context"] = runtime_context_status(false);
+        response
+    };
 
-    response.as_object_mut().unwrap().insert(
-        "rules_update".to_string(),
+    let response_obj = response.as_object_mut().unwrap();
+    response_obj.insert(
+        "rules_version".to_string(),
+        serde_json::json!(super::RULES_VERSION),
+    );
+    response_obj.insert(
+        "persistence_instructions".to_string(),
+        serde_json::json!(super::persistence_instructions(agent_type)),
+    );
+    response_obj.insert("startup_rule_actions".to_string(), startup_rule_actions);
+    response_obj.insert(
+        "plugin_contexts".to_string(),
         serde_json::json!({
-            "current_version": super::RULES_VERSION,
-            "instruction": "Runtime MCPViews rules are session breadcrumbs only. Do not persist the `rules` array, plugin_rules, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, or tool docs into native startup rule files. Reconcile only `startup_rule_actions` into harness-native startup rules, then record state with save_startup_rule_state."
+            "decidr": decidr_context,
         }),
     );
 
@@ -487,23 +567,52 @@ async fn startup_rule_actions_for_project(
             serde_json::json!(super::startup_rules::CODEX_NATIVE_RULE_FILE);
         actions["native_rule_file_path"] =
             serde_json::json!(native_rule_file_path.display().to_string());
-        actions["native_rule_block"] = serde_json::json!(
-            super::startup_rules::build_codex_startup_rules_block_for_project(
-                &config,
-                &resolved_rules,
-                existing_native_rule_file.as_deref(),
-            )
-        );
-        actions["codex_rule_file_context"] =
-            super::startup_rules::codex_native_rule_context(&project_path);
-        actions["native_rule_block_instruction"] = serde_json::json!(
-            format!(
-                "For Codex-style agents, install/update the returned `## MCPViews Startup Rules` block in `{}` for the supplied project_path. Replace any managed `## MCPViews` block containing `<!-- mcpviews-rules-version: ... -->` in that file. Preserve user-authored content outside managed MCPViews blocks. The block must contain startup rules only. Do not treat a parent AGENTS.md install as sufficient for a nested Codex project; rerun setup with the nested project_path and install there too.",
-                native_rule_file_path.display()
-            )
-        );
+        let codex_context = super::startup_rules::codex_native_rule_context(&project_path);
+        if should_include_codex_native_rule_block(&actions, &codex_context) {
+            actions["native_rule_block"] = serde_json::json!(
+                super::startup_rules::build_codex_startup_rules_block_for_project(
+                    &config,
+                    &resolved_rules,
+                    existing_native_rule_file.as_deref(),
+                )
+            );
+            actions["native_rule_block_instruction"] = serde_json::json!(
+                format!(
+                    "For Codex-style agents, install/update the returned `## MCPViews Startup Rules` block in `{}` for the supplied project_path. Replace any managed `## MCPViews` block containing `<!-- mcpviews-rules-version: ... -->` in that file. Preserve user-authored content outside managed MCPViews blocks. The block must contain startup rules only. Do not treat a parent AGENTS.md install as sufficient for a nested Codex project; rerun setup with the nested project_path and install there too.",
+                    native_rule_file_path.display()
+                )
+            );
+        } else {
+            actions["native_rule_block_omitted"] = serde_json::json!({
+                "reason": "startup_rules_current",
+                "instruction": "Native startup rules are already current for this project. MCPViews omits native_rule_block in current state to reduce init_session context."
+            });
+        }
+        actions["codex_rule_file_context"] = codex_context;
     }
     Ok(actions)
+}
+
+fn should_include_codex_native_rule_block(actions: &Value, codex_context: &Value) -> bool {
+    let project_rule_file = codex_context
+        .get("project_rule_file")
+        .and_then(Value::as_object);
+    let contains_startup_rules = project_rule_file
+        .and_then(|file| file.get("contains_mcpviews_startup_rules"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let contains_legacy_rules = project_rule_file
+        .and_then(|file| file.get("contains_legacy_mcpviews_rules"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    actions
+        .get("status")
+        .and_then(Value::as_str)
+        .map(|status| status != "current")
+        .unwrap_or(true)
+        || !contains_startup_rules
+        || contains_legacy_rules
 }
 
 fn project_path_required_startup_rule_actions() -> Value {
@@ -633,6 +742,71 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Rerun init_session or mcpviews_setup with project_path"));
+    }
+
+    #[test]
+    fn test_init_session_runtime_context_defaults_to_lean() {
+        assert!(!include_runtime_context(&serde_json::json!({})));
+        assert!(include_runtime_context(&serde_json::json!({
+            "include_runtime_context": true
+        })));
+
+        let lean = runtime_context_status(false);
+        assert_eq!(lean["mode"], "lean");
+        assert!(lean["omitted"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::String("plugin_registry".to_string())));
+        assert_eq!(
+            lean["full_context_request"]["arguments"]["include_runtime_context"],
+            true
+        );
+
+        let full = runtime_context_status(true);
+        assert_eq!(full["mode"], "full");
+    }
+
+    #[test]
+    fn test_codex_native_rule_block_omitted_only_when_current_and_present() {
+        let current_actions = serde_json::json!({ "status": "current" });
+        let current_context = serde_json::json!({
+            "project_rule_file": {
+                "contains_mcpviews_startup_rules": true,
+                "contains_legacy_mcpviews_rules": false
+            }
+        });
+        assert!(!should_include_codex_native_rule_block(
+            &current_actions,
+            &current_context
+        ));
+
+        let needs_install_actions = serde_json::json!({ "status": "needs_install" });
+        assert!(should_include_codex_native_rule_block(
+            &needs_install_actions,
+            &current_context
+        ));
+
+        let legacy_context = serde_json::json!({
+            "project_rule_file": {
+                "contains_mcpviews_startup_rules": true,
+                "contains_legacy_mcpviews_rules": true
+            }
+        });
+        assert!(should_include_codex_native_rule_block(
+            &current_actions,
+            &legacy_context
+        ));
+
+        let missing_context = serde_json::json!({
+            "project_rule_file": {
+                "contains_mcpviews_startup_rules": false,
+                "contains_legacy_mcpviews_rules": false
+            }
+        });
+        assert!(should_include_codex_native_rule_block(
+            &current_actions,
+            &missing_context
+        ));
     }
 
     #[test]

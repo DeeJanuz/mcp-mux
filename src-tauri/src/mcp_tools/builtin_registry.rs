@@ -309,7 +309,7 @@ fn describe_tool_definition(_: &[RendererDef]) -> Value {
 fn init_session_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "init_session",
-        "description": "Initialize MCPViews for this session. Returns runtime breadcrumbs, plugin auth status, and startup-rule reconciliation actions. Call at the start of every new agent session; pass project_path so MCPViews can evaluate mcpviews-init.json.",
+        "description": "Initialize MCPViews for this session. Defaults to lean startup-rule reconciliation, plugin auth/update status, and compact ephemeral context. Call at the start of every new agent session; pass project_path so MCPViews can evaluate mcpviews-init.json. Set include_runtime_context=true only when full runtime breadcrumbs and plugin registry details are needed.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -320,6 +320,10 @@ fn init_session_definition(_: &[RendererDef]) -> Value {
                 "project_path": {
                     "type": "string",
                     "description": "Optional absolute path to the current project root. When provided, MCPViews creates/loads mcpviews-init.json there and returns startup rule install/update actions."
+                },
+                "include_runtime_context": {
+                    "type": "boolean",
+                    "description": "Optional. Defaults to false. When true, includes full runtime breadcrumbs such as rules, plugin_registry, and rules_update. Leave false for the normal lean startup path and lazy-load details with describe_connector, describe_tool, get_plugin_docs, or get_plugin_prompt."
                 }
             }
         }
@@ -374,7 +378,7 @@ fn install_plugin_definition(_: &[RendererDef]) -> Value {
 fn get_plugin_docs_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "get_plugin_docs",
-        "description": "Fetch detailed usage docs for a plugin's tools and renderers. Call after init_session identifies which plugin you need.",
+        "description": "Fetch detailed usage docs for a plugin's tools and renderers. Call after tool discovery, plugin status, user intent, or opt-in full runtime context identifies which plugin you need.",
         "inputSchema": {
             "type": "object",
             "properties": {

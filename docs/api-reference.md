@@ -961,17 +961,17 @@ Non-blocking status check for a review session. Returns the current status witho
 
 ### `init_session`
 
-Initialize MCPViews for the current session. Returns runtime breadcrumbs, plugin auth status, hosted discovery, and startup-rule reconciliation actions. Must be called at the start of every conversation, chat session, or interaction -- not just once. Pass `project_path` so startup rules can be evaluated against the project ledger.
+Initialize MCPViews for the current session. By default it returns a lean startup payload: startup-rule reconciliation, plugin auth/update status, organization token status, and compact ephemeral plugin context. Must be called at the start of every conversation, chat session, or interaction -- not just once. Pass `project_path` so startup rules can be evaluated against the project ledger.
 
-The following diagram shows the two-tier lazy-loading approach for plugin documentation plus hosted breadcrumb discovery for core renderer tools.
+The following diagram shows the default local-rule-first flow and the lazy-loading path for broader runtime or plugin documentation.
 
 ```mermaid
 sequenceDiagram
     participant Agent as Agent
     participant MV as MCPViews
 
-    Agent->>MV: init_session
-    MV->>Agent: Compact plugin_registry index + built-in rules
+    Agent->>MV: init_session(project_path)
+    MV->>Agent: Startup actions + auth/update status + compact plugin_contexts
     Agent->>MV: describe_connector(key: "mcpviews-core")
     MV->>Agent: Core renderer/review/discovery breadcrumbs
     Agent->>MV: describe_tool(name: "universal_graph")
@@ -979,6 +979,10 @@ sequenceDiagram
     Note over Agent: Agent identifies needed plugin
     Agent->>MV: get_plugin_docs(plugin, filters)
     MV->>Agent: Detailed plugin rules + data hints
+    opt Legacy full startup context needed
+        Agent->>MV: init_session(include_runtime_context: true)
+        MV->>Agent: rules + plugin_registry + rules_update
+    end
 ```
 
 **Parameters:**
@@ -986,35 +990,11 @@ sequenceDiagram
 |-------|------|----------|-------------|
 | `agent_type` | string | No | The agent platform calling this tool. Supported: `claude_code`, `claude_desktop`, `codex`, `cursor`, `windsurf`, `opencode`, `antigravity`. Tailors startup-rule installation instructions. |
 | `project_path` | string | No | Absolute path to the current project root. When supplied, MCPViews creates/loads `<project_path>/mcpviews-init.json` and returns `startup_rule_actions` for core and plugin startup rule reconciliation. |
+| `include_runtime_context` | boolean | No | Defaults to `false`. When `true`, includes the broader runtime breadcrumb payload (`rules`, `plugin_registry`, and `rules_update`). Leave false for normal startup and lazy-load details with `describe_connector`, `describe_tool`, `get_plugin_docs`, or `get_plugin_prompt`. |
 
-**Response:**
+**Default response:**
 ```json
 {
-  "rules": [
-    {
-      "name": "renderer_selection",
-      "category": "system",
-      "source": "built-in",
-      "rule": "When displaying content in MCPViews, choose the renderer based on data shape..."
-    },
-    {
-      "name": "bulk_action_review",
-      "category": "system",
-      "source": "built-in",
-      "rule": "Use push_review for MCP mutations only when review adds meaningful safety or control..."
-    },
-    {
-      "name": "rich_content_usage",
-      "category": "renderer",
-      "source": "built-in",
-      "renderer": "rich_content",
-      "description": "Universal markdown display with mermaid diagrams",
-      "scope": "universal",
-      "data_hint": "{ \"title\": \"heading\", \"body\": \"markdown\" }",
-      "tools": [],
-      "rule": "When presenting implementation plans..."
-    }
-  ],
   "rules_version": "24",
   "plugin_status": [
     {
@@ -1026,22 +1006,6 @@ sequenceDiagram
     }
   ],
   "persistence_instructions": "Install/update only startup rules returned in startup_rule_actions...",
-  "plugin_registry": [
-    {
-      "name": "my-plugin",
-      "summary": "my-plugin plugin",
-      "tags": ["search-results", "code-units"],
-      "tool_groups": [
-        {
-          "name": "Search Results",
-          "hint": "Search the codebase for matching code snippets...",
-          "tools": ["search_codebase", "vector_search"]
-        }
-      ],
-      "renderers": ["search_results", "code_units"],
-      "plugin_rules": ["Always prefer vector search for semantic queries"]
-    }
-  ],
   "plugin_updates": [
     {
       "name": "my-plugin",
@@ -1076,6 +1040,24 @@ sequenceDiagram
       "instruction": "Use lazy always-on DecidR Active Work Sessions for cross-agent handoff..."
     }
   },
+  "runtime_context": {
+    "mode": "lean",
+    "omitted": ["rules", "plugin_registry"],
+    "instruction": "Default init_session is lean...",
+    "full_context_request": {
+      "tool": "init_session",
+      "arguments": {
+        "include_runtime_context": true
+      }
+    },
+    "lazy_tools": [
+      "describe_connector",
+      "describe_tool",
+      "describe_tool_group",
+      "get_plugin_docs",
+      "get_plugin_prompt"
+    ]
+  },
   "startup_rule_actions": {
     "status": "needs_install",
     "project_path": "/path/to/project",
@@ -1103,7 +1085,42 @@ sequenceDiagram
     },
     "native_rule_block": "## MCPViews Startup Rules\n\n<!-- mcpviews-startup-rules-schema: 1 -->\n...",
     "instruction": "Install or update only startup_rule_actions.needs_install and startup_rule_actions.auto_update..."
+  }
+}
+```
+
+When `include_runtime_context` is `true`, the response additionally includes:
+
+```json
+{
+  "runtime_context": {
+    "mode": "full",
+    "instruction": "Full runtime breadcrumbs were included..."
   },
+  "rules": [
+    {
+      "name": "renderer_selection",
+      "category": "system",
+      "source": "built-in",
+      "rule": "When displaying content in MCPViews, choose the renderer based on data shape..."
+    }
+  ],
+  "plugin_registry": [
+    {
+      "name": "my-plugin",
+      "summary": "my-plugin plugin",
+      "tags": ["search-results", "code-units"],
+      "tool_groups": [
+        {
+          "name": "Search Results",
+          "hint": "Search the codebase for matching code snippets...",
+          "tools": ["search_codebase", "vector_search"]
+        }
+      ],
+      "renderers": ["search_results", "code_units"],
+      "plugin_rules": ["Always prefer vector search for semantic queries"]
+    }
+  ],
   "rules_update": {
     "current_version": "24",
     "instruction": "Runtime MCPViews rules are session breadcrumbs only. Do not persist the rules array..."
@@ -1111,11 +1128,13 @@ sequenceDiagram
 }
 ```
 
-The `rules` array now contains built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers -- and saved setup preference rules for installed plugins. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
+The `runtime_context` object tells the agent whether it received the default lean payload or the opt-in full payload. In lean mode, `rules` and `plugin_registry` are omitted intentionally. Use `describe_connector`, `describe_tool`, `describe_tool_group`, `get_plugin_docs`, and `get_plugin_prompt` to load the needed subset.
+
+When `include_runtime_context` is `true`, the `rules` array contains built-in (universal) rules -- the `renderer_selection` and `bulk_action_review` system rules, plus rules for universal-scope renderers -- and saved setup preference rules for installed plugins. Plugin-specific rules are fetched on-demand via `get_plugin_docs`.
 
 The `rules_version` string tracks the current runtime breadcrumb set. Runtime `rules`, `plugin_rules`, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, and tool docs must not be written into native startup rule files. Native rule files should contain only explicit `startup_rules` returned through `startup_rule_actions`.
 
-The `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, tags, legacy global `plugin_rules`, and structured plugin rules marked `always_include`. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are also exposed through the hosted breadcrumb catalog; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
+When `include_runtime_context` is `true`, the `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, tags, legacy global `plugin_rules`, and structured plugin rules marked `always_include`. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are exposed through the hosted breadcrumb catalog in both modes; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
 The `plugin_contexts.decidr` object is fail-open and read-only during init. It returns active work-session summaries, latest feedback, preferences, capture defaults, and capture instructions when DecidR auth and tools are available; otherwise it returns a status such as `auth_missing`, `auth_unavailable`, `tool_unavailable`, `timeout`, or `error` with the same capture defaults and instruction shape. `init_session` never creates an empty DecidR work session.
 
@@ -1127,13 +1146,13 @@ The `startup_rule_actions` object evaluates MCPViews core startup rules plus plu
 
 ### `get_plugin_docs`
 
-Fetch detailed usage docs for a plugin's tools and renderers. Call after `init_session` identifies which plugin you need. Returns plugin-specific renderer rules, tool rules, global plugin breadcrumbs, and matching structured plugin breadcrumbs, optionally filtered by group, tool, or renderer name.
+Fetch detailed usage docs for a plugin's tools and renderers. Call after tool discovery, plugin status, user intent, or opt-in full runtime context identifies which plugin you need. Returns plugin-specific renderer rules, tool rules, global plugin breadcrumbs, and matching structured plugin breadcrumbs, optionally filtered by group, tool, or renderer name.
 
 **Parameters:**
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `plugin` | string | Yes | Plugin name (e.g., `"decidr"`, `"my-plugin"`). |
-| `groups` | string[] | No | Specific tool group names to fetch (e.g., `["Search", "Code Analysis"]`). Group names come from `plugin_registry[].tool_groups[].name` in the `init_session` response. |
+| `groups` | string[] | No | Specific tool group names to fetch (e.g., `["Search", "Code Analysis"]`). Group names come from plugin docs, tool discovery, or `plugin_registry[].tool_groups[].name` when `init_session` is called with `include_runtime_context: true`. |
 | `tools` | string[] | No | Specific tool names to fetch, unprefixed (e.g., `["search_codebase"]`). |
 | `renderers` | string[] | No | Specific renderer names to fetch (e.g., `["code_units", "search_results"]`). |
 

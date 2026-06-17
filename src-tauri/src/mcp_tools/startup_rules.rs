@@ -306,26 +306,32 @@ pub(crate) fn evaluate_startup_rule_actions(
         match config.startup_rules.get(&rule.key) {
             None => {
                 if rule.should_prompt_install {
-                    needs_install.push(rule_action(rule, None, None));
+                    needs_install.push(rule_action(rule, None, None, true));
                 } else {
                     suppressed.push(rule_action(
                         rule,
                         None,
                         Some("fresh_install_suppressed_by_setup_answer"),
+                        false,
                     ));
                 }
             }
             Some(state) if state.do_not_install && state.locations.is_empty() => {
-                suppressed.push(rule_action(rule, Some(state), Some("do_not_install")));
+                suppressed.push(rule_action(
+                    rule,
+                    Some(state),
+                    Some("do_not_install"),
+                    false,
+                ));
             }
             Some(state) if state.rule_version == rule.version && state.rule_hash == rule.hash => {
-                current.push(rule_action(rule, Some(state), None));
+                current.push(rule_action(rule, Some(state), None, false));
             }
             Some(state) if state.do_not_update => {
-                suppressed.push(rule_action(rule, Some(state), Some("do_not_update")));
+                suppressed.push(rule_action(rule, Some(state), Some("do_not_update"), false));
             }
             Some(state) => {
-                auto_update.push(rule_action(rule, Some(state), None));
+                auto_update.push(rule_action(rule, Some(state), None, true));
             }
         }
     }
@@ -673,6 +679,7 @@ fn rule_action(
     rule: &ResolvedStartupRule,
     state: Option<&StartupRuleState>,
     reason: Option<&str>,
+    include_rule_text: bool,
 ) -> Value {
     let mut action = serde_json::json!({
         "key": rule.key,
@@ -682,8 +689,11 @@ fn rule_action(
         "description": rule.description,
         "rule_version": rule.version,
         "rule_hash": rule.hash,
-        "rule": rule.rule,
     });
+
+    if include_rule_text {
+        action["rule"] = Value::String(rule.rule.clone());
+    }
 
     if let Some(reason) = reason {
         action["reason"] = Value::String(reason.to_string());
@@ -837,6 +847,10 @@ mod tests {
         let empty = ProjectStartupRulesConfig::default();
         let actions = evaluate_startup_rule_actions(&empty, &[rule.clone()]);
         assert_eq!(actions["needs_install"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            actions["needs_install"].as_array().unwrap()[0]["rule"],
+            "Do the thing."
+        );
 
         let mut config = ProjectStartupRulesConfig::default();
         config.startup_rules.insert(
@@ -858,10 +872,21 @@ mod tests {
         );
         let actions = evaluate_startup_rule_actions(&config, &[rule.clone()]);
         assert_eq!(actions["current"].as_array().unwrap().len(), 1);
+        assert!(actions["current"].as_array().unwrap()[0]
+            .get("rule")
+            .is_none());
+        assert_eq!(
+            actions["current"].as_array().unwrap()[0]["rule_hash"],
+            rule.hash
+        );
 
         config.startup_rules.get_mut(&rule.key).unwrap().rule_hash = "sha256:old".to_string();
         let actions = evaluate_startup_rule_actions(&config, &[rule.clone()]);
         assert_eq!(actions["auto_update"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            actions["auto_update"].as_array().unwrap()[0]["rule"],
+            "Do the thing."
+        );
 
         config
             .startup_rules

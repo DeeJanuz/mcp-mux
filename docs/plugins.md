@@ -43,7 +43,7 @@ A plugin manifest is a JSON file with the following structure:
 | `registry_index` | object | No | Pre-authored compact index for the `init_session` plugin registry. Contains `summary` (string), `tags` (string[]), `tool_groups` (ToolGroupEntry[]), and `renderer_names` (string[]). If omitted, MCPViews auto-derives the index from the `renderers` map and tool cache. |
 | `mcp` | object | No | MCP server connection configuration. If omitted, the plugin provides renderers only (no remote tools). |
 | `prompt_definitions` | PromptDef[] | No | Plugin prompt definitions for guided workflows. Each entry defines a prompt that can be discovered via the MCP `prompts/list` protocol and fetched via `get_plugin_prompt` or `prompts/get`. Prompts are markdown files bundled with the plugin that support `{{arg}}` template substitution. |
-| `plugin_rules` | string[] | No | Compact global workflow breadcrumbs for this plugin. These are returned by `init_session`, `mcpviews_setup`, and `get_plugin_docs` so agents can decide when to fetch prompts or plugin docs. Keep these short and broadly useful. Use `plugin_rule_definitions` for detailed tool/group-specific workflow guidance. |
+| `plugin_rules` | string[] | No | Compact global workflow breadcrumbs for this plugin. These are returned by `mcpviews_setup`, `get_plugin_docs`, and `init_session` only when `include_runtime_context` is true, so agents can decide when to fetch prompts or plugin docs without forcing every startup to carry them. Keep these short and broadly useful. Use `plugin_rule_definitions` for detailed tool/group-specific workflow guidance. |
 | `plugin_rule_definitions` | PluginRuleDefinition[] | No | Filterable plugin-level workflow breadcrumbs. Each entry has `id`, `rule`, optional `tools`, optional `groups`, optional `tags`, and optional `always_include`. `get_plugin_docs` includes matching entries when called with tool or group filters; `init_session` includes only entries marked `always_include`. |
 | `startup_rules` | StartupRule[] | No | Agent-native startup rules that should be installed into the current project's harness-specific rule files before the next session starts. `init_session`/`mcpviews_setup` evaluate these against project-local `mcpviews-init.json` when called with `project_path`, then return `startup_rule_actions` for install/update/skip handling. |
 | `setup_questions` | SetupQuestion[] | No | Optional setup-time questions returned by `mcpviews_setup` when unanswered. Questions can include optional `guidance`, `recommended_value`, and `example_outputs` fields for richer setup prompts. Agents should ask exactly one question at a time in returned order, explain the current choice using the question and option descriptions, then call `save_setup_preference` with the plugin, question id, and selected option value. MCPViews persists only the selected option's compact manifest-defined `persisted_rule`, not every option or the full workflow. |
@@ -131,7 +131,7 @@ Each `PromptArg` has:
 
 MCPViews uses a two-tier lazy-loading approach for plugin documentation:
 
-1. **`init_session`** returns built-in (universal) rules, saved setup preference rules for installed plugins, and a compact `plugin_registry` index listing each plugin's name, summary, tags, tool groups, and renderer names. This keeps session-start token usage minimal.
+1. **`init_session`** defaults to a lean startup payload with startup-rule reconciliation, plugin auth/update status, organization token status, and compact plugin context. Agents should lazy-load core renderer details with `describe_connector`/`describe_tool` and plugin guidance with `get_plugin_docs`/`get_plugin_prompt`. When a legacy full startup catalog is needed, pass `include_runtime_context: true` to include built-in rules, saved setup preference rules, and the compact `plugin_registry` index.
 
 2. **`get_plugin_docs`** fetches detailed rules for a specific plugin on-demand, with optional filters by tool group, tool name, or renderer name. Agents call this when they need to use a plugin's tools or renderers.
 
@@ -481,7 +481,7 @@ Each plugin can have per-plugin preferences stored in `~/.mcpviews/plugins/{plug
 - **`update_policy`**: `"always"` (auto-update), `"ask"` (prompt user each time, default), or `"skip"` (skip a specific version)
 - **`update_policy_version`**: When policy is `"skip"`, the version to skip. New versions beyond this will re-prompt.
 - **`update_policy_source`**: `"chat"` (set via MCP tool) or `"ui"` (set via Plugin Manager toggle)
-- **`setup_answers`**: Map of setup question ids to selected option values and manifest-defined rule snapshots. Saved setup rules are included in future `init_session` responses while the plugin is installed.
+- **`setup_answers`**: Map of setup question ids to selected option values and manifest-defined rule snapshots. Saved setup rules are included in future `mcpviews_setup` responses and in `init_session` full runtime context while the plugin is installed.
 
 Preferences are managed via:
 - The `save_update_preference` MCP tool (for agent-driven consent flows during chat)

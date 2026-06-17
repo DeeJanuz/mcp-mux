@@ -1249,7 +1249,7 @@ Save the user's selected answer for an installed plugin setup question. Used by 
 **Behavior:**
 - Rejects unknown plugins, unknown setup questions, unknown option values, and options without `persisted_rule`.
 - Stores the selected value and selected rule snapshot in `~/.mcpviews/plugins/{plugin-name}/preferences.json`.
-- Future `init_session` calls include the saved setup rule while the plugin remains installed.
+- Future `init_session` calls with `include_runtime_context: true` include the saved setup rule while the plugin remains installed; default lean `init_session` omits runtime rules and plugin registry details.
 - `mcpviews_setup` skips already answered setup questions by default, so users are not asked the same question every setup run.
 - Agent-native rule files may mirror the selected rule for compatibility, but the MCPViews preference store is the product source of truth.
 

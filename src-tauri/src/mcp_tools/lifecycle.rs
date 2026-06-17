@@ -429,7 +429,7 @@ pub(super) async fn call_save_setup_preference(
                 "value": value,
                 "persist_as_rule_name": rule_name,
                 "message": format!(
-                    "Setup preference saved for '{}' question '{}'. Future init_session calls will include the saved setup rule while the plugin is installed.",
+                    "Setup preference saved for '{}' question '{}'. Future full-context init_session calls include the saved setup rule while the plugin is installed; default lean init_session stays limited to startup reconciliation and compact plugin context.",
                     plugin,
                     question_id
                 ),

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Added compact DecidR Active Work Session context to default `init_session` responses so fresh agents can recover cross-session handoff state without storing raw transcript.
+
+### Changed
+- Made default `init_session` lean by omitting runtime `rules`, `plugin_registry`, and `rules_update`; agents can request full runtime breadcrumbs with `include_runtime_context: true`.
+- Kept MCPViews startup-rule reconciliation local-rule first by omitting the native startup rule block when installed startup rules are already current.
+
 ## [0.2.42] - 2026-06-12
 
 ### Changed

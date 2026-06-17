@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.43] - 2026-06-17
+
 ### Added
 - Added compact DecidR Active Work Session context to default `init_session` responses so fresh agents can recover cross-session handoff state without storing raw transcript.
 

@@ -1,9 +1,18 @@
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::time::{timeout, Duration};
 
 use crate::http_server::AsyncAppState;
+use crate::plugin::{
+    apply_tool_cache, fetch_plugin_tools, oauth_token_needs_preemptive_refresh, try_refresh_oauth,
+    OAuthRefreshInfo,
+};
+
+const DECIDR_PLUGIN_NAME: &str = "decidr";
+const DECIDR_ACTIVE_WORK_SESSIONS_TOOL: &str = "decidr__get_active_work_sessions";
+const DECIDR_CONTEXT_TIMEOUT_MS: u64 = 1_200;
 
 async fn gather_session_data(
     state: &Arc<TokioMutex<AsyncAppState>>,
@@ -64,6 +73,7 @@ pub(super) async fn call_init_session(
         gather_slim_session_data(state).await;
     let startup_rule_actions =
         startup_rule_actions_for_project(agent_type, project_path, state).await?;
+    let decidr_context = collect_decidr_plugin_context(state).await;
 
     let mut response = serde_json::json!({
         "rules": rules,
@@ -75,6 +85,9 @@ pub(super) async fn call_init_session(
         "plugin_updates": plugin_updates,
         "plugin_update_actions": plugin_update_actions,
         "startup_rule_actions": startup_rule_actions,
+        "plugin_contexts": {
+            "decidr": decidr_context,
+        },
     });
 
     response.as_object_mut().unwrap().insert(
@@ -91,6 +104,307 @@ pub(super) async fn call_init_session(
             "text": serde_json::to_string(&response).unwrap()
         }]
     }))
+}
+
+fn decidr_capture_defaults() -> Value {
+    serde_json::json!({
+        "ttl_hours": 24,
+        "archive_retention_days": 60,
+        "stored_content": "compact_summary_and_refs_only",
+        "raw_transcript_storage": false,
+        "capture_cadence": "milestone_or_end_turn",
+        "background_saver": "preferred_with_inline_fallback",
+        "logging_review": "mcpviews_structured_table_per_row_approval"
+    })
+}
+
+fn decidr_capture_instruction() -> &'static str {
+    "Use lazy always-on DecidR Active Work Sessions for cross-agent handoff. Do not create empty sessions during init. After milestones and end turns, spawn a background saver when supported; otherwise do a short inline save. Store compact summaries, next steps, blockers, decisions made, and artifact refs/previews only; do not store raw transcript. For multi-item DecidR logging, use an MCPViews structured review table and execute accepted rows only. Do not edit native rule files without explicit approval."
+}
+
+fn decidr_fail_open_context(status: &str, message: Option<String>) -> Value {
+    let mut context = serde_json::json!({
+        "status": status,
+        "activeWorkSessions": [],
+        "latestFeedback": [],
+        "preferences": null,
+        "capture_defaults": decidr_capture_defaults(),
+        "instruction": decidr_capture_instruction(),
+    });
+    if let Some(message) = message {
+        context["message"] = Value::String(message);
+    }
+    context
+}
+
+fn parse_plugin_result_payload(result: &Value) -> Option<Value> {
+    if result.get("data").is_some() || result.get("activeWorkSessions").is_some() {
+        return Some(result.clone());
+    }
+
+    let content = result.get("content")?.as_array()?;
+    for item in content {
+        if item.get("type").and_then(|v| v.as_str()) != Some("text") {
+            continue;
+        }
+        let text = item.get("text").and_then(|v| v.as_str())?;
+        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+            return Some(parsed);
+        }
+    }
+    None
+}
+
+fn normalize_decidr_context_payload(payload: Value, organization_id: &str) -> Value {
+    let mut data = payload
+        .get("data")
+        .cloned()
+        .unwrap_or_else(|| payload.clone());
+
+    if !data.is_object() {
+        return decidr_fail_open_context(
+            "error",
+            Some("DecidR active-session response was not an object.".to_string()),
+        );
+    }
+
+    let obj = data.as_object_mut().unwrap();
+    obj.entry("status".to_string())
+        .or_insert_with(|| Value::String("available".to_string()));
+    obj.entry("activeWorkSessions".to_string())
+        .or_insert_with(|| Value::Array(vec![]));
+    obj.entry("latestFeedback".to_string())
+        .or_insert_with(|| Value::Array(vec![]));
+    obj.entry("capture_defaults".to_string())
+        .or_insert_with(decidr_capture_defaults);
+    obj.entry("instruction".to_string())
+        .or_insert_with(|| Value::String(decidr_capture_instruction().to_string()));
+    obj.insert(
+        "organization_id".to_string(),
+        Value::String(organization_id.to_string()),
+    );
+    data
+}
+
+fn decidr_token_is_context_usable(
+    auth_dir: &Path,
+    org_id: &str,
+    expired_unrefreshable: &mut bool,
+) -> bool {
+    let status =
+        mcpviews_shared::token_store::token_status_for_org(auth_dir, DECIDR_PLUGIN_NAME, org_id);
+    match status {
+        mcpviews_shared::token_store::StoredTokenStatus::Valid
+        | mcpviews_shared::token_store::StoredTokenStatus::ExpiredRefreshable => true,
+        mcpviews_shared::token_store::StoredTokenStatus::ExpiredUnrefreshable => {
+            *expired_unrefreshable = true;
+            false
+        }
+        mcpviews_shared::token_store::StoredTokenStatus::Missing => false,
+    }
+}
+
+fn select_decidr_org_for_context_from_dir(auth_dir: &Path) -> Result<String, Value> {
+    let orgs = mcpviews_shared::token_store::list_orgs(auth_dir, DECIDR_PLUGIN_NAME);
+    if orgs.is_empty() {
+        return Err(decidr_fail_open_context(
+            "auth_missing",
+            Some("DecidR has no MCPViews organization token.".to_string()),
+        ));
+    }
+
+    let mut expired_unrefreshable = false;
+    if let Some(default_org) =
+        mcpviews_shared::token_store::load_default_org(auth_dir, DECIDR_PLUGIN_NAME)
+    {
+        if orgs.contains(&default_org)
+            && decidr_token_is_context_usable(auth_dir, &default_org, &mut expired_unrefreshable)
+        {
+            return Ok(default_org);
+        }
+    }
+
+    for org_id in &orgs {
+        if decidr_token_is_context_usable(auth_dir, org_id, &mut expired_unrefreshable) {
+            return Ok(org_id.clone());
+        }
+    }
+
+    Err(decidr_fail_open_context(
+        if expired_unrefreshable {
+            "auth_unavailable"
+        } else {
+            "auth_missing"
+        },
+        Some("DecidR auth is not currently usable for init-session context.".to_string()),
+    ))
+}
+
+fn select_decidr_org_for_context() -> Result<String, Value> {
+    let auth_dir = mcpviews_shared::auth_dir();
+    select_decidr_org_for_context_from_dir(&auth_dir)
+}
+
+fn decidr_oauth_info_for_org(
+    plugin_name: &str,
+    auth: &Option<mcpviews_shared::PluginAuth>,
+    organization_id: &str,
+) -> Option<OAuthRefreshInfo> {
+    match auth.as_ref()? {
+        mcpviews_shared::PluginAuth::OAuth {
+            client_id,
+            token_url,
+            ..
+        } => Some(OAuthRefreshInfo {
+            plugin_name: plugin_name.to_string(),
+            token_url: token_url.clone(),
+            client_id: client_id.clone(),
+            org_id: Some(organization_id.to_string()),
+        }),
+        _ => None,
+    }
+}
+
+async fn ensure_decidr_work_session_tool_cached(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+    organization_id: &str,
+) -> bool {
+    let (idx, mcp_url, mut auth_header, oauth_info, client) = {
+        let state_guard = state.lock().await;
+        let registry = state_guard.inner.plugin_registry.lock().unwrap();
+        let client = state_guard.inner.http_client.clone();
+        let Some((idx, manifest)) = registry.find_plugin_by_name(DECIDR_PLUGIN_NAME) else {
+            return false;
+        };
+        let Some(mcp) = manifest.mcp.as_ref() else {
+            return false;
+        };
+        let has_tool = registry
+            .tool_cache
+            .plugin_tools(idx)
+            .map(|tools| {
+                tools.iter().any(|tool| {
+                    tool.get("name").and_then(|value| value.as_str())
+                        == Some(DECIDR_ACTIVE_WORK_SESSIONS_TOOL)
+                })
+            })
+            .unwrap_or(false);
+        if has_tool {
+            return true;
+        }
+
+        let auth_header = mcp
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.resolve_header_for_org(DECIDR_PLUGIN_NAME, organization_id));
+        let oauth_info = decidr_oauth_info_for_org(DECIDR_PLUGIN_NAME, &mcp.auth, organization_id);
+        (idx, mcp.url.clone(), auth_header, oauth_info, client)
+    };
+
+    if auth_header.is_none()
+        || oauth_info
+            .as_ref()
+            .map(oauth_token_needs_preemptive_refresh)
+            .unwrap_or(false)
+    {
+        if let Some(oauth) = &oauth_info {
+            if let Some(bearer) = try_refresh_oauth(oauth, &client).await {
+                auth_header = Some(bearer);
+            }
+        }
+    }
+
+    match fetch_plugin_tools(&client, &mcp_url, auth_header.as_deref()).await {
+        Ok(tools) => apply_tool_cache(state, idx, tools).await,
+        Err(error) => {
+            eprintln!("{}", error);
+            return false;
+        }
+    }
+
+    let state_guard = state.lock().await;
+    let registry = state_guard.inner.plugin_registry.lock().unwrap();
+    let Some((idx, _)) = registry.find_plugin_by_name(DECIDR_PLUGIN_NAME) else {
+        return false;
+    };
+    registry
+        .tool_cache
+        .plugin_tools(idx)
+        .map(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name").and_then(|value| value.as_str())
+                    == Some(DECIDR_ACTIVE_WORK_SESSIONS_TOOL)
+            })
+        })
+        .unwrap_or(false)
+}
+
+async fn collect_decidr_plugin_context(state: &Arc<TokioMutex<AsyncAppState>>) -> Value {
+    match timeout(
+        Duration::from_millis(DECIDR_CONTEXT_TIMEOUT_MS),
+        collect_decidr_plugin_context_inner(state),
+    )
+    .await
+    {
+        Err(_) => decidr_fail_open_context(
+            "timeout",
+            Some("Timed out reading DecidR active-session context.".to_string()),
+        ),
+        Ok(context) => context,
+    }
+}
+
+async fn collect_decidr_plugin_context_inner(state: &Arc<TokioMutex<AsyncAppState>>) -> Value {
+    let organization_id = match select_decidr_org_for_context() {
+        Ok(org_id) => org_id,
+        Err(context) => return context,
+    };
+
+    if !ensure_decidr_work_session_tool_cached(state, &organization_id).await {
+        return decidr_fail_open_context(
+            "tool_unavailable",
+            Some("DecidR active work-session tool is not available.".to_string()),
+        );
+    }
+
+    let arguments = serde_json::json!({
+        "organization_id": organization_id,
+        "format": "compact",
+        "limit": 3,
+        "include_guidance": true,
+    });
+
+    let (plugin_info, client) = super::plugin_proxy::lookup_plugin_tool(
+        DECIDR_ACTIVE_WORK_SESSIONS_TOOL,
+        &arguments,
+        state,
+    )
+    .await;
+    let Some(info) = plugin_info else {
+        return decidr_fail_open_context(
+            "tool_unavailable",
+            Some("DecidR active work-session tool lookup failed.".to_string()),
+        );
+    };
+
+    let call = super::plugin_proxy::proxy_plugin_tool_call(
+        &client,
+        &info.mcp_url,
+        info.auth_header.as_deref(),
+        &info.unprefixed_name,
+        &arguments,
+    );
+
+    match call.await {
+        Err(error) => decidr_fail_open_context("error", Some(error)),
+        Ok(result) => match parse_plugin_result_payload(&result) {
+            Some(payload) => normalize_decidr_context_payload(payload, &organization_id),
+            None => decidr_fail_open_context(
+                "error",
+                Some("Could not parse DecidR active-session response.".to_string()),
+            ),
+        },
+    }
 }
 
 pub(crate) fn setup_instructions(agent_type: &str) -> String {
@@ -331,5 +645,141 @@ mod tests {
         assert!(instructions.contains("save_startup_rule_state"));
         assert!(!instructions.contains("renderer rules"));
         assert!(!instructions.contains("all rules below"));
+    }
+
+    #[test]
+    fn test_parse_plugin_result_payload_from_mcp_text() {
+        let result = serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": "{\"data\":{\"status\":\"available\",\"activeWorkSessions\":[{\"id\":\"ws_1\"}]}}"
+            }]
+        });
+
+        let parsed = parse_plugin_result_payload(&result).expect("payload should parse");
+
+        assert_eq!(parsed["data"]["status"], "available");
+        assert_eq!(parsed["data"]["activeWorkSessions"][0]["id"], "ws_1");
+    }
+
+    #[test]
+    fn test_normalize_decidr_context_payload_adds_defaults() {
+        let normalized = normalize_decidr_context_payload(
+            serde_json::json!({
+                "data": {
+                    "activeWorkSessions": []
+                }
+            }),
+            "org_1",
+        );
+
+        assert_eq!(normalized["status"], "available");
+        assert_eq!(normalized["organization_id"], "org_1");
+        assert_eq!(normalized["capture_defaults"]["ttl_hours"], 24);
+        assert!(normalized["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("Do not create empty sessions during init"));
+    }
+
+    #[test]
+    fn test_decidr_fail_open_context_shape() {
+        let context = decidr_fail_open_context("timeout", Some("slow".to_string()));
+
+        assert_eq!(context["status"], "timeout");
+        assert_eq!(context["message"], "slow");
+        assert!(context["activeWorkSessions"].as_array().unwrap().is_empty());
+        assert_eq!(context["capture_defaults"]["archive_retention_days"], 60);
+    }
+
+    #[test]
+    fn test_select_decidr_org_prefers_default_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let token = mcpviews_shared::token_store::StoredToken {
+            access_token: "token".to_string(),
+            refresh_token: None,
+            expires_at: Some(4_102_444_800),
+        };
+        mcpviews_shared::token_store::store_token_for_org(
+            dir.path(),
+            DECIDR_PLUGIN_NAME,
+            "org_a_sorted_first",
+            &token,
+        )
+        .unwrap();
+        mcpviews_shared::token_store::store_token_for_org(
+            dir.path(),
+            DECIDR_PLUGIN_NAME,
+            "org_z_default",
+            &token,
+        )
+        .unwrap();
+        mcpviews_shared::token_store::set_default_org(
+            dir.path(),
+            DECIDR_PLUGIN_NAME,
+            "org_z_default",
+        )
+        .unwrap();
+
+        let selected = select_decidr_org_for_context_from_dir(dir.path()).unwrap();
+
+        assert_eq!(selected, "org_z_default");
+    }
+
+    #[test]
+    fn test_select_decidr_org_falls_back_when_default_unusable() {
+        let dir = tempfile::tempdir().unwrap();
+        let valid_token = mcpviews_shared::token_store::StoredToken {
+            access_token: "token".to_string(),
+            refresh_token: None,
+            expires_at: Some(4_102_444_800),
+        };
+        let expired_unrefreshable = mcpviews_shared::token_store::StoredToken {
+            access_token: "old".to_string(),
+            refresh_token: None,
+            expires_at: Some(1),
+        };
+        mcpviews_shared::token_store::store_token_for_org(
+            dir.path(),
+            DECIDR_PLUGIN_NAME,
+            "org_a_default",
+            &expired_unrefreshable,
+        )
+        .unwrap();
+        mcpviews_shared::token_store::store_token_for_org(
+            dir.path(),
+            DECIDR_PLUGIN_NAME,
+            "org_b_valid",
+            &valid_token,
+        )
+        .unwrap();
+        mcpviews_shared::token_store::set_default_org(
+            dir.path(),
+            DECIDR_PLUGIN_NAME,
+            "org_a_default",
+        )
+        .unwrap();
+
+        let selected = select_decidr_org_for_context_from_dir(dir.path()).unwrap();
+
+        assert_eq!(selected, "org_b_valid");
+    }
+
+    #[test]
+    fn test_decidr_oauth_info_uses_selected_org() {
+        let auth = Some(mcpviews_shared::PluginAuth::OAuth {
+            auth_url: "https://auth.example.test".to_string(),
+            token_url: "https://token.example.test".to_string(),
+            client_id: Some("client_1".to_string()),
+            scopes: vec![],
+            email_code_auth: None,
+        });
+
+        let info = decidr_oauth_info_for_org(DECIDR_PLUGIN_NAME, &auth, "org_selected")
+            .expect("OAuth info");
+
+        assert_eq!(info.plugin_name, DECIDR_PLUGIN_NAME);
+        assert_eq!(info.org_id.as_deref(), Some("org_selected"));
+        assert_eq!(info.client_id.as_deref(), Some("client_1"));
     }
 }

@@ -35,6 +35,10 @@ function setupCheckbox() {
   return document.querySelector('input[type="checkbox"]');
 }
 
+function radioByValue(value) {
+  return document.querySelector('input[type="radio"][value="' + value + '"]');
+}
+
 function installLocalStorage() {
   var values = {};
   var storage = {
@@ -174,9 +178,12 @@ describe('decidr onboarding renderer', function () {
     expect(localStorage.getItem('decidr-onboarding:auth-org-id')).toBe('org_123');
     expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBeNull();
     expect(document.body.textContent).toContain('Configure your AI agent');
+    expect(document.body.textContent).toContain('Choose your active-work style');
     expect(document.body.textContent).toContain('What is MCPViews?');
     expect(document.body.textContent).not.toContain('Ludflow');
 
+    radioByValue('solo_builder').checked = true;
+    radioByValue('solo_builder').dispatchEvent(new Event('change'));
     var checkbox = setupCheckbox();
     expect(checkbox).toBeTruthy();
     checkbox.checked = true;
@@ -184,6 +191,16 @@ describe('decidr onboarding renderer', function () {
     textButton('Finish setup').click();
     await flushPromises();
 
+    expect(fetch).toHaveBeenCalledWith(
+      'https://app.decidrmcp.com/api/me/preferences',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: expect.objectContaining({
+          authorization: 'Bearer decidr-token',
+        }),
+        body: expect.stringContaining('"workStyleMode":"SOLO_BUILDER"'),
+      })
+    );
     expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBe('org_123');
     expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
       contentType: 'decidr_dashboard',
@@ -314,6 +331,48 @@ describe('decidr onboarding renderer', function () {
     expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
       contentType: 'decidr_dashboard',
     }));
+  });
+
+  it('completes setup when work-style preference persistence fails', async function () {
+    localStorage.setItem('decidr-onboarding:auth-org-id', 'org_123');
+    fetch.mockImplementation(function (url) {
+      if (String(url).indexOf('/me/preferences') !== -1) {
+        return Promise.resolve({
+          ok: false,
+          statusText: 'Service Unavailable',
+          json: function () { return Promise.resolve({ error: 'preferences offline' }); },
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: function () { return Promise.resolve({ seeded: true }); },
+      });
+    });
+    var warn = vi.spyOn(console, 'warn').mockImplementation(function () {});
+    var invoke = baseInvoke();
+    window.__TAURI__ = { core: { invoke } };
+    window.__companionUtils = { openSession: vi.fn(), closeSession: vi.fn() };
+
+    loadRenderer();
+    window.__renderers.decidr_onboarding(document.getElementById('root'), {});
+    await flushPromises();
+
+    setupCheckbox().checked = true;
+    setupCheckbox().dispatchEvent(new Event('change'));
+    textButton('Finish setup').click();
+    await flushPromises();
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://app.decidrmcp.com/api/me/preferences',
+      expect.objectContaining({ method: 'PATCH' })
+    );
+    expect(warn).toHaveBeenCalled();
+    expect(localStorage.getItem('decidr-onboarding:agent-configured-org-id')).toBe('org_123');
+    expect(window.__companionUtils.openSession).toHaveBeenCalledWith(expect.objectContaining({
+      contentType: 'decidr_dashboard',
+      data: { organization_id: 'org_123' },
+    }));
+    warn.mockRestore();
   });
 
   it('keeps the user on login when the DecidR starter seed fails', async function () {

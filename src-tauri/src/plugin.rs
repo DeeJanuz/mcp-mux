@@ -399,7 +399,7 @@ impl PluginRegistry {
 
 /// Perform the MCP initialize -> notifications/initialized -> tools/list handshake,
 /// returning the raw tool definitions on success.
-async fn fetch_plugin_tools(
+pub(crate) async fn fetch_plugin_tools(
     client: &reqwest::Client,
     url: &str,
     auth: Option<&str>,
@@ -514,7 +514,11 @@ async fn fetch_plugin_tools(
 }
 
 /// Apply fetched tools to the plugin cache: prefix names, update tool_index, set timestamps.
-async fn apply_tool_cache(state: &Arc<TokioMutex<AsyncAppState>>, idx: usize, tools: Vec<Value>) {
+pub(crate) async fn apply_tool_cache(
+    state: &Arc<TokioMutex<AsyncAppState>>,
+    idx: usize,
+    tools: Vec<Value>,
+) {
     let state_guard = state.lock().await;
     let mut registry = state_guard.inner.plugin_registry.lock().unwrap();
 

@@ -7,6 +7,7 @@
   var AUTH_PLUGIN = 'decidr';
   var REQUIRED_PLUGINS = ['decidr', 'ludflow'];
   var INSTALL_PROMPT_URL = 'https://github.com/DeeJanuz/mcpviews/blob/master/docs/install-prompt.md';
+  var DEFAULT_WORK_STYLE = 'simple_handoff';
   var AGENT_INSTALL_PROMPT = [
     'Register the MCPViews MCP server for me at user / global scope so it is',
     'available in every project I work on.',
@@ -190,6 +191,11 @@
       '.decidr-setup-agent-steps{display:grid;gap:14px;margin-top:16px;}',
       '.decidr-setup-agent-step{border:1px solid var(--decidr-setup-border);border-radius:8px;padding:14px;background:var(--decidr-setup-surface-subtle);}',
       '.decidr-setup-agent-step strong{display:block;margin-bottom:6px;}',
+      '.decidr-setup-choice-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px;}',
+      '.decidr-setup-choice{display:flex;gap:10px;border:1px solid var(--decidr-setup-border);border-radius:8px;padding:12px;background:var(--decidr-setup-surface-subtle);cursor:pointer;}',
+      '.decidr-setup-choice input{margin-top:3px;accent-color:var(--decidr-setup-accent);}',
+      '.decidr-setup-choice strong{display:block;font-size:13px;margin:0 0 4px;}',
+      '.decidr-setup-choice span span{display:block;color:var(--text-secondary,#4b5563);font-size:12px;line-height:1.4;}',
       '.decidr-setup-prompt{display:block;width:100%;min-height:150px;margin-top:12px;border:1px solid var(--decidr-setup-border-strong);border-radius:6px;padding:10px;background:var(--decidr-setup-surface);color:var(--text-primary,#111827);font:12px ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;resize:vertical;}',
       '.decidr-setup-check{display:flex;align-items:flex-start;gap:10px;margin-top:16px;color:var(--text-primary,#111827);font-size:14px;line-height:1.45;}',
       '.decidr-setup-check input{accent-color:var(--decidr-setup-accent);}',
@@ -209,7 +215,7 @@
       '.decidr-setup-status{min-height:22px;margin-top:14px;font-size:13px;color:var(--text-secondary,#4b5563);}',
       '.decidr-setup-status.error{color:var(--decidr-setup-error-text);}',
       '.decidr-setup-status.success{color:var(--decidr-setup-success-text);}',
-      '@media(max-width:720px){.decidr-setup{padding:26px 18px;}.decidr-setup-info-grid{grid-template-columns:1fr;}}',
+      '@media(max-width:720px){.decidr-setup{padding:26px 18px;}.decidr-setup-info-grid,.decidr-setup-choice-grid{grid-template-columns:1fr;}}',
       '</style>',
       '<div class="decidr-setup">',
       '<h1>DecidR Setup</h1>',
@@ -476,6 +482,7 @@
         throw new Error('DecidR setup is not fully authenticated for the selected organization.');
       }
       return ensureDecidrOnboarding(root, results[0], orgId).then(function () {
+        state.decidrAuthHeader = results[0];
         storeValue(AUTH_ORG_KEY, orgId);
         renderAgentSetup(root, state);
       });
@@ -524,6 +531,82 @@
         return { seeded: false };
       });
     });
+  }
+
+  function workStyleApiMode(value) {
+    if (value === 'solo_builder') return 'SOLO_BUILDER';
+    if (value === 'team_approval') return 'TEAM_APPROVAL';
+    return 'SIMPLE_HANDOFF';
+  }
+
+  function saveWorkStylePreferences(root, state) {
+    if (!state.decidrAuthHeader) return Promise.resolve();
+    return fetch(decidrApiBaseUrl() + '/me/preferences', {
+      method: 'PATCH',
+      headers: {
+        accept: 'application/json',
+        authorization: state.decidrAuthHeader,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        workStyleMode: workStyleApiMode(state.workStyleMode),
+        agentGuidanceSummary: 'Use lazy DecidR Active Work Sessions, background capture when available, compact summary plus artifact refs only, and review-gated DecidR logging.',
+      }),
+      cache: 'no-store',
+    }).then(function (response) {
+      if (!response.ok) {
+        return parseApiError(response).then(function (message) {
+          throw new Error(message || 'Failed to save DecidR work style.');
+        });
+      }
+      return response.json().catch(function () {
+        return {};
+      });
+    });
+  }
+
+  function renderWorkStyleChooser(state) {
+    var wrapper = document.createElement('section');
+    wrapper.className = 'decidr-setup-agent-step';
+
+    var title = document.createElement('strong');
+    title.textContent = '3. Choose your active-work style';
+    wrapper.appendChild(title);
+
+    var copy = document.createElement('p');
+    copy.textContent = 'Agents will use this for compact handoffs, artifact refs, and review-gated DecidR logging.';
+    wrapper.appendChild(copy);
+
+    var grid = document.createElement('div');
+    grid.className = 'decidr-setup-choice-grid';
+    [
+      ['simple_handoff', 'Simple handoff', 'Compact capture, ask before logging.'],
+      ['solo_builder', 'Solo builder', 'Capture fast, review rows before writes.'],
+      ['team_approval', 'Team approval', 'Capture fast, treat logging as approval-sensitive.'],
+    ].forEach(function (choice) {
+      var label = document.createElement('label');
+      label.className = 'decidr-setup-choice';
+      var input = document.createElement('input');
+      input.type = 'radio';
+      input.name = 'decidr-work-style';
+      input.value = choice[0];
+      input.checked = state.workStyleMode === choice[0];
+      input.addEventListener('change', function () {
+        if (input.checked) state.workStyleMode = input.value;
+      });
+      label.appendChild(input);
+      var text = document.createElement('span');
+      var strong = document.createElement('strong');
+      strong.textContent = choice[1];
+      var desc = document.createElement('span');
+      desc.textContent = choice[2];
+      text.appendChild(strong);
+      text.appendChild(desc);
+      label.appendChild(text);
+      grid.appendChild(label);
+    });
+    wrapper.appendChild(grid);
+    return wrapper;
   }
 
   function currentSessionId(root) {
@@ -612,6 +695,8 @@
     setupStep.appendChild(setupCopy);
     steps.appendChild(setupStep);
 
+    steps.appendChild(renderWorkStyleChooser(state));
+
     body.appendChild(steps);
 
     var checkLabel = document.createElement('label');
@@ -628,10 +713,25 @@
     finishRow.className = 'decidr-setup-row';
     var finish = button('Finish setup', 'decidr-setup-button primary', function () {
       if (!check.checked) return;
-      storeValue(AGENT_CONFIGURED_KEY, state.organizationId);
-      markStep(root, 'agent', true);
-      setStatus(root, 'Opening DecidR dashboard...', 'success');
-      openDashboardAndCloseSetup(root, state);
+      finish.disabled = true;
+      setStatus(root, 'Saving DecidR work style...');
+      saveWorkStylePreferences(root, state).catch(function (error) {
+        if (window.console && typeof window.console.warn === 'function') {
+          window.console.warn('DecidR work style preference save failed', error);
+        }
+        return { preferenceSaveFailed: true };
+      }).then(function (result) {
+        storeValue(AGENT_CONFIGURED_KEY, state.organizationId);
+        markStep(root, 'agent', true);
+        setStatus(
+          root,
+          result && result.preferenceSaveFailed
+            ? 'Opening DecidR dashboard. Work style can be saved later.'
+            : 'Opening DecidR dashboard...',
+          'success'
+        );
+        openDashboardAndCloseSetup(root, state);
+      });
     });
     finish.disabled = true;
     check.addEventListener('change', function () {
@@ -651,6 +751,8 @@
       codeSent: false,
       organizationId: initialOrganizationId(data),
       organizationName: '',
+      decidrAuthHeader: null,
+      workStyleMode: DEFAULT_WORK_STYLE,
       installedPlugins: {},
       organizations: [],
     };

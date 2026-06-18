@@ -350,6 +350,7 @@ jobs:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           MCPVIEWS_RELEASE_FLAVOR: ${{ matrix.flavor }}
           MCPVIEWS_UPDATER_PUBLIC_KEY: ${{ vars.MCPVIEWS_UPDATER_PUBLIC_KEY || secrets.MCPVIEWS_UPDATER_PUBLIC_KEY }}
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
@@ -358,6 +359,9 @@ jobs:
             unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
           fi
           npm run build -- --target aarch64-apple-darwin
+
+      - name: Verify macOS DMG Finder layout
+        run: node scripts/verify-macos-dmg-layout.mjs target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
 
       - name: Verify generic macOS bundle excludes bundled plugins
         if: ${{ matrix.flavor == 'generic' }}

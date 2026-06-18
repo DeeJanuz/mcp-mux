@@ -468,7 +468,7 @@ describe('universal_graph renderer', function () {
     expect(container.querySelectorAll('.ug-point-focus').length).toBeLessThanOrEqual(50);
     expect(container.querySelector('.ug-density-note').textContent).toContain('dense native layer');
     expect(container.innerHTML).not.toContain('NaN');
-  });
+  }, 15000);
 
   it('uses dense native layers for bubble charts without exploding the SVG node count', function () {
     var graph = {

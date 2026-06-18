@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.52] - 2026-06-18
+
+### Fixed
+- Allow the dense scatter renderer regression test more time on Windows release runners.
+
 ## [0.2.51] - 2026-06-18
 
 ### Changed

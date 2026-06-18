@@ -350,6 +350,8 @@ pub(crate) fn evaluate_startup_rule_actions(
         "needs_install"
     } else if !auto_update.is_empty() {
         "auto_update"
+    } else if !orphaned.is_empty() {
+        "cleanup_required"
     } else {
         "current"
     };
@@ -361,8 +363,63 @@ pub(crate) fn evaluate_startup_rule_actions(
         "suppressed": suppressed,
         "current": current,
         "orphaned": orphaned,
-        "instruction": "Install or update only startup_rule_actions.needs_install and startup_rule_actions.auto_update using the agent-native rule mechanism for the current harness, then call save_startup_rule_state with recorded file locations. When status is current, report the active startup_rule_actions.current titles and rule_ids so the user can verify which startup rules are loaded; do not summarize this as only no changes needed. Do not persist runtime rules, plugin_rules, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, or tool docs into native startup rule files. If a user declines installation, call save_startup_rule_state with do_not_install=true so MCPViews does not ask again. If a user declines updates for an installed rule, call save_startup_rule_state with do_not_update=true."
+        "instruction": "Install or update only startup_rule_actions.needs_install and startup_rule_actions.auto_update using the agent-native rule mechanism for the current harness, then call save_startup_rule_state with recorded file locations. When status is cleanup_required, replace the managed native startup-rule block with the returned block so orphaned rules are removed from the agent-visible file; do not reinstall orphaned rules. When status is current, report the active startup_rule_actions.current titles and rule_ids so the user can verify which startup rules are loaded; do not summarize this as only no changes needed. Do not persist runtime rules, plugin_rules, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, or tool docs into native startup rule files. If a user declines installation, call save_startup_rule_state with do_not_install=true so MCPViews does not ask again. If a user declines updates for an installed rule, call save_startup_rule_state with do_not_update=true."
     })
+}
+
+fn startup_rule_action_array_len(actions: &Value, key: &str) -> usize {
+    actions
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn refresh_startup_rule_action_status(actions: &mut Value) {
+    let status = if startup_rule_action_array_len(actions, "needs_install") > 0 {
+        "needs_install"
+    } else if startup_rule_action_array_len(actions, "auto_update") > 0 {
+        "auto_update"
+    } else if startup_rule_action_array_len(actions, "orphaned") > 0 {
+        "cleanup_required"
+    } else {
+        "current"
+    };
+    actions["status"] = Value::String(status.to_string());
+}
+
+pub(crate) fn filter_startup_rule_actions_to_codex_file_orphans(
+    actions: &mut Value,
+    existing_document: Option<&str>,
+) {
+    let Some(orphaned) = actions.get("orphaned").and_then(Value::as_array) else {
+        refresh_startup_rule_action_status(actions);
+        return;
+    };
+    if orphaned.is_empty() {
+        refresh_startup_rule_action_status(actions);
+        return;
+    }
+
+    let existing_keys = existing_document
+        .and_then(existing_codex_startup_rule_blocks)
+        .map(|blocks| blocks.into_keys().collect::<BTreeSet<_>>())
+        .unwrap_or_default();
+
+    actions["orphaned"] = Value::Array(
+        orphaned
+            .iter()
+            .filter(|entry| {
+                entry
+                    .get("key")
+                    .and_then(Value::as_str)
+                    .map(|key| existing_keys.contains(key))
+                    .unwrap_or(false)
+            })
+            .cloned()
+            .collect(),
+    );
+    refresh_startup_rule_action_status(actions);
 }
 
 pub(crate) fn build_codex_startup_rules_block_for_project(
@@ -798,6 +855,7 @@ mod tests {
             plugin_rule_definitions: vec![],
             startup_rules: vec![startup_rule],
             setup_questions: vec![],
+            init_context: None,
         }
     }
 
@@ -1136,6 +1194,108 @@ mod tests {
             actions["orphaned"].as_array().unwrap()[0]["key"],
             "mcpviews-gronk-speak:mcpviews_gronk_speak_mode"
         );
+    }
+
+    #[test]
+    fn test_codex_file_orphan_filter_requires_native_marker() {
+        let core_rule = core_init_session_project_path_rule();
+        let mut config = ProjectStartupRulesConfig::default();
+        config.startup_rules.insert(
+            core_rule.key.clone(),
+            StartupRuleState {
+                plugin: core_rule.plugin.clone(),
+                rule_id: core_rule.rule_id.clone(),
+                rule_version: core_rule.version.clone(),
+                rule_hash: core_rule.hash.clone(),
+                locations: vec![StartupRuleLocation {
+                    agent_type: "codex".to_string(),
+                    path: "AGENTS.md".to_string(),
+                    label: "Project AGENTS.md".to_string(),
+                }],
+                do_not_install: false,
+                do_not_update: false,
+                updated_at: None,
+            },
+        );
+        config.startup_rules.insert(
+            "decidr:decidr_work_session_bootstrap".to_string(),
+            StartupRuleState {
+                plugin: "decidr".to_string(),
+                rule_id: "decidr_work_session_bootstrap".to_string(),
+                rule_version: "2".to_string(),
+                rule_hash: "sha256:old-work-session".to_string(),
+                locations: vec![StartupRuleLocation {
+                    agent_type: "codex".to_string(),
+                    path: "AGENTS.md".to_string(),
+                    label: "Project AGENTS.md".to_string(),
+                }],
+                do_not_install: false,
+                do_not_update: false,
+                updated_at: None,
+            },
+        );
+
+        let mut actions = evaluate_startup_rule_actions(&config, std::slice::from_ref(&core_rule));
+        assert_eq!(actions["status"], "cleanup_required");
+
+        let existing_with_orphan = "\
+# AGENTS.md
+
+## MCPViews Startup Rules
+
+<!-- mcpviews-startup-rules-schema: 1 -->
+
+<!-- mcpviews-startup-rule: plugin=mcpviews-core rule_id=init_session_project_path version=1 hash=sha256:core -->
+
+### MCPViews Session Init
+
+Init.
+
+<!-- mcpviews-startup-rule: plugin=decidr rule_id=decidr_work_session_bootstrap version=2 hash=sha256:old-work-session -->
+
+### DecidR Work Session Bootstrap
+
+Old temporary work session rule.
+";
+        filter_startup_rule_actions_to_codex_file_orphans(&mut actions, Some(existing_with_orphan));
+        assert_eq!(actions["status"], "cleanup_required");
+        assert_eq!(actions["orphaned"].as_array().unwrap().len(), 1);
+
+        let mut actions = evaluate_startup_rule_actions(&config, std::slice::from_ref(&core_rule));
+        let existing_without_orphan = "\
+# AGENTS.md
+
+## MCPViews Startup Rules
+
+<!-- mcpviews-startup-rules-schema: 1 -->
+
+<!-- mcpviews-startup-rule: plugin=mcpviews-core rule_id=init_session_project_path version=1 hash=sha256:core -->
+
+### MCPViews Session Init
+
+Init.
+";
+        filter_startup_rule_actions_to_codex_file_orphans(
+            &mut actions,
+            Some(existing_without_orphan),
+        );
+        assert_eq!(actions["status"], "current");
+        assert_eq!(actions["orphaned"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_codex_startup_block_drops_orphaned_decidr_work_session_rule() {
+        let core_rule = core_init_session_project_path_rule();
+        let config = ProjectStartupRulesConfig::default();
+        let block = build_codex_startup_rules_block_for_project(
+            &config,
+            std::slice::from_ref(&core_rule),
+            None,
+        );
+
+        assert!(block.contains("plugin=mcpviews-core rule_id=init_session_project_path"));
+        assert!(!block.contains("decidr_work_session_bootstrap"));
+        assert!(!block.contains("Work Session"));
     }
 
     #[test]

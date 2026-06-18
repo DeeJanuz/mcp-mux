@@ -355,6 +355,7 @@ mod tests {
                 plugin_rule_definitions: vec![],
                 startup_rules: vec![],
                 setup_questions: vec![],
+                init_context: None,
             },
             tags: vec![],
             download_url: None,

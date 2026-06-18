@@ -6,13 +6,20 @@ use tokio::time::{timeout, Duration};
 
 use crate::http_server::AsyncAppState;
 use crate::plugin::{
-    apply_tool_cache, fetch_plugin_tools, oauth_token_needs_preemptive_refresh, try_refresh_oauth,
-    OAuthRefreshInfo,
+    fetch_plugin_tools, oauth_token_needs_preemptive_refresh, try_refresh_oauth, OAuthRefreshInfo,
 };
+use crate::state::AppState;
 
-const DECIDR_PLUGIN_NAME: &str = "decidr";
-const DECIDR_ACTIVE_WORK_SESSIONS_TOOL: &str = "decidr__get_active_work_sessions";
-const DECIDR_CONTEXT_TIMEOUT_MS: u64 = 1_200;
+const DEFAULT_PLUGIN_INIT_CONTEXT_TIMEOUT_MS: u64 = 1_200;
+
+#[derive(Debug, Clone)]
+struct PluginInitContextProvider {
+    plugin_name: String,
+    prefixed_tool_name: String,
+    mcp_url: String,
+    auth: Option<mcpviews_shared::PluginAuth>,
+    config: mcpviews_shared::PluginInitContext,
+}
 
 async fn gather_session_data(
     state: &Arc<TokioMutex<AsyncAppState>>,
@@ -118,7 +125,7 @@ fn runtime_context_status(
     serde_json::json!({
         "mode": "lean",
         "omitted": ["rules", "plugin_registry"],
-        "instruction": "Default init_session is lean: startup-rule reconciliation, auth/update status, org token summary, and compact ephemeral plugin context only. Lazy-load broader runtime/plugin context when needed.",
+        "instruction": "Default init_session is lean: startup-rule reconciliation, auth/update status, org token summary, and compact plugin-provided init context only. Lazy-load broader runtime/plugin context when needed.",
         "full_context_request": {
             "tool": "init_session",
             "arguments": Value::Object(full_context_arguments)
@@ -140,7 +147,11 @@ pub(super) async fn call_init_session(
 
     let startup_rule_actions =
         startup_rule_actions_for_project(agent_type, project_path, state).await?;
-    let decidr_context = collect_decidr_plugin_context(state).await;
+    let app_state = {
+        let state_guard = state.lock().await;
+        state_guard.inner.clone()
+    };
+    let plugin_contexts = collect_plugin_init_contexts(&app_state).await;
 
     let mut response = if include_runtime_context {
         let (
@@ -188,12 +199,7 @@ pub(super) async fn call_init_session(
         serde_json::json!(super::persistence_instructions(agent_type)),
     );
     response_obj.insert("startup_rule_actions".to_string(), startup_rule_actions);
-    response_obj.insert(
-        "plugin_contexts".to_string(),
-        serde_json::json!({
-            "decidr": decidr_context,
-        }),
-    );
+    response_obj.insert("plugin_contexts".to_string(), plugin_contexts);
 
     Ok(serde_json::json!({
         "content": [{
@@ -203,30 +209,9 @@ pub(super) async fn call_init_session(
     }))
 }
 
-fn decidr_capture_defaults() -> Value {
-    serde_json::json!({
-        "ttl_hours": 24,
-        "archive_retention_days": 60,
-        "stored_content": "compact_summary_and_refs_only",
-        "raw_transcript_storage": false,
-        "capture_cadence": "milestone_or_end_turn",
-        "background_saver": "preferred_with_inline_fallback",
-        "logging_review": "mcpviews_structured_table_per_row_approval"
-    })
-}
-
-fn decidr_capture_instruction() -> &'static str {
-    "Use lazy always-on DecidR Active Work Sessions for cross-agent handoff. Do not create empty sessions during init. After milestones and end turns, spawn a background saver when supported; otherwise do a short inline save. Store compact summaries, next steps, blockers, decisions made, and artifact refs/previews only; do not store raw transcript. For multi-item DecidR logging, use an MCPViews structured review table and execute accepted rows only. Do not edit native rule files without explicit approval."
-}
-
-fn decidr_fail_open_context(status: &str, message: Option<String>) -> Value {
+fn plugin_init_context_fail_open(status: &str, message: Option<String>) -> Value {
     let mut context = serde_json::json!({
         "status": status,
-        "activeWorkSessions": [],
-        "latestFeedback": [],
-        "preferences": null,
-        "capture_defaults": decidr_capture_defaults(),
-        "instruction": decidr_capture_instruction(),
     });
     if let Some(message) = message {
         context["message"] = Value::String(message);
@@ -235,8 +220,12 @@ fn decidr_fail_open_context(status: &str, message: Option<String>) -> Value {
 }
 
 fn parse_plugin_result_payload(result: &Value) -> Option<Value> {
-    if result.get("data").is_some() || result.get("activeWorkSessions").is_some() {
+    if result.get("data").is_some() {
         return Some(result.clone());
+    }
+
+    if let Some(structured) = result.get("structuredContent") {
+        return Some(structured.clone());
     }
 
     let content = result.get("content")?.as_array()?;
@@ -252,44 +241,17 @@ fn parse_plugin_result_payload(result: &Value) -> Option<Value> {
     None
 }
 
-fn normalize_decidr_context_payload(payload: Value, organization_id: &str) -> Value {
-    let mut data = payload
-        .get("data")
-        .cloned()
-        .unwrap_or_else(|| payload.clone());
-
-    if !data.is_object() {
-        return decidr_fail_open_context(
-            "error",
-            Some("DecidR active-session response was not an object.".to_string()),
-        );
-    }
-
-    let obj = data.as_object_mut().unwrap();
-    obj.entry("status".to_string())
-        .or_insert_with(|| Value::String("available".to_string()));
-    obj.entry("activeWorkSessions".to_string())
-        .or_insert_with(|| Value::Array(vec![]));
-    obj.entry("latestFeedback".to_string())
-        .or_insert_with(|| Value::Array(vec![]));
-    obj.entry("capture_defaults".to_string())
-        .or_insert_with(decidr_capture_defaults);
-    obj.entry("instruction".to_string())
-        .or_insert_with(|| Value::String(decidr_capture_instruction().to_string()));
-    obj.insert(
-        "organization_id".to_string(),
-        Value::String(organization_id.to_string()),
-    );
-    data
+fn normalize_plugin_init_context_payload(payload: Value) -> Value {
+    payload.get("data").cloned().unwrap_or(payload)
 }
 
-fn decidr_token_is_context_usable(
+fn plugin_token_is_context_usable(
     auth_dir: &Path,
+    plugin_name: &str,
     org_id: &str,
     expired_unrefreshable: &mut bool,
 ) -> bool {
-    let status =
-        mcpviews_shared::token_store::token_status_for_org(auth_dir, DECIDR_PLUGIN_NAME, org_id);
+    let status = mcpviews_shared::token_store::token_status_for_org(auth_dir, plugin_name, org_id);
     match status {
         mcpviews_shared::token_store::StoredTokenStatus::Valid
         | mcpviews_shared::token_store::StoredTokenStatus::ExpiredRefreshable => true,
@@ -301,51 +263,65 @@ fn decidr_token_is_context_usable(
     }
 }
 
-fn select_decidr_org_for_context_from_dir(auth_dir: &Path) -> Result<String, Value> {
-    let orgs = mcpviews_shared::token_store::list_orgs(auth_dir, DECIDR_PLUGIN_NAME);
+fn select_plugin_org_for_context_from_dir(
+    plugin_name: &str,
+    auth_dir: &Path,
+) -> Result<String, Value> {
+    let orgs = mcpviews_shared::token_store::list_orgs(auth_dir, plugin_name);
     if orgs.is_empty() {
-        return Err(decidr_fail_open_context(
+        return Err(plugin_init_context_fail_open(
             "auth_missing",
-            Some("DecidR has no MCPViews organization token.".to_string()),
+            Some(format!(
+                "{} has no MCPViews organization token.",
+                plugin_name
+            )),
         ));
     }
 
     let mut expired_unrefreshable = false;
-    if let Some(default_org) =
-        mcpviews_shared::token_store::load_default_org(auth_dir, DECIDR_PLUGIN_NAME)
+    if let Some(default_org) = mcpviews_shared::token_store::load_default_org(auth_dir, plugin_name)
     {
         if orgs.contains(&default_org)
-            && decidr_token_is_context_usable(auth_dir, &default_org, &mut expired_unrefreshable)
+            && plugin_token_is_context_usable(
+                auth_dir,
+                plugin_name,
+                &default_org,
+                &mut expired_unrefreshable,
+            )
         {
             return Ok(default_org);
         }
     }
 
     for org_id in &orgs {
-        if decidr_token_is_context_usable(auth_dir, org_id, &mut expired_unrefreshable) {
+        if plugin_token_is_context_usable(auth_dir, plugin_name, org_id, &mut expired_unrefreshable)
+        {
             return Ok(org_id.clone());
         }
     }
 
-    Err(decidr_fail_open_context(
+    Err(plugin_init_context_fail_open(
         if expired_unrefreshable {
             "auth_unavailable"
         } else {
             "auth_missing"
         },
-        Some("DecidR auth is not currently usable for init-session context.".to_string()),
+        Some(format!(
+            "{} auth is not currently usable for init-session context.",
+            plugin_name
+        )),
     ))
 }
 
-fn select_decidr_org_for_context() -> Result<String, Value> {
+fn select_plugin_org_for_context(plugin_name: &str) -> Result<String, Value> {
     let auth_dir = mcpviews_shared::auth_dir();
-    select_decidr_org_for_context_from_dir(&auth_dir)
+    select_plugin_org_for_context_from_dir(plugin_name, &auth_dir)
 }
 
-fn decidr_oauth_info_for_org(
+fn plugin_oauth_info_for_context(
     plugin_name: &str,
     auth: &Option<mcpviews_shared::PluginAuth>,
-    organization_id: &str,
+    organization_id: Option<&str>,
 ) -> Option<OAuthRefreshInfo> {
     match auth.as_ref()? {
         mcpviews_shared::PluginAuth::OAuth {
@@ -356,33 +332,48 @@ fn decidr_oauth_info_for_org(
             plugin_name: plugin_name.to_string(),
             token_url: token_url.clone(),
             client_id: client_id.clone(),
-            org_id: Some(organization_id.to_string()),
+            org_id: organization_id.map(str::to_string),
         }),
         _ => None,
     }
 }
 
-async fn ensure_decidr_work_session_tool_cached(
-    state: &Arc<TokioMutex<AsyncAppState>>,
-    organization_id: &str,
+fn plugin_auth_header_for_context(
+    plugin_name: &str,
+    auth: &Option<mcpviews_shared::PluginAuth>,
+    organization_id: Option<&str>,
+) -> Option<String> {
+    match (auth.as_ref(), organization_id) {
+        (Some(auth), Some(org_id)) => auth.resolve_header_for_org(plugin_name, org_id),
+        (Some(auth), None) => auth.resolve_header(plugin_name),
+        (None, _) => None,
+    }
+}
+
+async fn ensure_plugin_init_context_tool_cached(
+    app_state: &Arc<AppState>,
+    provider: &PluginInitContextProvider,
+    organization_id: Option<&str>,
 ) -> bool {
-    let (idx, mcp_url, mut auth_header, oauth_info, client) = {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let client = state_guard.inner.http_client.clone();
-        let Some((idx, manifest)) = registry.find_plugin_by_name(DECIDR_PLUGIN_NAME) else {
+    let (idx, mcp_url, tool_prefix, mut auth_header, oauth_info, client) = {
+        let registry = app_state.plugin_registry.lock().unwrap();
+        let client = app_state.http_client.clone();
+        let Some((idx, _manifest)) = registry.find_plugin_by_name(&provider.plugin_name) else {
             return false;
         };
-        let Some(mcp) = manifest.mcp.as_ref() else {
-            return false;
-        };
+        let tool_prefix = registry
+            .manifests
+            .get(idx)
+            .and_then(|manifest| manifest.mcp.as_ref())
+            .map(|mcp| mcp.tool_prefix.clone())
+            .unwrap_or_default();
         let has_tool = registry
             .tool_cache
             .plugin_tools(idx)
             .map(|tools| {
                 tools.iter().any(|tool| {
                     tool.get("name").and_then(|value| value.as_str())
-                        == Some(DECIDR_ACTIVE_WORK_SESSIONS_TOOL)
+                        == Some(provider.prefixed_tool_name.as_str())
                 })
             })
             .unwrap_or(false);
@@ -390,12 +381,18 @@ async fn ensure_decidr_work_session_tool_cached(
             return true;
         }
 
-        let auth_header = mcp
-            .auth
-            .as_ref()
-            .and_then(|auth| auth.resolve_header_for_org(DECIDR_PLUGIN_NAME, organization_id));
-        let oauth_info = decidr_oauth_info_for_org(DECIDR_PLUGIN_NAME, &mcp.auth, organization_id);
-        (idx, mcp.url.clone(), auth_header, oauth_info, client)
+        let auth_header =
+            plugin_auth_header_for_context(&provider.plugin_name, &provider.auth, organization_id);
+        let oauth_info =
+            plugin_oauth_info_for_context(&provider.plugin_name, &provider.auth, organization_id);
+        (
+            idx,
+            provider.mcp_url.clone(),
+            tool_prefix,
+            auth_header,
+            oauth_info,
+            client,
+        )
     };
 
     if auth_header.is_none()
@@ -412,16 +409,18 @@ async fn ensure_decidr_work_session_tool_cached(
     }
 
     match fetch_plugin_tools(&client, &mcp_url, auth_header.as_deref()).await {
-        Ok(tools) => apply_tool_cache(state, idx, tools).await,
+        Ok(tools) => {
+            let mut registry = app_state.plugin_registry.lock().unwrap();
+            registry.tool_cache.apply(idx, &tool_prefix, tools);
+        }
         Err(error) => {
             eprintln!("{}", error);
             return false;
         }
     }
 
-    let state_guard = state.lock().await;
-    let registry = state_guard.inner.plugin_registry.lock().unwrap();
-    let Some((idx, _)) = registry.find_plugin_by_name(DECIDR_PLUGIN_NAME) else {
+    let registry = app_state.plugin_registry.lock().unwrap();
+    let Some((idx, _)) = registry.find_plugin_by_name(&provider.plugin_name) else {
         return false;
     };
     registry
@@ -430,82 +429,159 @@ async fn ensure_decidr_work_session_tool_cached(
         .map(|tools| {
             tools.iter().any(|tool| {
                 tool.get("name").and_then(|value| value.as_str())
-                    == Some(DECIDR_ACTIVE_WORK_SESSIONS_TOOL)
+                    == Some(provider.prefixed_tool_name.as_str())
             })
         })
         .unwrap_or(false)
 }
 
-async fn collect_decidr_plugin_context(state: &Arc<TokioMutex<AsyncAppState>>) -> Value {
+async fn collect_plugin_init_contexts(app_state: &Arc<AppState>) -> Value {
+    let providers = {
+        let registry = app_state.plugin_registry.lock().unwrap();
+        registry
+            .manifests
+            .iter()
+            .filter_map(|manifest| {
+                let config = manifest.init_context.clone()?;
+                let mcp = manifest.mcp.clone()?;
+                Some(PluginInitContextProvider {
+                    plugin_name: manifest.name.clone(),
+                    prefixed_tool_name: format!("{}{}", mcp.tool_prefix, config.tool),
+                    mcp_url: mcp.url,
+                    auth: mcp.auth,
+                    config,
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut contexts = serde_json::Map::new();
+    for provider in providers {
+        let context = collect_plugin_init_context(app_state, &provider).await;
+        contexts.insert(provider.plugin_name.clone(), context);
+    }
+    Value::Object(contexts)
+}
+
+async fn collect_plugin_init_context(
+    app_state: &Arc<AppState>,
+    provider: &PluginInitContextProvider,
+) -> Value {
+    let timeout_ms = provider
+        .config
+        .timeout_ms
+        .unwrap_or(DEFAULT_PLUGIN_INIT_CONTEXT_TIMEOUT_MS);
     match timeout(
-        Duration::from_millis(DECIDR_CONTEXT_TIMEOUT_MS),
-        collect_decidr_plugin_context_inner(state),
+        Duration::from_millis(timeout_ms),
+        collect_plugin_init_context_inner(app_state, provider),
     )
     .await
     {
-        Err(_) => decidr_fail_open_context(
+        Err(_) => plugin_init_context_fail_open(
             "timeout",
-            Some("Timed out reading DecidR active-session context.".to_string()),
+            Some(format!(
+                "Timed out reading {} init-session context.",
+                provider.plugin_name
+            )),
         ),
         Ok(context) => context,
     }
 }
 
-async fn collect_decidr_plugin_context_inner(state: &Arc<TokioMutex<AsyncAppState>>) -> Value {
-    let organization_id = match select_decidr_org_for_context() {
-        Ok(org_id) => org_id,
-        Err(context) => return context,
+async fn collect_plugin_init_context_inner(
+    app_state: &Arc<AppState>,
+    provider: &PluginInitContextProvider,
+) -> Value {
+    let mut argument_map = match provider.config.arguments.clone() {
+        Value::Object(map) => map,
+        _ => {
+            return plugin_init_context_fail_open(
+                "configuration_error",
+                Some(format!(
+                    "{} init_context.arguments must be an object.",
+                    provider.plugin_name
+                )),
+            );
+        }
     };
 
-    if !ensure_decidr_work_session_tool_cached(state, &organization_id).await {
-        return decidr_fail_open_context(
+    let organization_id = if provider.config.inject_organization_id {
+        match select_plugin_org_for_context(&provider.plugin_name) {
+            Ok(org_id) => Some(org_id),
+            Err(context) => return context,
+        }
+    } else {
+        None
+    };
+
+    if let Some(org_id) = organization_id.as_ref() {
+        argument_map.insert("organization_id".to_string(), Value::String(org_id.clone()));
+    }
+    let arguments = Value::Object(argument_map);
+
+    if !ensure_plugin_init_context_tool_cached(app_state, provider, organization_id.as_deref())
+        .await
+    {
+        return plugin_init_context_fail_open(
             "tool_unavailable",
-            Some("DecidR active work-session tool is not available.".to_string()),
+            Some(format!(
+                "{} init context tool {} is not available.",
+                provider.plugin_name, provider.prefixed_tool_name
+            )),
         );
     }
 
-    let arguments = serde_json::json!({
-        "organization_id": organization_id,
-        "format": "compact",
-        "limit": 3,
-        "include_guidance": true,
-    });
-
-    let (plugin_info, client) = super::plugin_proxy::lookup_plugin_tool(
-        DECIDR_ACTIVE_WORK_SESSIONS_TOOL,
-        &arguments,
-        state,
-    )
-    .await;
-    let Some(info) = plugin_info else {
-        return decidr_fail_open_context(
-            "tool_unavailable",
-            Some("DecidR active work-session tool lookup failed.".to_string()),
+    let (mut auth_header, oauth_info, client) = {
+        let auth_header = plugin_auth_header_for_context(
+            &provider.plugin_name,
+            &provider.auth,
+            organization_id.as_deref(),
         );
+        let oauth_info = plugin_oauth_info_for_context(
+            &provider.plugin_name,
+            &provider.auth,
+            organization_id.as_deref(),
+        );
+        (auth_header, oauth_info, app_state.http_client.clone())
     };
+    if auth_header.is_none()
+        || oauth_info
+            .as_ref()
+            .map(oauth_token_needs_preemptive_refresh)
+            .unwrap_or(false)
+    {
+        if let Some(oauth) = &oauth_info {
+            if let Some(bearer) = try_refresh_oauth(oauth, &client).await {
+                auth_header = Some(bearer);
+            }
+        }
+    }
 
     let call = super::plugin_proxy::proxy_plugin_tool_call(
         &client,
-        &info.mcp_url,
-        info.auth_header.as_deref(),
-        &info.unprefixed_name,
+        &provider.mcp_url,
+        auth_header.as_deref(),
+        &provider.config.tool,
         &arguments,
     );
 
     match call.await {
-        Err(error) => decidr_fail_open_context("error", Some(error)),
+        Err(error) => plugin_init_context_fail_open("error", Some(error)),
         Ok(result) => match parse_plugin_result_payload(&result) {
-            Some(payload) => normalize_decidr_context_payload(payload, &organization_id),
-            None => decidr_fail_open_context(
+            Some(payload) => normalize_plugin_init_context_payload(payload),
+            None => plugin_init_context_fail_open(
                 "error",
-                Some("Could not parse DecidR active-session response.".to_string()),
+                Some(format!(
+                    "Could not parse {} init-session context response.",
+                    provider.plugin_name
+                )),
             ),
         },
     }
 }
 
 pub(crate) fn setup_instructions(agent_type: &str) -> String {
-    const REPORT_CURRENT_RULES: &str = " When startup_rule_actions.status is current, report the active startup_rule_actions.current titles and rule_ids so the user can verify which startup rules are loaded; do not summarize this as only no changes needed.";
+    const REPORT_CURRENT_RULES: &str = " When startup_rule_actions.status is cleanup_required, replace the managed native startup-rule block with the returned block so orphaned rules are removed from the agent-visible file; do not reinstall orphaned rules. When startup_rule_actions.status is current, report the active startup_rule_actions.current titles and rule_ids so the user can verify which startup rules are loaded; do not summarize this as only no changes needed.";
     match agent_type {
         "claude_code" => format!("Install or update only entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` into `.claude/rules/mcpviews-startup.md`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.{REPORT_CURRENT_RULES}"),
         "claude_desktop" => format!("Create or update only startup-rule memories for entries returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update`, then call `save_startup_rule_state`. Do not persist runtime MCPViews rules or plugin_rules.{REPORT_CURRENT_RULES}"),
@@ -530,7 +606,32 @@ pub(super) async fn call_mcpviews_setup(
     let startup_rule_actions =
         startup_rule_actions_for_project(agent_type, project_path, state).await?;
 
-    let response = serde_json::json!({
+    let response = build_mcpviews_setup_response(
+        agent_type,
+        Value::Array(rules),
+        Value::Array(plugin_status),
+        Value::Array(available_tools),
+        Value::Array(setup_questions),
+        startup_rule_actions,
+    );
+
+    Ok(serde_json::json!({
+        "content": [{
+            "type": "text",
+            "text": serde_json::to_string(&response).unwrap()
+        }]
+    }))
+}
+
+fn build_mcpviews_setup_response(
+    agent_type: &str,
+    rules: Value,
+    plugin_status: Value,
+    available_tools: Value,
+    setup_questions: Value,
+    startup_rule_actions: Value,
+) -> Value {
+    serde_json::json!({
         "rules": rules,
         "rules_version": super::RULES_VERSION,
         "plugin_status": plugin_status,
@@ -544,14 +645,7 @@ pub(super) async fn call_mcpviews_setup(
             "instruction": "Do not persist this setup response's runtime `rules` array into native startup rule files. Use only `startup_rule_actions` for native startup-rule installation/update, and keep plugin_rules as runtime workflow breadcrumbs."
         },
         "available_tools": available_tools,
-    });
-
-    Ok(serde_json::json!({
-        "content": [{
-            "type": "text",
-            "text": serde_json::to_string(&response).unwrap()
-        }]
-    }))
+    })
 }
 
 async fn startup_rule_actions_for_project(
@@ -559,17 +653,25 @@ async fn startup_rule_actions_for_project(
     project_path: Option<&str>,
     state: &Arc<TokioMutex<AsyncAppState>>,
 ) -> Result<Value, String> {
+    let app_state = {
+        let state_guard = state.lock().await;
+        state_guard.inner.clone()
+    };
+    startup_rule_actions_for_project_state(agent_type, project_path, &app_state)
+}
+
+fn startup_rule_actions_for_project_state(
+    agent_type: &str,
+    project_path: Option<&str>,
+    app_state: &Arc<AppState>,
+) -> Result<Value, String> {
     let Some(project_path) = project_path else {
         return Ok(project_path_required_startup_rule_actions());
     };
 
     let (manifests, store) = {
-        let state_guard = state.lock().await;
-        let registry = state_guard.inner.plugin_registry.lock().unwrap();
-        (
-            registry.manifests.clone(),
-            state_guard.inner.plugin_store().clone(),
-        )
+        let registry = app_state.plugin_registry.lock().unwrap();
+        (registry.manifests.clone(), app_state.plugin_store().clone())
     };
     let project_path = PathBuf::from(project_path);
     let config = super::startup_rules::load_or_create_project_config(&project_path)?;
@@ -581,6 +683,10 @@ async fn startup_rule_actions_for_project(
     if matches!(agent_type, "codex" | "opencode" | "antigravity") {
         let native_rule_file_path = project_path.join(super::startup_rules::CODEX_NATIVE_RULE_FILE);
         let existing_native_rule_file = std::fs::read_to_string(&native_rule_file_path).ok();
+        super::startup_rules::filter_startup_rule_actions_to_codex_file_orphans(
+            &mut actions,
+            existing_native_rule_file.as_deref(),
+        );
         actions["native_rule_file"] =
             serde_json::json!(super::startup_rules::CODEX_NATIVE_RULE_FILE);
         actions["native_rule_file_path"] =
@@ -749,6 +855,11 @@ pub(super) async fn call_get_plugin_docs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp_tools::startup_rules;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     #[test]
     fn test_missing_project_path_requires_project_specific_init() {
@@ -849,53 +960,186 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_actions_cleanup_removed_decidr_rule_converges_after_apply() {
+        let (app_state, _temp_store) = crate::test_utils::test_app_state();
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project.path().display().to_string();
+        let resolved = startup_rules::resolve_all_startup_rules(&[], app_state.plugin_store());
+        let core_rule = resolved
+            .iter()
+            .find(|rule| {
+                rule.plugin == startup_rules::CORE_STARTUP_RULE_PLUGIN
+                    && rule.rule_id == startup_rules::CORE_INIT_SESSION_PROJECT_PATH_RULE_ID
+            })
+            .expect("core startup rule");
+
+        let locations = serde_json::json!([{
+            "agent_type": "codex",
+            "path": "AGENTS.md",
+            "label": "Project AGENTS.md"
+        }]);
+        startup_rules::save_startup_rule_state_from_args(serde_json::json!({
+            "project_path": project_path,
+            "plugin": core_rule.plugin,
+            "rule_id": core_rule.rule_id,
+            "rule_version": core_rule.version,
+            "rule_hash": core_rule.hash,
+            "locations": locations.clone()
+        }))
+        .unwrap();
+        startup_rules::save_startup_rule_state_from_args(serde_json::json!({
+            "project_path": project_path,
+            "plugin": "decidr",
+            "rule_id": "decidr_work_session_bootstrap",
+            "rule_version": "2",
+            "rule_hash": "sha256:old-work-session",
+            "locations": locations
+        }))
+        .unwrap();
+
+        let stale_agents = format!(
+            "\
+# AGENTS.md
+
+## MCPViews Startup Rules
+
+<!-- mcpviews-startup-rules-schema: 1 -->
+
+<!-- mcpviews-startup-rule: plugin={} rule_id={} version={} hash={} -->
+
+### {}
+
+{}
+
+<!-- mcpviews-startup-rule: plugin=decidr rule_id=decidr_work_session_bootstrap version=2 hash=sha256:old-work-session -->
+
+### DecidR Work Session Bootstrap
+
+Old temporary work session rule.
+",
+            core_rule.plugin,
+            core_rule.rule_id,
+            core_rule.version,
+            core_rule.hash,
+            core_rule.title,
+            core_rule.rule
+        );
+        std::fs::write(project.path().join("AGENTS.md"), stale_agents).unwrap();
+
+        let actions =
+            startup_rule_actions_for_project_state("codex", Some(&project_path), &app_state)
+                .unwrap();
+        assert_eq!(actions["status"], "cleanup_required");
+        assert_eq!(actions["orphaned"].as_array().unwrap().len(), 1);
+        let replacement = actions["native_rule_block"].as_str().unwrap();
+        assert!(replacement.contains("plugin=mcpviews-core rule_id=init_session_project_path"));
+        assert!(!replacement.contains("decidr_work_session_bootstrap"));
+        assert!(!replacement.contains("DecidR Work Session Bootstrap"));
+        assert!(actions["native_rule_block_instruction"]
+            .as_str()
+            .unwrap()
+            .contains("install/update"));
+        assert!(setup_instructions("codex").contains("cleanup_required"));
+        let setup_response = build_mcpviews_setup_response(
+            "codex",
+            serde_json::json!([]),
+            serde_json::json!([]),
+            serde_json::json!([]),
+            serde_json::json!([]),
+            actions.clone(),
+        );
+        assert_eq!(
+            setup_response["startup_rule_actions"]["status"],
+            "cleanup_required"
+        );
+        assert!(setup_response["startup_rule_actions"]["native_rule_block"]
+            .as_str()
+            .unwrap()
+            .contains("plugin=mcpviews-core rule_id=init_session_project_path"));
+        assert!(!setup_response["startup_rule_actions"]["native_rule_block"]
+            .as_str()
+            .unwrap()
+            .contains("decidr_work_session_bootstrap"));
+        assert!(setup_response["setup_instructions"]
+            .as_str()
+            .unwrap()
+            .contains("cleanup_required"));
+        assert!(setup_response["rules_update"]["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("Use only `startup_rule_actions`"));
+
+        std::fs::write(project.path().join("AGENTS.md"), replacement).unwrap();
+        let current_actions =
+            startup_rule_actions_for_project_state("codex", Some(&project_path), &app_state)
+                .unwrap();
+        assert_eq!(current_actions["status"], "current");
+        assert_eq!(current_actions["orphaned"].as_array().unwrap().len(), 0);
+        assert!(current_actions.get("native_rule_block").is_none());
+        assert_eq!(
+            current_actions["native_rule_block_omitted"]["reason"],
+            "startup_rules_current"
+        );
+    }
+
+    #[test]
     fn test_parse_plugin_result_payload_from_mcp_text() {
         let result = serde_json::json!({
             "content": [{
                 "type": "text",
-                "text": "{\"data\":{\"status\":\"available\",\"activeWorkSessions\":[{\"id\":\"ws_1\"}]}}"
+                "text": "{\"data\":{\"status\":\"available\",\"recentDecisions\":[{\"id\":\"dec_1\"}]}}"
             }]
         });
 
         let parsed = parse_plugin_result_payload(&result).expect("payload should parse");
 
         assert_eq!(parsed["data"]["status"], "available");
-        assert_eq!(parsed["data"]["activeWorkSessions"][0]["id"], "ws_1");
+        assert_eq!(parsed["data"]["recentDecisions"][0]["id"], "dec_1");
     }
 
     #[test]
-    fn test_normalize_decidr_context_payload_adds_defaults() {
-        let normalized = normalize_decidr_context_payload(
-            serde_json::json!({
-                "data": {
-                    "activeWorkSessions": []
-                }
-            }),
-            "org_1",
-        );
+    fn test_parse_plugin_result_payload_from_structured_content() {
+        let result = serde_json::json!({
+            "structuredContent": {
+                "status": "available",
+                "items": []
+            }
+        });
+
+        let parsed = parse_plugin_result_payload(&result).expect("payload should parse");
+
+        assert_eq!(parsed["status"], "available");
+    }
+
+    #[test]
+    fn test_normalize_plugin_init_context_payload_extracts_data_only() {
+        let normalized = normalize_plugin_init_context_payload(serde_json::json!({
+            "data": {
+                "status": "available",
+                "recentDecisions": []
+            },
+            "meta": {
+                "debug": true
+            }
+        }));
 
         assert_eq!(normalized["status"], "available");
-        assert_eq!(normalized["organization_id"], "org_1");
-        assert_eq!(normalized["capture_defaults"]["ttl_hours"], 24);
-        assert!(normalized["instruction"]
-            .as_str()
-            .unwrap()
-            .contains("Do not create empty sessions during init"));
+        assert!(normalized.get("meta").is_none());
     }
 
     #[test]
-    fn test_decidr_fail_open_context_shape() {
-        let context = decidr_fail_open_context("timeout", Some("slow".to_string()));
+    fn test_plugin_init_context_fail_open_context_shape() {
+        let context = plugin_init_context_fail_open("timeout", Some("slow".to_string()));
 
         assert_eq!(context["status"], "timeout");
         assert_eq!(context["message"], "slow");
-        assert!(context["activeWorkSessions"].as_array().unwrap().is_empty());
-        assert_eq!(context["capture_defaults"]["archive_retention_days"], 60);
+        assert_eq!(context.as_object().unwrap().len(), 2);
     }
 
     #[test]
-    fn test_select_decidr_org_prefers_default_token() {
+    fn test_select_plugin_org_prefers_default_token() {
         let dir = tempfile::tempdir().unwrap();
+        let plugin_name = "context-plugin";
         let token = mcpviews_shared::token_store::StoredToken {
             access_token: "token".to_string(),
             refresh_token: None,
@@ -903,33 +1147,30 @@ mod tests {
         };
         mcpviews_shared::token_store::store_token_for_org(
             dir.path(),
-            DECIDR_PLUGIN_NAME,
+            plugin_name,
             "org_a_sorted_first",
             &token,
         )
         .unwrap();
         mcpviews_shared::token_store::store_token_for_org(
             dir.path(),
-            DECIDR_PLUGIN_NAME,
+            plugin_name,
             "org_z_default",
             &token,
         )
         .unwrap();
-        mcpviews_shared::token_store::set_default_org(
-            dir.path(),
-            DECIDR_PLUGIN_NAME,
-            "org_z_default",
-        )
-        .unwrap();
+        mcpviews_shared::token_store::set_default_org(dir.path(), plugin_name, "org_z_default")
+            .unwrap();
 
-        let selected = select_decidr_org_for_context_from_dir(dir.path()).unwrap();
+        let selected = select_plugin_org_for_context_from_dir(plugin_name, dir.path()).unwrap();
 
         assert_eq!(selected, "org_z_default");
     }
 
     #[test]
-    fn test_select_decidr_org_falls_back_when_default_unusable() {
+    fn test_select_plugin_org_falls_back_when_default_unusable() {
         let dir = tempfile::tempdir().unwrap();
+        let plugin_name = "context-plugin";
         let valid_token = mcpviews_shared::token_store::StoredToken {
             access_token: "token".to_string(),
             refresh_token: None,
@@ -942,32 +1183,28 @@ mod tests {
         };
         mcpviews_shared::token_store::store_token_for_org(
             dir.path(),
-            DECIDR_PLUGIN_NAME,
+            plugin_name,
             "org_a_default",
             &expired_unrefreshable,
         )
         .unwrap();
         mcpviews_shared::token_store::store_token_for_org(
             dir.path(),
-            DECIDR_PLUGIN_NAME,
+            plugin_name,
             "org_b_valid",
             &valid_token,
         )
         .unwrap();
-        mcpviews_shared::token_store::set_default_org(
-            dir.path(),
-            DECIDR_PLUGIN_NAME,
-            "org_a_default",
-        )
-        .unwrap();
+        mcpviews_shared::token_store::set_default_org(dir.path(), plugin_name, "org_a_default")
+            .unwrap();
 
-        let selected = select_decidr_org_for_context_from_dir(dir.path()).unwrap();
+        let selected = select_plugin_org_for_context_from_dir(plugin_name, dir.path()).unwrap();
 
         assert_eq!(selected, "org_b_valid");
     }
 
     #[test]
-    fn test_decidr_oauth_info_uses_selected_org() {
+    fn test_plugin_oauth_info_uses_selected_org() {
         let auth = Some(mcpviews_shared::PluginAuth::OAuth {
             auth_url: "https://auth.example.test".to_string(),
             token_url: "https://token.example.test".to_string(),
@@ -976,11 +1213,148 @@ mod tests {
             email_code_auth: None,
         });
 
-        let info = decidr_oauth_info_for_org(DECIDR_PLUGIN_NAME, &auth, "org_selected")
+        let info = plugin_oauth_info_for_context("context-plugin", &auth, Some("org_selected"))
             .expect("OAuth info");
 
-        assert_eq!(info.plugin_name, DECIDR_PLUGIN_NAME);
+        assert_eq!(info.plugin_name, "context-plugin");
         assert_eq!(info.org_id.as_deref(), Some("org_selected"));
         assert_eq!(info.client_id.as_deref(), Some("client_1"));
+    }
+
+    async fn mock_init_context_mcp_handler(
+        axum::extract::State(call_count): axum::extract::State<Arc<AtomicUsize>>,
+        axum::Json(body): axum::Json<Value>,
+    ) -> axum::Json<Value> {
+        call_count.fetch_add(1, Ordering::SeqCst);
+        let id = body.get("id").cloned().unwrap_or(Value::Null);
+        match body.get("method").and_then(Value::as_str) {
+            Some("initialize") => axum::Json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "serverInfo": {
+                        "name": "mock-decidr",
+                        "version": "1.0.0"
+                    }
+                }
+            })),
+            Some("notifications/initialized") => axum::Json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "result": {}
+            })),
+            Some("tools/list") => axum::Json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {
+                    "tools": [{
+                        "name": "get_init_context",
+                        "description": "Return compact init context.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    }]
+                }
+            })),
+            Some("tools/call") => {
+                let params = body.get("params").cloned().unwrap_or(Value::Null);
+                let name = params.get("name").and_then(Value::as_str);
+                let arguments = params
+                    .get("arguments")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                if name != Some("get_init_context") || arguments.contains_key("organization_id") {
+                    return axum::Json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": {
+                            "code": -32602,
+                            "message": "unexpected init-context call"
+                        }
+                    }));
+                }
+
+                axum::Json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::json!({
+                                "data": {
+                                    "status": "available",
+                                    "windowHours": 24,
+                                    "recentDecisions": [{
+                                        "id": "dec_1",
+                                        "title": "Frontend mockup plan",
+                                        "description": "Build the application front-end mockup."
+                                    }],
+                                    "instruction": "Call get_decision for a relevant recent decision match."
+                                }
+                            }).to_string()
+                        }]
+                    }
+                }))
+            }
+            _ => axum::Json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32601,
+                    "message": "unknown method"
+                }
+            })),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_collect_plugin_init_contexts_calls_manifest_provider() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new()
+            .route("/", axum::routing::post(mock_init_context_mcp_handler))
+            .with_state(call_count.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let (app_state, _temp_dir) = crate::test_utils::test_app_state();
+        let mut manifest = crate::test_utils::test_manifest("decidr");
+        manifest.mcp = Some(mcpviews_shared::PluginMcpConfig {
+            url: format!("http://{addr}/"),
+            auth: None,
+            tool_prefix: "decidr__".to_string(),
+        });
+        manifest.init_context = Some(mcpviews_shared::PluginInitContext {
+            tool: "get_init_context".to_string(),
+            timeout_ms: Some(1_200),
+            inject_organization_id: false,
+            arguments: serde_json::json!({}),
+        });
+        app_state
+            .plugin_registry
+            .lock()
+            .unwrap()
+            .add_plugin(manifest)
+            .unwrap();
+
+        let contexts = collect_plugin_init_contexts(&app_state).await;
+        server.abort();
+
+        let decidr = contexts.get("decidr").expect("decidr init context");
+        assert_eq!(decidr["status"], "available");
+        assert_eq!(decidr["windowHours"], 24);
+        assert_eq!(decidr["recentDecisions"][0]["id"], "dec_1");
+        assert_eq!(
+            decidr["recentDecisions"][0]["title"],
+            "Frontend mockup plan"
+        );
+        assert!(decidr.get("activeWorkSessions").is_none());
+        assert!(decidr["recentDecisions"][0].get("context").is_none());
+        assert!(call_count.load(Ordering::SeqCst) >= 3);
     }
 }

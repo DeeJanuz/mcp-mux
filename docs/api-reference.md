@@ -961,7 +961,7 @@ Non-blocking status check for a review session. Returns the current status witho
 
 ### `init_session`
 
-Initialize MCPViews for the current session. By default it returns a lean startup payload: startup-rule reconciliation, plugin auth/update status, organization token status, and compact ephemeral plugin context. Must be called at the start of every conversation, chat session, or interaction -- not just once. Pass `project_path` so startup rules can be evaluated against the project ledger.
+Initialize MCPViews for the current session. By default it returns a lean startup payload: startup-rule reconciliation, plugin auth/update status, organization token status, and compact plugin-provided init context. Must be called at the start of every conversation, chat session, or interaction -- not just once. Pass `project_path` so startup rules can be evaluated against the project ledger.
 
 The following diagram shows the default local-rule-first flow and the lazy-loading path for broader runtime or plugin documentation.
 
@@ -1025,19 +1025,15 @@ sequenceDiagram
   "plugin_contexts": {
     "decidr": {
       "status": "available",
-      "organization_id": "org_123",
-      "activeWorkSessions": [],
-      "latestFeedback": [],
-      "preferences": {
-        "workStyleMode": "SIMPLE_HANDOFF"
-      },
-      "capture_defaults": {
-        "ttl_hours": 24,
-        "archive_retention_days": 60,
-        "stored_content": "compact_summary_and_refs_only",
-        "raw_transcript_storage": false
-      },
-      "instruction": "Use lazy always-on DecidR Active Work Sessions for cross-agent handoff..."
+      "windowHours": 24,
+      "recentDecisions": [
+        {
+          "id": "dec_123",
+          "title": "Implement front-end mockup",
+          "description": "Build the accepted application mockup."
+        }
+      ],
+      "instruction": "Use recentDecisions as breadcrumbs only. Call get_decision for the relevant decision before implementation."
     }
   },
   "runtime_context": {
@@ -1138,7 +1134,7 @@ The `rules_version` string tracks the current runtime breadcrumb set. Runtime `r
 
 When `include_runtime_context` is `true`, the `plugin_registry` array is a compact index of installed plugins, listing their tool groups, renderer names, tags, legacy global `plugin_rules`, and structured plugin rules marked `always_include`. Agents use this to identify which plugin to query for detailed docs, then call `get_plugin_docs` with the plugin name and optional filters. Built-in renderer tools are exposed through the hosted breadcrumb catalog in both modes; use `describe_connector` with key `mcpviews-core`, then `describe_tool` or `describe_tool_group` for direct renderer guidance.
 
-The `plugin_contexts.decidr` object is fail-open and read-only during init. It returns active work-session summaries, latest feedback, preferences, capture defaults, and capture instructions when DecidR auth and tools are available; otherwise it returns a status such as `auth_missing`, `auth_unavailable`, `tool_unavailable`, `timeout`, or `error` with the same capture defaults and instruction shape. `init_session` never creates an empty DecidR work session.
+The `plugin_contexts` object is fail-open and read-only during init. MCPViews fills it by calling each installed plugin manifest's optional `init_context` provider tool. On success, `plugin_contexts.<pluginName>` is the provider tool's returned `data`; on failure it contains a compact status such as `auth_missing`, `auth_unavailable`, `tool_unavailable`, `timeout`, `configuration_error`, or `error`. MCPViews enforces timeout and auth plumbing only; plugin-owned provider tools define their own compact payload shape.
 
 The `plugin_updates` array lists plugins that have newer versions available in the registry. Each entry includes the plugin name, installed version, and available version. Call `update_plugins` to apply updates.
 

@@ -62,7 +62,7 @@
     },
     {
       "name": "decidr",
-      "version": "0.1.45",
+      "version": "0.1.48",
       "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
@@ -75,7 +75,7 @@
       ],
       "manifest": {
         "name": "decidr",
-        "version": "0.1.45",
+        "version": "0.1.48",
         "prompt_definitions": [
           {
             "name": "initiative_planning",
@@ -147,25 +147,18 @@
         "plugin_rules": [
           "When the user asks for action items, to-do items, pending work, or what needs attention: call my_action_items and push to decidr_list. Never open decidr_dashboard for these requests.",
           "When the user asks for a DecidR governance check-in, pending approvals, approval reminders, or assigned decision reviews, fetch governance_checkin and follow it.",
-          "When creating, updating, approving, staging, implementing, or logging DecidR-governed decision work, follow any installed DecidR governance lifecycle and work logging startup rules first. Use get_plugin_docs and governance_lifecycle for tool schemas or deeper detail when needed, not as the only source of lifecycle behavior.",
+          "When the user accepts a durable choice, plan, meaningful discovery, agreed finding, persistent object, or release/deploy/commit proof, follow installed DecidR governance lifecycle and work logging startup rules first even if the user did not mention DecidR. Use provided DecidR tools; fetch get_plugin_docs or governance_lifecycle only for schemas or deeper detail.",
           "When using DecidR search, list, or detail tools only for agent discovery, keep results private. Push decidr_list only when the user explicitly asks to see results or details.",
           "When the user asks for a timeline, roadmap, schedule, portfolio timing, or how initiatives shape up over time: push decidr_timeline directly. Do not call list tools first; the renderer fetches its own data.",
-          "Active Work Sessions are lazy and always-on for cross-agent handoff. Use get_active_work_sessions during startup/context reads; create/update a session only when there is compact summary, note, or artifact reference content to save."
+          "During init_session, DecidR may provide plugin_contexts.decidr.recentDecisions as current-user decision breadcrumbs from the last 24 hours. Treat them as hints only; call get_decision for a relevant match before implementation."
         ],
         "startup_rules": [
           {
-            "id": "decidr_work_session_bootstrap",
-            "version": "1",
-            "title": "DecidR Work Session Bootstrap",
-            "description": "Project startup rule for deterministic DecidR Active Work Session tool availability in fresh agents and subagents.",
-            "rule": "After calling MCPViews `init_session`, inspect `plugin_contexts.decidr`. If DecidR status is `available`, active work sessions are present, or capture defaults/instructions are present, use DecidR Active Work Sessions for cross-agent handoff. Before saving or reading work-session state, ensure the Work Session tools are callable: `decidr__get_active_work_sessions`, `decidr__ensure_work_session`, `decidr__update_work_session_summary`, and `decidr__record_work_session_event`. In Codex subagents or other deferred-tool environments, if those tools are not already callable, call tool discovery with the query `active work sessions` to expose the Work Sessions group, then use the normal MCPViews/DecidR tools. Prefer the normal tools over direct HTTP calls to DecidR MCP. Store only compact summaries, next steps, blockers, decisions made, and artifact refs/previews; never store raw transcript."
-          },
-          {
             "id": "decidr_governance_lifecycle_team_runtime",
-            "version": "1",
+            "version": "3",
             "title": "DecidR Team Governance Lifecycle Runtime",
             "description": "Setup-configured native startup rule for team approval governance lifecycle behavior.",
-            "rule": "DecidR governance lifecycle mode is team and always-on for this project. After MCPViews init_session, if DecidR is available, manage governed decision work without waiting for the user to ask for governance instructions. Search existing initiatives, projects, decisions, tasks, documents, and active work sessions before creating records. Use standard decisions for durable choices and CATCH_UP decisions only for small already-implemented rationale capture. Keep discovery and planning in DRAFT until a PLAN document exists. Before governed implementation, save a PLAN version with save_decision_document_version and transition the decision through PROPOSED to APPROVED; do not begin governed implementation before approval unless the user explicitly overrides. Assign owner or implementer only after resolving active organization members. Transition approved decisions to IN_PROGRESS when implementation starts and link execution tasks to the decision or project. When the change is built and ready for testing or non-production validation, save a STAGED document version and move status to STAGED. Move to IMPLEMENTED only after production-equivalent proof such as merge, deployment, release, or committed operational evidence; save an IMPLEMENTED document version with that proof. Use MCPViews review for ambiguous, destructive, cross-organization, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level accept/reject batches. Work Sessions are temporary handoff context, not the canonical governance record.",
+            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: team approvals.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before governed implementation, save PLAN with `save_decision_document_version`, move through PROPOSED -> APPROVED, then begin unless the user explicitly overrides.\n- When implementation starts, move approved work to IN_PROGRESS when allowed and link execution tasks.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN before implementation.\n- A discovery finding becomes the basis for future work -> capture it as a decision or PLAN update.\n- PR merged or installer released -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Unsure parent project or cross-org target -> use review before writing.",
             "conditions": [
               {
                 "question_id": "decidr_governance_mode",
@@ -177,10 +170,10 @@
           },
           {
             "id": "decidr_governance_lifecycle_solo_runtime",
-            "version": "1",
+            "version": "3",
             "title": "DecidR Solo Governance Lifecycle Runtime",
             "description": "Setup-configured native startup rule for solo-builder governance lifecycle behavior.",
-            "rule": "DecidR governance lifecycle mode is solo_builder and always-on for this project. After MCPViews init_session, if DecidR is available, manage governed decision work without waiting for the user to ask for governance instructions. Search existing initiatives, projects, decisions, tasks, documents, and active work sessions before creating records. Use standard decisions for durable choices and CATCH_UP decisions only for small already-implemented rationale capture. Keep discovery and planning in DRAFT until a PLAN document exists. Before implementation, save a PLAN version with save_decision_document_version; in solo mode, a clear accepted decision artifact or explicit user request is enough to proceed without team PROPOSED or APPROVED gates unless the user or organization policy asks for them. Assign owner or implementer only after resolving active organization members. Link execution tasks to the decision or project. When the change is built and ready for testing or non-production validation, save a STAGED document version and move status to STAGED. Move to IMPLEMENTED only after production-equivalent proof such as merge, deployment, release, or committed operational evidence; save an IMPLEMENTED document version with that proof. Use MCPViews review for ambiguous, destructive, cross-organization, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level accept/reject batches. Work Sessions are temporary handoff context, not the canonical governance record.",
+            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: solo builder.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before implementation, save PLAN with `save_decision_document_version`. In solo mode, a clear accepted plan, selected direction, agreed finding, or explicit user request is enough to proceed unless user/org policy asks for team approval.\n- Transition only through allowed DecidR status changes.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN, then implement.\n- Meaningful discovery accepted as true -> capture it as a decision or PLAN update before it drives work.\n- Release shipped or commit pushed to live branch -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Small finished rationale with no full lifecycle needed -> create/update a catch-up decision.",
             "conditions": [
               {
                 "question_id": "decidr_governance_mode",
@@ -192,7 +185,7 @@
           },
           {
             "id": "decidr_work_logging_runtime",
-            "version": "1",
+            "version": "3",
             "title": "DecidR Work Logging Runtime",
             "description": "Setup-configured native startup rule for always-on DecidR work logging policy.",
             "source": {
@@ -213,13 +206,13 @@
                 "value": "team",
                 "label": "Yes - team approvals",
                 "description": "Use discovery -> PROPOSED -> APPROVED -> implementation -> STAGED for testing/non-prod validation -> IMPLEMENTED after production-equivalent push, merge, deployment, or release.",
-                "persisted_rule": "Default DecidR governance lifecycle mode is team. Install or follow the DecidR Team Governance Lifecycle Runtime startup rule for DRAFT -> PROPOSED -> APPROVED -> IN_PROGRESS -> STAGED -> IMPLEMENTED. Use save_decision_document_version for PLAN, STAGED, and IMPLEMENTED snapshots; STAGED means built and validating, IMPLEMENTED means live or production-equivalent release."
+                "persisted_rule": "DecidR governance mode: team approvals. Run governance when the user accepts a durable plan, option, finding, discovery, object, task, or lifecycle proof, even without DecidR wording. Use provided DecidR tools. Short path: search first -> DRAFT + PLAN -> PROPOSED -> APPROVED -> IN_PROGRESS -> STAGED + STAGED doc -> IMPLEMENTED + IMPLEMENTED proof. Review-gate risky or ambiguous writes."
               },
               {
                 "value": "solo_builder",
                 "label": "No - solo builder",
                 "description": "Use discovery -> accepted decision artifact -> implementation -> STAGED for testing/non-prod validation -> IMPLEMENTED after production-equivalent push, merge, deployment, or release.",
-                "persisted_rule": "Default DecidR governance lifecycle mode is solo_builder. Install or follow the DecidR Solo Governance Lifecycle Runtime startup rule for discovery -> DRAFT + PLAN -> implementation -> STAGED -> IMPLEMENTED without team approval gates unless requested. Use save_decision_document_version for PLAN, STAGED, and IMPLEMENTED snapshots; STAGED means built and validating, IMPLEMENTED means live or production-equivalent release."
+                "persisted_rule": "DecidR governance mode: solo builder. Run governance when the user accepts a durable plan, option, finding, discovery, object, task, or lifecycle proof, even without DecidR wording. Use provided DecidR tools. Short path: search first -> DRAFT + PLAN -> implement after accepted plan/request/finding -> STAGED + STAGED doc -> IMPLEMENTED + IMPLEMENTED proof. Review-gate risky or ambiguous writes."
               }
             ]
           },
@@ -227,38 +220,38 @@
             "id": "decidr_work_logging_policy",
             "question": "How should agents log DecidR work by default?",
             "description": "This controls the local always-on DecidR work logging startup rule for future agent sessions.",
-            "guidance": "Explain that DecidR can log durable work as decisions, small completed rationale as catch-up decisions, execution follow-up as tasks, and release proof as lifecycle document or audit evidence. Work Sessions remain temporary handoff context.",
+            "guidance": "Explain that DecidR can log durable work as decisions, small completed rationale as catch-up decisions, execution follow-up as tasks, and release proof as lifecycle document or audit evidence. Init-session decision breadcrumbs are discovery hints only.",
             "default_value": "auto_log_confident",
             "recommended_value": "auto_log_confident",
             "persist_as_rule_name": "decidr_work_logging_runtime",
             "example_outputs": {
-              "auto_log_confident": "A clear low-risk plugin setup change can create or update the matching DecidR decision directly after search. Ambiguous or high-impact writes still use MCPViews review.",
-              "review_first": "Agents keep DecidR logging active, but present proposed formal writes for review before creating or updating records.",
-              "capture_only": "Agents keep compact Work Sessions for handoff and ask before promoting or logging formal DecidR records."
+              "auto_log_confident": "A clear low-risk accepted plan, finding, discovery, or plugin setup change can create or update the matching DecidR record directly after search. Ambiguous or high-impact writes still use review.",
+              "review_first": "Agents keep durable-work logging active, but present proposed formal writes for review before creating or updating DecidR records.",
+              "capture_only": "Agents do not write DecidR records automatically. They summarize candidate durable memory and ask before creating or updating formal records."
             },
             "options": [
               {
                 "value": "auto_log_confident",
                 "label": "Auto-log confident work",
                 "description": "Search first, then directly log clear low-risk work while review-gating ambiguous or high-impact writes.",
-                "persisted_rule": "DecidR work logging policy is auto_log_confident and always-on for this project. After MCPViews init_session, if DecidR is available, search existing initiatives, projects, decisions, tasks, and documents before creating or updating records. Use a decision-first mapping: durable choices, tradeoffs, architecture direction, approval-worthy implementation paths, or persistent behavior become standard decisions; small already-completed rationale capture becomes catch-up decisions; lightweight execution follow-up becomes tasks; commit, release, deploy, or operational proof updates lifecycle documents or audit evidence. Clear low-risk DecidR writes may proceed directly after search/context checks when organization, parent, target, and impact are confident. Use MCPViews review before executing ambiguous, destructive, cross-organization, high-impact, customer/production-visible, major lifecycle-transition, hard-to-undo, or row-level accept/reject-worthy writes. Work Sessions are temporary handoff context only, not the canonical project-management record. Store compact summaries and refs only; never store raw transcript. Use governance_lifecycle for lifecycle/status transitions and save_decision_document_version for PLAN, STAGED, and IMPLEMENTED snapshots."
+                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: a plan, selected option, agreed finding, meaningful discovery, persistent object, task, or lifecycle proof.\n\nPolicy: auto-log confident work.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, and lifecycle transitions.\n- If tool names differ by agent, use the provided DecidR tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Proceed directly only when organization, parent, target, record type, evidence, and impact are clear and low-risk.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, major lifecycle-transition, hard-to-undo, or row-level batch writes.\n\nDecision-first mapping:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture direction, approval-worthy path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> catch-up decision.\n- Execution-only follow-up -> task.\n- Commit, release, deploy, or operational proof -> lifecycle document or audit evidence.\n- Temporary handoff only -> no DecidR record unless the user asks to log it.\n\nDo:\n- Use governance lifecycle rules for PLAN/STAGED/IMPLEMENTED and `save_decision_document_version` snapshots.\n\nExamples:\n- User says \"yes, proceed with that plan\" -> search, create/update matching decision, save PLAN.\n- A meaningful discovery is accepted as the basis for future work -> capture it as a decision or PLAN update.\n- Release published -> save IMPLEMENTED proof on matching decision.\n- Parent project unclear -> review before writing."
               },
               {
                 "value": "review_first",
                 "label": "Review first",
                 "description": "Keep DecidR logging always-on, but review formal writes before creating or updating records.",
-                "persisted_rule": "DecidR work logging policy is review_first and always-on for this project. After MCPViews init_session, if DecidR is available, search existing initiatives, projects, decisions, tasks, and documents before proposing records. Use a decision-first mapping: durable choices, tradeoffs, architecture direction, approval-worthy implementation paths, or persistent behavior become standard decisions; small already-completed rationale capture becomes catch-up decisions; lightweight execution follow-up becomes tasks; commit, release, deploy, or operational proof updates lifecycle documents or audit evidence. Present proposed formal DecidR writes for review before execution, then execute accepted rows only. Work Sessions are temporary handoff context only, not the canonical project-management record. Store compact summaries and refs only; never store raw transcript. Use governance_lifecycle for lifecycle/status transitions and save_decision_document_version for PLAN, STAGED, and IMPLEMENTED snapshots."
+                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: a plan, selected option, agreed finding, meaningful discovery, persistent object, task, or lifecycle proof.\n\nPolicy: review first.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, and lifecycle transitions.\n- If tool names differ by agent, use the provided DecidR tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Present formal DecidR writes in review before creating/updating records.\n\nDecision-first mapping:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture direction, approval-worthy path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> catch-up decision.\n- Execution-only follow-up -> task.\n- Commit, release, deploy, or operational proof -> lifecycle document or audit evidence.\n- Temporary handoff only -> no DecidR record unless the user asks to log it.\n\nDo:\n- Review table rows should show target, action, reason, evidence/ref, and risk.\n- Execute accepted rows only.\n- Use governance lifecycle rules for PLAN/STAGED/IMPLEMENTED and `save_decision_document_version` snapshots.\n\nExamples:\n- User accepts a plan with several possible task/decision updates -> propose rows, execute accepted rows.\n- Release proof accepted -> save IMPLEMENTED proof.\n- User rejects a row -> do not write that record."
               },
               {
                 "value": "capture_only",
-                "label": "Capture only",
-                "description": "Keep compact Work Sessions active and ask before promoting or logging formal DecidR records.",
-                "persisted_rule": "DecidR work logging policy is capture_only and always-on for this project. After MCPViews init_session, if DecidR is available, use Active Work Sessions for compact handoff context and artifact refs, but ask before creating, updating, promoting, or lifecycle-transitioning formal DecidR decisions, tasks, documents, or audit evidence. Work Sessions are temporary handoff context only, not the canonical project-management record. Store compact summaries and refs only; never store raw transcript. When the user approves formal logging, use a decision-first mapping and governance_lifecycle; save_decision_document_version for PLAN, STAGED, and IMPLEMENTED snapshots."
+                "label": "Manual only",
+                "description": "Do not write DecidR records automatically; summarize candidate durable memory and ask before formal logging.",
+                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: a plan, selected option, agreed finding, meaningful discovery, persistent object, task, or lifecycle proof.\n\nPolicy: manual logging only.\n\nDo:\n- Confirm DecidR is available before proposing DecidR writes.\n- Summarize candidate durable memory in chat and ask before creating, updating, or lifecycle-transitioning DecidR decisions, tasks, documents, or audit evidence.\n- When user approves formal logging, search existing initiatives, projects, decisions, tasks, and documents first.\n- Use decision-first mapping and governance lifecycle rules.\n- Use `save_decision_document_version` for PLAN, STAGED, and IMPLEMENTED snapshots.\n\nExamples:\n- End of coding session -> summarize candidate decision/task/doc updates; do not write automatically.\n- User says \"log this formally\" -> search, propose/create the formal DecidR record.\n- Release proof exists but no approval to log -> explain what could be logged and wait."
               }
             ]
           }
         ],
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.45/decidr.zip",
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.48/decidr.zip",
         "registry_index": {
           "summary": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
           "tags": [
@@ -274,22 +267,6 @@
               "hint": "Prioritized action items: pending approvals, assigned tasks, stalled decisions. BACKLOG decisions/tasks are intentionally non-actionable and stay out of Next Steps. Push results to decidr_list.",
               "tools": [
                 "my_action_items"
-              ]
-            },
-            {
-              "name": "Work Sessions",
-              "hint": "Lazy, temporary Active Work Sessions for cross-agent handoff. Read active sessions at init/context time, then save only compact summaries, next steps, blockers, decisions made, and artifact refs/previews after milestones or end-turn. Use MCPViews review before multi-item DecidR logging.",
-              "tools": [
-                "get_active_work_sessions",
-                "ensure_work_session",
-                "start_work_session",
-                "record_work_session_event",
-                "update_work_session_summary",
-                "promote_work_session_to_decision",
-                "mark_work_session_logged",
-                "archive_work_session",
-                "record_agent_feedback",
-                "propose_native_rule_patch"
               ]
             },
             {
@@ -409,16 +386,6 @@
         },
         "tool_rules": {
           "my_action_items": "Returns prioritized action items as entity refs. Draft, approved, in-progress, and staged decisions appear when the user is owner or implementer; proposed decisions appear when awaiting the user's review. ALWAYS push results to decidr_list — the renderer fetches full data from the API. Never use decidr_dashboard for action item requests. Drill into individual items with get_decision/get_task.",
-          "get_active_work_sessions": "Read active DecidR work sessions for cross-agent handoff. Safe during init_session because it is read-only and must not create empty sessions. Use include_guidance=true for startup context, capture defaults, preferences, and latest feedback.",
-          "ensure_work_session": "Lazily ensure a session only when there is compact summary, note, artifact ref, or entity context to save. Prefer client_session_key for per-user/org active-session identity. Store summary+refs only; never raw transcript.",
-          "start_work_session": "Compatibility alias for ensure_work_session. Do not call just because init_session ran; call only when useful session content exists.",
-          "record_work_session_event": "Record compact events such as ARTIFACT_CREATED, USER_NOTE, AGENT_NOTE, TOOL_ACTIVITY, or LOGGING_PROPOSED. For proposed DecidR writes, first build an MCPViews structured review table and record LOGGING_PROPOSED before executing accepted rows.",
-          "update_work_session_summary": "Save compact milestone/end-turn state. Include next_steps, blockers, decisions_made, and entity_refs where possible. Use background saver when the runtime supports it; otherwise save inline briefly.",
-          "promote_work_session_to_decision": "Promote a temporary work session into formal governance by creating a DRAFT decision and PLAN document, then archive the session. Supports entity_type PROJECT, INITIATIVE, or BRIDGE plus optional parent_decision_id.",
-          "mark_work_session_logged": "Call only after accepted MCPViews review rows have been executed in DecidR. Records completed logging and archives the work session.",
-          "archive_work_session": "Manually archive a work session. Sessions also archive after successful logging, promotion, or expiry; archived rows are retained for 60 days.",
-          "record_agent_feedback": "Record user feedback about agent behavior or work style so init_session can return guidance later.",
-          "propose_native_rule_patch": "Record a proposed native startup-rule file patch for review only. Never edit native agent rule files from this tool unless the user explicitly approves the patch separately.",
           "list_initiatives": "Use to discover all initiatives. Push to decidr_list. Use format=compact to save tokens. The standalone graph view is currently hidden from this plugin line.",
           "list_projects": "Use to discover projects. Push to decidr_list. Filter by status to find active work. Use initiative_id to filter by initiative.",
           "list_decisions": "Use to discover decisions. Filter status=BACKLOG to inspect future/non-actionable decisions. No auto-push: keep discovery-only calls private. Push to decidr_list only when the user explicitly asked to see/list/browse decisions. Call get_decision for full details including approval progress.",
@@ -483,19 +450,11 @@
           "merge_pr": "Merge a GitHub pull request and mark the DecidR PR artifact as MERGED. No auto-push.",
           "generate_fix_prompt": "Generate a code fix prompt from issue context. Returns text. No auto-push.",
           "generate_review_prompt": "Generate a PR review prompt. Returns text. No auto-push.",
-          "manage_repo_admin": "Add or remove repo admin. No auto-push."
+          "manage_repo_admin": "Add or remove repo admin. No auto-push.",
+          "get_init_context": "Read-only init-session provider used by MCPViews. Returns current-user decision breadcrumbs from the last 24 hours as id, title, and description only. Treat as private discovery; call get_decision for a relevant match before implementation."
         },
         "no_auto_push": [
-          "get_active_work_sessions",
-          "ensure_work_session",
-          "start_work_session",
-          "record_work_session_event",
-          "update_work_session_summary",
-          "promote_work_session_to_decision",
-          "mark_work_session_logged",
-          "archive_work_session",
-          "record_agent_feedback",
-          "propose_native_rule_patch",
+          "get_init_context",
           "list_decisions",
           "get_decision",
           "search",
@@ -589,16 +548,6 @@
           "save_decision_document_version": "decidr_list",
           "archive_entity": "decidr_list",
           "restore_entity": "decidr_list",
-          "get_active_work_sessions": "decidr_list",
-          "ensure_work_session": "decidr_list",
-          "start_work_session": "decidr_list",
-          "record_work_session_event": "decidr_list",
-          "update_work_session_summary": "decidr_list",
-          "promote_work_session_to_decision": "decidr_list",
-          "mark_work_session_logged": "decidr_list",
-          "archive_work_session": "decidr_list",
-          "record_agent_feedback": "decidr_list",
-          "propose_native_rule_patch": "decidr_list",
           "connect_github": "decidr_github_auth",
           "disconnect_github": "decidr_list",
           "list_repos": "decidr_list",
@@ -672,16 +621,6 @@
               "save_decision_document_version",
               "archive_entity",
               "restore_entity",
-              "get_active_work_sessions",
-              "ensure_work_session",
-              "start_work_session",
-              "record_work_session_event",
-              "update_work_session_summary",
-              "promote_work_session_to_decision",
-              "mark_work_session_logged",
-              "archive_work_session",
-              "record_agent_feedback",
-              "propose_native_rule_patch",
               "connect_github",
               "disconnect_github",
               "list_repos",
@@ -756,31 +695,6 @@
             "tags": [
               "auth",
               "organization"
-            ],
-            "always_include": true
-          },
-          {
-            "id": "active_work_sessions",
-            "rule": "Use DecidR Active Work Sessions as lazy always-on handoff state. During init/context reads, call get_active_work_sessions with include_guidance=true when available and do not create an empty session. After milestones and end-turn, spawn a background saver when the runtime supports it; otherwise do a short inline update_work_session_summary. Save only compact summary, next steps, blockers, decisions made, and artifact refs/previews. Store no raw transcript. For multi-item DecidR logging, build an MCPViews structured review table with one row per proposed write, execute accepted rows only, then call mark_work_session_logged to archive. Promote to formal governance with promote_work_session_to_decision only when the user chooses a PROJECT, INITIATIVE, or BRIDGE target. Never edit native agent rule files from work-session guidance; use propose_native_rule_patch and wait for explicit user approval.",
-            "tools": [
-              "get_active_work_sessions",
-              "ensure_work_session",
-              "start_work_session",
-              "record_work_session_event",
-              "update_work_session_summary",
-              "promote_work_session_to_decision",
-              "mark_work_session_logged",
-              "archive_work_session",
-              "record_agent_feedback",
-              "propose_native_rule_patch"
-            ],
-            "groups": [
-              "Work Sessions"
-            ],
-            "tags": [
-              "work-sessions",
-              "handoff",
-              "review"
             ],
             "always_include": true
           },
@@ -1075,9 +989,15 @@
               "review"
             ]
           }
-        ]
+        ],
+        "init_context": {
+          "tool": "get_init_context",
+          "timeout_ms": 1200,
+          "inject_organization_id": true,
+          "arguments": {}
+        }
       },
-      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.45/decidr.zip"
+      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.48/decidr.zip"
     },
     {
       "name": "mcpviews-gronk-speak",

@@ -5,6 +5,7 @@ pub mod settings;
 pub mod token_store;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -171,6 +172,27 @@ pub struct PluginRuleDefinition {
     pub always_include: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginInitContext {
+    /// Unprefixed plugin MCP tool name that supplies compact init-session context.
+    pub tool: String,
+    /// Maximum time MCPViews should wait before failing open for this provider.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    /// Inject the selected organization_id into the MCP proxy lookup so normal
+    /// org-scoped auth is used. The proxy strips organization_id before calling
+    /// the backend tool, matching existing plugin-tool behavior.
+    #[serde(default)]
+    pub inject_organization_id: bool,
+    /// Static arguments merged into the tool call.
+    #[serde(default = "default_init_context_arguments")]
+    pub arguments: Value,
+}
+
+fn default_init_context_arguments() -> Value {
+    serde_json::json!({})
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PluginManifest {
     pub name: String,
@@ -214,6 +236,8 @@ pub struct PluginManifest {
     pub startup_rules: Vec<StartupRule>,
     #[serde(default)]
     pub setup_questions: Vec<SetupQuestion>,
+    #[serde(default)]
+    pub init_context: Option<PluginInitContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -985,6 +1009,49 @@ mod tests {
         assert!(manifest.renderer_definitions.is_empty());
         assert!(manifest.renderers.is_empty());
         assert!(manifest.mcp.is_none());
+        assert!(manifest.init_context.is_none());
+    }
+
+    #[test]
+    fn test_plugin_manifest_init_context_roundtrip() {
+        let json = r#"{
+            "name": "context-plugin",
+            "version": "1.0.0",
+            "init_context": {
+                "tool": "get_init_context",
+                "timeout_ms": 1200,
+                "inject_organization_id": true,
+                "arguments": {
+                    "limit": 5
+                }
+            }
+        }"#;
+
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        let init_context = manifest.init_context.expect("init_context");
+
+        assert_eq!(init_context.tool, "get_init_context");
+        assert_eq!(init_context.timeout_ms, Some(1200));
+        assert!(init_context.inject_organization_id);
+        assert_eq!(init_context.arguments["limit"], 5);
+    }
+
+    #[test]
+    fn test_plugin_manifest_init_context_arguments_default_to_object() {
+        let json = r#"{
+            "name": "context-plugin",
+            "version": "1.0.0",
+            "init_context": {
+                "tool": "get_init_context"
+            }
+        }"#;
+
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        let init_context = manifest.init_context.expect("init_context");
+
+        assert_eq!(init_context.arguments, serde_json::json!({}));
+        assert_eq!(init_context.timeout_ms, None);
+        assert!(!init_context.inject_organization_id);
     }
 
     #[test]

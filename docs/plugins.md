@@ -18,6 +18,12 @@ A plugin manifest is a JSON file with the following structure:
   "renderers": {
     "tool_name": "renderer_name"
   },
+  "init_context": {
+    "tool": "get_init_context",
+    "timeout_ms": 1200,
+    "inject_organization_id": true,
+    "arguments": {}
+  },
   "mcp": {
     "url": "http://localhost:8080/mcp",
     "auth": {
@@ -41,6 +47,7 @@ A plugin manifest is a JSON file with the following structure:
 | `tool_rules` | object | No | Map of tool names to behavioral rule strings. These rules are returned by `get_plugin_docs` and `mcpviews_setup` for guided tool usage; they are runtime breadcrumbs, not native startup rules. Tool names are automatically prefixed with the plugin's `tool_prefix`. |
 | `no_auto_push` | string[] | No | **Deprecated.** Previously controlled which tools skipped auto-push. Auto-push has been removed entirely -- pushes now only happen via explicit `push_content`/`push_review` calls. Field is still accepted for backward compatibility but has no effect. |
 | `registry_index` | object | No | Pre-authored compact index for the `init_session` plugin registry. Contains `summary` (string), `tags` (string[]), `tool_groups` (ToolGroupEntry[]), and `renderer_names` (string[]). If omitted, MCPViews auto-derives the index from the `renderers` map and tool cache. |
+| `init_context` | PluginInitContext | No | Optional plugin-owned init-session provider. MCPViews calls the declared unprefixed MCP tool during `init_session`, fail-open and timeout-wrapped, then places the returned `data` at `plugin_contexts.<pluginName>`. |
 | `mcp` | object | No | MCP server connection configuration. If omitted, the plugin provides renderers only (no remote tools). |
 | `prompt_definitions` | PromptDef[] | No | Plugin prompt definitions for guided workflows. Each entry defines a prompt that can be discovered via the MCP `prompts/list` protocol and fetched via `get_plugin_prompt` or `prompts/get`. Prompts are markdown files bundled with the plugin that support `{{arg}}` template substitution. |
 | `plugin_rules` | string[] | No | Compact global workflow breadcrumbs for this plugin. These are returned by `mcpviews_setup`, `get_plugin_docs`, and `init_session` only when `include_runtime_context` is true, so agents can decide when to fetch prompts or plugin docs without forcing every startup to carry them. Keep these short and broadly useful. Use `plugin_rule_definitions` for detailed tool/group-specific workflow guidance. |
@@ -48,6 +55,30 @@ A plugin manifest is a JSON file with the following structure:
 | `startup_rules` | StartupRule[] | No | Agent-native startup rules that should be installed into the current project's harness-specific rule files before the next session starts. `init_session`/`mcpviews_setup` evaluate these against project-local `mcpviews-init.json` when called with `project_path`, then return `startup_rule_actions` for install/update/skip handling. |
 | `setup_questions` | SetupQuestion[] | No | Optional setup-time questions returned by `mcpviews_setup` when unanswered. Questions can include optional `guidance`, `recommended_value`, and `example_outputs` fields for richer setup prompts. Agents should ask exactly one question at a time in returned order, explain the current choice using the question and option descriptions, then call `save_setup_preference` with the plugin, question id, and selected option value. MCPViews persists only the selected option's compact manifest-defined `persisted_rule`, not every option or the full workflow. |
 | `download_url` | string | No | URL to a ZIP package for this plugin version. Used by `manifest_url`-based registry entries and the `update_plugins` tool. |
+
+### PluginInitContext
+
+Plugins can declare a compact startup context provider without MCPViews core changes:
+
+```json
+{
+  "init_context": {
+    "tool": "get_init_context",
+    "timeout_ms": 1200,
+    "inject_organization_id": true,
+    "arguments": {}
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `tool` | string | Yes | Unprefixed MCP tool name. MCPViews applies the plugin's normal `tool_prefix` internally. |
+| `timeout_ms` | integer | No | Timeout before MCPViews fails open for this provider. Defaults to 1200. |
+| `inject_organization_id` | boolean | No | When true, MCPViews selects the default/usable organization token and passes `organization_id` through the normal plugin proxy lookup for org-scoped auth. |
+| `arguments` | object | No | Static object merged into the tool call arguments. Defaults to `{}`. |
+
+The provider tool should return a normal MCP tool result whose text payload parses to `{ "data": ... }`. MCPViews inserts only that `data` value into `plugin_contexts.<pluginName>`. On failure, MCPViews inserts a compact `{ "status": "...", "message": "..." }` object and continues `init_session`.
 
 ### StartupRule
 
@@ -404,6 +435,12 @@ Write a JSON file following the PluginManifest schema above. Example:
   "renderers": {
     "analyze_code": "code_units",
     "search_files": "search_results"
+  },
+  "init_context": {
+    "tool": "get_init_context",
+    "timeout_ms": 1200,
+    "inject_organization_id": true,
+    "arguments": {}
   },
   "mcp": {
     "url": "http://localhost:9000/mcp",

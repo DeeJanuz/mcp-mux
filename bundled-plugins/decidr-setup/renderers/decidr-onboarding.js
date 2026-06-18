@@ -550,7 +550,7 @@
       },
       body: JSON.stringify({
         workStyleMode: workStyleApiMode(state.workStyleMode),
-        agentGuidanceSummary: 'Use lazy DecidR Active Work Sessions, background capture when available, compact summary plus artifact refs only, and review-gated DecidR logging.',
+        agentGuidanceSummary: 'Use DecidR decision breadcrumbs for discovery only; call get_decision before implementation and review-gate ambiguous DecidR writes.',
       }),
       cache: 'no-store',
     }).then(function (response) {

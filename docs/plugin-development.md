@@ -811,7 +811,7 @@ After adding `renderer_definitions`:
 - Startup-rule reconciliation
 - Plugin auth/update status
 - Organization token status
-- Compact plugin context, such as DecidR active work-session summaries when available
+- Compact plugin-provided init context from each manifest's optional `init_context` provider
 
 Core renderer and plugin-specific rules are fetched on-demand via `describe_connector`, `describe_tool`, `get_plugin_docs`, and `get_plugin_prompt`. This keeps session-start token usage minimal and avoids loading documentation the agent never uses in a given conversation.
 

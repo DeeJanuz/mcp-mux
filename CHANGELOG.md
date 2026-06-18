@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [0.2.49] - 2026-06-18
 
 ### Changed
+- Rebuilt the DecidR-branded installer bundle after DeeJanuz/decidr-plugin@0.1.48, staging the latest stable bundled plugin releases.
 - Replaced the hardcoded DecidR Active Work Session init bootstrap with plugin-declared `init_context` providers, allowing trusted plugins to supply compact `init_session` breadcrumbs through their own MCP tools.
 - Emit Codex startup-rule cleanup blocks when removed plugin rules are still present in the managed `AGENTS.md` block, so setup can drop stale native rules such as DecidR Work Session bootstrap.
 

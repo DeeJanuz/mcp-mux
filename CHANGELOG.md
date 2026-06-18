@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.51] - 2026-06-18
+
+### Changed
+- Stage DecidR plugin v0.1.49 in the bundled registry with a 2500 ms DecidR init-context timeout.
+
+### Fixed
+- Call manifest-declared plugin `init_context` providers directly during `init_session`, so DecidR recent-decision breadcrumbs are not blocked by cold plugin tool-list warmup.
+
 ## [0.2.50] - 2026-06-18
 
 ### Changed
 - Rebuilt the DecidR-branded installer bundle after DeeJanuz/decidr-plugin@0.1.49, staging the latest stable bundled plugin releases.
-
 
 ## [0.2.49] - 2026-06-18
 

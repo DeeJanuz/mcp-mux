@@ -62,7 +62,7 @@
     },
     {
       "name": "decidr",
-      "version": "0.1.48",
+      "version": "0.1.49",
       "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
@@ -75,7 +75,7 @@
       ],
       "manifest": {
         "name": "decidr",
-        "version": "0.1.48",
+        "version": "0.1.49",
         "prompt_definitions": [
           {
             "name": "initiative_planning",
@@ -251,7 +251,7 @@
             ]
           }
         ],
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.48/decidr.zip",
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.49/decidr.zip",
         "registry_index": {
           "summary": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
           "tags": [
@@ -992,12 +992,12 @@
         ],
         "init_context": {
           "tool": "get_init_context",
-          "timeout_ms": 1200,
+          "timeout_ms": 2500,
           "inject_organization_id": true,
           "arguments": {}
         }
       },
-      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.48/decidr.zip"
+      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.49/decidr.zip"
     },
     {
       "name": "mcpviews-gronk-speak",

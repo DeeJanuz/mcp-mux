@@ -5,9 +5,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::time::{timeout, Duration};
 
 use crate::http_server::AsyncAppState;
-use crate::plugin::{
-    fetch_plugin_tools, oauth_token_needs_preemptive_refresh, try_refresh_oauth, OAuthRefreshInfo,
-};
+use crate::plugin::{oauth_token_needs_preemptive_refresh, try_refresh_oauth, OAuthRefreshInfo};
 use crate::state::AppState;
 
 const DEFAULT_PLUGIN_INIT_CONTEXT_TIMEOUT_MS: u64 = 1_200;
@@ -15,7 +13,6 @@ const DEFAULT_PLUGIN_INIT_CONTEXT_TIMEOUT_MS: u64 = 1_200;
 #[derive(Debug, Clone)]
 struct PluginInitContextProvider {
     plugin_name: String,
-    prefixed_tool_name: String,
     mcp_url: String,
     auth: Option<mcpviews_shared::PluginAuth>,
     config: mcpviews_shared::PluginInitContext,
@@ -350,91 +347,6 @@ fn plugin_auth_header_for_context(
     }
 }
 
-async fn ensure_plugin_init_context_tool_cached(
-    app_state: &Arc<AppState>,
-    provider: &PluginInitContextProvider,
-    organization_id: Option<&str>,
-) -> bool {
-    let (idx, mcp_url, tool_prefix, mut auth_header, oauth_info, client) = {
-        let registry = app_state.plugin_registry.lock().unwrap();
-        let client = app_state.http_client.clone();
-        let Some((idx, _manifest)) = registry.find_plugin_by_name(&provider.plugin_name) else {
-            return false;
-        };
-        let tool_prefix = registry
-            .manifests
-            .get(idx)
-            .and_then(|manifest| manifest.mcp.as_ref())
-            .map(|mcp| mcp.tool_prefix.clone())
-            .unwrap_or_default();
-        let has_tool = registry
-            .tool_cache
-            .plugin_tools(idx)
-            .map(|tools| {
-                tools.iter().any(|tool| {
-                    tool.get("name").and_then(|value| value.as_str())
-                        == Some(provider.prefixed_tool_name.as_str())
-                })
-            })
-            .unwrap_or(false);
-        if has_tool {
-            return true;
-        }
-
-        let auth_header =
-            plugin_auth_header_for_context(&provider.plugin_name, &provider.auth, organization_id);
-        let oauth_info =
-            plugin_oauth_info_for_context(&provider.plugin_name, &provider.auth, organization_id);
-        (
-            idx,
-            provider.mcp_url.clone(),
-            tool_prefix,
-            auth_header,
-            oauth_info,
-            client,
-        )
-    };
-
-    if auth_header.is_none()
-        || oauth_info
-            .as_ref()
-            .map(oauth_token_needs_preemptive_refresh)
-            .unwrap_or(false)
-    {
-        if let Some(oauth) = &oauth_info {
-            if let Some(bearer) = try_refresh_oauth(oauth, &client).await {
-                auth_header = Some(bearer);
-            }
-        }
-    }
-
-    match fetch_plugin_tools(&client, &mcp_url, auth_header.as_deref()).await {
-        Ok(tools) => {
-            let mut registry = app_state.plugin_registry.lock().unwrap();
-            registry.tool_cache.apply(idx, &tool_prefix, tools);
-        }
-        Err(error) => {
-            eprintln!("{}", error);
-            return false;
-        }
-    }
-
-    let registry = app_state.plugin_registry.lock().unwrap();
-    let Some((idx, _)) = registry.find_plugin_by_name(&provider.plugin_name) else {
-        return false;
-    };
-    registry
-        .tool_cache
-        .plugin_tools(idx)
-        .map(|tools| {
-            tools.iter().any(|tool| {
-                tool.get("name").and_then(|value| value.as_str())
-                    == Some(provider.prefixed_tool_name.as_str())
-            })
-        })
-        .unwrap_or(false)
-}
-
 async fn collect_plugin_init_contexts(app_state: &Arc<AppState>) -> Value {
     let providers = {
         let registry = app_state.plugin_registry.lock().unwrap();
@@ -446,7 +358,6 @@ async fn collect_plugin_init_contexts(app_state: &Arc<AppState>) -> Value {
                 let mcp = manifest.mcp.clone()?;
                 Some(PluginInitContextProvider {
                     plugin_name: manifest.name.clone(),
-                    prefixed_tool_name: format!("{}{}", mcp.tool_prefix, config.tool),
                     mcp_url: mcp.url,
                     auth: mcp.auth,
                     config,
@@ -518,18 +429,6 @@ async fn collect_plugin_init_context_inner(
         argument_map.insert("organization_id".to_string(), Value::String(org_id.clone()));
     }
     let arguments = Value::Object(argument_map);
-
-    if !ensure_plugin_init_context_tool_cached(app_state, provider, organization_id.as_deref())
-        .await
-    {
-        return plugin_init_context_fail_open(
-            "tool_unavailable",
-            Some(format!(
-                "{} init context tool {} is not available.",
-                provider.plugin_name, provider.prefixed_tool_name
-            )),
-        );
-    }
 
     let (mut auth_header, oauth_info, client) = {
         let auth_header = plugin_auth_header_for_context(
@@ -1311,7 +1210,7 @@ Old temporary work session rule.
     }
 
     #[tokio::test]
-    async fn test_collect_plugin_init_contexts_calls_manifest_provider() {
+    async fn test_collect_plugin_init_contexts_calls_manifest_provider_without_tool_list_warmup() {
         let call_count = Arc::new(AtomicUsize::new(0));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1355,6 +1254,6 @@ Old temporary work session rule.
         );
         assert!(decidr.get("activeWorkSessions").is_none());
         assert!(decidr["recentDecisions"][0].get("context").is_none());
-        assert!(call_count.load(Ordering::SeqCst) >= 3);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
 }

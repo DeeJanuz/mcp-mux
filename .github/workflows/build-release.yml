@@ -147,6 +147,7 @@ jobs:
             export DATE SOURCE_LABEL
             python3 - <<'PY'
           import os
+          import re
           from pathlib import Path
 
           path = Path("CHANGELOG.md")
@@ -154,12 +155,28 @@ jobs:
           version = os.environ["VERSION"]
           date = os.environ["DATE"]
           source = os.environ.get("SOURCE_LABEL") or "an upstream plugin release"
-          entry = (
-              f"## [{version}] - {date}\n\n"
-              "### Changed\n"
-              f"- Rebuilt the DecidR-branded installer bundle after {source}, staging the latest stable bundled plugin releases.\n"
-          )
-          path.write_text(text.replace("## [Unreleased]\n", f"## [Unreleased]\n\n{entry}\n", 1))
+          bullet = f"- Rebuilt the DecidR-branded installer bundle after {source}, staging the latest stable bundled plugin releases.\n"
+          heading = re.search(rf"^## \[{re.escape(version)}\] - .*$", text, re.MULTILINE)
+          if heading:
+              section_start = heading.end() + 1
+              next_heading = re.search(r"^## \[", text[section_start:], re.MULTILINE)
+              section_end = section_start + next_heading.start() if next_heading else len(text)
+              section = text[section_start:section_end]
+              if bullet not in section:
+                  changed = re.search(r"^### Changed\n", section, re.MULTILINE)
+                  if changed:
+                      insert_at = section_start + changed.end()
+                      text = text[:insert_at] + bullet + text[insert_at:]
+                  else:
+                      text = text[:section_start] + f"\n### Changed\n{bullet}" + text[section_start:]
+          else:
+              entry = (
+                  f"## [{version}] - {date}\n\n"
+                  "### Changed\n"
+                  f"{bullet}"
+              )
+              text = text.replace("## [Unreleased]\n", f"## [Unreleased]\n\n{entry}\n", 1)
+          path.write_text(text)
           PY
           else
             sed -i "s/^## \[Unreleased\]/## [Unreleased]\n\n## [$VERSION] - $DATE/" CHANGELOG.md

@@ -30,7 +30,7 @@ const CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_TITLE: &str = "MCPViews Plan Rendering";
 const CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_DESCRIPTION: &str =
     "Core startup rule that mirrors user-facing plans into MCPViews rich content.";
 const CORE_PUSH_PLANS_TO_MCPVIEWS_RULE: &str = "\
-Whenever you present a user-facing proposed plan, also push the same plan to MCPViews using the `rich_content` renderer. Use `push_content` with `tool_name: \"rich_content\"` when that compatibility tool is available, or the direct `rich_content` tool in hosted surfaces that expose it.
+Whenever you present a user-facing proposed plan that needs user approval and ONLY when user approval is required, also push the same plan to MCPViews using the `rich_content` renderer. Use `push_content` with `tool_name: \"rich_content\"` when that compatibility tool is available, or the direct `rich_content` tool in hosted surfaces that expose it.
 
 Include Mermaid diagrams when they materially clarify architecture, workflow, lifecycle, dependency, sequence, or data-flow shape. Keep the MCPViews version aligned with the chat plan, and do not push private scratch notes, hidden reasoning, or plans that are only internal to the agent.
 

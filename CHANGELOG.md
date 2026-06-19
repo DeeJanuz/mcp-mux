@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.54] - 2026-06-19
+
+### Added
+- Add the `mcpviews-core:push_plans_to_mcpviews` startup rule so setup writes instructions for agents to mirror user-facing plans into MCPViews rich content with Mermaid diagrams when helpful.
+
 ## [0.2.53] - 2026-06-18
 
 ### Changed

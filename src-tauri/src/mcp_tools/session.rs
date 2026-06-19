@@ -864,28 +864,50 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         let project_path = project.path().display().to_string();
         let resolved = startup_rules::resolve_all_startup_rules(&[], app_state.plugin_store());
-        let core_rule = resolved
+        let core_rules = resolved
             .iter()
-            .find(|rule| {
-                rule.plugin == startup_rules::CORE_STARTUP_RULE_PLUGIN
-                    && rule.rule_id == startup_rules::CORE_INIT_SESSION_PROJECT_PATH_RULE_ID
+            .filter(|rule| rule.plugin == startup_rules::CORE_STARTUP_RULE_PLUGIN)
+            .collect::<Vec<_>>();
+        assert!(core_rules
+            .iter()
+            .any(|rule| { rule.rule_id == startup_rules::CORE_INIT_SESSION_PROJECT_PATH_RULE_ID }));
+        assert!(core_rules
+            .iter()
+            .any(|rule| { rule.rule_id == startup_rules::CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_ID }));
+
+        let core_rule_blocks = core_rules
+            .iter()
+            .map(|rule| {
+                format!(
+                    "\
+<!-- mcpviews-startup-rule: plugin={} rule_id={} version={} hash={} -->
+
+### {}
+
+{}
+
+",
+                    rule.plugin, rule.rule_id, rule.version, rule.hash, rule.title, rule.rule
+                )
             })
-            .expect("core startup rule");
+            .collect::<String>();
 
         let locations = serde_json::json!([{
             "agent_type": "codex",
             "path": "AGENTS.md",
             "label": "Project AGENTS.md"
         }]);
-        startup_rules::save_startup_rule_state_from_args(serde_json::json!({
-            "project_path": project_path,
-            "plugin": core_rule.plugin,
-            "rule_id": core_rule.rule_id,
-            "rule_version": core_rule.version,
-            "rule_hash": core_rule.hash,
-            "locations": locations.clone()
-        }))
-        .unwrap();
+        for core_rule in core_rules {
+            startup_rules::save_startup_rule_state_from_args(serde_json::json!({
+                "project_path": project_path,
+                "plugin": core_rule.plugin,
+                "rule_id": core_rule.rule_id,
+                "rule_version": core_rule.version,
+                "rule_hash": core_rule.hash,
+                "locations": locations.clone()
+            }))
+            .unwrap();
+        }
         startup_rules::save_startup_rule_state_from_args(serde_json::json!({
             "project_path": project_path,
             "plugin": "decidr",
@@ -904,24 +926,14 @@ mod tests {
 
 <!-- mcpviews-startup-rules-schema: 1 -->
 
-<!-- mcpviews-startup-rule: plugin={} rule_id={} version={} hash={} -->
-
-### {}
-
 {}
-
 <!-- mcpviews-startup-rule: plugin=decidr rule_id=decidr_work_session_bootstrap version=2 hash=sha256:old-work-session -->
 
 ### DecidR Work Session Bootstrap
 
 Old temporary work session rule.
 ",
-            core_rule.plugin,
-            core_rule.rule_id,
-            core_rule.version,
-            core_rule.hash,
-            core_rule.title,
-            core_rule.rule
+            core_rule_blocks
         );
         std::fs::write(project.path().join("AGENTS.md"), stale_agents).unwrap();
 
@@ -932,6 +944,7 @@ Old temporary work session rule.
         assert_eq!(actions["orphaned"].as_array().unwrap().len(), 1);
         let replacement = actions["native_rule_block"].as_str().unwrap();
         assert!(replacement.contains("plugin=mcpviews-core rule_id=init_session_project_path"));
+        assert!(replacement.contains("plugin=mcpviews-core rule_id=push_plans_to_mcpviews"));
         assert!(!replacement.contains("decidr_work_session_bootstrap"));
         assert!(!replacement.contains("DecidR Work Session Bootstrap"));
         assert!(actions["native_rule_block_instruction"]
@@ -955,6 +968,10 @@ Old temporary work session rule.
             .as_str()
             .unwrap()
             .contains("plugin=mcpviews-core rule_id=init_session_project_path"));
+        assert!(setup_response["startup_rule_actions"]["native_rule_block"]
+            .as_str()
+            .unwrap()
+            .contains("plugin=mcpviews-core rule_id=push_plans_to_mcpviews"));
         assert!(!setup_response["startup_rule_actions"]["native_rule_block"]
             .as_str()
             .unwrap()

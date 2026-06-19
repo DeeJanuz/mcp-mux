@@ -12,6 +12,7 @@ pub(crate) const STARTUP_RULES_SCHEMA_VERSION: u32 = 1;
 pub(crate) const CODEX_STARTUP_RULES_HEADING: &str = "## MCPViews Startup Rules";
 pub(crate) const CORE_STARTUP_RULE_PLUGIN: &str = "mcpviews-core";
 pub(crate) const CORE_INIT_SESSION_PROJECT_PATH_RULE_ID: &str = "init_session_project_path";
+pub(crate) const CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_ID: &str = "push_plans_to_mcpviews";
 pub(crate) const CODEX_NATIVE_RULE_FILE: &str = "AGENTS.md";
 const PROJECT_CONFIG_SCHEMA_VERSION: u32 = 1;
 const CORE_INIT_SESSION_PROJECT_PATH_RULE_VERSION: &str = "1";
@@ -24,6 +25,16 @@ At the start of every new agent session in this project, call the MCPViews `init
 If an initial `init_session` call omitted `project_path`, rerun `init_session` with `project_path` before treating startup rules as reconciled. Use the root for this actual Codex session, not a parent workspace, unless the session really starts at that parent.
 
 This is only a startup bootstrap rule. Do not copy MCPViews runtime `rules`, `plugin_rules`, renderer rules, DecidR/Ludflow workflow guidance, setup questions, plugin docs, or tool docs into this native rule file.";
+const CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_VERSION: &str = "1";
+const CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_TITLE: &str = "MCPViews Plan Rendering";
+const CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_DESCRIPTION: &str =
+    "Core startup rule that mirrors user-facing plans into MCPViews rich content.";
+const CORE_PUSH_PLANS_TO_MCPVIEWS_RULE: &str = "\
+Whenever you present a user-facing proposed plan, also push the same plan to MCPViews using the `rich_content` renderer. Use `push_content` with `tool_name: \"rich_content\"` when that compatibility tool is available, or the direct `rich_content` tool in hosted surfaces that expose it.
+
+Include Mermaid diagrams when they materially clarify architecture, workflow, lifecycle, dependency, sequence, or data-flow shape. Keep the MCPViews version aligned with the chat plan, and do not push private scratch notes, hidden reasoning, or plans that are only internal to the agent.
+
+Only the main/coordinator agent may push plan content. Sub-agents must return plan material to the coordinator. If MCPViews or a rich-content push tool is unavailable, briefly say the plan could not be pushed and continue with the chat plan.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct StartupRuleLocation {
@@ -156,9 +167,16 @@ pub(crate) fn resolve_all_startup_rules(
     manifests: &[PluginManifest],
     store: &PluginStore,
 ) -> Vec<ResolvedStartupRule> {
-    let mut rules = vec![core_init_session_project_path_rule()];
+    let mut rules = core_startup_rules();
     rules.extend(resolve_startup_rules(manifests, store));
     rules
+}
+
+fn core_startup_rules() -> Vec<ResolvedStartupRule> {
+    vec![
+        core_init_session_project_path_rule(),
+        core_push_plans_to_mcpviews_rule(),
+    ]
 }
 
 fn core_init_session_project_path_rule() -> ResolvedStartupRule {
@@ -174,6 +192,23 @@ fn core_init_session_project_path_rule() -> ResolvedStartupRule {
         description: Some(CORE_INIT_SESSION_PROJECT_PATH_RULE_DESCRIPTION.to_string()),
         rule: CORE_INIT_SESSION_PROJECT_PATH_RULE.to_string(),
         hash: startup_rule_hash(CORE_INIT_SESSION_PROJECT_PATH_RULE),
+        should_prompt_install: true,
+    }
+}
+
+fn core_push_plans_to_mcpviews_rule() -> ResolvedStartupRule {
+    ResolvedStartupRule {
+        key: startup_rule_key(
+            CORE_STARTUP_RULE_PLUGIN,
+            CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_ID,
+        ),
+        plugin: CORE_STARTUP_RULE_PLUGIN.to_string(),
+        rule_id: CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_ID.to_string(),
+        version: CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_VERSION.to_string(),
+        title: CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_TITLE.to_string(),
+        description: Some(CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_DESCRIPTION.to_string()),
+        rule: CORE_PUSH_PLANS_TO_MCPVIEWS_RULE.to_string(),
+        hash: startup_rule_hash(CORE_PUSH_PLANS_TO_MCPVIEWS_RULE),
         should_prompt_install: true,
     }
 }
@@ -1139,18 +1174,60 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_all_startup_rules_includes_core_init_rule() {
+    fn test_resolve_all_startup_rules_includes_core_rules() {
         let dir = tempfile::tempdir().unwrap();
         let store = PluginStore::with_dir(dir.path().join("plugins"));
         let manifest = manifest_with_rule(static_rule("GronkSpeak", "2", "Talk terse."));
 
         let resolved = resolve_all_startup_rules(&[manifest], &store);
 
-        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved.len(), 3);
         assert_eq!(resolved[0].plugin, CORE_STARTUP_RULE_PLUGIN);
         assert_eq!(resolved[0].rule_id, CORE_INIT_SESSION_PROJECT_PATH_RULE_ID);
         assert!(resolved[0].rule.contains("project_path"));
-        assert_eq!(resolved[1].rule_id, "GronkSpeak");
+        assert_eq!(resolved[1].plugin, CORE_STARTUP_RULE_PLUGIN);
+        assert_eq!(resolved[1].rule_id, CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_ID);
+        assert!(resolved[1].rule.contains("rich_content"));
+        assert!(resolved[1].rule.contains("Mermaid"));
+        assert_eq!(resolved[2].rule_id, "GronkSpeak");
+    }
+
+    #[test]
+    fn test_existing_core_init_install_needs_plan_rule_without_orphan() {
+        let init_rule = core_init_session_project_path_rule();
+        let plan_rule = core_push_plans_to_mcpviews_rule();
+        let mut config = ProjectStartupRulesConfig::default();
+        config.startup_rules.insert(
+            init_rule.key.clone(),
+            StartupRuleState {
+                plugin: init_rule.plugin.clone(),
+                rule_id: init_rule.rule_id.clone(),
+                rule_version: init_rule.version.clone(),
+                rule_hash: init_rule.hash.clone(),
+                locations: vec![StartupRuleLocation {
+                    agent_type: "codex".to_string(),
+                    path: "AGENTS.md".to_string(),
+                    label: "Project AGENTS.md".to_string(),
+                }],
+                do_not_install: false,
+                do_not_update: false,
+                updated_at: None,
+            },
+        );
+
+        let actions = evaluate_startup_rule_actions(&config, &[init_rule, plan_rule]);
+
+        assert_eq!(actions["status"], "needs_install");
+        assert_eq!(actions["current"].as_array().unwrap().len(), 1);
+        assert_eq!(actions["needs_install"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            actions["needs_install"].as_array().unwrap()[0]["key"],
+            startup_rule_key(
+                CORE_STARTUP_RULE_PLUGIN,
+                CORE_PUSH_PLANS_TO_MCPVIEWS_RULE_ID
+            )
+        );
+        assert_eq!(actions["orphaned"].as_array().unwrap().len(), 0);
     }
 
     #[test]
@@ -1285,35 +1362,32 @@ Init.
 
     #[test]
     fn test_codex_startup_block_drops_orphaned_decidr_work_session_rule() {
-        let core_rule = core_init_session_project_path_rule();
+        let core_rules = core_startup_rules();
         let config = ProjectStartupRulesConfig::default();
-        let block = build_codex_startup_rules_block_for_project(
-            &config,
-            std::slice::from_ref(&core_rule),
-            None,
-        );
+        let block = build_codex_startup_rules_block_for_project(&config, &core_rules, None);
 
         assert!(block.contains("plugin=mcpviews-core rule_id=init_session_project_path"));
+        assert!(block.contains("plugin=mcpviews-core rule_id=push_plans_to_mcpviews"));
+        assert!(block.contains("MCPViews Plan Rendering"));
+        assert!(block.contains("rich_content"));
         assert!(!block.contains("decidr_work_session_bootstrap"));
         assert!(!block.contains("Work Session"));
     }
 
     #[test]
     fn test_codex_startup_block_replaces_legacy_all_rules_section_only() {
-        let rules = vec![
-            core_init_session_project_path_rule(),
-            ResolvedStartupRule {
-                key: "mcpviews-gronk-speak:GronkSpeak".to_string(),
-                plugin: "mcpviews-gronk-speak".to_string(),
-                rule_id: "GronkSpeak".to_string(),
-                version: "3".to_string(),
-                title: "GronkSpeak".to_string(),
-                description: None,
-                rule: "GronkSpeak active. Technical terms exact.".to_string(),
-                hash: startup_rule_hash("GronkSpeak active. Technical terms exact."),
-                should_prompt_install: true,
-            },
-        ];
+        let mut rules = core_startup_rules();
+        rules.push(ResolvedStartupRule {
+            key: "mcpviews-gronk-speak:GronkSpeak".to_string(),
+            plugin: "mcpviews-gronk-speak".to_string(),
+            rule_id: "GronkSpeak".to_string(),
+            version: "3".to_string(),
+            title: "GronkSpeak".to_string(),
+            description: None,
+            rule: "GronkSpeak active. Technical terms exact.".to_string(),
+            hash: startup_rule_hash("GronkSpeak active. Technical terms exact."),
+            should_prompt_install: true,
+        });
         let replacement = build_codex_startup_rules_block(&rules);
         let legacy = "\
 # AGENTS.md
@@ -1342,7 +1416,9 @@ Preserve me.
         assert!(migrated.contains("Keep this user-authored rule."));
         assert!(migrated.contains("## MCPViews Startup Rules"));
         assert!(migrated.contains("plugin=mcpviews-core rule_id=init_session_project_path"));
+        assert!(migrated.contains("plugin=mcpviews-core rule_id=push_plans_to_mcpviews"));
         assert!(migrated.contains("plugin=mcpviews-gronk-speak rule_id=GronkSpeak"));
+        assert!(migrated.contains("MCPViews Plan Rendering"));
         assert!(migrated.contains("GronkSpeak active."));
         assert!(migrated.contains("## Local Section"));
         assert!(!migrated.contains("mcpviews-rules-version"));

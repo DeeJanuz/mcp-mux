@@ -910,6 +910,8 @@ Startup rules are explicit agent-native rules contributed by MCPViews core or by
 
 Agents remain responsible for how each harness installs rules. For example, Codex may update an `AGENTS.md` startup-rules section, Claude Code may update `.claude/rules/*.md`, and Cursor may update `.cursor/rules/*.mdc`. After installing, updating, or declining a startup rule, the agent calls `save_startup_rule_state` so MCPViews records locations and opt-out flags. Native rule files must contain startup rules only; runtime `rules`, `plugin_rules`, renderer docs, DecidR/Ludflow workflow guidance, setup questions, plugin docs, and tool docs remain runtime breadcrumbs.
 
+MCPViews core currently contributes startup rules for project-specific `init_session` calls and for mirroring user-facing proposed plans into MCPViews `rich_content`, with Mermaid diagrams when they clarify the plan.
+
 ```json
 {
   "startup_rules": [

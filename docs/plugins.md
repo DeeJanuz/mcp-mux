@@ -530,6 +530,8 @@ Preferences are managed via:
 
 When `init_session` or `mcpviews_setup` receives `project_path`, MCPViews creates or loads `<project_path>/mcpviews-init.json`. This file is a project-local ledger for MCPViews core startup rules and startup rules contributed by installed plugins. It records rule versions, hashes, agent-native rule file locations, and permanent opt-out flags.
 
+MCPViews core startup rules cover project-specific `init_session` calls and mirroring user-facing proposed plans into MCPViews `rich_content`; plugin startup rules add project/team behavior on top of those core rules.
+
 MCPViews does not write native rule files. Agents install or update only the rules returned in `startup_rule_actions.needs_install` and `startup_rule_actions.auto_update` using the correct mechanism for their harness, then call `save_startup_rule_state` to record the result. Runtime `rules`, `plugin_rules`, renderer guidance, DecidR/Ludflow workflow guidance, setup questions, plugin docs, and tool docs stay in init/docs responses and must not be copied into `AGENTS.md` or equivalent startup files.
 
 For Codex-style agents, the managed native block is `## MCPViews Startup Rules` with `<!-- mcpviews-startup-rules-schema: 1 -->` and one `<!-- mcpviews-startup-rule: plugin=... rule_id=... version=... hash=... -->` marker per installed startup rule. If an old managed MCPViews rules-version block exists, agents should replace that managed block with startup rules only while preserving user-authored content outside the block.

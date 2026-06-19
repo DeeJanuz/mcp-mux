@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.55] - 2026-06-19
+
 ### Changed
 - Update API, plugin, CLI, and Windows/Tauri docs to match current renderer names, plugin storage, app update, org auth, native panel, file export, hosted AI, and local bridge surfaces.
 

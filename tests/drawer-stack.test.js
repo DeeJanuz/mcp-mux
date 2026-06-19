@@ -8,6 +8,7 @@ describe('drawer-stack', function () {
     // Close all drawers and clear body children between tests
     utils.closeAllDrawers();
     document.body._children.length = 0;
+    document.body.querySelector = function() { return null; };
   });
 
   it('exposes invokeRenderer, closeDrawer, closeAllDrawers', function () {
@@ -81,16 +82,15 @@ describe('drawer-stack', function () {
     expect(document.body._children.length).toBe(0);
   });
 
-  it('sets increasing z-index per level', function () {
+  it('layers stacked panels under their parent panels', function () {
     utils.invokeRenderer('first', {});
     utils.invokeRenderer('second', {});
 
-    // First overlay z=150, first panel z=151
+    // Overlays stay behind every panel, and parent panels stay above child sidecars.
     expect(document.body._children[0].style.zIndex).toBe('150');
-    expect(document.body._children[1].style.zIndex).toBe('151');
-    // Second overlay z=152, second panel z=153
-    expect(document.body._children[2].style.zIndex).toBe('152');
-    expect(document.body._children[3].style.zIndex).toBe('153');
+    expect(document.body._children[1].style.zIndex).toBe('180');
+    expect(document.body._children[2].style.zIndex).toBe('150');
+    expect(document.body._children[3].style.zIndex).toBe('178');
   });
 
   it('sets decreasing width per level', function () {
@@ -100,6 +100,44 @@ describe('drawer-stack', function () {
     // First panel width: 420px, second: 400px
     expect(document.body._children[1].style.width).toBe('420px');
     expect(document.body._children[3].style.width).toBe('400px');
+  });
+
+  it('anchors first invoked drawer to the left edge of an open right drawer', function () {
+    document.body.querySelector = function(selector) {
+      if (selector === '.ai-codex-drawer') {
+        return {
+          offsetWidth: 420,
+          style: { width: '420px' },
+          getBoundingClientRect: function() { return { width: 420 }; },
+        };
+      }
+      return null;
+    };
+
+    utils.invokeRenderer('first', {});
+
+    expect(document.body._children[1].style.right).toBe('420px');
+    expect(document.body._children[1].className).toContain('drawer-stack-panel-attached');
+    expect(document.body._children[1].getAttribute('data-drawer-stack-attached')).toBe('true');
+  });
+
+  it('stacks deeper invoked drawers left of the anchored sidecar', function () {
+    document.body.querySelector = function(selector) {
+      if (selector === '.ai-codex-drawer') {
+        return {
+          offsetWidth: 420,
+          style: { width: '420px' },
+          getBoundingClientRect: function() { return { width: 420 }; },
+        };
+      }
+      return null;
+    };
+
+    utils.invokeRenderer('first', {});
+    utils.invokeRenderer('second', {});
+
+    expect(document.body._children[1].style.right).toBe('420px');
+    expect(document.body._children[3].style.right).toBe('840px');
   });
 
   it('increments context level for nested invocations', function () {

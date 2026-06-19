@@ -2,12 +2,6 @@
 
 ## Installation
 
-### From crates.io
-
-```bash
-cargo install mcpviews-cli
-```
-
 ### From source
 
 ```bash
@@ -16,6 +10,8 @@ cd mcpviews/cli
 cargo build --release
 # Binary is at target/release/mcpviews-cli
 ```
+
+The CLI is currently built from this repository. It is not published on crates.io.
 
 ## Commands
 
@@ -56,7 +52,7 @@ mcpviews-cli plugin add decidr
 Installed plugin 'decidr' v0.1.4
 ```
 
-This fetches the registry, finds the entry matching `<name>`, and writes its manifest to `~/.mcpviews/plugins/<name>.json`. If the plugin is not found, the CLI prints available plugins and exits with an error.
+This fetches the registry, finds the entry matching `<name>`, and saves its manifest in directory format at `~/.mcpviews/plugins/<name>/manifest.json`. If the plugin is not found, the CLI prints available plugins and exits with an error.
 
 ### `plugin remove <name>`
 
@@ -72,7 +68,7 @@ mcpviews-cli plugin remove decidr
 Removed plugin 'decidr'.
 ```
 
-Deletes the manifest file from `~/.mcpviews/plugins/`. If the plugin is not installed, the CLI exits with an error.
+Deletes the plugin directory from `~/.mcpviews/plugins/<name>/`, falling back to the legacy `~/.mcpviews/plugins/<name>.json` flat-file format when present. If the plugin is not installed, the CLI exits with an error.
 
 ### `plugin add-custom <path>`
 
@@ -88,7 +84,7 @@ mcpviews-cli plugin add-custom ./my-plugin-manifest.json
 Installed custom plugin 'my-plugin' v1.0.0
 ```
 
-Reads the manifest at `<path>`, validates it, and copies it to `~/.mcpviews/plugins/<name>.json` (where `<name>` is the `name` field from the manifest). This is useful for testing plugins during development or for private plugins not published to the registry.
+Reads the manifest at `<path>`, validates it, and saves it to `~/.mcpviews/plugins/<name>/manifest.json` (where `<name>` is the `name` field from the manifest). This is useful for testing plugins during development or for private plugins not published to the registry.
 
 ### `plugin search [query]`
 
@@ -129,8 +125,8 @@ The CLI reads this file on every registry operation. If the file does not exist 
 
 | Path | Purpose |
 |------|---------|
-| `~/.mcpviews/plugins/` | Installed plugin manifests |
-| `~/.mcpviews/config.json` | Configuration (registry URL) |
+| `~/.mcpviews/plugins/` | Installed plugin directories, manifests, renderer assets, and preferences |
+| `~/.mcpviews/config.json` | Configuration (`registry_sources`, or legacy `registry_url`) |
 | `~/.mcpviews/cache/` | Cached registry data |
 | `~/.mcpviews/auth/` | Stored authentication tokens |
 

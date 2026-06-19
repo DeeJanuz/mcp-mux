@@ -4140,6 +4140,10 @@ html[data-theme] .collapsible-body {
   flex-direction: column;
   overflow: hidden;
 }
+.drawer-stack-panel-attached {
+  border-right: 1px solid var(--glass-border);
+  box-shadow: -18px 0 46px rgba(0, 0, 0, 0.2);
+}
 .drawer-stack-panel.open {
   transform: translateX(0);
 }
@@ -6839,6 +6843,11 @@ body.ai-mode-active .ai-nav-thread-tree-row .ai-nav-thread-row-meta {
 .ai-codex-composer-region {
   min-width: 0;
   min-height: 0;
+}
+
+.ai-codex-drawer-region {
+  position: relative;
+  z-index: 190;
 }
 
 .ai-codex-timeline-region {

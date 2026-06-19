@@ -169,7 +169,7 @@ curl -X POST http://localhost:4200/api/push \
 # Push with review (returns immediately with session_id; call await_review to wait for decision)
 curl -X POST http://localhost:4200/api/push \
   -H 'Content-Type: application/json' \
-  -d '{"toolName":"write_document","result":{"data":{"operations":[{"type":"replace","target":"Introduction","replacement":"New intro text"}]}},"reviewRequired":true}'
+  -d '{"toolName":"structured_data","result":{"data":{"title":"Review Changes","tables":[{"id":"changes","name":"Changes","columns":[{"id":"target","name":"Target","change":null},{"id":"summary","name":"Summary","change":"update"}],"rows":[{"id":"change-1","cells":{"target":{"value":"Introduction section","change":null},"summary":{"value":"Replace intro text","change":"update"}},"children":[]}]}]}},"reviewRequired":true}'
 ```
 
 ## SSE Sidecar
@@ -291,7 +291,7 @@ A plugin manifest is a JSON file with renderer mappings and MCP configuration:
 | `mcp.auth` | Authentication config (`bearer`, `api_key`, or `oauth`) |
 | `mcp.tool_prefix` | Prefix for tool names to avoid collisions |
 
-Three auth types are supported: **bearer token** (env var), **API key** (custom header + env var), and **OAuth** (browser redirect flow). See [docs/plugins.md](docs/plugins.md) for the full schema reference.
+Three auth types are supported: **bearer token**, **API key**, and **OAuth**. Bearer/API key plugins can use stored tokens entered through MCPViews, with environment variables as a fallback; OAuth uses the browser redirect flow and stored refreshable tokens. See [docs/plugins.md](docs/plugins.md) for the full schema reference.
 
 ## CLI Reference
 

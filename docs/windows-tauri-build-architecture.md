@@ -293,13 +293,14 @@ phase.
 - The current release pipeline builds Windows artifacts and runs frontend/Rust
   tests, but it does not launch the Windows app or prove the user-visible
   Windows UI path.
-- The recent Apps popup patch introduced a new Tauri window label,
-  `apps-popup`, whose script invokes Tauri IPC. Confirm the final refactor gives
-  that window an explicit capability or routes the popup through an adapter that
-  does not require IPC from an unlisted window.
-- Current panel/popup behavior should be reworked behind `apps_popup` and
-  `native_panel` adapters so the UX contract is shared while macOS and Windows
-  can use different composition mechanics.
+- The Apps popup surface now has an explicit `apps-popup` Tauri capability and
+  an `apps_popup` adapter. Current Windows builds decline the native popup and
+  use the shared DOM dropdown fallback; any future native Windows popup must
+  keep capability, focus, minimize, tray-quit, and close-on-blur evidence
+  together.
+- Panel/popup behavior now lives behind named adapters such as `apps_popup`,
+  `native_panel`, and `external_web_panel`. Future refactors should extend
+  those boundaries instead of adding ad hoc platform branches at call sites.
 - Windows release evidence should be separated from macOS updater evidence in
   release and governance notes. A tag, published release, or macOS smoke test is
   not Windows UX proof.

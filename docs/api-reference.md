@@ -9,7 +9,7 @@ Returns server status.
 **Response** `200 OK`
 ```json
 {
-  "version": "0.1.0",
+  "version": "<current package version>",
   "port": 4200,
   "uptime_seconds": 123,
   "started_at": "2026-03-25T18:00:00Z"
@@ -41,7 +41,7 @@ Content type (renderer name) is resolved by searching all loaded plugin manifest
 
 | `toolName` | Content Type | Renderer |
 |------------|-------------|----------|
-| `rich_content`, `push_to_companion` | `rich_content` | Markdown + mermaid fallback |
+| `rich_content` | `rich_content` | Markdown + mermaid fallback |
 | `structured_data` | `structured_data` | Tabular data with hierarchical rows, change tracking, and review mode |
 | `universal_graph` | `universal_graph` | Read-only analytical charts and graph packs |
 | _(plugin-mapped tool)_ | Renderer name from plugin manifest `renderers` map | Plugin-provided renderer |
@@ -268,6 +268,7 @@ CORS preflight. Returns `200` with:
 ## Tauri IPC Commands
 
 These are called from the WebView via `window.__TAURI__.core.invoke()`.
+JavaScript examples use Tauri's camelCase argument names.
 
 ### `get_sessions`
 
@@ -307,7 +308,70 @@ Returns app health info.
 
 ```javascript
 const health = await invoke('get_health');
-// Returns: { version: "0.1.0", status: "ok" }
+// Returns: { version: "<current package version>", status: "ok" }
+```
+
+### `check_app_update` / `install_app_update`
+
+Check GitHub releases for a signed updater-compatible app release, then install
+and relaunch from the returned updater manifest URL.
+
+```javascript
+const update = await invoke('check_app_update');
+if (update) {
+  await invoke('install_app_update', { updateJsonUrl: update.updateJsonUrl });
+}
+```
+
+### `open_external_url`
+
+Open an HTTP(S) URL through the platform browser adapter.
+
+```javascript
+await invoke('open_external_url', { url: 'https://example.com/path?x=1' });
+```
+
+### Apps Popup And Native Panels
+
+These commands back the Apps menu and embedded app surfaces. Windows currently
+returns `{ opened: false }` from `open_apps_popup`, causing the frontend to use
+the DOM dropdown fallback.
+
+```javascript
+const result = await invoke('open_apps_popup', {
+  bounds: { x: 12, y: 48, width: 280, height: 360 }
+});
+await invoke('close_apps_popup');
+await invoke('select_apps_popup_renderer', {
+  selection: { rendererName: 'decidr_dashboard', rendererLabel: 'Dashboard' }
+});
+
+const app = await invoke('open_native_app_view', {
+  pluginName: 'ludflow',
+  url: 'https://app.ludflow.com/',
+  title: 'Ludflow',
+  label: 'ludflow-main'
+});
+const panel = await invoke('mount_native_app_panel', {
+  pluginName: 'ludflow',
+  url: 'https://app.ludflow.com/',
+  title: 'Ludflow',
+  label: 'ludflow-panel',
+  bounds: { x: 0, y: 0, width: 800, height: 600, visible: true }
+});
+await invoke('mount_external_web_panel', {
+  url: 'https://example.com/',
+  title: 'External',
+  label: 'external-panel',
+  sessionId: 'optional-session-id',
+  returnOrigins: ['https://example.com'],
+  bounds: { x: 0, y: 0, width: 800, height: 600, visible: true }
+});
+await invoke('update_native_app_panel_bounds', {
+  label: panel.label,
+  bounds: { x: 0, y: 0, width: 960, height: 640, visible: true }
+});
+await invoke('close_native_app_panel', { label: panel.label });
 ```
 
 ### `list_plugins`
@@ -317,7 +381,7 @@ Returns all installed plugins.
 ```javascript
 const plugins = await invoke('list_plugins');
 // Returns: PluginInfo[]
-// PluginInfo: { name, version, has_mcp, auth_type, auth_configured, tool_count }
+// PluginInfo includes name, version, auth state, tool count, and update_available
 ```
 
 ### `install_plugin`
@@ -368,17 +432,18 @@ const token = await invoke('start_plugin_auth', { pluginName: 'my-plugin' });
 Retrieve the resolved authentication header for a plugin. Returns the full header value (e.g., `Bearer <token>` or a custom header value). Checks stored tokens first, then environment variable fallbacks, and attempts an OAuth token refresh if the stored token has expired.
 
 ```javascript
-const header = await invoke('get_plugin_auth_header', { pluginName: 'my-plugin' });
+const header = await invoke('get_plugin_auth_header', { pluginName: 'my-plugin', orgId: null });
 // Returns: "Bearer sk-abc123" (or custom header value)
 // Throws: if plugin not found, has no auth config, or no token is available
 ```
 
 ### `store_plugin_token`
 
-Store a Bearer token or API key for a plugin. Saves to `~/.mcpviews/auth/<pluginName>.json`.
+Store a Bearer token or API key for a plugin. Pass `orgId` to store an org-scoped
+token; otherwise the token is saved at `~/.mcpviews/auth/<pluginName>.json`.
 
 ```javascript
-await invoke('store_plugin_token', { pluginName: 'my-plugin', token: 'sk-abc123' });
+await invoke('store_plugin_token', { pluginName: 'my-plugin', token: 'sk-abc123', orgId: null });
 ```
 
 ### `install_plugin_from_registry`
@@ -405,6 +470,20 @@ Update an installed plugin to the latest version from the cached registry. Downl
 await invoke('update_plugin', { name: 'plugin-name' });
 ```
 
+### `check_plugin_prerelease` / `install_plugin_prerelease` / `rollback_plugin_to_stable`
+
+Plugin Manager beta-channel helpers for registry plugins backed by GitHub
+releases. They inspect the provider repository, install the latest prerelease
+ZIP asset when available, or roll back to the latest stable asset.
+
+```javascript
+const beta = await invoke('check_plugin_prerelease', { name: 'plugin-name' });
+if (beta?.updateAvailable) {
+  await invoke('install_plugin_prerelease', { name: 'plugin-name' });
+}
+await invoke('rollback_plugin_to_stable', { name: 'plugin-name' });
+```
+
 ### `reinstall_plugin`
 
 Reinstall a plugin from the registry. If the plugin exists in the cached registry, it is re-downloaded and installed (replacing the current version). For non-registry (local-only) plugins, the command verifies the plugin exists but does not re-download.
@@ -415,10 +494,32 @@ await invoke('reinstall_plugin', { name: 'plugin-name' });
 
 ### `clear_plugin_auth`
 
-Remove the stored authentication token for a plugin. Deletes the token file at `~/.mcpviews/auth/<name>.json`. Returns success even if no token file exists.
+Remove the stored authentication token for a plugin. Pass `orgId` to clear an
+org-scoped token; otherwise deletes `~/.mcpviews/auth/<name>.json`. Returns
+success even if no token file exists.
 
 ```javascript
-await invoke('clear_plugin_auth', { name: 'plugin-name' });
+await invoke('clear_plugin_auth', { name: 'plugin-name', orgId: null });
+```
+
+### Plugin Email-Code And Org Auth
+
+Plugins can expose native email-code auth flows and org-scoped token state.
+
+```javascript
+await invoke('send_plugin_email_code', {
+  pluginName: 'decidr',
+  email: 'user@example.com'
+});
+await invoke('verify_plugin_email_code', {
+  pluginName: 'decidr',
+  email: 'user@example.com',
+  code: '123456',
+  organizationId: 'org-id',
+  organizationName: 'Org Name'
+});
+const orgIds = await invoke('list_plugin_orgs', { pluginName: 'decidr' });
+const orgAuth = await invoke('list_plugin_org_auth', { pluginName: 'decidr' });
 ```
 
 ### `get_plugin_renderers`
@@ -447,6 +548,16 @@ const renderers = await invoke('get_renderer_registry');
 ```
 
 Each entry includes the renderer's preferred `display_mode` ("drawer", "modal", or "replace"), the `invoke_schema` (JSON schema hint for invocation params), `url_patterns` (glob patterns for auto-detecting URLs), and the `plugin` name that provides it. Only renderers with `invoke_schema` set are included.
+
+### `get_standalone_renderers`
+
+Return Apps-menu renderer groups declared by installed plugin
+`renderer_definitions` entries with `standalone: true`.
+
+```javascript
+const groups = await invoke('get_standalone_renderers');
+// [{ plugin, label, renderers: [{ name, label, description, data_hint }] }]
+```
 
 ### `get_registry_sources`
 
@@ -522,6 +633,69 @@ await invoke('save_settings', {
     ]
   }
 });
+```
+
+### Native File Export And Theme
+
+Renderer helpers for save dialogs and native window theme sync.
+
+```javascript
+await invoke('save_file', { filename: 'export.csv', content: 'a,b\n1,2\n' });
+await invoke('save_binary_file', { filename: 'report.pdf', contentBase64: '...' });
+await invoke('set_native_theme', { theme: 'dark' }); // "light", "dark", or system default for other values
+```
+
+### Hosted AI Provider Compatibility And Local Bridge
+
+These commands back the optional hosted AI workspace compatibility renderer.
+They are intentionally implementation-specific; external providers implement
+the HTTP contract in [Hosted AI Thread Provider Contract](hosted-ai-provider-contract.md)
+and do not call these commands directly.
+
+```javascript
+await invoke('get_first_party_ai_config');
+await invoke('start_first_party_ai_auth');
+await invoke('get_first_party_ai_auth_header');
+await invoke('get_first_party_ai_session');
+await invoke('send_first_party_ai_magic_link', { email: 'user@example.com' });
+await invoke('send_first_party_ai_email_code', { email: 'user@example.com' });
+await invoke('verify_first_party_ai_email_code', { email: 'user@example.com', code: '123456' });
+await invoke('verify_first_party_ai_magic_link', { verificationUrlOrToken: '...' });
+await invoke('clear_first_party_ai_auth');
+await invoke('first_party_ai_request', { method: 'GET', path: '/api/threads', body: null, query: null });
+await invoke('first_party_ai_relay_request', { method: 'POST', path: '/relay', body: {}, query: null, relayToken: null });
+await invoke('fetch_signed_file_bytes', { url: 'https://signed-worker-url.example/file' });
+```
+
+Local bridge commands expose the running MCPViews tool catalog to the hosted
+workspace and let it call local MCP tools through MCPViews:
+
+```javascript
+await invoke('probe_local_runtime_host', { url: 'http://localhost:4200/health', token: null, timeoutMs: 1000 });
+const tools = await invoke('list_local_mcp_tools');
+const catalog = await invoke('get_local_mcp_catalog');
+const result = await invoke('call_local_mcp_tool', { name: 'push_content', arguments: { tool_name: 'rich_content', data: { body: 'Hi' } } });
+```
+
+Relay and presence helpers:
+
+```javascript
+await invoke('register_first_party_ai_desktop_relay', { body: {} });
+await invoke('refresh_first_party_ai_desktop_relay', { body: {} });
+await invoke('start_first_party_ai_companion_stream', { threadId: 'thread-id', companionKey: 'key' });
+await invoke('stop_first_party_ai_companion_stream', { threadId: 'thread-id' });
+await invoke('start_first_party_ai_desktop_relay_stream', { streamId: 'stream-id', path: null, query: null });
+await invoke('start_first_party_ai_realtime_relay_stream', {
+  streamId: 'stream-id',
+  relaySessionId: 'relay-session-id',
+  streamUrl: 'https://runtime.example/stream',
+  responseUrl: 'https://runtime.example/respond',
+  token: 'token',
+  tokenExpiresAt: 1893456000
+});
+await invoke('stop_first_party_ai_desktop_relay_stream', { streamId: 'stream-id' });
+await invoke('start_first_party_ai_desktop_presence_heartbeat', { heartbeatId: 'heartbeat-id', path: null, intervalSecs: 30, body: null });
+await invoke('stop_first_party_ai_desktop_presence_heartbeat', { heartbeatId: 'heartbeat-id' });
 ```
 
 ## MCP Tools

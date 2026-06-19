@@ -39,7 +39,7 @@ A plugin manifest is a JSON file with the following structure:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Unique identifier for the plugin. Used as the filename in `~/.mcpviews/plugins/<name>.json`. |
+| `name` | string | Yes | Unique identifier for the plugin. Used as the plugin directory name in `~/.mcpviews/plugins/<name>/`. |
 | `version` | string | Yes | Semantic version of the plugin. |
 | `renderers` | object | No | Map of MCP tool names to frontend renderer names. When a tool result arrives, MCPViews uses this mapping to select the correct renderer. If a tool is not listed, the default `rich_content` renderer is used. |
 | `frame_origins` | string[] | No | HTTP(S) origins that plugin renderer iframes may embed. MCPViews normalizes each entry to `scheme://host[:port]` and appends it to the webview CSP `frame-src` directive. Use this only for trusted app origins that the renderer intentionally frames. |
@@ -400,7 +400,8 @@ MCPViews includes built-in renderers for general-purpose content:
 |----------|-------------|
 | `rich_content` | Markdown + mermaid fallback (default) |
 | `document_preview` | Rendered markdown document |
-| `document_diff` | Two-column diff with accept/reject |
+| `structured_data` | Tables, hierarchies, and reviewable row/cell changes |
+| `universal_graph` | Read-only charts, graphs, timelines, and analytical graph packs |
 | `citation_panel` | Citation list (used as sub-component) |
 
 Domain-specific renderers (decision governance, project management) are delivered via plugins. For example, the [DecidR plugin](https://github.com/DeeJanuz/decidr-plugin) provides renderers for `decidr_list` (entity lists, details, search results, and action items), `decidr_dashboard` (initiative dashboard with health bars and project cards), and `decidr_graph` (force-directed graph of projects and bridges).
@@ -500,13 +501,13 @@ Two caches operate with different TTLs:
 
 Plugins can be added or removed at runtime via the CLI, GUI, or the `mcpviews_install_plugin` MCP tool (allowing agents to install plugins programmatically). When a plugin is added:
 
-1. The manifest is written to `~/.mcpviews/plugins/<name>.json` (or extracted to `~/.mcpviews/plugins/<name>/` for ZIP packages)
+1. The manifest is written to `~/.mcpviews/plugins/<name>/manifest.json` for normal installs, or a ZIP package is extracted into `~/.mcpviews/plugins/<name>/` with its bundled assets
 2. The desktop app detects the change and loads the new plugin
 3. Tools from the plugin become available immediately
 
 When a plugin is removed:
 
-1. The manifest file is deleted from `~/.mcpviews/plugins/`
+1. The plugin directory is deleted from `~/.mcpviews/plugins/<name>/`; legacy flat-file plugins at `~/.mcpviews/plugins/<name>.json` are still removed when present
 2. Any stored auth token at `~/.mcpviews/auth/<name>.json` is deleted
 3. The desktop app unloads the plugin
 4. Cached tool data for the plugin is cleared

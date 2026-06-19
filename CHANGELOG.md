@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Update API, plugin, CLI, and Windows/Tauri docs to match current renderer names, plugin storage, app update, org auth, native panel, file export, hosted AI, and local bridge surfaces.
+
+### Fixed
+- Anchor nested drawer-stack sidecars beside the open AI drawer and keep parent panels layered above child sidecars.
+
 ## [0.2.54] - 2026-06-19
 
 ### Added

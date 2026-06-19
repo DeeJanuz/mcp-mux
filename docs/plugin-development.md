@@ -171,7 +171,8 @@ These are general-purpose renderers bundled with MCPViews. If no renderer is spe
 |----------|----------|------------|
 | `rich_content` | Markdown, mermaid diagrams, general text | `{ title?, body, citations? }` |
 | `document_preview` | Rendered markdown document | `{ title, content, status? }` |
-| `document_diff` | Two-column diff with accept/reject | `{ operations: [{ type, target, replacement }] }` |
+| `structured_data` | Tables, hierarchies, and reviewable row/cell changes | `{ title?, tables: [...] }` |
+| `universal_graph` | Read-only charts, timelines, networks, trees, and graph packs | `{ title?, graphs: [...] }` |
 | `citation_panel` | Citation list (used as sub-component) | `{ citations: {} }` |
 
 #### Plugin-Provided Renderers
@@ -850,7 +851,7 @@ plugin name to fetch detailed rules. You can filter by:
 
 ### Note about `mcpviews_setup`
 
-`mcpviews_setup` (the one-time setup tool for first-time users) still returns all rules including plugin rules via the older `gather_session_data` path. First-time setup flows continue to get everything in a single call. Per-session `init_session` is lean by default, with full runtime context available only by opt-in.
+`mcpviews_setup` is the setup/reconciliation tool for first-time or changed projects. It returns runtime rules for immediate use plus `startup_rule_actions` for native rule-file installation. Agents must persist only the explicit `startup_rule_actions` entries, then record them with `save_startup_rule_state`; runtime `rules`, plugin rules, renderer docs, and setup questions stay in MCPViews responses. Per-session `init_session` is lean by default, with full runtime context available only by opt-in.
 
 ### Backward compatibility
 

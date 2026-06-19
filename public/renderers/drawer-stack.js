@@ -8,7 +8,10 @@
   var threadChatOutputDrawers = new Map();
   var currentSessionId = null;
   var BASE_Z = 150;
+  var PANEL_Z = 180;
   var Z_INCREMENT = 2;
+  var BASE_PANEL_WIDTH = 420;
+  var MIN_PANEL_WIDTH = 320;
   var WIDTH_SHRINK = 20; // px narrower per level
 
   function getStack(sessionId) {
@@ -76,15 +79,98 @@
   function createOverlay(level) {
     var overlay = document.createElement('div');
     overlay.className = 'drawer-stack-overlay';
-    overlay.style.zIndex = String(BASE_Z + level * Z_INCREMENT);
+    overlay.style.zIndex = String(BASE_Z);
     return overlay;
   }
 
-  function createPanel(level) {
+  function numberFromPx(value) {
+    if (typeof value === 'number' && isFinite(value)) return value;
+    var parsed = parseFloat(String(value || '').replace('px', ''));
+    return isFinite(parsed) ? parsed : 0;
+  }
+
+  function panelWidthForLevel(level) {
+    return Math.max(MIN_PANEL_WIDTH, BASE_PANEL_WIDTH - level * WIDTH_SHRINK);
+  }
+
+  function elementWidth(element) {
+    if (!element) return 0;
+    if (typeof element.getBoundingClientRect === 'function') {
+      var rect = element.getBoundingClientRect();
+      if (rect && rect.width) return rect.width;
+    }
+    if (element.offsetWidth) return element.offsetWidth;
+    return numberFromPx(element.style && element.style.width);
+  }
+
+  function hostWidth(host) {
+    var width = elementWidth(host);
+    if (width) return width;
+    if (document.documentElement && document.documentElement.clientWidth) {
+      return document.documentElement.clientWidth;
+    }
+    return 0;
+  }
+
+  function rightSideAnchorWidth(sessionId) {
+    var host = resolveHost(sessionId);
+    if (!host || typeof host.querySelector !== 'function') return 0;
+
+    var selectors = [
+      '.ai-codex-drawer',
+      '.thread-chat-output-shell-panel.open',
+      '.thread-chat-output-shell-panel',
+    ];
+
+    for (var i = 0; i < selectors.length; i++) {
+      var anchor = host.querySelector(selectors[i]);
+      var width = elementWidth(anchor);
+      if (width) return Math.round(width);
+    }
+
+    return 0;
+  }
+
+  function rightOffsetForStack(sessionId, stack) {
+    var offset = stack.length && typeof stack[0].anchorOffset === 'number'
+      ? stack[0].anchorOffset
+      : rightSideAnchorWidth(sessionId);
+
+    for (var i = 0; i < stack.length; i++) {
+      offset += stack[i].panelWidth || elementWidth(stack[i].panel) || panelWidthForLevel(stack[i].level);
+    }
+
+    return offset;
+  }
+
+  function fitPanelGeometry(host, rightOffset, panelWidth) {
+    var width = hostWidth(host);
+    var fittedRight = Math.max(0, Math.round(rightOffset || 0));
+    var fittedWidth = Math.max(MIN_PANEL_WIDTH, Math.round(panelWidth || BASE_PANEL_WIDTH));
+
+    if (width && fittedRight > 0) {
+      fittedRight = Math.min(fittedRight, Math.max(0, width - MIN_PANEL_WIDTH));
+      if (fittedRight + fittedWidth > width) {
+        fittedWidth = Math.max(MIN_PANEL_WIDTH, width - fittedRight);
+      }
+    }
+
+    return {
+      rightOffset: fittedRight,
+      panelWidth: fittedWidth,
+    };
+  }
+
+  function createPanel(level, panelWidth, rightOffset) {
     var panel = document.createElement('div');
     panel.className = 'drawer-stack-panel';
-    panel.style.zIndex = String(BASE_Z + level * Z_INCREMENT + 1);
-    panel.style.width = Math.max(320, 420 - level * WIDTH_SHRINK) + 'px';
+    panel.style.zIndex = String(PANEL_Z - level * Z_INCREMENT);
+    panel.style.width = Math.max(MIN_PANEL_WIDTH, panelWidth || panelWidthForLevel(level)) + 'px';
+    panel.style.right = Math.max(0, rightOffset || 0) + 'px';
+    if (rightOffset > 0) {
+      panel.className += ' drawer-stack-panel-attached';
+      panel.setAttribute('data-drawer-stack-attached', 'true');
+    }
     return panel;
   }
 
@@ -205,7 +291,12 @@
   function createDrawerEntry(sessionId, level, options) {
     options = options || {};
     var overlay = createOverlay(level);
-    var panel = createPanel(level);
+    var panelWidth = options.panelWidth || panelWidthForLevel(level);
+    if (options.width) {
+      panelWidth = numberFromPx(options.width) || panelWidth;
+    }
+    var rightOffset = typeof options.rightOffset === 'number' ? options.rightOffset : 0;
+    var panel = createPanel(level, panelWidth, rightOffset);
     if (options.overlayClassName) {
       overlay.className += ' ' + options.overlayClassName;
     }
@@ -234,6 +325,9 @@
       level: level,
       rendererName: options.rendererName || null,
       displayMode: options.displayMode || 'drawer',
+      anchorOffset: typeof options.anchorOffset === 'number' ? options.anchorOffset : rightOffset,
+      panelWidth: numberFromPx(panel.style.width) || panelWidth,
+      rightOffset: rightOffset,
       overlay: overlay,
       panel: panel,
       header: headerParts.header,
@@ -300,10 +394,18 @@
   function invokeRenderer(rendererName, params, displayMode) {
     var stack = getStack(currentSessionId);
     var level = stack.length;
+    var host = resolveHost(currentSessionId);
+    var geometry = fitPanelGeometry(host, rightOffsetForStack(currentSessionId, stack), panelWidthForLevel(level));
+    var anchorOffset = stack.length && typeof stack[0].anchorOffset === 'number'
+      ? stack[0].anchorOffset
+      : geometry.rightOffset;
     var entry = createDrawerEntry(currentSessionId, level, {
       rendererName: rendererName,
       title: formatRendererTitle(rendererName),
       displayMode: displayMode || 'drawer',
+      anchorOffset: anchorOffset,
+      panelWidth: geometry.panelWidth,
+      rightOffset: geometry.rightOffset,
       onClose: function () {
         closeDrawer();
       },

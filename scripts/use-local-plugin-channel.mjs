@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import AdmZip from 'adm-zip';
 import { spawnSync } from 'node:child_process';
 import {
   cpSync,
@@ -12,6 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,6 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const workspaceRoot = resolve(repoRoot, '..');
+const require = createRequire(import.meta.url);
 
 export const CHANNELS = {
   production: {
@@ -372,6 +373,7 @@ function extractBuiltPlugin(spec, channel) {
     throw new Error(`Missing built ZIP for ${spec.name}: ${zipPath}`);
   }
   const extractRoot = mkdtempSync(join(tmpdir(), `mcpviews-${spec.name}-${channel}-`));
+  const AdmZip = require('adm-zip');
   const archive = new AdmZip(zipPath);
   archive.extractAllTo(extractRoot, true);
   const sourceRoot = pluginSourceRoot(extractRoot);

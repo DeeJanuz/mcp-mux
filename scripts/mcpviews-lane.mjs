@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import AdmZip from 'adm-zip';
 import { spawnSync } from 'node:child_process';
 import {
   cpSync,
@@ -12,16 +11,18 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { writePluginHash } from './stage-branded-bundled-plugins.mjs';
+import { writePluginHash } from './plugin-hash.mjs';
 import { validateManifestForChannel } from './use-local-plugin-channel.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
 const workspaceRoot = resolve(repoRoot, '..');
 const laneLockDir = join(repoRoot, '.mcpviews-lane.lock');
+const require = createRequire(import.meta.url);
 
 export const LANES = {
   production: {
@@ -166,6 +167,7 @@ function copyDirectory(source, destination) {
 }
 
 function safeExtractZip(zipPath, destination) {
+  const AdmZip = require('adm-zip');
   const archive = new AdmZip(zipPath);
   for (const entry of archive.getEntries()) {
     const entryName = String(entry.entryName || '').replace(/\\/g, '/');

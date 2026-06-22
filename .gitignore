@@ -4,6 +4,9 @@ dist/
 src-tauri/target/
 src-tauri/gen/schemas/
 sidecar/dist/
+tauri.*.generated.conf.json
+.mcpviews-lane.lock/
 .env
 .DS_Store
 src-tauri/bundled-plugins/mac-dev/
+src-tauri/lane-bundled-plugins/

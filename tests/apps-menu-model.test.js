@@ -39,6 +39,22 @@ describe('apps menu model', function () {
     expect(plugins[1].label).toBe('Persona Lab');
   });
 
+  it('orders production app groups before staging groups', function () {
+    var plugins = window.__mcpviewsAppsMenu.normalizePlugins([
+      { plugin: 'decidr-staging', label: 'DecidR Staging', renderers: [] },
+      { plugin: 'ludflow-staging', label: 'Ludflow Staging', renderers: [] },
+      { plugin: 'ludflow', renderers: [] },
+      { plugin: 'decidr', renderers: [] },
+    ]);
+
+    expect(plugins.map(function (plugin) { return plugin.plugin; })).toEqual([
+      'decidr',
+      'ludflow',
+      'decidr-staging',
+      'ludflow-staging',
+    ]);
+  });
+
   it('renders identical grouping structure for DOM fallback selections', function () {
     var onSelect = vi.fn();
     var root = document.getElementById('apps');

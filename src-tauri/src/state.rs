@@ -25,7 +25,7 @@ const DECIDR_PLUGIN: &str = "decidr";
 const DECIDR_SETUP_PLUGIN: &str = "decidr-setup";
 const LUDFLOW_PLUGIN: &str = "ludflow";
 const EMAIL_DELIVERABILITY_PLUGIN: &str = "email-deliverability";
-const RESOURCE_BUNDLED_PLUGIN_ROOTS: [&str; 2] = ["release", "mac-dev"];
+const RESOURCE_BUNDLED_PLUGIN_ROOTS: [&str; 3] = ["release", "staging", "mac-dev"];
 
 pub struct AppState {
     pub sessions: Mutex<SessionStore>,
@@ -159,7 +159,8 @@ impl AppState {
         Ok(plugin_name)
     }
 
-    /// Returns deduplicated origins (scheme + authority) from all installed plugin MCP URLs.
+    /// Returns deduplicated CSP `connect-src` sources from all installed plugin
+    /// MCP URLs and plugin-declared extra connect origins.
     pub fn plugin_csp_origins(&self) -> Vec<String> {
         let registry = self.plugin_registry.lock().unwrap();
         let mut origins = std::collections::HashSet::new();
@@ -167,6 +168,11 @@ impl AppState {
             if let Some(ref mcp) = manifest.mcp {
                 if let Ok(url) = url::Url::parse(&mcp.url) {
                     let origin = format!("{}://{}", url.scheme(), url.authority());
+                    origins.insert(origin);
+                }
+            }
+            for connect_origin in &manifest.connect_origins {
+                if let Some(origin) = normalize_connect_source(connect_origin) {
                     origins.insert(origin);
                 }
             }
@@ -272,6 +278,9 @@ impl AppState {
     ///
     /// The mac dev bundle still stages plugin directories at:
     /// {resource_dir}/bundled-plugins/mac-dev/{plugin}/manifest.json
+    ///
+    /// Dedicated staging builds stage plugin directories at:
+    /// {resource_dir}/bundled-plugins/staging/{plugin}/manifest.json
     pub fn ensure_resource_bundled_plugins(
         &self,
         resource_dir: &std::path::Path,
@@ -293,6 +302,41 @@ impl AppState {
         }
         Ok(installed)
     }
+}
+
+fn normalize_connect_source(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed
+            .chars()
+            .any(|ch| ch.is_ascii_whitespace() || ch == ';')
+    {
+        return None;
+    }
+
+    if let Ok(url) = url::Url::parse(trimmed) {
+        if matches!(url.scheme(), "http" | "https" | "ws" | "wss") && !url.authority().is_empty() {
+            return Some(format!("{}://{}", url.scheme(), url.authority()));
+        }
+    }
+
+    for prefix in ["https://*.", "wss://*."] {
+        if let Some(host) = trimmed.strip_prefix(prefix) {
+            if is_valid_wildcard_csp_host(host) {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn is_valid_wildcard_csp_host(host: &str) -> bool {
+    !host.is_empty()
+        && host.contains('.')
+        && host
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '.')
 }
 
 fn retire_email_deliverability_for_decidr_bundle(
@@ -615,6 +659,23 @@ mod tests {
     }
 
     #[test]
+    fn test_plugin_csp_origins_with_declared_connect_origins() {
+        let (state, _dir) = test_app_state();
+        let mut manifest = test_manifest("upload-plugin");
+        manifest.connect_origins = vec![
+            "https://*.r2.cloudflarestorage.com".to_string(),
+            "https://api.example.com/some/path".to_string(),
+            "javascript:alert(1)".to_string(),
+            "https://bad.example.com; connect-src *".to_string(),
+        ];
+        state.install_plugin_from_manifest(manifest, false).unwrap();
+        let origins = state.plugin_csp_origins();
+        assert_eq!(origins.len(), 2);
+        assert!(origins.contains(&"https://*.r2.cloudflarestorage.com".to_string()));
+        assert!(origins.contains(&"https://api.example.com".to_string()));
+    }
+
+    #[test]
     fn test_plugin_csp_origins_no_mcp() {
         let (state, _dir) = test_app_state();
         let manifest = test_manifest("no-mcp-plugin");
@@ -744,6 +805,34 @@ mod tests {
         assert_eq!(installed, vec!["decidr".to_string()]);
         let manifest = state.plugin_store().load("decidr").unwrap();
         assert_eq!(manifest.version, "1.2.3");
+    }
+
+    #[test]
+    fn test_ensure_resource_bundled_plugins_installs_staging_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins_dir = dir.path().join("plugins");
+        let resource_dir = dir.path().join("resources");
+        let store = PluginStore::with_dir(plugins_dir);
+        let state = AppState::new_with_store_and_auth_dir(store, dir.path().join("auth"));
+
+        let bundled_plugin_dir = resource_dir
+            .join("bundled-plugins")
+            .join("staging")
+            .join("ludflow");
+        write_plugin_manifest(
+            &bundled_plugin_dir,
+            "ludflow",
+            "4.5.6",
+            Some("staging-hash"),
+        );
+
+        let installed = state
+            .ensure_resource_bundled_plugins(&resource_dir)
+            .unwrap();
+
+        assert_eq!(installed, vec!["ludflow".to_string()]);
+        let manifest = state.plugin_store().load("ludflow").unwrap();
+        assert_eq!(manifest.version, "4.5.6");
     }
 
     #[test]

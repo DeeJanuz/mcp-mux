@@ -1079,6 +1079,14 @@ MCPViews dynamically builds the Content Security Policy `connect-src` directive 
 
 When a new plugin is installed, MCPViews reloads the webview so the updated CSP takes effect immediately. No plugin configuration is needed -- the origin is extracted automatically from the `mcp.url` field in your manifest. For example, if your manifest has `"url": "https://api.example.com/mcp"`, then `https://api.example.com` is added to `connect-src`.
 
+If a renderer must connect to another origin, such as a signed object-storage upload URL, declare it in `connect_origins`:
+
+```json
+"connect_origins": ["https://*.r2.cloudflarestorage.com"]
+```
+
+MCPViews accepts HTTP(S), WS(S), and HTTPS/WSS wildcard host sources. Invalid or injection-looking values are ignored.
+
 ## Renderer Interaction Patterns
 
 Renderers can interact with data in two fundamentally different ways. Most plugins use one or both of these patterns.

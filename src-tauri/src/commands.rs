@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex as TokioMutex;
 
 use mcpviews_shared::{PluginAuth, PluginInfo, PluginManifest, RegistryEntry, RegistrySource};
@@ -1397,6 +1399,228 @@ pub async fn save_binary_file(
     }
 }
 
+const FILE_PREVIEW_CACHE_DIR: &str = "file-preview";
+
+fn normalized_file_preview_mime(mime_type: Option<&str>) -> String {
+    mime_type
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn file_preview_extension_for_mime(mime_type: &str) -> Option<&'static str> {
+    match mime_type {
+        "application/rtf" | "text/rtf" => Some("rtf"),
+        "application/msword" => Some("doc"),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => Some("docx"),
+        "application/vnd.ms-excel" => Some("xls"),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => Some("xlsx"),
+        "application/vnd.ms-powerpoint" => Some("ppt"),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => Some("pptx"),
+        "application/vnd.oasis.opendocument.text" => Some("odt"),
+        "application/vnd.oasis.opendocument.spreadsheet" => Some("ods"),
+        "application/vnd.oasis.opendocument.presentation" => Some("odp"),
+        "application/vnd.apple.pages" | "application/x-iwork-pages-sffpages" => Some("pages"),
+        "application/vnd.apple.numbers" | "application/x-iwork-numbers-sffnumbers" => {
+            Some("numbers")
+        }
+        "application/vnd.apple.keynote" | "application/x-iwork-keynote-sffkey" => Some("key"),
+        _ => None,
+    }
+}
+
+fn normalized_file_preview_extension(filename: &str) -> Option<String> {
+    let normalized = filename.replace('\\', "/");
+    let basename = normalized.rsplit('/').next().unwrap_or("").trim();
+    let extension = basename.rsplit_once('.')?.1.trim().to_ascii_lowercase();
+    if extension.is_empty()
+        || extension.len() > 16
+        || !extension.chars().all(|ch| ch.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    Some(extension)
+}
+
+fn is_allowed_file_preview_extension(extension: &str) -> bool {
+    matches!(
+        extension,
+        "doc"
+            | "docx"
+            | "xls"
+            | "xlsx"
+            | "ppt"
+            | "pptx"
+            | "rtf"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "pages"
+            | "numbers"
+            | "key"
+    )
+}
+
+fn file_preview_allowed_extension(
+    filename: &str,
+    mime_type: Option<&str>,
+) -> Result<String, String> {
+    let mime = normalized_file_preview_mime(mime_type);
+    if let Some(extension) = file_preview_extension_for_mime(&mime) {
+        return Ok(extension.to_string());
+    }
+
+    let file_extension = normalized_file_preview_extension(filename);
+    let Some(extension) = file_extension.as_deref() else {
+        return Err(
+            "File preview requires a supported filename extension or MIME type.".to_string(),
+        );
+    };
+    if !is_allowed_file_preview_extension(extension) {
+        return Err(format!("Unsupported file preview extension: {}", extension));
+    }
+
+    if mime.is_empty() || mime == "application/octet-stream" || mime == "binary/octet-stream" {
+        return Ok(extension.to_string());
+    }
+
+    Err(format!("Unsupported file preview MIME type: {}", mime))
+}
+
+fn sanitized_file_preview_filename(filename: &str, extension: &str) -> String {
+    let normalized = filename.replace('\\', "/");
+    let basename = normalized.rsplit('/').next().unwrap_or("").trim();
+    let mut clean = String::new();
+    for ch in basename.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.') {
+            clean.push(ch);
+        } else if ch.is_control() || !ch.is_ascii() {
+            clean.push('_');
+        } else {
+            clean.push('_');
+        }
+    }
+    let clean = clean.trim_matches(|ch| matches!(ch, ' ' | '.' | '-' | '_'));
+    let suffix = format!(".{}", extension);
+    let lower = clean.to_ascii_lowercase();
+    let stem = if lower.ends_with(&suffix) {
+        &clean[..clean.len().saturating_sub(suffix.len())]
+    } else if let Some((left, right)) = clean.rsplit_once('.') {
+        if !left.is_empty()
+            && !right.is_empty()
+            && right.len() <= 16
+            && right.chars().all(|ch| ch.is_ascii_alphanumeric())
+        {
+            left
+        } else {
+            clean
+        }
+    } else {
+        clean
+    };
+    let stem = stem.trim_matches(|ch| matches!(ch, ' ' | '.' | '-' | '_'));
+    let stem = if stem.is_empty() { "preview" } else { stem };
+    let limited_stem: String = stem.chars().take(80).collect();
+    format!("{}.{}", limited_stem, extension)
+}
+
+fn file_preview_dir(cache_dir: &Path) -> PathBuf {
+    cache_dir.join(FILE_PREVIEW_CACHE_DIR)
+}
+
+fn file_preview_temp_path_for_cache(
+    cache_dir: &Path,
+    filename: &str,
+    mime_type: Option<&str>,
+) -> Result<PathBuf, String> {
+    let extension = file_preview_allowed_extension(filename, mime_type)?;
+    let safe_filename = sanitized_file_preview_filename(filename, &extension);
+    let dir = file_preview_dir(cache_dir);
+    let path = dir.join(format!("{}-{}", uuid::Uuid::new_v4(), safe_filename));
+    if !path.starts_with(&dir) {
+        return Err("File preview path escaped the app cache directory.".to_string());
+    }
+    Ok(path)
+}
+
+fn file_preview_command_for_platform(
+    path: &Path,
+    platform: crate::auth_browser::BrowserPlatform,
+) -> Result<crate::auth_browser::BrowserCommand, String> {
+    let path_arg = path
+        .to_str()
+        .ok_or_else(|| "File preview path is not valid UTF-8.".to_string())?
+        .to_string();
+    match platform {
+        crate::auth_browser::BrowserPlatform::Linux => Ok(crate::auth_browser::BrowserCommand {
+            program: "xdg-open",
+            args: vec![path_arg],
+        }),
+        crate::auth_browser::BrowserPlatform::MacOs => Ok(crate::auth_browser::BrowserCommand {
+            program: "open",
+            args: vec![path_arg],
+        }),
+        crate::auth_browser::BrowserPlatform::Windows => Ok(crate::auth_browser::BrowserCommand {
+            program: "rundll32",
+            args: vec!["url.dll,FileProtocolHandler".to_string(), path_arg],
+        }),
+        crate::auth_browser::BrowserPlatform::Unsupported => {
+            Err("Unsupported platform".to_string())
+        }
+    }
+}
+
+fn open_file_preview_path(path: &Path) -> Result<(), String> {
+    let command = file_preview_command_for_platform(path, crate::auth_browser::current_platform())?;
+    Command::new(command.program)
+        .args(command.args)
+        .spawn()
+        .map_err(|e| format!("Failed to open file preview: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_file_preview(
+    app_handle: tauri::AppHandle,
+    filename: String,
+    mime_type: Option<String>,
+    data_base64: String,
+) -> Result<bool, String> {
+    use base64::Engine;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("Failed to decode file preview bytes: {}", e))?;
+    let cache_dir = app_handle
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to resolve app cache directory: {}", e))?;
+    let preview_dir = file_preview_dir(&cache_dir);
+    let preview_path =
+        file_preview_temp_path_for_cache(&cache_dir, &filename, mime_type.as_deref())?;
+    std::fs::create_dir_all(&preview_dir)
+        .map_err(|e| format!("Failed to create file preview directory: {}", e))?;
+    let canonical_dir = preview_dir
+        .canonicalize()
+        .map_err(|e| format!("Failed to verify file preview directory: {}", e))?;
+    let parent = preview_path
+        .parent()
+        .ok_or_else(|| "File preview path is missing a parent directory.".to_string())?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| format!("Failed to verify file preview parent directory: {}", e))?;
+    if !canonical_parent.starts_with(&canonical_dir) {
+        return Err("File preview path escaped the app cache directory.".to_string());
+    }
+    std::fs::write(&preview_path, bytes)
+        .map_err(|e| format!("Failed to write file preview: {}", e))?;
+    open_file_preview_path(&preview_path)?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub fn get_standalone_renderers(state: State<'_, Arc<AppState>>) -> Vec<serde_json::Value> {
     let registry = state.plugin_registry.lock().unwrap();
@@ -1488,6 +1712,13 @@ pub fn collect_standalone_renderers(
             }
         }
     }
+    results.sort_by(|a, b| {
+        let a_plugin = a["plugin"].as_str().unwrap_or_default();
+        let b_plugin = b["plugin"].as_str().unwrap_or_default();
+        standalone_group_rank(a_plugin)
+            .cmp(&standalone_group_rank(b_plugin))
+            .then_with(|| a_plugin.cmp(b_plugin))
+    });
     results
 }
 
@@ -1509,6 +1740,17 @@ fn humanize_standalone_plugin_label(plugin: &str) -> String {
             })
             .collect::<Vec<_>>()
             .join(" "),
+    }
+}
+
+fn standalone_group_rank(plugin: &str) -> usize {
+    match plugin {
+        "decidr" => 10,
+        "ludflow" => 20,
+        "decidr-staging" => 30,
+        "ludflow-staging" => 40,
+        "tribe-x-persona-studio" => 50,
+        _ => 100,
     }
 }
 
@@ -1599,6 +1841,91 @@ mod tests {
             download_url: None,
             manifest_url: None,
         }
+    }
+
+    #[test]
+    fn file_preview_sanitizes_filename_path_traversal() {
+        let filename = sanitized_file_preview_filename("../../secret/../report.docx", "docx");
+
+        assert_eq!(filename, "report.docx");
+        assert!(!filename.contains('/'));
+        assert!(!filename.contains('\\'));
+        assert!(!filename.contains(".."));
+    }
+
+    #[test]
+    fn file_preview_mime_allowlist_accepts_office_type() {
+        let extension = file_preview_allowed_extension(
+            "unsafe.exe",
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        )
+        .expect("expected docx MIME to be previewable");
+
+        assert_eq!(extension, "docx");
+    }
+
+    #[test]
+    fn file_preview_mime_allowlist_rejects_unsupported_binary() {
+        let error = file_preview_allowed_extension("payload.bin", Some("application/octet-stream"))
+            .expect_err("unexpectedly accepted unsupported binary");
+
+        assert!(error.contains("Unsupported file preview extension"));
+    }
+
+    #[test]
+    fn file_preview_rejects_conflicting_unsafe_mime() {
+        let error = file_preview_allowed_extension("report.docx", Some("application/x-msdownload"))
+            .expect_err("unexpectedly accepted unsafe MIME");
+
+        assert!(error.contains("Unsupported file preview MIME type"));
+    }
+
+    #[test]
+    fn file_preview_uses_mime_extension_when_filename_is_unsafe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_preview_temp_path_for_cache(
+            dir.path(),
+            "../invoice.exe",
+            Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        )
+        .expect("expected safe preview path");
+        let filename = path.file_name().unwrap().to_string_lossy();
+
+        assert!(path.starts_with(dir.path().join(FILE_PREVIEW_CACHE_DIR)));
+        assert!(filename.ends_with("invoice.docx"));
+        assert!(!filename.ends_with(".exe"));
+    }
+
+    #[test]
+    fn file_preview_temp_path_stays_inside_cache_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_preview_temp_path_for_cache(
+            dir.path(),
+            "../../escape.xlsx",
+            Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        )
+        .expect("expected safe preview path");
+        let preview_dir = dir.path().join(FILE_PREVIEW_CACHE_DIR);
+
+        assert!(path.starts_with(&preview_dir));
+        assert_eq!(path.parent(), Some(preview_dir.as_path()));
+    }
+
+    #[test]
+    fn file_preview_windows_command_preserves_path_as_single_argument() {
+        let path = Path::new(r"C:\Users\Test User\AppData\Local\MCPViews\file-preview\report.docx");
+        let command =
+            file_preview_command_for_platform(path, crate::auth_browser::BrowserPlatform::Windows)
+                .expect("expected Windows file preview command");
+
+        assert_eq!(command.program, "rundll32");
+        assert_eq!(
+            command.args,
+            vec![
+                "url.dll,FileProtocolHandler".to_string(),
+                path.to_string_lossy().to_string()
+            ]
+        );
     }
 
     #[test]
@@ -2007,6 +2334,54 @@ mod tests {
         assert_eq!(renderers.len(), 2);
         assert_eq!(renderers[0]["name"], "decidr_timeline");
         assert_eq!(renderers[1]["name"], "decidr_onboarding");
+    }
+
+    #[test]
+    fn test_collect_standalone_renderers_orders_prod_before_staging() {
+        fn with_renderer(
+            mut manifest: mcpviews_shared::PluginManifest,
+            renderer_name: &str,
+        ) -> mcpviews_shared::PluginManifest {
+            manifest
+                .renderer_definitions
+                .push(mcpviews_shared::RendererDef {
+                    name: renderer_name.to_string(),
+                    description: renderer_name.to_string(),
+                    scope: "universal".to_string(),
+                    tools: vec![],
+                    data_hint: None,
+                    rule: None,
+                    display_mode: None,
+                    invoke_schema: None,
+                    url_patterns: vec![],
+                    standalone: true,
+                    standalone_label: Some(renderer_name.to_string()),
+                });
+            manifest
+        }
+
+        let mut decidr_staging =
+            with_renderer(test_manifest("decidr-staging"), "decidr_staging_dashboard");
+        decidr_staging.standalone_group_label = Some("DecidR Staging".to_string());
+        let mut ludflow_staging =
+            with_renderer(test_manifest("ludflow-staging"), "ludflow_staging_app");
+        ludflow_staging.standalone_group_label = Some("Ludflow Staging".to_string());
+
+        let results = collect_standalone_renderers(&[
+            decidr_staging,
+            ludflow_staging,
+            with_renderer(test_manifest("ludflow"), "ludflow_app"),
+            with_renderer(test_manifest("decidr"), "decidr_dashboard"),
+        ]);
+
+        let plugins: Vec<&str> = results
+            .iter()
+            .map(|entry| entry["plugin"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            plugins,
+            vec!["decidr", "ludflow", "decidr-staging", "ludflow-staging"]
+        );
     }
 
     #[tokio::test]

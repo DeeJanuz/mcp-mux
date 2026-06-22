@@ -48,7 +48,54 @@ use tauri_plugin_autostart::MacosLauncher;
 // See https://github.com/orgs/tauri-apps/discussions/5597
 const BASE_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net plugin://localhost https://plugin.localhost; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com plugin://localhost https://plugin.localhost; font-src 'self' https://fonts.gstatic.com plugin://localhost https://plugin.localhost; connect-src 'self' http://localhost:4200; img-src 'self' data: blob: plugin://localhost https://plugin.localhost; frame-src 'self'";
 const DEFAULT_HTTP_PORT: u16 = 4200;
+const STAGING_HTTP_PORT: u16 = 4201;
 const DEV_HTTP_PORT_ENV: &str = "MCPVIEWS_DEV_HTTP_PORT";
+
+fn compiled_build_lane() -> Option<&'static str> {
+    option_env!("MCPVIEWS_BUILD_LANE").and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+fn is_staging_lane(lane: Option<&str>) -> bool {
+    lane.unwrap_or_default()
+        .trim()
+        .eq_ignore_ascii_case("staging")
+}
+
+fn app_display_name_for_lane(lane: Option<&str>) -> &'static str {
+    if is_staging_lane(lane) {
+        "MCPViews Staging"
+    } else {
+        "MCPViews"
+    }
+}
+
+fn default_http_port_for_lane(lane: Option<&str>) -> u16 {
+    if is_staging_lane(lane) {
+        STAGING_HTTP_PORT
+    } else {
+        DEFAULT_HTTP_PORT
+    }
+}
+
+fn configure_runtime_storage_lane() {
+    if !is_staging_lane(compiled_build_lane()) {
+        return;
+    }
+    if std::env::var_os(mcpviews_shared::MCPVIEWS_HOME_ENV).is_some() {
+        return;
+    }
+    if std::env::var_os(mcpviews_shared::MCPVIEWS_STORAGE_LANE_ENV).is_some() {
+        return;
+    }
+    std::env::set_var(mcpviews_shared::MCPVIEWS_STORAGE_LANE_ENV, "staging");
+}
 
 fn build_csp(connect_origins: &[String], frame_origins: &[String]) -> String {
     let mut csp = BASE_CSP.to_string();
@@ -126,9 +173,9 @@ fn http_bind_address() -> String {
         std::env::var(DEV_HTTP_PORT_ENV)
             .ok()
             .and_then(|value| value.trim().parse::<u16>().ok())
-            .unwrap_or(DEFAULT_HTTP_PORT)
+            .unwrap_or_else(|| default_http_port_for_lane(compiled_build_lane()))
     } else {
-        DEFAULT_HTTP_PORT
+        default_http_port_for_lane(compiled_build_lane())
     };
 
     format!("0.0.0.0:{port}")
@@ -172,7 +219,9 @@ fn mime_from_extension(path: &std::path::Path) -> &'static str {
 }
 
 fn main() {
+    configure_runtime_storage_lane();
     let app_state = Arc::new(AppState::new());
+    let app_display_name = app_display_name_for_lane(compiled_build_lane());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -291,6 +340,7 @@ fn main() {
             commands::clear_plugin_auth,
             commands::save_file,
             commands::save_binary_file,
+            commands::open_file_preview,
             commands::get_renderer_registry,
             commands::get_standalone_renderers,
             commands::set_native_theme,
@@ -367,7 +417,7 @@ fn main() {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("MCPViews")
+            .title(app_display_name)
             .inner_size(1200.0, 800.0)
             .resizable(true)
             .theme(Some(tauri::Theme::Light))
@@ -402,7 +452,7 @@ fn main() {
             let _tray = TrayIconBuilder::new()
                 .icon(icon)
                 .menu(&tray_menu)
-                .tooltip("MCPViews")
+                .tooltip(app_display_name)
                 .on_menu_event(move |app, event| match event.id().as_ref() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -421,7 +471,7 @@ fn main() {
                                 "plugin-manager",
                                 tauri::WebviewUrl::App("plugin-manager.html".into()),
                             )
-                            .title("MCPViews - Plugin Manager")
+                            .title(format!("{} - Plugin Manager", app_display_name))
                             .inner_size(800.0, 600.0)
                             .use_https_scheme(true)
                             .on_web_resource_request(csp_request_hook(state.inner().clone()))
@@ -450,6 +500,25 @@ mod tests {
     fn test_build_csp_no_extras() {
         let csp = build_csp(&[], &[]);
         assert_eq!(csp, BASE_CSP);
+    }
+
+    #[test]
+    fn test_default_lane_uses_production_app_identity_and_port() {
+        assert_eq!(app_display_name_for_lane(None), "MCPViews");
+        assert_eq!(app_display_name_for_lane(Some("")), "MCPViews");
+        assert_eq!(app_display_name_for_lane(Some("production")), "MCPViews");
+        assert_eq!(default_http_port_for_lane(None), 4200);
+        assert_eq!(default_http_port_for_lane(Some("production")), 4200);
+    }
+
+    #[test]
+    fn test_staging_lane_uses_staging_app_identity_and_port() {
+        assert_eq!(
+            app_display_name_for_lane(Some("staging")),
+            "MCPViews Staging"
+        );
+        assert_eq!(default_http_port_for_lane(Some("staging")), 4201);
+        assert_eq!(default_http_port_for_lane(Some(" StAgInG ")), 4201);
     }
 
     #[test]

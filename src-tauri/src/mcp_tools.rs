@@ -3908,6 +3908,7 @@ mod tests {
             standalone_group_label: None,
             renderers: std::collections::HashMap::new(),
             frame_origins: vec![],
+            connect_origins: vec![],
             mcp,
             renderer_definitions: renderer_defs,
             tool_rules,
@@ -4643,6 +4644,7 @@ mod tests {
             standalone_group_label: None,
             renderers,
             frame_origins: vec![],
+            connect_origins: vec![],
             mcp: Some(PluginMcpConfig {
                 url: "http://localhost:8080".into(),
                 auth: None,

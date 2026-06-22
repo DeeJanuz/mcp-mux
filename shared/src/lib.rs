@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
+pub const MCPVIEWS_HOME_ENV: &str = "MCPVIEWS_HOME";
+pub const MCPVIEWS_STORAGE_LANE_ENV: &str = "MCPVIEWS_STORAGE_LANE";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DisplayMode {
@@ -211,6 +214,10 @@ pub struct PluginManifest {
     /// appended to the MCPViews webview CSP `frame-src` directive.
     #[serde(default)]
     pub frame_origins: Vec<String>,
+    /// Extra CSP `connect-src` sources plugin renderers need beyond the plugin
+    /// MCP URL, such as signed object-storage upload origins.
+    #[serde(default)]
+    pub connect_origins: Vec<String>,
     pub mcp: Option<PluginMcpConfig>,
     #[serde(default)]
     pub renderer_definitions: Vec<RendererDef>,
@@ -584,32 +591,49 @@ pub fn newer_version(installed: &str, available: &str) -> Option<String> {
     }
 }
 
-pub fn plugins_dir() -> PathBuf {
+pub fn mcpviews_home_name_for_storage_lane(lane: Option<&str>) -> &'static str {
+    match lane
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "staging" => ".mcpviews-staging",
+        _ => ".mcpviews",
+    }
+}
+
+pub fn mcpviews_home_dir_for_storage_lane(lane: Option<&str>) -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mcpviews")
-        .join("plugins")
+        .join(mcpviews_home_name_for_storage_lane(lane))
+}
+
+pub fn mcpviews_home_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os(MCPVIEWS_HOME_ENV) {
+        if !path.is_empty() {
+            return PathBuf::from(path);
+        }
+    }
+
+    let lane = std::env::var(MCPVIEWS_STORAGE_LANE_ENV).ok();
+    mcpviews_home_dir_for_storage_lane(lane.as_deref())
+}
+
+pub fn plugins_dir() -> PathBuf {
+    mcpviews_home_dir().join("plugins")
 }
 
 pub fn config_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mcpviews")
-        .join("config.json")
+    mcpviews_home_dir().join("config.json")
 }
 
 pub fn auth_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mcpviews")
-        .join("auth")
+    mcpviews_home_dir().join("auth")
 }
 
 pub fn cache_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".mcpviews")
-        .join("cache")
+    mcpviews_home_dir().join("cache")
 }
 
 #[cfg(test)]
@@ -622,6 +646,28 @@ mod tests {
             token_env: "MY_TOKEN".to_string(),
         };
         assert_eq!(auth.display_name(), "bearer");
+    }
+
+    #[test]
+    fn test_default_storage_lane_uses_production_home_name() {
+        assert_eq!(mcpviews_home_name_for_storage_lane(None), ".mcpviews");
+        assert_eq!(mcpviews_home_name_for_storage_lane(Some("")), ".mcpviews");
+        assert_eq!(
+            mcpviews_home_name_for_storage_lane(Some("production")),
+            ".mcpviews"
+        );
+    }
+
+    #[test]
+    fn test_staging_storage_lane_uses_separate_home_name() {
+        assert_eq!(
+            mcpviews_home_name_for_storage_lane(Some("staging")),
+            ".mcpviews-staging"
+        );
+        assert_eq!(
+            mcpviews_home_name_for_storage_lane(Some(" StAgInG ")),
+            ".mcpviews-staging"
+        );
     }
 
     #[test]
@@ -986,7 +1032,8 @@ mod tests {
         let json = r#"{
             "name": "test-plugin",
             "version": "1.0.0",
-            "frame_origins": ["https://app.example.com", "http://localhost:3000"]
+            "frame_origins": ["https://app.example.com", "http://localhost:3000"],
+            "connect_origins": ["https://*.r2.cloudflarestorage.com", "https://api.example.com/v1"]
         }"#;
         let manifest: PluginManifest = serde_json::from_str(json).unwrap();
         assert_eq!(
@@ -994,6 +1041,13 @@ mod tests {
             vec![
                 "https://app.example.com".to_string(),
                 "http://localhost:3000".to_string(),
+            ]
+        );
+        assert_eq!(
+            manifest.connect_origins,
+            vec![
+                "https://*.r2.cloudflarestorage.com".to_string(),
+                "https://api.example.com/v1".to_string(),
             ]
         );
     }
@@ -1006,6 +1060,7 @@ mod tests {
         }"#;
         let manifest: PluginManifest = serde_json::from_str(json).unwrap();
         assert!(manifest.frame_origins.is_empty());
+        assert!(manifest.connect_origins.is_empty());
         assert!(manifest.renderer_definitions.is_empty());
         assert!(manifest.renderers.is_empty());
         assert!(manifest.mcp.is_none());

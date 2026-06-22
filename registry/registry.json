@@ -3,7 +3,7 @@
   "plugins": [
     {
       "name": "ludflow",
-      "version": "0.5.0",
+      "version": "0.5.20",
       "description": "Code intelligence, data governance, and knowledge management powered by Ludflow",
       "author": "Ludflow",
       "homepage": "https://ludflow.com",
@@ -16,8 +16,8 @@
       ],
       "manifest": {
         "name": "ludflow",
-        "version": "0.5.0",
-        "download_url": "https://github.com/DeeJanuz/ludflow-mcpviews/releases/download/v0.5.0/ludflow-plugin.zip",
+        "version": "0.5.20",
+        "download_url": "https://github.com/DeeJanuz/ludflow-mcpviews/releases/download/v0.5.20/ludflow-plugin.zip",
         "renderers": {
           "search_codebase": "rich_content",
           "vector_search": "rich_content",
@@ -62,7 +62,7 @@
     },
     {
       "name": "decidr",
-      "version": "0.1.49",
+      "version": "0.1.52",
       "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
@@ -75,7 +75,7 @@
       ],
       "manifest": {
         "name": "decidr",
-        "version": "0.1.49",
+        "version": "0.1.52",
         "prompt_definitions": [
           {
             "name": "initiative_planning",
@@ -251,7 +251,7 @@
             ]
           }
         ],
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.49/decidr.zip",
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.52/decidr.zip",
         "registry_index": {
           "summary": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
           "tags": [
@@ -688,6 +688,9 @@
           },
           "tool_prefix": "decidr__"
         },
+        "connect_origins": [
+          "https://*.r2.cloudflarestorage.com"
+        ],
         "plugin_rule_definitions": [
           {
             "id": "decidr_auth_status",
@@ -997,7 +1000,7 @@
           "arguments": {}
         }
       },
-      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.49/decidr.zip"
+      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.52/decidr.zip"
     },
     {
       "name": "mcpviews-gronk-speak",

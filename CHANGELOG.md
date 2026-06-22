@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Add explicit production/staging MCPViews lanes with separate homes, ports, app identity, plugin setup/install helpers, and lane tests.
+- Add a `file_preview` desktop adapter so trusted renderers can open supported office-style files through sanitized cache paths and OS default apps.
+- Allow plugins to declare extra `connect_origins` for signed upload targets such as R2.
+
+### Changed
+- Order production DecidR/Ludflow apps before staging app groups in the Apps menu.
+- Stage DecidR plugin v0.1.52 and Ludflow plugin v0.5.20 in the DecidR-branded bundle.
+
 ## [0.2.58] - 2026-06-22
 
 ### Changed

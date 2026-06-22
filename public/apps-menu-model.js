@@ -34,6 +34,18 @@
     return humanizePluginName(plugin.plugin);
   }
 
+  function pluginRank(pluginName) {
+    var ranks = {
+      decidr: 10,
+      ludflow: 20,
+      'decidr-staging': 30,
+      'ludflow-staging': 40,
+      'tribe-x-persona-studio': 50,
+    };
+    var key = String(pluginName || '');
+    return Object.prototype.hasOwnProperty.call(ranks, key) ? ranks[key] : 100;
+  }
+
   function normalizePlugins(plugins) {
     if (!Array.isArray(plugins)) return [];
     return plugins.map(function (plugin) {
@@ -51,6 +63,10 @@
           };
         }),
       };
+    }).sort(function (a, b) {
+      var rankDelta = pluginRank(a.plugin) - pluginRank(b.plugin);
+      if (rankDelta !== 0) return rankDelta;
+      return String(a.label || a.plugin || '').localeCompare(String(b.label || b.plugin || ''));
     });
   }
 
@@ -166,6 +182,7 @@
     collapseAll: collapseAll,
     humanizePluginName: humanizePluginName,
     normalizePlugins: normalizePlugins,
+    pluginRank: pluginRank,
     renderAppsMenu: renderAppsMenu,
     setEmpty: setEmpty,
   };

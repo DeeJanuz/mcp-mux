@@ -8,6 +8,7 @@ fn main() {
         "MCPVIEWS_BUNDLE_AI_PROVIDER_CLIENT_ID",
         "MCPVIEWS_UPDATER_PUBLIC_KEY",
         "MCPVIEWS_RELEASE_FLAVOR",
+        "MCPVIEWS_BUILD_LANE",
     ] {
         println!("cargo:rerun-if-env-changed={key}");
         if let Ok(value) = std::env::var(key) {

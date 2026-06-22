@@ -743,16 +743,21 @@ pub async fn execute_push(
 }
 
 static START_TIME: std::sync::OnceLock<(std::time::Instant, String)> = std::sync::OnceLock::new();
+static HTTP_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
 fn get_start_info() -> &'static (std::time::Instant, String) {
     START_TIME.get_or_init(|| (std::time::Instant::now(), chrono::Utc::now().to_rfc3339()))
+}
+
+fn reported_http_port() -> u16 {
+    *HTTP_PORT.get().unwrap_or(&4200)
 }
 
 async fn health_handler() -> impl IntoResponse {
     let (start_instant, started_at) = get_start_info();
     Json(HealthResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        port: 4200,
+        port: reported_http_port(),
         uptime_seconds: start_instant.elapsed().as_secs(),
         started_at: started_at.clone(),
     })
@@ -1227,6 +1232,9 @@ pub async fn start_http_server(
         .local_addr()
         .map(|addr| addr.to_string())
         .unwrap_or_else(|_| "<unknown>".to_string());
+    if let Ok(addr) = std_listener.local_addr() {
+        let _ = HTTP_PORT.set(addr.port());
+    }
     eprintln!("[mcpviews] Starting HTTP server on {bind_address}");
     let _ = get_start_info(); // Initialize start time
 
@@ -1343,6 +1351,7 @@ mod tests {
             standalone_group_label: None,
             renderers,
             frame_origins: vec![],
+            connect_origins: vec![],
             mcp: None,
             renderer_definitions: vec![],
             tool_rules: HashMap::new(),

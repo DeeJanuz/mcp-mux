@@ -464,6 +464,7 @@ mod tests {
             standalone_group_label: None,
             renderers: std::collections::HashMap::new(),
             frame_origins: vec![],
+            connect_origins: vec![],
             mcp: None,
             renderer_definitions: vec![],
             tool_rules: std::collections::HashMap::new(),

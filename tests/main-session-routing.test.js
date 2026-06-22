@@ -897,6 +897,44 @@ describe('main session routing', function () {
     expect(window.__companionUtils.mountExternalWebPanel).toBeUndefined();
   });
 
+  it('exposes native download adapter through host and companion utils', async function () {
+    var invoke = vi.fn(function (command) {
+      if (command === 'get_plugin_renderers' || command === 'get_sessions') {
+        return Promise.resolve([]);
+      }
+      if (command === 'check_app_update') {
+        return Promise.resolve(null);
+      }
+      if (command === 'download_file') {
+        return Promise.resolve({ filename: 'report.txt', path: '/tmp/report.txt', revealed: true });
+      }
+      return Promise.resolve(null);
+    });
+    window.__TAURI__ = {
+      event: {
+        listen: vi.fn(function () {
+          return Promise.resolve(function () {});
+        }),
+      },
+      core: { invoke: invoke },
+    };
+
+    loadMain();
+    await flushPromises();
+    await window.__mcpviewsHost.downloadFile({
+      filename: 'report.txt',
+      mimeType: 'text/plain',
+      dataBase64: 'dGVzdA==',
+    });
+
+    expect(window.__companionUtils.downloadFile).toEqual(expect.any(Function));
+    expect(invoke).toHaveBeenCalledWith('download_file', {
+      filename: 'report.txt',
+      mimeType: 'text/plain',
+      dataBase64: 'dGVzdA==',
+    });
+  });
+
   it('shows DecidR Setup under the DecidR app group', async function () {
     window.__TAURI__ = {
       event: {

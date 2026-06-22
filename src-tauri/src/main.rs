@@ -340,6 +340,7 @@ fn main() {
             commands::clear_plugin_auth,
             commands::save_file,
             commands::save_binary_file,
+            commands::download_file,
             commands::open_file_preview,
             commands::get_renderer_registry,
             commands::get_standalone_renderers,

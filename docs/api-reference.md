@@ -642,8 +642,12 @@ Renderer helpers for save dialogs and native window theme sync.
 ```javascript
 await invoke('save_file', { filename: 'export.csv', content: 'a,b\n1,2\n' });
 await invoke('save_binary_file', { filename: 'report.pdf', contentBase64: '...' });
+await invoke('download_file', { filename: 'report.pdf', mimeType: 'application/pdf', dataBase64: '...' });
 await invoke('set_native_theme', { theme: 'dark' }); // "light", "dark", or system default for other values
 ```
+
+`download_file` writes sanitized bytes to the user's Downloads directory and
+opens the platform file browser at the saved file location.
 
 ### Hosted AI Provider Compatibility And Local Bridge
 

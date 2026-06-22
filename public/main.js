@@ -163,6 +163,18 @@
     });
   }
 
+  function downloadFile(options) {
+    options = options || {};
+    if (!window.__TAURI__ || !window.__TAURI__.core) {
+      return Promise.reject(new Error('File downloads are only available in MCPViews desktop.'));
+    }
+    return window.__TAURI__.core.invoke('download_file', {
+      filename: options.filename || 'download',
+      mimeType: options.mimeType || options.mime_type || null,
+      dataBase64: options.dataBase64 || options.data_base64 || options.contentBase64 || '',
+    });
+  }
+
   function mountNativeAppView(options) {
     options = options || {};
     if (!window.__TAURI__ || !window.__TAURI__.core) {
@@ -276,6 +288,7 @@
   window.__mcpviewsHost = window.__mcpviewsHost || {};
   window.__mcpviewsHost.openNativeAppView = openNativeAppView;
   window.__mcpviewsHost.openFilePreview = openFilePreview;
+  window.__mcpviewsHost.downloadFile = downloadFile;
   window.__mcpviewsHost.openExternalUrlInTab = openExternalUrlInTab;
   window.__mcpviewsHost.supportsNativeAppPanels = supportsNativeAppPanels;
   if (supportsNativeAppPanels()) {
@@ -1448,6 +1461,7 @@
   window.__companionUtils.refreshActiveSession = refreshCurrentSession;
   window.__companionUtils.openNativeAppView = openNativeAppView;
   window.__companionUtils.openFilePreview = openFilePreview;
+  window.__companionUtils.downloadFile = downloadFile;
   window.__companionUtils.openExternalUrlInTab = openExternalUrlInTab;
   window.__companionUtils.supportsNativeAppPanels = supportsNativeAppPanels;
   if (supportsNativeAppPanels()) {

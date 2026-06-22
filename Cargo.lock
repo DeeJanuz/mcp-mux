@@ -2369,6 +2369,7 @@ dependencies = [
  "tower-http",
  "url",
  "uuid",
+ "windows",
 ]
 
 [[package]]

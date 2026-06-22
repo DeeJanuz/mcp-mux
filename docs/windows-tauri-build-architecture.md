@@ -65,6 +65,9 @@ Use adapter names that describe the behavior boundary:
   close requests, and trusted native fetch fallbacks.
 - `auth_browser`: external browser launch, URL escaping, callback handling, token
   storage, and retry/recovery messaging.
+- `file_download`: user-initiated file downloads, default Downloads-directory
+  writes, filename sanitization, collision handling, and reveal-in-file-manager
+  behavior.
 - `installer_update`: Windows/macOS installer formats, updater artifacts, stable
   aliases, signatures, release metadata, and manual fallback downloads.
 - `custom_protocols`: plugin renderer URL construction, CSP, cache busting, and
@@ -197,6 +200,32 @@ runtime behavior, the shared UX contract, and the Windows evidence.
   WebView loading, stacking, hit-testing, focus, and bounds updates pass VMware
   and human Windows QA evidence. WebDriver automation is a backlogged discovery
   item, not a current hard gate.
+
+### Platform Decision: File Download Reveal
+
+- Identical UX required: clicking Download for an uploaded document saves the
+  original bytes using the device default Downloads location and makes the saved
+  file visible to the user immediately.
+- Why shared implementation is unsafe or insufficient: browser/WebView blob
+  downloads can succeed silently, especially in Windows WebView2, leaving users
+  unsure whether the file was saved or where it went.
+- macOS implementation: write sanitized bytes to the Downloads directory and run
+  `open -R <file>` so Finder reveals the saved file.
+- Windows implementation: write sanitized bytes to the Downloads directory,
+  verify the saved file size, then call the Windows Shell API
+  `SHOpenFolderAndSelectItems` on a dedicated STA thread so File Explorer
+  selects the saved file without relying on command-line quoting or the Tauri
+  command thread's COM mode. If the Shell API fails, open the parent Downloads
+  directory with `ShellExecuteW`.
+- Shared tests: Rust tests cover filename sanitization, collision suffixes, and
+  platform command arguments; frontend tests cover the `downloadFile` host
+  adapter wiring.
+- macOS verification evidence: local Rust/frontend tests are required; macOS
+  runtime smoke remains a separate release evidence item.
+- Windows verification evidence: VM-first Windows validation is required before
+  calling the release Windows-ready.
+- Follow-up risk: Linux has no universal select-file command, so the adapter
+  opens the parent Downloads directory with `xdg-open`.
 
 ## VM-First Windows Validation
 

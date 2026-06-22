@@ -34,6 +34,15 @@ tauri-plugin-updater = "2.10.1"
 [dev-dependencies]
 tempfile = "3"
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

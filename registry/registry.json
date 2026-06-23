@@ -62,7 +62,7 @@
     },
     {
       "name": "decidr",
-      "version": "0.1.52",
+      "version": "0.1.53",
       "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
@@ -75,7 +75,7 @@
       ],
       "manifest": {
         "name": "decidr",
-        "version": "0.1.52",
+        "version": "0.1.53",
         "prompt_definitions": [
           {
             "name": "initiative_planning",
@@ -185,7 +185,7 @@
           },
           {
             "id": "decidr_work_logging_runtime",
-            "version": "3",
+            "version": "4",
             "title": "DecidR Work Logging Runtime",
             "description": "Setup-configured native startup rule for always-on DecidR work logging policy.",
             "source": {
@@ -225,7 +225,7 @@
             "recommended_value": "auto_log_confident",
             "persist_as_rule_name": "decidr_work_logging_runtime",
             "example_outputs": {
-              "auto_log_confident": "A clear low-risk accepted plan, finding, discovery, or plugin setup change can create or update the matching DecidR record directly after search. Ambiguous or high-impact writes still use review.",
+              "auto_log_confident": "A clear low-risk accepted plan, finding, discovery, or plugin setup change logs directly after search. If no exact parent matches but product/company relevance is clear, agents choose the closest project or initiative and log there instead of skipping.",
               "review_first": "Agents keep durable-work logging active, but present proposed formal writes for review before creating or updating DecidR records.",
               "capture_only": "Agents do not write DecidR records automatically. They summarize candidate durable memory and ask before creating or updating formal records."
             },
@@ -233,8 +233,8 @@
               {
                 "value": "auto_log_confident",
                 "label": "Auto-log confident work",
-                "description": "Search first, then directly log clear low-risk work while review-gating ambiguous or high-impact writes.",
-                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: a plan, selected option, agreed finding, meaningful discovery, persistent object, task, or lifecycle proof.\n\nPolicy: auto-log confident work.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, and lifecycle transitions.\n- If tool names differ by agent, use the provided DecidR tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Proceed directly only when organization, parent, target, record type, evidence, and impact are clear and low-risk.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, major lifecycle-transition, hard-to-undo, or row-level batch writes.\n\nDecision-first mapping:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture direction, approval-worthy path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> catch-up decision.\n- Execution-only follow-up -> task.\n- Commit, release, deploy, or operational proof -> lifecycle document or audit evidence.\n- Temporary handoff only -> no DecidR record unless the user asks to log it.\n\nDo:\n- Use governance lifecycle rules for PLAN/STAGED/IMPLEMENTED and `save_decision_document_version` snapshots.\n\nExamples:\n- User says \"yes, proceed with that plan\" -> search, create/update matching decision, save PLAN.\n- A meaningful discovery is accepted as the basis for future work -> capture it as a decision or PLAN update.\n- Release published -> save IMPLEMENTED proof on matching decision.\n- Parent project unclear -> review before writing."
+                "description": "Search first, then directly log clear low-risk work. If no exact parent matches, use the closest relevant product/company project or initiative instead of skipping.",
+                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: a plan, selected option, agreed finding, meaningful discovery, persistent object, task, or lifecycle proof.\n\nPolicy: auto-log confident work.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, and lifecycle transitions.\n- If tool names differ by agent, use the provided DecidR tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- If no exact initiative or project matches but the work is relevant to the general product, company, or organization involved, choose the closest matching project or initiative and log there. Do not skip DecidR logging solely because the parent is inferred.\n- Proceed directly when organization, closest parent, record type, evidence, and impact are clear and low-risk.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, major lifecycle-transition, hard-to-undo, or row-level batch writes.\n\nDecision-first mapping:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture direction, approval-worthy path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> catch-up decision.\n- Execution-only follow-up -> task.\n- Commit, release, deploy, or operational proof -> lifecycle document or audit evidence.\n- Temporary handoff only -> no DecidR record unless the user asks to log it.\n\nDo:\n- Log meaningful work unless the user explicitly says not to log, not to write DecidR records, or chooses a manual logging policy.\n- When using an inferred closest parent, state the inferred parent in the decision rationale/evidence so the record can be corrected later.\n- Use governance lifecycle rules for PLAN/STAGED/IMPLEMENTED and `save_decision_document_version` snapshots.\n\nExamples:\n- User says \"yes, proceed with that plan\" -> search, create/update matching decision, save PLAN.\n- A meaningful discovery is accepted as the basis for future work -> capture it as a decision or PLAN update.\n- Release published -> save IMPLEMENTED proof on matching decision.\n- Exact parent project unclear but product/company relevance is clear -> create the decision under the closest matching project or initiative and note the inferred parent.\n- Closest parent ambiguous or risky -> use review before writing."
               },
               {
                 "value": "review_first",
@@ -251,7 +251,7 @@
             ]
           }
         ],
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.52/decidr.zip",
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.53/decidr.zip",
         "registry_index": {
           "summary": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
           "tags": [
@@ -1000,7 +1000,7 @@
           "arguments": {}
         }
       },
-      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.52/decidr.zip"
+      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.53/decidr.zip"
     },
     {
       "name": "mcpviews-gronk-speak",

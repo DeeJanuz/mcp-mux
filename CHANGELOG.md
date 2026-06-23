@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.60] - 2026-06-23
+
+### Changed
+- Include the v0.2.59 source/release hardening changes after the v0.2.59 tag failed before publishing release assets.
+
+### Fixed
+- Make lane configuration tests path-separator agnostic so Windows release CI can validate staging and production homes.
+
 ## [0.2.59] - 2026-06-23
 
 ### Added

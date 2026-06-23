@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -14,6 +14,10 @@ import {
   resolveLane,
   setupCommandForLane,
 } from '../scripts/mcpviews-lane.mjs';
+
+function normalizePathSeparators(path) {
+  return path.replace(/\\/g, '/');
+}
 
 describe('MCPViews lane config', function () {
   it('defaults to production when no staging flag is present', function () {
@@ -56,19 +60,22 @@ describe('MCPViews lane config', function () {
   });
 
   it('keeps production and staging profiles separate', function () {
-    expect(laneHome(LANES.production, '/Users/tester')).toBe('/Users/tester/.mcpviews');
-    expect(laneHome(LANES.staging, '/Users/tester')).toBe('/Users/tester/.mcpviews-staging');
+    var productionHome = resolve('/Users/tester', '.mcpviews');
+    var stagingHome = resolve('/Users/tester', '.mcpviews-staging');
+
+    expect(laneHome(LANES.production, '/Users/tester')).toBe(productionHome);
+    expect(laneHome(LANES.staging, '/Users/tester')).toBe(stagingHome);
 
     expect(laneSummary(LANES.production, '/Users/tester')).toMatchObject({
       name: 'production',
-      home: '/Users/tester/.mcpviews',
+      home: productionHome,
       httpPort: 4200,
       buildLaneEnv: null,
       pluginChannel: 'production',
     });
     expect(laneSummary(LANES.staging, '/Users/tester')).toMatchObject({
       name: 'staging',
-      home: '/Users/tester/.mcpviews-staging',
+      home: stagingHome,
       httpPort: 4201,
       buildLaneEnv: 'staging',
       pluginChannel: 'staging',
@@ -79,12 +86,12 @@ describe('MCPViews lane config', function () {
     var setup = setupCommandForLane(LANES.staging, '/Users/tester', { force: true });
 
     expect(setup.args.slice(-2)).toEqual(['staging', '--force']);
-    expect(setup.env.MCPVIEWS_HOME).toBe('/Users/tester/.mcpviews-staging');
+    expect(setup.env.MCPVIEWS_HOME).toBe(resolve('/Users/tester', '.mcpviews-staging'));
     expect(setup.env.MCPVIEWS_RELOAD_PORT).toBe('4201');
   });
 
   it('keeps generated staging app resources outside the production bundle glob', function () {
-    expect(laneBundledPluginsRoot(LANES.staging)).toMatch(
+    expect(normalizePathSeparators(laneBundledPluginsRoot(LANES.staging))).toMatch(
       /src-tauri\/lane-bundled-plugins\/staging$/,
     );
     expect(JSON.stringify(laneTauriConfig(LANES.production))).not.toContain(

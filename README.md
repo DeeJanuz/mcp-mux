@@ -27,7 +27,7 @@ graph LR
 
 **macOS / Windows**: Download the latest installer from [Releases](https://github.com/DeeJanuz/mcpviews/releases/latest) (`.dmg` for macOS, `.msi` or `.exe` for Windows).
 
-**Linux**: Build from source (see below).
+**Linux**: Download the `.deb`, `.rpm`, or AppImage from Releases when present; otherwise build from source (see below).
 
 For detailed platform instructions and post-install setup, see the [Install Guide](docs/install.md).
 

@@ -11,7 +11,7 @@ on:
         required: false
         type: string
       platform:
-        description: 'Platform to build'
+        description: 'Platform to build. Versioned releases require all.'
         required: true
         type: choice
         options:
@@ -51,6 +51,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ github.event.inputs.version || github.event.client_payload.version }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$VERSION" ] && [ "${{ github.event.inputs.platform }}" != "all" ]; then
+            echo "::error::Versioned releases must use platform=all so macOS/Windows updater artifacts and Linux manual downloads are published together. Leave version empty for platform-specific build-only runs."
+            exit 1
+          fi
           if [ -z "$VERSION" ]; then
             LATEST_TAG="$(gh api repos/${{ github.repository }}/releases/latest --jq .tag_name 2>/dev/null || echo "")"
             if [ -z "$LATEST_TAG" ]; then

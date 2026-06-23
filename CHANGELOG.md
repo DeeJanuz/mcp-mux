@@ -11,8 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add explicit production/staging MCPViews lanes with separate homes, ports, app identity, plugin setup/install helpers, and lane tests.
 - Add a `file_preview` desktop adapter so trusted renderers can open supported office-style files through sanitized cache paths and OS default apps.
 - Allow plugins to declare extra `connect_origins` for signed upload targets such as R2.
+- Publish Linux `.deb`, `.rpm`, and AppImage release artifacts with an Ubuntu 24.04 build and loopback smoke gate.
 
 ### Changed
+- Keep updater artifacts disabled for local/source builds while release builds inject the configured signing public key and enable signed updater artifacts.
+- Default the local MCP HTTP server to loopback with narrowed CORS for loopback desktop/plugin origins, leaving `MCPVIEWS_BIND_ADDR` as the explicit network-bind opt-in.
+- Declare the supported Node.js engine range and refresh frontend dependencies to clear the source-install audit report.
+- Load renderer/browser-harness scripts as modules to reduce release build warning noise.
 - Order production DecidR/Ludflow apps before staging app groups in the Apps menu.
 - Stage DecidR plugin v0.1.52 and Ludflow plugin v0.5.20 in the DecidR-branded bundle.
 

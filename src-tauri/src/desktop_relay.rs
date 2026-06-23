@@ -272,6 +272,7 @@ fn build_tool_response_payload(request: &HostedToolRequest, result: Value) -> Va
         "jsonrpc": "2.0",
         "id": request_id_value,
         "relaySessionId": request.relay_session_id,
+        "deviceId": request.device_id,
         "requestId": request_id,
         "success": !is_error,
         "result": result,
@@ -2456,6 +2457,7 @@ mod tests {
         assert_eq!(payload["jsonrpc"], "2.0");
         assert_eq!(payload["id"], "req-1");
         assert_eq!(payload["relaySessionId"], "relay-session-1");
+        assert_eq!(payload["deviceId"], "device-1");
         assert_eq!(payload["success"], true);
         assert_eq!(payload["result"]["content"][0]["text"], "ok");
         assert_eq!(payload["error"], Value::Null);

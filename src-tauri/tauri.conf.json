@@ -18,7 +18,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "targets": "all",
     "resources": [
       "bundled-plugins/**/*"
@@ -49,7 +49,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "development-placeholder",
+      "pubkey": "",
       "endpoints": []
     },
     "shell": {

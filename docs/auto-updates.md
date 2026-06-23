@@ -24,9 +24,13 @@ npm run build
 
 The private signing key must never be committed. Store it in the release runner's secret store as `TAURI_SIGNING_PRIVATE_KEY`; the optional password belongs in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The public key is safe to embed in the app and is picked up by `src-tauri/build.rs` from `MCPVIEWS_UPDATER_PUBLIC_KEY`, which the GitHub release workflow reads from an environment variable or secret and injects into `tauri.conf.json` before building updater artifacts. Use the encoded Tauri `.pub` file contents, not only the inner `RW` key line. The runtime install path also accepts the decoded two-line public key text and encodes it before verifying update signatures.
 
-`src-tauri/tauri.conf.json` has `bundle.createUpdaterArtifacts` enabled. Each release should upload the app installers plus the generated updater artifacts and `latest.json` to the matching GitHub release. The release workflow publishes update-eligible builds as normal GitHub releases, not GitHub pre-releases, so the update checker can ignore unsupported pre-release channels. The changelog button opens that release page.
+`src-tauri/tauri.conf.json` leaves `bundle.createUpdaterArtifacts` disabled and keeps the updater `pubkey` empty so local/source builds do not require `TAURI_SIGNING_PRIVATE_KEY`. The empty key is still present because the Tauri updater plugin requires the field at runtime, even when source builds do not generate updater artifacts. The release workflow validates signing secrets, enables updater artifacts, injects the configured updater public key, and then builds signed updater artifacts. Each release should upload the app installers plus the generated updater artifacts and `latest.json` to the matching GitHub release. The release workflow publishes update-eligible builds as normal GitHub releases, not GitHub pre-releases, so the update checker can ignore unsupported pre-release channels. The changelog button opens that release page.
 
-The release workflow must fail if a packaged app still contains the `development-placeholder` updater key or if the validated `MCPVIEWS_UPDATER_PUBLIC_KEY` value is not embedded in the production binary. If an already-installed app was built with the placeholder key, it may require one manual installer download before future signed in-app updates work.
+The release workflow must fail if the validated `MCPVIEWS_UPDATER_PUBLIC_KEY` value is not embedded in the production binary. Older apps built with the former placeholder key may require one manual installer download before future signed in-app updates work.
+
+Linux `.deb`, `.rpm`, and AppImage artifacts are published as manual release downloads. They are not included in `latest.json` until the Linux updater contract has a signed artifact policy and runtime validation gate matching macOS/Windows.
+
+The macOS build currently warns that `com.mcpviews.app` ends with `.app`. Keep that identifier until a dedicated installer/updater identity migration is approved; renaming it changes the application identity used by installed apps and release updates.
 
 ## Local Banner Testing
 

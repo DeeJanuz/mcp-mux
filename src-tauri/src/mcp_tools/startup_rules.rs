@@ -488,6 +488,7 @@ pub(crate) fn build_codex_startup_rules_block_for_project(
     block.trim_end().to_string() + "\n"
 }
 
+#[cfg(test)]
 pub(crate) fn build_codex_startup_rules_block(rules: &[ResolvedStartupRule]) -> String {
     let mut block = format!(
         "{}\n\n<!-- mcpviews-startup-rules-schema: {} -->\n\n",
@@ -565,6 +566,7 @@ fn parse_codex_startup_rule_marker(block: &str) -> Option<(String, String)> {
     Some((plugin?, rule_id?))
 }
 
+#[cfg(test)]
 pub(crate) fn replace_managed_startup_rules_section(
     document: &str,
     replacement_block: &str,
@@ -735,6 +737,7 @@ fn codex_rule_file_summary(path: &Path) -> Value {
     })
 }
 
+#[cfg(test)]
 fn find_managed_section(document: &str) -> Option<(usize, usize)> {
     find_heading_section(document, CODEX_STARTUP_RULES_HEADING)
         .or_else(|| find_legacy_mcpviews_rules_section(document))
@@ -754,6 +757,7 @@ fn find_heading_section(document: &str, heading: &str) -> Option<(usize, usize)>
     Some((start, end))
 }
 
+#[cfg(test)]
 fn find_legacy_mcpviews_rules_section(document: &str) -> Option<(usize, usize)> {
     let marker = document.find("<!-- mcpviews-rules-version:")?;
     let start = document[..marker]

@@ -33,6 +33,7 @@ mod tool_cache;
 
 use state::AppState;
 use std::collections::BTreeSet;
+use std::net::IpAddr;
 use std::sync::Arc;
 use tauri::{
     image::Image,
@@ -49,6 +50,8 @@ use tauri_plugin_autostart::MacosLauncher;
 const BASE_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net plugin://localhost https://plugin.localhost; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com plugin://localhost https://plugin.localhost; font-src 'self' https://fonts.gstatic.com plugin://localhost https://plugin.localhost; connect-src 'self' http://localhost:4200; img-src 'self' data: blob: plugin://localhost https://plugin.localhost; frame-src 'self'";
 const DEFAULT_HTTP_PORT: u16 = 4200;
 const STAGING_HTTP_PORT: u16 = 4201;
+const DEFAULT_HTTP_BIND_ADDR: &str = "127.0.0.1";
+const HTTP_BIND_ADDR_ENV: &str = "MCPVIEWS_BIND_ADDR";
 const DEV_HTTP_PORT_ENV: &str = "MCPVIEWS_DEV_HTTP_PORT";
 
 fn compiled_build_lane() -> Option<&'static str> {
@@ -178,7 +181,60 @@ fn http_bind_address() -> String {
         default_http_port_for_lane(compiled_build_lane())
     };
 
-    format!("0.0.0.0:{port}")
+    let bind_addr = std::env::var(HTTP_BIND_ADDR_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_HTTP_BIND_ADDR.to_string());
+
+    http_bind_address_for(&bind_addr, port)
+}
+
+fn http_bind_address_for(bind_addr: &str, port: u16) -> String {
+    let trimmed = bind_addr.trim();
+    if trimmed.parse::<std::net::SocketAddr>().is_ok() {
+        return trimmed.to_string();
+    }
+    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        return format!("{trimmed}:{port}");
+    }
+    if trimmed.parse::<std::net::Ipv6Addr>().is_ok() {
+        return format!("[{trimmed}]:{port}");
+    }
+    format!("{trimmed}:{port}")
+}
+
+fn bind_host_from_address(bind_address: &str) -> &str {
+    let trimmed = bind_address.trim();
+    if let Some(rest) = trimmed.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            return &rest[..end];
+        }
+    }
+    trimmed
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(trimmed)
+}
+
+fn is_loopback_bind_address(bind_address: &str) -> bool {
+    let host = bind_host_from_address(bind_address).trim();
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|addr| addr.is_loopback())
+            .unwrap_or(false)
+}
+
+fn log_http_bind_security_posture(bind_address: &str) {
+    if is_loopback_bind_address(bind_address) {
+        eprintln!("[mcpviews] HTTP server restricted to loopback at {bind_address}");
+    } else {
+        eprintln!(
+            "[mcpviews] WARNING: HTTP server binding to non-loopback address {bind_address}; \
+             local MCP APIs may be reachable from the network"
+        );
+    }
 }
 
 fn csp_request_hook(
@@ -394,6 +450,7 @@ fn main() {
             // Pre-bind the TCP listener on the main thread so the port is ready
             // before Claude Code probes it (eliminates MCP startup race condition)
             let bind_address = http_bind_address();
+            log_http_bind_security_posture(&bind_address);
             let std_listener = std::net::TcpListener::bind(&bind_address)
                 .map_err(|e| format!("Failed to bind to {bind_address}: {e}"))?;
             std_listener
@@ -520,6 +577,27 @@ mod tests {
         );
         assert_eq!(default_http_port_for_lane(Some("staging")), 4201);
         assert_eq!(default_http_port_for_lane(Some(" StAgInG ")), 4201);
+    }
+
+    #[test]
+    fn test_http_bind_address_defaults_and_overrides() {
+        assert_eq!(
+            http_bind_address_for(DEFAULT_HTTP_BIND_ADDR, DEFAULT_HTTP_PORT),
+            "127.0.0.1:4200"
+        );
+        assert_eq!(http_bind_address_for("0.0.0.0", 4200), "0.0.0.0:4200");
+        assert_eq!(http_bind_address_for("0.0.0.0:4210", 4200), "0.0.0.0:4210");
+        assert_eq!(http_bind_address_for("::1", 4200), "[::1]:4200");
+        assert_eq!(http_bind_address_for("[::1]", 4200), "[::1]:4200");
+    }
+
+    #[test]
+    fn test_loopback_bind_address_detection() {
+        assert!(is_loopback_bind_address("127.0.0.1:4200"));
+        assert!(is_loopback_bind_address("localhost:4200"));
+        assert!(is_loopback_bind_address("[::1]:4200"));
+        assert!(!is_loopback_bind_address("0.0.0.0:4200"));
+        assert!(!is_loopback_bind_address("192.168.1.10:4200"));
     }
 
     #[test]

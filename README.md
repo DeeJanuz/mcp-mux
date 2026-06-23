@@ -98,7 +98,7 @@ For the full manifest schema and auth reference, see [Plugin System Reference](d
 
 ## Architecture
 
-- **Rust backend** (axum): HTTP server on `:4200` for push API + review workflow
+- **Rust backend** (axum): loopback HTTP server on `:4200` for push API + review workflow
 - **WebView frontend**: Vanilla JS renderers for core content types plus an optional workspace shell currently powered by internal compatibility modules; domain-specific and control-plane experiences are delivered via plugins
 - **Node.js sidecar**: SSE bridge for remote server connections
 - **System tray**: Hide-to-tray, click to show, auto-start on login
@@ -111,19 +111,39 @@ The AI workspace is dormant by default in open-source builds. MCPViews only show
 
 ## Building from Source
 
-Requires Rust, Node.js 20+, and platform-specific system libraries.
+Requires Rust, Node.js 20.19+ or 22.12+, and platform-specific system libraries.
+
+**Rust and Node.js on clean Ubuntu:**
+```bash
+# Rust (user-local)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+
+# Node 20.19+ (user-local)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
+nvm install 20.19.0
+nvm use 20.19.0
+```
 
 **Linux prerequisites:**
 ```bash
-# Debian/Ubuntu:
-sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+# Ubuntu 24.04 / Debian:
+sudo apt install -y \
+  pkg-config libssl-dev \
+  libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev patchelf
 
 # Fedora:
-sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel
+sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel openssl-devel pkgconf-pkg-config
 
 # Arch:
-sudo pacman -S webkit2gtk-4.1 libappindicator-gtk3 librsvg
+sudo pacman -S webkit2gtk-4.1 libappindicator-gtk3 librsvg openssl pkgconf
 ```
+
+Ubuntu 24.04 uses `libayatana-appindicator3-dev`; older Debian/Ubuntu releases may require `libappindicator3-dev` instead. Do not install both.
 
 **Build:**
 ```bash
@@ -132,6 +152,13 @@ cd mcpviews
 npm install
 npm run build
 ```
+
+Build output lands under the repository root workspace:
+
+- Binary: `target/release/mcpviews`
+- Linux bundles: `target/release/bundle/deb/*.deb`, `target/release/bundle/rpm/*.rpm`, `target/release/bundle/appimage/*.AppImage`
+
+MCPViews binds to loopback by default. Set `MCPVIEWS_BIND_ADDR=0.0.0.0` only when you intentionally want the local MCP server reachable from another device.
 
 ## Development
 

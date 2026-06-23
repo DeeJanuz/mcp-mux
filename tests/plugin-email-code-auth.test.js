@@ -41,7 +41,9 @@ beforeEach(function () {
 
 describe('plugin email-code auth renderer', function () {
   it('ships as a built-in renderer', function () {
-    expect(indexHtml).toContain('<script src="./renderers/plugin-email-code-auth.js"></script>');
+    expect(indexHtml).toContain(
+      '<script type="module" src="/renderers/plugin-email-code-auth.js"></script>',
+    );
   });
 
   it('sends and verifies a redacted code-auth session', async function () {

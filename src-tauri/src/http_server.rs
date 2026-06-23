@@ -1,6 +1,6 @@
 use axum::{
     extract::{Extension, Json, Query},
-    http::{HeaderMap, Method, StatusCode},
+    http::{request::Parts as RequestParts, HeaderMap, HeaderValue, Method, StatusCode},
     response::{
         sse::{Event, KeepAlive, Sse},
         IntoResponse,
@@ -18,7 +18,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use crate::mcp;
 use crate::plugin::PluginRegistry;
@@ -1243,11 +1243,7 @@ pub async fn start_http_server(
         app_handle,
     }));
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
-        .allow_headers(Any)
-        .expose_headers(["mcp-session-id".parse::<axum::http::HeaderName>().unwrap()]);
+    let cors = cors_layer_for_listener(&std_listener);
 
     let app = Router::new()
         .route("/health", get(health_handler))
@@ -1316,6 +1312,53 @@ pub async fn start_http_server(
     if let Err(e) = axum::serve(listener, app).await {
         eprintln!("[mcpviews] HTTP server error: {}", e);
     }
+}
+
+fn cors_layer_for_listener(std_listener: &std::net::TcpListener) -> CorsLayer {
+    let network_bind = std_listener
+        .local_addr()
+        .map(|addr| !addr.ip().is_loopback())
+        .unwrap_or(false);
+    let allow_origin: AllowOrigin = if network_bind {
+        Any.into()
+    } else {
+        AllowOrigin::predicate(|origin: &HeaderValue, _request_parts: &RequestParts| {
+            is_allowed_loopback_cors_origin(origin)
+        })
+    };
+
+    CorsLayer::new()
+        .allow_origin(allow_origin)
+        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+        .allow_headers(Any)
+        .expose_headers(["mcp-session-id".parse::<axum::http::HeaderName>().unwrap()])
+}
+
+fn is_allowed_loopback_cors_origin(origin: &HeaderValue) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    is_allowed_loopback_cors_origin_str(origin)
+}
+
+fn is_allowed_loopback_cors_origin_str(origin: &str) -> bool {
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https" | "plugin" | "tauri") {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host.eq_ignore_ascii_case("plugin.localhost")
+        || host.eq_ignore_ascii_case("tauri.localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|addr| addr.is_loopback())
+            .unwrap_or(false)
 }
 
 /// Resolve a tool_name to a content_type (renderer name) by searching all plugin
@@ -1429,6 +1472,40 @@ mod tests {
 
         let result = resolve_content_type(&registry, "search_codebase");
         assert_eq!(result, "search_codebase");
+    }
+
+    #[test]
+    fn test_loopback_cors_origin_allowlist() {
+        for origin in [
+            "http://localhost:4200",
+            "http://127.0.0.1:4200",
+            "http://[::1]:4200",
+            "https://plugin.localhost",
+            "plugin://localhost",
+            "tauri://localhost",
+            "https://tauri.localhost",
+        ] {
+            assert!(
+                is_allowed_loopback_cors_origin_str(origin),
+                "expected allowed origin {origin}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_loopback_cors_origin_blocks_remote_websites() {
+        for origin in [
+            "https://example.com",
+            "http://192.168.1.10:4200",
+            "http://evil.localhost.example",
+            "file://localhost/tmp/index.html",
+            "null",
+        ] {
+            assert!(
+                !is_allowed_loopback_cors_origin_str(origin),
+                "expected blocked origin {origin}"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

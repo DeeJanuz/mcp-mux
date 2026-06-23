@@ -464,6 +464,7 @@ pub(crate) async fn get_relay_auth_header(state: &Arc<AppState>) -> Result<Strin
     Err("Hosted AI provider relay token is not configured.".to_string())
 }
 
+#[cfg(test)]
 pub(crate) fn persist_relay_auth_with_paths(
     auth_dir: &std::path::Path,
     settings_path: &std::path::Path,

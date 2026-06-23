@@ -3191,6 +3191,7 @@ fn collect_org_tokens(manifests: &[mcpviews_shared::PluginManifest]) -> Value {
 }
 
 /// Return platform-specific instructions for configuring automatic session initialization.
+#[cfg(test)]
 pub(crate) fn setup_instructions(agent_type: &str) -> String {
     session::setup_instructions(agent_type)
 }
@@ -3860,6 +3861,7 @@ fn renderer_description(renderers: &[RendererDef], name: &str, fallback: &str) -
         .unwrap_or_else(|| fallback.to_string())
 }
 
+#[cfg(test)]
 fn direct_renderer_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
     builtin_registry::builtin_tool_definitions(renderers)
         .into_iter()
@@ -3872,6 +3874,7 @@ fn direct_renderer_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(test)]
 fn builtin_tool_definitions(renderers: &[RendererDef]) -> Vec<Value> {
     builtin_registry::builtin_tool_definitions(renderers)
 }

@@ -1138,17 +1138,45 @@
     return Math.min(Math.max(Number(width) || 440, FILE_BROWSER_MIN_WIDTH), Math.min(FILE_BROWSER_MAX_WIDTH, viewportLimit));
   }
 
-  function readFileBrowserWidth() {
+  function getSafeLocalStorage() {
     try {
-      return clampFileBrowserWidth(window.localStorage && window.localStorage.getItem(FILE_BROWSER_WIDTH_KEY));
+      var descriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+      var globalDescriptor = typeof globalThis !== 'undefined'
+        ? Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+        : null;
+      var isNodeRuntime = typeof process !== 'undefined'
+        && process.versions
+        && process.versions.node;
+      if (isNodeRuntime && !descriptor) return null;
+      var isNodeNativeStorage = isNodeRuntime
+        && process.versions
+        && descriptor
+        && typeof descriptor.get === 'function'
+        && String(descriptor.get).indexOf('[native code]') !== -1;
+      if (!isNodeNativeStorage && isNodeRuntime && descriptor && globalDescriptor) {
+        isNodeNativeStorage = descriptor.get === globalDescriptor.get;
+      }
+      if (isNodeNativeStorage) return null;
+      return window.localStorage || null;
     } catch (_error) {
-      return clampFileBrowserWidth(440);
+      return null;
     }
   }
 
-  function persistFileBrowserWidth(width) {
+  function readFileBrowserWidth() {
+    var storage = getSafeLocalStorage();
+    if (!storage) return clampFileBrowserWidth(440);
     try {
-      if (window.localStorage) window.localStorage.setItem(FILE_BROWSER_WIDTH_KEY, String(Math.round(width)));
+      return clampFileBrowserWidth(storage.getItem(FILE_BROWSER_WIDTH_KEY));
+    } catch (_error) {}
+    return clampFileBrowserWidth(440);
+  }
+
+  function persistFileBrowserWidth(width) {
+    var storage = getSafeLocalStorage();
+    if (!storage) return;
+    try {
+      storage.setItem(FILE_BROWSER_WIDTH_KEY, String(Math.round(width)));
     } catch (_error) {}
   }
 

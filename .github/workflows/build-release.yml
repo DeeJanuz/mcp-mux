@@ -18,6 +18,7 @@ on:
           - all
           - macos
           - windows
+          - linux
       notarize_macos:
         description: 'Notarize macOS app when signing credentials are available'
         required: false
@@ -352,6 +353,8 @@ jobs:
           }
 
           const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          config.bundle ??= {};
+          config.bundle.createUpdaterArtifacts = true;
           config.plugins ??= {};
           config.plugins.updater ??= {};
           config.plugins.updater.pubkey = publicKey.trim();
@@ -478,6 +481,106 @@ jobs:
             target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
             target/aarch64-apple-darwin/release/bundle/**/*.sig
 
+  build-linux:
+    needs: [prepare-release]
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') &&
+      (
+        github.event_name == 'push' ||
+        github.event_name == 'repository_dispatch' ||
+        (github.event_name == 'workflow_dispatch' && (github.event.inputs.platform == 'all' || github.event.inputs.platform == 'linux'))
+      )
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag || github.ref }}
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev patchelf xvfb
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: linux-cargo-registry-${{ hashFiles('Cargo.lock') }}
+          restore-keys: linux-cargo-registry-
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Build Linux bundles
+        run: npm run build
+
+      - name: Verify Linux bundle artifacts
+        run: |
+          set -euo pipefail
+          test -x target/release/mcpviews
+          compgen -G "target/release/bundle/deb/*.deb" >/dev/null
+          compgen -G "target/release/bundle/rpm/*.rpm" >/dev/null
+          compgen -G "target/release/bundle/appimage/*.AppImage" >/dev/null
+
+      - name: Smoke test loopback health endpoint
+        run: |
+          set -euo pipefail
+          xvfb-run -a ./target/release/mcpviews > linux-smoke.log 2>&1 &
+          APP_PID=$!
+          cleanup() {
+            kill "$APP_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for _ in $(seq 1 60); do
+            if curl -sSf http://localhost:4200/health >/tmp/mcpviews-health.json; then
+              cat /tmp/mcpviews-health.json
+              break
+            fi
+            if ! kill -0 "$APP_PID" >/dev/null 2>&1; then
+              cat linux-smoke.log
+              echo "::error::MCPViews exited before health endpoint became ready"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          curl -sSf http://localhost:4200/health >/dev/null
+          if ss -lntp | grep -q '0.0.0.0:4200'; then
+            ss -lntp | grep 4200 || true
+            echo "::error::MCPViews must not bind the Linux smoke server to 0.0.0.0 by default"
+            exit 1
+          fi
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpviews-linux-generic
+          path: |
+            target/release/bundle/deb/*.deb
+            target/release/bundle/rpm/*.rpm
+            target/release/bundle/appimage/*.AppImage
+
   build-windows:
     needs: [prepare-release]
     if: >-
@@ -596,6 +699,8 @@ jobs:
           }
 
           const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          config.bundle ??= {};
+          config.bundle.createUpdaterArtifacts = true;
           config.plugins ??= {};
           config.plugins.updater ??= {};
           config.plugins.updater.pubkey = publicKey.trim();
@@ -658,12 +763,13 @@ jobs:
       (needs.prepare-release.result == 'success' || needs.prepare-release.result == 'skipped') &&
       (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
       (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') &&
+      (needs.build-linux.result == 'success' || needs.build-linux.result == 'skipped') &&
       (
         startsWith(github.ref, 'refs/tags/') ||
         github.event_name == 'repository_dispatch' ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '')
       )
-    needs: [prepare-release, build-macos, build-windows]
+    needs: [prepare-release, build-macos, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -777,6 +883,9 @@ jobs:
             mcpviews-windows-generic/**/*.exe
             mcpviews-windows-generic/**/*.zip
             mcpviews-windows-generic/**/*.sig
+            mcpviews-linux-generic/**/*.deb
+            mcpviews-linux-generic/**/*.rpm
+            mcpviews-linux-generic/**/*.AppImage
             branded-downloads/*
             latest.json
             decidr-latest.json

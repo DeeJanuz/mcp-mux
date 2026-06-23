@@ -12,7 +12,7 @@ All installers are available on the [GitHub Releases](https://github.com/DeeJanu
 
 1. Download **[MCPViews.dmg](https://github.com/DeeJanuz/mcpviews/releases/download/v0.2.58/MCPViews_0.2.58_aarch64.dmg)** from the release
 2. Open the `.dmg` and drag MCPViews to your Applications folder
-3. Launch MCPViews — it starts a local server on `http://localhost:4200`
+3. Launch MCPViews — it starts a loopback-only local server on `http://localhost:4200`
 
 > **Note:** On first launch, macOS may show a security prompt. Go to **System Settings > Privacy & Security** and click **Open Anyway**.
 
@@ -32,17 +32,32 @@ the agent install prompt below to connect MCPViews to your tools.
 
 ### Linux
 
-Linux builds are not yet available as pre-built packages. Build from source:
+When a release includes Linux assets, download the `.deb`, `.rpm`, or AppImage from the [GitHub Releases](https://github.com/DeeJanuz/mcpviews/releases) page. If your release does not include a package for your distro, build from source:
 
 ```bash
-# Install prerequisites (Debian/Ubuntu)
-sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+# Install Rust (user-local)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+
+# Install Node.js 20.19+ (user-local)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+export NVM_DIR="$HOME/.nvm"
+. "$NVM_DIR/nvm.sh"
+nvm install 20.19.0
+nvm use 20.19.0
+
+# Install prerequisites (Ubuntu 24.04 / Debian)
+sudo apt install -y \
+  pkg-config libssl-dev \
+  libwebkit2gtk-4.1-dev \
+  libayatana-appindicator3-dev \
+  librsvg2-dev patchelf
 
 # Fedora
-sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel
+sudo dnf install webkit2gtk4.1-devel libappindicator-gtk3-devel librsvg2-devel openssl-devel pkgconf-pkg-config
 
 # Arch
-sudo pacman -S webkit2gtk-4.1 libappindicator-gtk3 librsvg
+sudo pacman -S webkit2gtk-4.1 libappindicator-gtk3 librsvg openssl pkgconf
 
 # Clone and build
 git clone https://github.com/DeeJanuz/mcpviews.git
@@ -51,7 +66,16 @@ npm install
 npm run build
 ```
 
-The built application will be in `src-tauri/target/release/bundle/`.
+Ubuntu 24.04 uses `libayatana-appindicator3-dev`; older Debian/Ubuntu releases may still require `libappindicator3-dev` instead. Do not install both packages together because they conflict.
+
+The repo is a Cargo workspace, so build output lands under the repository root:
+
+- Binary: `target/release/mcpviews`
+- Debian package: `target/release/bundle/deb/*.deb`
+- RPM package: `target/release/bundle/rpm/*.rpm`
+- AppImage: `target/release/bundle/appimage/*.AppImage`
+
+By default, MCPViews binds only to loopback (`127.0.0.1`). To intentionally expose the local MCP server on a network interface for diagnostics, set `MCPVIEWS_BIND_ADDR`, for example `MCPVIEWS_BIND_ADDR=0.0.0.0 npm run dev`.
 
 ---
 

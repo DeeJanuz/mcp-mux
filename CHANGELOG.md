@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.59] - 2026-06-23
+
 ### Added
 - Add explicit production/staging MCPViews lanes with separate homes, ports, app identity, plugin setup/install helpers, and lane tests.
 - Add a `file_preview` desktop adapter so trusted renderers can open supported office-style files through sanitized cache paths and OS default apps.

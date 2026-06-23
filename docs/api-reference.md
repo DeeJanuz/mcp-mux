@@ -260,7 +260,8 @@ Returns a mock access token.
 ### `OPTIONS /api/push`
 
 CORS preflight. Returns `200` with:
-- `Access-Control-Allow-Origin: *`
+- `Access-Control-Allow-Origin: {request origin}` for allowed loopback, plugin, and Tauri desktop origins when MCPViews is using the default loopback bind
+- `Access-Control-Allow-Origin: *` only when MCPViews is explicitly started with a non-loopback bind such as `MCPVIEWS_BIND_ADDR=0.0.0.0`
 - `Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`
 - `Access-Control-Allow-Headers: *`
 - `Access-Control-Expose-Headers: mcp-session-id`

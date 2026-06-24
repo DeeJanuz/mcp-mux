@@ -1112,6 +1112,78 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_sourced_work_logging_v5_updates_and_excludes_work_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().join("plugins"));
+        let startup_rule = StartupRule {
+            id: "decidr_work_logging_runtime".to_string(),
+            version: "5".to_string(),
+            title: "DecidR Work Logging Runtime".to_string(),
+            description: None,
+            rule: None,
+            source: Some(StartupRuleSource {
+                source_type: "setup_question".to_string(),
+                question_id: "decidr_work_logging_policy".to_string(),
+                skip_install_values: vec![],
+            }),
+            conditions: vec![],
+        };
+        let manifest = manifest_with_rule(startup_rule);
+        let mut prefs = PluginPreferences::default();
+        prefs.setup_answers.insert(
+            "decidr_work_logging_policy".to_string(),
+            SetupPreferenceAnswer {
+                value: "auto_log_confident".to_string(),
+                persist_as_rule_name: Some("decidr_work_logging_runtime".to_string()),
+                persisted_rule: Some(
+                    "Log created artifacts to the closest matching project or initiative."
+                        .to_string(),
+                ),
+                source: "chat".to_string(),
+                plugin_version: Some("1.0.0".to_string()),
+                updated_at: None,
+            },
+        );
+        store.save_preferences("test-plugin", &prefs).unwrap();
+
+        let resolved = resolve_startup_rules(&[manifest], &store);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].version, "5");
+        assert!(resolved[0].rule.contains("created artifacts"));
+        assert!(resolved[0]
+            .rule
+            .contains("closest matching project or initiative"));
+        assert!(!resolved[0].rule.contains("Work Session"));
+
+        let mut installed = ProjectStartupRulesConfig::default();
+        installed.startup_rules.insert(
+            resolved[0].key.clone(),
+            StartupRuleState {
+                plugin: resolved[0].plugin.clone(),
+                rule_id: resolved[0].rule_id.clone(),
+                rule_version: "4".to_string(),
+                rule_hash: "sha256:old-work-session".to_string(),
+                locations: vec![StartupRuleLocation {
+                    agent_type: "codex".to_string(),
+                    path: "AGENTS.md".to_string(),
+                    label: "MCPViews startup rule".to_string(),
+                }],
+                do_not_install: false,
+                do_not_update: false,
+                updated_at: None,
+            },
+        );
+        let actions = evaluate_startup_rule_actions(&installed, &resolved);
+        let update = &actions["auto_update"].as_array().unwrap()[0];
+        assert_eq!(update["rule_version"], "5");
+        assert!(update["rule"]
+            .as_str()
+            .unwrap()
+            .contains("closest matching project or initiative"));
+        assert!(!update["rule"].as_str().unwrap().contains("Work Session"));
+    }
+
+    #[test]
     fn test_setup_sourced_startup_rule_conditions_gate_companion_rules() {
         let dir = tempfile::tempdir().unwrap();
         let store = PluginStore::with_dir(dir.path().join("plugins"));

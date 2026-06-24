@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Sync the DecidR plugin registry entry to v0.1.55 with decision-first work logging rule v5.
+
+### Fixed
+- Add startup-rule coverage so setup-sourced DecidR work logging upgrades stale v4 rules to v5 without preserving canonical Work Session wording.
+
 ## [0.2.62] - 2026-06-24
 
 ### Changed

@@ -356,6 +356,41 @@ describe('structured_data review decisions', function () {
     expect(submitted.decisions).toEqual({});
   });
 
+  it('uses a large multiline editor for review cell edits', function () {
+    var submitted = null;
+    var container = renderReview(function (payload) {
+      submitted = payload;
+    });
+    var statusCell = container.querySelector('td[data-column-id="status"]');
+
+    statusCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+
+    var editor = statusCell.querySelector('textarea.sd-cell-editor');
+    expect(editor).not.toBeNull();
+    expect(editor.tagName).toBe('TEXTAREA');
+    expect(editor.getAttribute('rows')).toBe('6');
+    expect(editor.value).toBe('Pending');
+
+    var plainEnter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    editor.dispatchEvent(plainEnter);
+    expect(plainEnter.defaultPrevented).toBe(false);
+    expect(statusCell.querySelector('textarea.sd-cell-editor')).toBe(editor);
+
+    editor.value = 'Line one\nLine two\nLine three';
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(editor.style.height).toBe('132px');
+    editor.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
+
+    expect(container.querySelector('td[data-column-id="status"]').textContent).toBe('Line one\nLine two\nLine three');
+
+    var submitBarButtons = container.querySelectorAll('.sd-submit-bar button');
+    submitBarButtons[submitBarButtons.length - 1].click();
+
+    expect(submitted).not.toBeNull();
+    expect(JSON.parse(submitted.modifications['r1.status']).value).toBe('Line one\nLine two\nLine three');
+    expect(submitted.additions.user_edits['r1.status']).toBe('Line one\nLine two\nLine three');
+  });
+
   it('returns an imperative review submit hook for host-level buttons', async function () {
     var submitted = null;
     var container = renderReview(function (payload) {

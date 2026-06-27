@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Open review-table cell edits in a multiline textarea so users can comfortably edit long mutation text, preserve newlines, and submit the edited value.
+
 ## [0.2.63] - 2026-06-24
 
 ### Changed

@@ -102,7 +102,7 @@
       '.sd-submit-bar[data-submit-state="submitted"] .sd-submit-status { color: var(--color-success-text); }',
       '.sd-submit-bar[data-submit-state="error"] .sd-submit-status { color: var(--color-error-text); }',
       '.sd-submit-bar button:disabled, .sd-container[data-review-submitted="true"] button:disabled { opacity: 0.65; cursor: default; }',
-      '.sd-cell-editor { font-family: var(--font-sans); font-size: var(--text-body); color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--color-info); border-radius: var(--border-radius-sm); padding: var(--space-1) var(--space-2); width: 100%; box-sizing: border-box; outline: none; }',
+      '.sd-cell-editor { font-family: var(--font-sans); font-size: var(--text-body); line-height: 1.4; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--color-info); border-radius: var(--border-radius-sm); padding: var(--space-2); width: 100%; min-height: 132px; max-height: 48vh; box-sizing: border-box; outline: none; resize: vertical; overflow: auto; white-space: pre-wrap; }',
       '.sd-empty { font-family: var(--font-sans); font-size: var(--text-body); color: var(--text-tertiary); padding: var(--space-6); text-align: center; }',
       '.sd-loading, .sd-efficiency-warning, .sd-dataref-warning { font-family: var(--font-sans); font-size: var(--text-small); padding: var(--space-3); border-radius: var(--border-radius-sm); margin-bottom: var(--space-3); }',
       '.sd-instruction-template { font-family: var(--font-sans); font-size: var(--text-small); color: var(--text-secondary); background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--border-radius-sm); padding: var(--space-3); margin-bottom: var(--space-3); white-space: pre-wrap; }',
@@ -676,12 +676,23 @@
   // ── 3. Table Builders — Review Mode ──
 
   function buildCellEditor(td, rowId, colId, currentValue, state, rerenderFn) {
-    var input = document.createElement('input');
+    var input = document.createElement('textarea');
     input.className = 'sd-cell-editor';
-    input.type = 'text';
+    input.rows = 6;
     input.value = currentValue;
+    input.setAttribute('aria-label', 'Edit cell value');
+    input.title = 'Edit cell value';
     td.innerHTML = '';
     td.appendChild(input);
+
+    function resizeEditor() {
+      input.style.height = 'auto';
+      var maxHeight = Math.round(window.innerHeight * 0.48);
+      input.style.height = Math.min(Math.max(input.scrollHeight, 132), maxHeight) + 'px';
+    }
+
+    input.addEventListener('input', resizeEditor);
+    resizeEditor();
     input.focus();
     input.select();
 
@@ -696,7 +707,7 @@
 
     input.addEventListener('blur', commit);
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         input.blur();
       }

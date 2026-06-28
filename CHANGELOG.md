@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.65] - 2026-06-28
+
+### Changed
+- Rebuilt the DecidR-branded installer bundle after DeeJanuz/decidr-plugin@0.1.56, staging the latest stable bundled plugin releases.
+
+
 ## [0.2.64] - 2026-06-27
 
 ### Fixed

@@ -42,6 +42,7 @@ pub(super) async fn call_install_plugin(
 
     {
         let state_guard = state.lock().await;
+        crate::context_layer::invalidate_context_catalog(state_guard.inner.as_ref());
         state_guard.inner.notify_tools_changed();
         let _ = state_guard.app_handle.emit("reload_renderers", ());
     }
@@ -181,6 +182,7 @@ pub(super) async fn call_update_plugins(
 
     {
         let state_guard = state.lock().await;
+        crate::context_layer::invalidate_context_catalog(state_guard.inner.as_ref());
         state_guard.inner.notify_tools_changed();
         let _ = state_guard.app_handle.emit("reload_renderers", ());
     }

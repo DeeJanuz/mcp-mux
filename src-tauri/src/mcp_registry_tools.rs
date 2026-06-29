@@ -152,10 +152,14 @@ pub(crate) async fn trigger_plugin_oauth(
             )
             .await
             {
-                Ok(_token) => Ok(format!(
-                    "OAuth authentication for '{}' completed successfully.",
-                    plugin_name
-                )),
+                Ok(_token) => {
+                    let state_guard = state.lock().await;
+                    crate::context_layer::invalidate_context_catalog(state_guard.inner.as_ref());
+                    Ok(format!(
+                        "OAuth authentication for '{}' completed successfully.",
+                        plugin_name
+                    ))
+                }
                 Err(e) => Err(format!("OAuth flow failed for '{}': {}", plugin_name, e)),
             }
         }

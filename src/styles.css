@@ -920,7 +920,50 @@ body {
 }
 
 .apps-renderer-list.expanded {
-  max-height: 200px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.apps-context-block {
+  padding: 4px 0;
+}
+
+.apps-context-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 4px 32px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.apps-context-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apps-context-status {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.apps-context-default-button {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  line-height: 20px;
+}
+
+.apps-context-default-button:hover {
+  color: var(--text-primary);
 }
 
 .apps-renderer-item {
@@ -931,6 +974,10 @@ body {
   cursor: pointer;
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.apps-context-block .apps-renderer-item {
+  padding-left: 44px;
 }
 
 .apps-renderer-item:hover {

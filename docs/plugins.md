@@ -48,6 +48,7 @@ A plugin manifest is a JSON file with the following structure:
 | `no_auto_push` | string[] | No | **Deprecated.** Previously controlled which tools skipped auto-push. Auto-push has been removed entirely -- pushes now only happen via explicit `push_content`/`push_review` calls. Field is still accepted for backward compatibility but has no effect. |
 | `registry_index` | object | No | Pre-authored compact index for the `init_session` plugin registry. Contains `summary` (string), `tags` (string[]), `tool_groups` (ToolGroupEntry[]), and `renderer_names` (string[]). If omitted, MCPViews auto-derives the index from the `renderers` map and tool cache. |
 | `init_context` | PluginInitContext | No | Optional plugin-owned init-session provider. MCPViews calls the declared unprefixed MCP tool during `init_session`, fail-open and timeout-wrapped, then places the returned `data` at `plugin_contexts.<pluginName>`. |
+| `context_provider` | PluginContextProvider | No | Optional org/account context metadata for token-optimized context discovery. Used by `list_contexts`, `set_context_default`, and the Apps menu. |
 | `mcp` | object | No | MCP server connection configuration. If omitted, the plugin provides renderers only (no remote tools). |
 | `prompt_definitions` | PromptDef[] | No | Plugin prompt definitions for guided workflows. Each entry defines a prompt that can be discovered via the MCP `prompts/list` protocol and fetched via `get_plugin_prompt` or `prompts/get`. Prompts are markdown files bundled with the plugin that support `{{arg}}` template substitution. |
 | `plugin_rules` | string[] | No | Compact global workflow breadcrumbs for this plugin. These are returned by `mcpviews_setup`, `get_plugin_docs`, and `init_session` only when `include_runtime_context` is true, so agents can decide when to fetch prompts or plugin docs without forcing every startup to carry them. Keep these short and broadly useful. Use `plugin_rule_definitions` for detailed tool/group-specific workflow guidance. |
@@ -77,6 +78,29 @@ Plugins can declare a compact startup context provider without MCPViews core cha
 | `timeout_ms` | integer | No | Timeout before MCPViews fails open for this provider. Defaults to 1200. |
 | `inject_organization_id` | boolean | No | When true, MCPViews selects the default/usable organization token and passes `organization_id` through the normal plugin proxy lookup for org-scoped auth. |
 | `arguments` | object | No | Static object merged into the tool call arguments. Defaults to `{}`. |
+
+### PluginContextProvider
+
+Multi-org or multi-account plugins can declare how MCPViews should discover and
+route contexts without loading a full org catalog at startup:
+
+```json
+{
+  "context_provider": {
+    "context_type": "organization",
+    "routing_arg": "organization_id",
+    "provider_tool": "list_organizations",
+    "label_fields": ["name", "slug", "role"]
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `context_type` | string | Yes | Context kind, such as `organization` or `account`. |
+| `routing_arg` | string | Yes | Argument MCPViews uses as local routing metadata before stripping it from upstream plugin calls, such as `organization_id`. |
+| `provider_tool` | string | Yes | Unprefixed MCP tool that returns available contexts. For DecidR and Ludflow this is `list_organizations`. |
+| `label_fields` | string[] | No | Fields MCPViews may expose when labels are requested through `list_contexts`. Labels stay lazy and are not included in default `init_session` output. |
 
 The provider tool should return a normal MCP tool result whose text payload parses to `{ "data": ... }`. MCPViews inserts only that `data` value into `plugin_contexts.<pluginName>`. On failure, MCPViews inserts a compact `{ "status": "...", "message": "..." }` object and continues `init_session`.
 

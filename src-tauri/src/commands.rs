@@ -359,6 +359,7 @@ pub fn install_plugin(
     let mut registry = state.plugin_registry.lock().unwrap();
     registry.add_plugin(manifest)?;
     drop(registry);
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     Ok(())
 }
@@ -370,6 +371,7 @@ pub fn uninstall_plugin(name: String, state: State<'_, Arc<AppState>>) -> Result
     drop(registry);
     // Clean up any stored auth tokens for this plugin
     let _ = mcpviews_shared::token_store::remove_token(&mcpviews_shared::auth_dir(), &name);
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     Ok(())
 }
@@ -386,6 +388,7 @@ pub fn install_plugin_from_file(
     let mut registry = state.plugin_registry.lock().unwrap();
     registry.add_plugin(manifest)?;
     drop(registry);
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     Ok(())
 }
@@ -504,7 +507,7 @@ pub async fn start_plugin_auth(
                     plugin_name
                 ));
             }
-            crate::auth::start_oauth_flow(
+            let token = crate::auth::start_oauth_flow(
                 &plugin_name,
                 client_id.as_deref(),
                 auth_url,
@@ -513,7 +516,9 @@ pub async fn start_plugin_auth(
                 &client,
                 org_id.as_deref(),
             )
-            .await
+            .await?;
+            crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
+            Ok(token)
         }
         PluginAuth::Bearer { token_env } => std::env::var(token_env).map_err(|_| {
             format!(
@@ -554,7 +559,7 @@ pub async fn verify_plugin_email_code(
     organization_name: Option<String>,
     state: State<'_, Arc<AppState>>,
 ) -> Result<serde_json::Value, String> {
-    crate::plugin_email_auth::verify_email_code(
+    let result = crate::plugin_email_auth::verify_email_code(
         &plugin_name,
         &email,
         &code,
@@ -562,7 +567,9 @@ pub async fn verify_plugin_email_code(
         organization_name.as_deref(),
         state.inner(),
     )
-    .await
+    .await?;
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
+    Ok(result)
 }
 
 #[tauri::command]
@@ -633,8 +640,9 @@ pub fn store_plugin_token(
     plugin_name: String,
     token: String,
     org_id: Option<String>,
+    state: State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
-    if let Some(ref oid) = org_id {
+    let result = if let Some(ref oid) = org_id {
         let stored = mcpviews_shared::token_store::StoredToken {
             access_token: token,
             refresh_token: None,
@@ -648,7 +656,11 @@ pub fn store_plugin_token(
         )
     } else {
         crate::auth::store_api_key(&plugin_name, &token)
+    };
+    if result.is_ok() {
+        crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     }
+    result
 }
 
 #[tauri::command]
@@ -662,6 +674,7 @@ pub async fn install_plugin_from_registry(
 
     state.install_or_update_from_entry(&entry).await?;
 
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
 
@@ -687,6 +700,7 @@ pub fn install_plugin_from_zip(
     registry.add_plugin(manifest)?;
     drop(registry);
 
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
 
@@ -716,18 +730,27 @@ pub async fn reinstall_plugin(
         // Plugin exists but not in registry - just notify to refresh
     }
 
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
     Ok(())
 }
 
 #[tauri::command]
-pub fn clear_plugin_auth(name: String, org_id: Option<String>) -> Result<(), String> {
-    if let Some(ref oid) = org_id {
+pub fn clear_plugin_auth(
+    name: String,
+    org_id: Option<String>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    let result = if let Some(ref oid) = org_id {
         mcpviews_shared::token_store::remove_org_token(&mcpviews_shared::auth_dir(), &name, oid)
     } else {
         mcpviews_shared::token_store::remove_token(&mcpviews_shared::auth_dir(), &name)
+    };
+    if result.is_ok() {
+        crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     }
+    result
 }
 
 #[tauri::command]
@@ -753,6 +776,53 @@ pub fn list_plugin_org_auth(plugin_name: String) -> Vec<serde_json::Value> {
             })
         })
         .collect()
+}
+
+#[tauri::command]
+pub async fn list_plugin_contexts(
+    project_path: Option<String>,
+    plugin_names: Option<Vec<String>>,
+    include_contexts: Option<bool>,
+    include_labels: Option<bool>,
+    include_apps: Option<bool>,
+    query: Option<String>,
+    max_contexts_per_plugin: Option<usize>,
+    refresh_catalog: Option<bool>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::context_layer::list_plugin_contexts_for_tauri(
+        project_path,
+        plugin_names,
+        include_contexts,
+        include_labels,
+        include_apps,
+        query,
+        max_contexts_per_plugin,
+        refresh_catalog,
+        state.inner().as_ref(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub fn set_plugin_context_default(
+    project_path: Option<String>,
+    plugin_name: String,
+    context_id: String,
+    scope: Option<String>,
+    target_name: Option<String>,
+    label: Option<String>,
+    state: State<'_, Arc<AppState>>,
+) -> Result<serde_json::Value, String> {
+    crate::context_layer::set_plugin_context_default_for_tauri(
+        project_path,
+        plugin_name,
+        context_id,
+        scope,
+        target_name,
+        label,
+        state.inner().as_ref(),
+    )
 }
 
 #[tauri::command]
@@ -1115,6 +1185,7 @@ pub async fn update_plugin(
 
     state.install_or_update_from_entry(&entry).await?;
 
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
 
@@ -1188,6 +1259,7 @@ pub async fn install_plugin_prerelease(
     state
         .install_or_update_from_entry(&prerelease_entry)
         .await?;
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
     Ok(())
@@ -1217,6 +1289,7 @@ pub async fn rollback_plugin_to_stable(
     stable_entry.manifest.download_url = stable_entry.download_url.clone();
 
     state.install_or_update_from_entry(&stable_entry).await?;
+    crate::context_layer::invalidate_context_catalog(state.inner().as_ref());
     state.notify_tools_changed();
     let _ = app_handle.emit("reload_renderers", ());
     Ok(())

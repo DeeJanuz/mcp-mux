@@ -500,6 +500,7 @@ mod tests {
                 persist_as_rule_name: Some("setup_mode".to_string()),
             }],
             init_context: None,
+            context_provider: None,
         }
     }
 

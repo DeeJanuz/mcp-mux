@@ -1407,6 +1407,7 @@ mod tests {
             startup_rules: vec![],
             setup_questions: vec![],
             init_context: None,
+            context_provider: None,
         }
     }
 

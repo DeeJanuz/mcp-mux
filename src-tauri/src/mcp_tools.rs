@@ -14,9 +14,9 @@ mod lifecycle;
 mod plugin_proxy;
 mod presentation;
 mod session;
-mod startup_rules;
+pub(crate) mod startup_rules;
 
-const RULES_VERSION: &str = "24"; // Bump when built-in rules change
+const RULES_VERSION: &str = "25"; // Bump when built-in rules change
 pub(crate) const SETUP_QUESTION_INSTRUCTIONS: &str = concat!(
     "If setup_questions is non-empty, ask exactly one setup question at a time in the returned order. ",
     "Process setup question groups in the returned order, and process each group's questions in order. ",
@@ -2366,7 +2366,7 @@ pub(crate) fn collect_builtin_rules(all_renderers: &[RendererDef]) -> Vec<Value>
         "name": "org_switching",
         "category": "system",
         "source": "built-in",
-        "rule": "When working with multi-org plugins, be aware of which organization the current token is scoped to. The init_session response includes org_tokens showing available organizations and token status per plugin: valid, expired_refreshable, expired_unrefreshable, or missing. If the user asks about data in a different org, include organization_id in tool call arguments. Treat expired_refreshable as configured while MCPViews refreshes it. If the token is missing or expired_unrefreshable, call start_plugin_auth with organization_id to authenticate."
+        "rule": "When working with multi-org/account plugins, use init_session(project_path) for compact project context_defaults and org_tokens. For richer context discovery, call list_contexts instead of spending tokens on plugin-specific discovery. Include the returned routing_arg, such as organization_id, in follow-up plugin tool or renderer calls. Treat expired_refreshable as configured while MCPViews refreshes it. If the project default token is missing or expired_unrefreshable, do not silently fall back to another org; call start_plugin_auth with the target context id."
     }));
 
     // Only built-in (universal scope) renderers with rules
@@ -3924,6 +3924,7 @@ mod tests {
             startup_rules: vec![],
             setup_questions: vec![],
             init_context: None,
+            context_provider: None,
         }
     }
 
@@ -4664,6 +4665,7 @@ mod tests {
             startup_rules: vec![],
             setup_questions: vec![],
             init_context: None,
+            context_provider: None,
         }
     }
 
@@ -4928,7 +4930,7 @@ mod tests {
 
     #[test]
     fn test_rules_version_and_persistence_marker_are_updated() {
-        assert_eq!(RULES_VERSION, "24");
+        assert_eq!(RULES_VERSION, "25");
         let instructions = persistence_instructions("codex");
         assert!(instructions.contains("mcpviews-startup-rules-schema: 1"));
         assert!(
@@ -5754,6 +5756,31 @@ mod tests {
                 serde_json::json!("rule_id"),
                 serde_json::json!("rule_version"),
                 serde_json::json!("rule_hash"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_context_tools_defined() {
+        let tools = builtin_tool_definitions(&[]);
+        let list_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "list_contexts")
+            .expect("list_contexts tool should be defined");
+        assert!(list_tool["inputSchema"]["properties"]["project_path"].is_object());
+        assert!(list_tool["inputSchema"]["properties"]["include_labels"].is_object());
+
+        let set_tool = tools
+            .iter()
+            .find(|tool| tool["name"] == "set_context_default")
+            .expect("set_context_default tool should be defined");
+        assert!(set_tool["inputSchema"]["properties"]["context_id"].is_object());
+        assert_eq!(
+            set_tool["inputSchema"]["required"].as_array().unwrap(),
+            &vec![
+                serde_json::json!("project_path"),
+                serde_json::json!("plugin_name"),
+                serde_json::json!("context_id"),
             ]
         );
     }

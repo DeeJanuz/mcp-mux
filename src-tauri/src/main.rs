@@ -6,6 +6,7 @@ mod apps_popup;
 mod auth;
 mod auth_browser;
 mod commands;
+mod context_layer;
 mod custom_protocols;
 mod datasets;
 mod desktop_relay;
@@ -355,6 +356,8 @@ fn main() {
             commands::verify_plugin_email_code,
             commands::get_plugin_auth_header,
             commands::list_plugin_org_auth,
+            commands::list_plugin_contexts,
+            commands::set_plugin_context_default,
             commands::store_plugin_token,
             commands::get_first_party_ai_config,
             commands::start_first_party_ai_auth,

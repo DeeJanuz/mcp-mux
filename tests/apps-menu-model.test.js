@@ -87,6 +87,52 @@ describe('apps menu model', function () {
       expect.objectContaining({ name: 'ludflow_documents_home' }),
       'Documents',
       expect.objectContaining({ plugin: 'ludflow' }),
+      null,
+    );
+  });
+
+  it('renders context rows and passes selected context to callers', function () {
+    var onSelect = vi.fn();
+    var onSetDefault = vi.fn();
+    var root = document.getElementById('apps');
+
+    window.__mcpviewsAppsMenu.renderAppsMenu(root, [
+      {
+        plugin: 'decidr',
+        contexts: [
+          {
+            context_id: 'org_1',
+            label: 'Acme',
+            status: 'valid',
+            usable: true,
+            routing_arg: 'organization_id',
+            is_project_default: true,
+          },
+        ],
+        renderers: [{ name: 'decidr_dashboard', label: 'Dashboard' }],
+      },
+    ], {
+      onSelect: onSelect,
+      onSetDefault: onSetDefault,
+    });
+
+    expect(root.querySelector('.apps-context-label').textContent).toBe('Acme');
+    expect(root.querySelector('.apps-context-status').textContent).toBe('default');
+    expect(root.querySelector('.apps-context-default-button').textContent).toBe('★');
+
+    root.querySelector('.apps-renderer-item').click();
+
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'decidr_dashboard' }),
+      'Dashboard',
+      expect.objectContaining({ plugin: 'decidr' }),
+      expect.objectContaining({ context_id: 'org_1' }),
+    );
+
+    root.querySelector('.apps-context-default-button').click();
+    expect(onSetDefault).toHaveBeenCalledWith(
+      expect.objectContaining({ context_id: 'org_1' }),
+      expect.objectContaining({ plugin: 'decidr' }),
     );
   });
 

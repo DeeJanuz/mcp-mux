@@ -523,6 +523,49 @@ const orgIds = await invoke('list_plugin_orgs', { pluginName: 'decidr' });
 const orgAuth = await invoke('list_plugin_org_auth', { pluginName: 'decidr' });
 ```
 
+### Project Context Defaults
+
+`mcpviews-init.json` is the canonical project file for default plugin
+org/account context. Native rule files such as `AGENTS.md`, `.claude/rules`,
+`.cursor/rules`, and `.windsurfrules` should keep only startup bootstrap rules
+that call `init_session(project_path)`.
+
+Agents can use `list_contexts` for token-optimized discovery. The default
+response is compact; labels, apps, and context rows are lazy.
+
+```javascript
+await callTool('list_contexts', {
+  project_path: '/path/to/project',
+  plugin_names: ['decidr', 'ludflow'],
+  include_contexts: true,
+  include_labels: true,
+});
+```
+
+Persist a project default with `set_context_default`. MCPViews writes only
+`<project_path>/mcpviews-init.json`; it does not write token material or mirror
+dynamic org IDs into native rule files.
+
+```javascript
+await callTool('set_context_default', {
+  project_path: '/path/to/project',
+  plugin_name: 'decidr',
+  context_id: 'org-id',
+  scope: 'plugin',
+  label: 'Acme Org'
+});
+```
+
+Local renderers and the Apps menu use the same resolver through Tauri IPC:
+
+```javascript
+const contexts = await invoke('list_plugin_contexts', {
+  pluginNames: ['decidr'],
+  includeContexts: true,
+  includeLabels: true
+});
+```
+
 ### `get_plugin_renderers`
 
 Scan installed plugin directories for custom renderer JS files.

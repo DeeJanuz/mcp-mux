@@ -197,6 +197,21 @@ fn default_init_context_arguments() -> Value {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PluginContextProvider {
+    /// Type of external account context this plugin supports, such as
+    /// "organization" or "account".
+    pub context_type: String,
+    /// Tool/render payload argument MCPViews uses to route auth, such as
+    /// "organization_id".
+    pub routing_arg: String,
+    /// Unprefixed plugin MCP tool that returns available contexts.
+    pub provider_tool: String,
+    /// Optional field names to expose as compact human labels when available.
+    #[serde(default)]
+    pub label_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PluginManifest {
     pub name: String,
     pub version: String,
@@ -245,6 +260,8 @@ pub struct PluginManifest {
     pub setup_questions: Vec<SetupQuestion>,
     #[serde(default)]
     pub init_context: Option<PluginInitContext>,
+    #[serde(default)]
+    pub context_provider: Option<PluginContextProvider>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

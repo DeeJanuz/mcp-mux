@@ -25,6 +25,7 @@ pub fn test_manifest(name: &str) -> mcpviews_shared::PluginManifest {
         startup_rules: vec![],
         setup_questions: vec![],
         init_context: None,
+        context_provider: None,
     }
 }
 

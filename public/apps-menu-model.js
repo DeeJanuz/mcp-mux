@@ -50,10 +50,22 @@
     if (!Array.isArray(plugins)) return [];
     return plugins.map(function (plugin) {
       var renderers = Array.isArray(plugin && plugin.renderers) ? plugin.renderers : [];
+      var contexts = Array.isArray(plugin && plugin.contexts) ? plugin.contexts : [];
       return {
         raw: plugin,
         plugin: plugin && plugin.plugin,
         label: pluginLabel(plugin),
+        contexts: contexts.map(function (context) {
+          return {
+            raw: context,
+            contextId: context && (context.context_id || context.contextId),
+            label: String((context && (context.label || context.name || context.slug || context.context_id || context.contextId)) || ''),
+            status: String((context && context.status) || ''),
+            usable: !!(context && context.usable),
+            isProjectDefault: !!(context && (context.is_project_default || context.isProjectDefault)),
+            routingArg: context && (context.routing_arg || context.routingArg),
+          };
+        }),
         renderers: renderers.map(function (renderer) {
           return {
             raw: renderer,
@@ -131,21 +143,61 @@
 
       var rendererList = document.createElement('div');
       rendererList.className = 'apps-renderer-list';
-      plugin.renderers.forEach(function (renderer) {
+      function renderRendererItem(renderer, context) {
         var item = createClickable(options.itemTag || 'button');
         item.className = 'apps-renderer-item';
         item.setAttribute('data-renderer', renderer.name || '');
         item.setAttribute('data-plugin', plugin.plugin || '');
+        if (context && context.contextId) item.setAttribute('data-context-id', context.contextId);
         item.setAttribute('title', renderer.description || '');
         item.textContent = renderer.label;
         item.addEventListener('click', function (event) {
           if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
           if (typeof options.onSelect === 'function') {
-            options.onSelect(renderer.raw, renderer.label, plugin.raw);
+            options.onSelect(renderer.raw, renderer.label, plugin.raw, context && context.raw);
           }
         });
-        rendererList.appendChild(item);
-      });
+        return item;
+      }
+
+      if (plugin.contexts.length > 0) {
+        plugin.contexts.forEach(function (context) {
+          var contextBlock = document.createElement('div');
+          contextBlock.className = 'apps-context-block';
+          var contextHeader = document.createElement('div');
+          contextHeader.className = 'apps-context-header';
+          var contextLabel = document.createElement('span');
+          contextLabel.className = 'apps-context-label';
+          contextLabel.textContent = context.label || context.contextId || 'Context';
+          contextHeader.appendChild(contextLabel);
+          if (context.status) {
+            var contextStatus = document.createElement('span');
+            contextStatus.className = 'apps-context-status';
+            contextStatus.textContent = context.isProjectDefault ? 'default' : context.status;
+            contextHeader.appendChild(contextStatus);
+          }
+          if (context.usable && typeof options.onSetDefault === 'function') {
+            var defaultButton = createClickable('button');
+            defaultButton.className = 'apps-context-default-button';
+            defaultButton.textContent = context.isProjectDefault ? '★' : '☆';
+            defaultButton.setAttribute('title', 'Set as project default');
+            defaultButton.addEventListener('click', function (event) {
+              if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+              options.onSetDefault(context.raw, plugin.raw);
+            });
+            contextHeader.appendChild(defaultButton);
+          }
+          contextBlock.appendChild(contextHeader);
+          plugin.renderers.forEach(function (renderer) {
+            contextBlock.appendChild(renderRendererItem(renderer, context));
+          });
+          rendererList.appendChild(contextBlock);
+        });
+      } else {
+        plugin.renderers.forEach(function (renderer) {
+          rendererList.appendChild(renderRendererItem(renderer, null));
+        });
+      }
       entry.appendChild(rendererList);
       root.appendChild(entry);
 

@@ -148,6 +148,14 @@ pub(super) async fn call_init_session(
         let state_guard = state.lock().await;
         state_guard.inner.clone()
     };
+    if let Some(project_path) = project_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Ok(mut active_project_path) = app_state.active_project_path.lock() {
+            *active_project_path = Some(PathBuf::from(project_path));
+        }
+    }
     let plugin_contexts = collect_plugin_init_contexts(&app_state).await;
 
     let mut response = if include_runtime_context {
@@ -197,6 +205,17 @@ pub(super) async fn call_init_session(
     );
     response_obj.insert("startup_rule_actions".to_string(), startup_rule_actions);
     response_obj.insert("plugin_contexts".to_string(), plugin_contexts);
+    let compact_context_defaults = {
+        let registry = app_state.plugin_registry.lock().unwrap();
+        crate::context_layer::collect_compact_project_context_defaults(
+            project_path,
+            &registry.manifests,
+            &app_state.auth_dir,
+        )
+    };
+    if !compact_context_defaults.is_null() {
+        response_obj.insert("context_defaults".to_string(), compact_context_defaults);
+    }
 
     Ok(serde_json::json!({
         "content": [{

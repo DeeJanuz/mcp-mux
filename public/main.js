@@ -281,7 +281,35 @@
       return Promise.reject(new Error('Tauri IPC is not available.'));
     }
     return window.__TAURI__.core.invoke('get_standalone_renderers').then(function (plugins) {
-      return Array.isArray(plugins) ? plugins : [];
+      plugins = Array.isArray(plugins) ? plugins : [];
+      return attachContextRowsToStandalonePlugins(plugins);
+    });
+  }
+
+  function attachContextRowsToStandalonePlugins(plugins) {
+    if (!plugins.length || !window.__TAURI__ || !window.__TAURI__.core) return Promise.resolve(plugins);
+    var pluginNames = plugins.map(function (plugin) { return plugin && plugin.plugin; }).filter(Boolean);
+    if (!pluginNames.length) return Promise.resolve(plugins);
+    return window.__TAURI__.core.invoke('list_plugin_contexts', {
+      pluginNames: pluginNames,
+      includeContexts: true,
+      includeLabels: true,
+      includeApps: false,
+      maxContextsPerPlugin: 12,
+    }).then(function (contextResult) {
+      var byPlugin = {};
+      var contextPlugins = Array.isArray(contextResult && contextResult.plugins) ? contextResult.plugins : [];
+      contextPlugins.forEach(function (entry) {
+        if (!entry || !entry.plugin_name || !Array.isArray(entry.contexts)) return;
+        byPlugin[entry.plugin_name] = entry.contexts;
+      });
+      return plugins.map(function (plugin) {
+        if (!plugin || !plugin.plugin || !byPlugin[plugin.plugin]) return plugin;
+        return Object.assign({}, plugin, { contexts: byPlugin[plugin.plugin] });
+      });
+    }).catch(function (err) {
+      console.warn('[apps] Context discovery unavailable:', err);
+      return plugins;
     });
   }
 
@@ -1983,10 +2011,39 @@
           itemTag: 'div',
           chevronText: '\u25B6',
           emptyText: 'No apps available',
-          onSelect: function (renderer, rendererLabel) {
+          onSelect: function (renderer, rendererLabel, plugin, context) {
             var rendererName = renderer && renderer.name;
+            var data = {};
+            var contextId = context && (context.context_id || context.contextId);
+            var routingArg = context && (context.routing_arg || context.routingArg);
+            if (contextId && routingArg) data[routingArg] = contextId;
+            var displayLabel = rendererLabel;
+            var contextLabel = context && (context.label || context.name || context.slug);
+            if (contextLabel) displayLabel = rendererLabel + ' - ' + contextLabel;
             dropdown.classList.add('hidden');
-            launchStandalone(rendererName, rendererLabel);
+            launchStandalone(rendererName, displayLabel, data, contextId ? {
+              contextId: contextId,
+              contextLabel: contextLabel || null,
+              contextRoutingArg: routingArg || null,
+              contextPlugin: plugin && plugin.plugin || null,
+            } : null);
+          },
+          onSetDefault: function (context, plugin) {
+            var contextId = context && (context.context_id || context.contextId);
+            var pluginName = plugin && plugin.plugin;
+            if (!contextId || !pluginName || !window.__TAURI__ || !window.__TAURI__.core) return;
+            window.__TAURI__.core.invoke('set_plugin_context_default', {
+              projectPath: null,
+              pluginName: pluginName,
+              contextId: contextId,
+              scope: 'plugin',
+              targetName: null,
+              label: context.label || context.name || context.slug || null,
+            }).then(function () {
+              populateAppsDropdown(dropdown);
+            }).catch(function (err) {
+              console.error('[apps] Failed to set project default context:', err);
+            });
           },
         });
       })

@@ -330,6 +330,97 @@ fn init_session_definition(_: &[RendererDef]) -> Value {
     })
 }
 
+fn list_contexts_definition(_: &[RendererDef]) -> Value {
+    serde_json::json!({
+        "name": "list_contexts",
+        "description": "List MCPViews plugin org/account contexts without exposing token material. Defaults to compact token/status summaries; request labels, apps, or rows only when needed.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_path": {
+                    "type": "string",
+                    "description": "Optional absolute project path. When supplied, MCPViews includes defaults from that project's mcpviews-init.json."
+                },
+                "plugin_names": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional plugin-name filter, such as [\"decidr\", \"ludflow\"]."
+                },
+                "include_contexts": {
+                    "type": "boolean",
+                    "description": "Include bounded context rows. Defaults to false."
+                },
+                "include_labels": {
+                    "type": "boolean",
+                    "description": "Fetch provider labels such as organization name/slug/role. Defaults to false to save tokens."
+                },
+                "include_apps": {
+                    "type": "boolean",
+                    "description": "Include standalone app launch templates for each plugin/context. Defaults to false."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Optional case-insensitive context search. May fetch provider labels."
+                },
+                "max_contexts_per_plugin": {
+                    "type": "integer",
+                    "description": "Maximum context rows per plugin. Defaults to 12."
+                },
+                "refresh_policy": {
+                    "type": "string",
+                    "description": "Reserved. Current behavior is lazy/no eager refresh unless a token is selected for provider lookup."
+                },
+                "refresh_catalog": {
+                    "type": "boolean",
+                    "description": "Bypass the short-lived label/catalog cache. Defaults to false."
+                }
+            }
+        }
+    })
+}
+
+fn set_context_default_definition(_: &[RendererDef]) -> Value {
+    serde_json::json!({
+        "name": "set_context_default",
+        "description": "Persist a project-scoped default org/account context in mcpviews-init.json. Does not write AGENTS.md or other harness rule files.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_path": {
+                    "type": "string",
+                    "description": "Absolute project path whose mcpviews-init.json should store the default."
+                },
+                "plugin_name": {
+                    "type": "string",
+                    "description": "Plugin name, such as decidr or ludflow."
+                },
+                "context_id": {
+                    "type": "string",
+                    "description": "Org/account context id to use by default."
+                },
+                "agent_type": {
+                    "type": "string",
+                    "description": "Optional caller harness. Stored defaults remain in mcpviews-init.json regardless of harness."
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["plugin", "tool", "renderer", "app"],
+                    "description": "Optional scope for the default. Defaults to plugin."
+                },
+                "target_name": {
+                    "type": "string",
+                    "description": "Optional tool, renderer, or app name when scope is narrower than plugin."
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Optional human label to store with the default. No token material is stored."
+                }
+            },
+            "required": ["project_path", "plugin_name", "context_id"]
+        }
+    })
+}
+
 fn mcpviews_setup_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "mcpviews_setup",
@@ -681,6 +772,32 @@ fn init_session_handler<'a>(
     Box::pin(super::session::call_init_session(arguments, state))
 }
 
+fn list_contexts_handler<'a>(
+    arguments: Value,
+    state: &'a Arc<TokioMutex<AsyncAppState>>,
+) -> BuiltinToolFuture<'a> {
+    Box::pin(async move {
+        let app_state = {
+            let state_guard = state.lock().await;
+            state_guard.inner.clone()
+        };
+        crate::context_layer::list_contexts(arguments, &app_state).await
+    })
+}
+
+fn set_context_default_handler<'a>(
+    arguments: Value,
+    state: &'a Arc<TokioMutex<AsyncAppState>>,
+) -> BuiltinToolFuture<'a> {
+    Box::pin(async move {
+        let app_state = {
+            let state_guard = state.lock().await;
+            state_guard.inner.clone()
+        };
+        crate::context_layer::set_context_default(arguments, &app_state).await
+    })
+}
+
 fn mcpviews_setup_handler<'a>(
     arguments: Value,
     state: &'a Arc<TokioMutex<AsyncAppState>>,
@@ -853,6 +970,20 @@ pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
             name: "init_session",
             definition: init_session_definition,
             handler: init_session_handler,
+            hosted_visibility: HostedVisibility::HostedModelFacing,
+            core_connector_group: None,
+        },
+        BuiltinToolSpec {
+            name: "list_contexts",
+            definition: list_contexts_definition,
+            handler: list_contexts_handler,
+            hosted_visibility: HostedVisibility::HostedModelFacing,
+            core_connector_group: Some(discovery_group),
+        },
+        BuiltinToolSpec {
+            name: "set_context_default",
+            definition: set_context_default_definition,
+            handler: set_context_default_handler,
             hosted_visibility: HostedVisibility::HostedModelFacing,
             core_connector_group: None,
         },

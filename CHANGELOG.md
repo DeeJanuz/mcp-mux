@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Add a token-safe context layer for org/account-scoped plugins, including `list_contexts`, `set_context_default`, local Tauri context commands, project defaults in `mcpviews-init.json`, and compact `init_session` context default reporting.
+- Add DecidR/Ludflow organization context metadata and Apps menu context selection with project-default actions.
+
+### Changed
+- Resolve project defaults before token-store defaults for context-aware routing, cache label/catalog details lazily, and keep context discovery token-free by default.
+
+### Fixed
+- Invalidate the context catalog from hosted auth/update/default flows so context lists do not retain stale auth or label state.
+- Harden MCPViews startup-rule reconciliation so setup-sourced rules use current manifest text after plugin updates, hash invisible text drift consistently, and refuse to mark native startup rules current unless the exact marker exists in the agent rule file.
+
 ## [0.2.65] - 2026-06-28
 
 ### Changed

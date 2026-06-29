@@ -101,6 +101,22 @@
     return element;
   }
 
+  function isValidContextAuth(context) {
+    if (!context || typeof context !== 'object') return false;
+    var status = String(context.status || '').toLowerCase();
+    return context.usable === true && status === 'valid';
+  }
+
+  function setContextExpanded(contextBlock, expanded) {
+    if (!contextBlock) return;
+    contextBlock.classList.toggle('apps-context-collapsed', !expanded);
+    var contextToggle = contextBlock.querySelector('.apps-context-toggle');
+    if (contextToggle) {
+      contextToggle.classList.toggle('expanded', !!expanded);
+      contextToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    }
+  }
+
   function setEmpty(root, message) {
     root.innerHTML = '';
     var empty = document.createElement('div');
@@ -162,20 +178,29 @@
 
       if (plugin.contexts.length > 0) {
         plugin.contexts.forEach(function (context) {
+          var contextAuthValid = isValidContextAuth(context);
           var contextBlock = document.createElement('div');
           contextBlock.className = 'apps-context-block';
           var contextHeader = document.createElement('div');
           contextHeader.className = 'apps-context-header';
+          var contextToggle = createClickable('button');
+          contextToggle.className = 'apps-context-toggle';
+          contextToggle.setAttribute('aria-expanded', contextAuthValid ? 'true' : 'false');
+          var contextChevron = document.createElement('span');
+          contextChevron.className = 'apps-context-chevron';
+          contextChevron.textContent = options.chevronText || '>';
+          contextToggle.appendChild(contextChevron);
           var contextLabel = document.createElement('span');
           contextLabel.className = 'apps-context-label';
           contextLabel.textContent = context.label || context.contextId || 'Context';
-          contextHeader.appendChild(contextLabel);
+          contextToggle.appendChild(contextLabel);
           if (context.status) {
             var contextStatus = document.createElement('span');
             contextStatus.className = 'apps-context-status';
             contextStatus.textContent = context.isProjectDefault ? 'default' : context.status;
-            contextHeader.appendChild(contextStatus);
+            contextToggle.appendChild(contextStatus);
           }
+          contextHeader.appendChild(contextToggle);
           if (context.usable && typeof options.onSetDefault === 'function') {
             var defaultButton = createClickable('button');
             defaultButton.className = 'apps-context-default-button';
@@ -188,8 +213,16 @@
             contextHeader.appendChild(defaultButton);
           }
           contextBlock.appendChild(contextHeader);
+          var contextItems = document.createElement('div');
+          contextItems.className = 'apps-context-items';
           plugin.renderers.forEach(function (renderer) {
-            contextBlock.appendChild(renderRendererItem(renderer, context));
+            contextItems.appendChild(renderRendererItem(renderer, context));
+          });
+          contextBlock.appendChild(contextItems);
+          setContextExpanded(contextBlock, contextAuthValid);
+          contextToggle.addEventListener('click', function (event) {
+            if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+            setContextExpanded(contextBlock, contextBlock.classList.contains('apps-context-collapsed'));
           });
           rendererList.appendChild(contextBlock);
         });
@@ -233,6 +266,7 @@
   window.__mcpviewsAppsMenu = {
     collapseAll: collapseAll,
     humanizePluginName: humanizePluginName,
+    isValidContextAuth: isValidContextAuth,
     normalizePlugins: normalizePlugins,
     pluginRank: pluginRank,
     renderAppsMenu: renderAppsMenu,

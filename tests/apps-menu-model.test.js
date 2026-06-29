@@ -136,6 +136,43 @@ describe('apps menu model', function () {
     );
   });
 
+  it('auto-collapses contexts whose auth is not valid', function () {
+    var root = document.getElementById('apps');
+
+    window.__mcpviewsAppsMenu.renderAppsMenu(root, [
+      {
+        plugin: 'decidr',
+        contexts: [
+          {
+            context_id: 'org_missing',
+            label: 'Missing Org',
+            status: 'missing',
+            usable: false,
+            routing_arg: 'organization_id',
+          },
+          {
+            context_id: 'org_valid',
+            label: 'Valid Org',
+            status: 'valid',
+            usable: true,
+            routing_arg: 'organization_id',
+          },
+        ],
+        renderers: [{ name: 'decidr_dashboard', label: 'Dashboard' }],
+      },
+    ]);
+
+    var blocks = Array.from(root.querySelectorAll('.apps-context-block'));
+    expect(blocks[0].classList.contains('apps-context-collapsed')).toBe(true);
+    expect(blocks[0].querySelector('.apps-context-toggle').getAttribute('aria-expanded')).toBe('false');
+    expect(blocks[1].classList.contains('apps-context-collapsed')).toBe(false);
+    expect(blocks[1].querySelector('.apps-context-toggle').getAttribute('aria-expanded')).toBe('true');
+
+    blocks[0].querySelector('.apps-context-toggle').click();
+    expect(blocks[0].classList.contains('apps-context-collapsed')).toBe(false);
+    expect(blocks[0].querySelector('.apps-context-toggle').getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('uses button controls for the native popup caller', function () {
     var root = document.getElementById('apps');
 

@@ -116,9 +116,17 @@ pub(crate) fn startup_rule_key(plugin: &str, rule_id: &str) -> String {
 }
 
 pub(crate) fn startup_rule_hash(rule: &str) -> String {
+    let rule = normalize_startup_rule_hash_text(rule);
     let mut hasher = Sha256::new();
     hasher.update(rule.as_bytes());
     format!("sha256:{:x}", hasher.finalize())
+}
+
+fn normalize_startup_rule_hash_text(rule: &str) -> String {
+    rule.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_string()
 }
 
 pub(crate) fn project_config_path(project_path: &Path) -> PathBuf {
@@ -240,7 +248,7 @@ pub(crate) fn resolve_startup_rules(
     for manifest in manifests {
         let prefs = store.load_preferences(&manifest.name);
         for startup_rule in &manifest.startup_rules {
-            let Some(rule_text) = resolve_rule_text(startup_rule, &prefs) else {
+            let Some(rule_text) = resolve_rule_text(startup_rule, manifest, &prefs) else {
                 continue;
             };
             if !conditions_match(startup_rule.conditions.as_slice(), &prefs) {
@@ -267,6 +275,7 @@ pub(crate) fn resolve_startup_rules(
 
 fn resolve_rule_text(
     startup_rule: &StartupRule,
+    manifest: &PluginManifest,
     prefs: &mcpviews_shared::PluginPreferences,
 ) -> Option<String> {
     if let Some(rule) = startup_rule
@@ -283,13 +292,33 @@ fn resolve_rule_text(
         return None;
     }
 
-    prefs
-        .setup_answers
-        .get(&source.question_id)
-        .and_then(|answer| answer.persisted_rule.as_deref())
+    let answer = prefs.setup_answers.get(&source.question_id)?;
+    let current_option_rule = manifest
+        .setup_questions
+        .iter()
+        .find(|question| question.id == source.question_id)
+        .and_then(|question| {
+            question
+                .options
+                .iter()
+                .find(|option| option.value == answer.value)
+        })
+        .and_then(|option| option.persisted_rule.as_deref())
         .map(str::trim)
-        .filter(|rule| !rule.is_empty())
-        .map(str::to_string)
+        .filter(|rule| !rule.is_empty());
+    let stored_rule = answer
+        .persisted_rule
+        .as_deref()
+        .map(str::trim)
+        .filter(|rule| !rule.is_empty());
+    let stored_version_current =
+        answer.plugin_version.as_deref() == Some(manifest.version.as_str());
+
+    if stored_version_current {
+        stored_rule.or(current_option_rule).map(str::to_string)
+    } else {
+        current_option_rule.or(stored_rule).map(str::to_string)
+    }
 }
 
 fn conditions_match(
@@ -853,6 +882,16 @@ pub(crate) fn save_startup_rule_state_from_args(arguments: Value) -> Result<Valu
         .unwrap_or(false);
 
     let project_path = PathBuf::from(project_path);
+    verify_startup_rule_locations(
+        &project_path,
+        plugin,
+        rule_id,
+        rule_version,
+        rule_hash,
+        &locations,
+        do_not_install,
+        do_not_update,
+    )?;
     let mut config = load_or_create_project_config(&project_path)?;
     let key = startup_rule_key(plugin, rule_id);
     let state = StartupRuleState {
@@ -877,6 +916,60 @@ pub(crate) fn save_startup_rule_state_from_args(arguments: Value) -> Result<Valu
     }))
 }
 
+fn verify_startup_rule_locations(
+    project_path: &Path,
+    plugin: &str,
+    rule_id: &str,
+    rule_version: &str,
+    rule_hash: &str,
+    locations: &[StartupRuleLocation],
+    do_not_install: bool,
+    do_not_update: bool,
+) -> Result<(), String> {
+    if do_not_install || do_not_update {
+        return Ok(());
+    }
+
+    for location in locations {
+        if !matches!(
+            location.agent_type.as_str(),
+            "codex" | "opencode" | "antigravity"
+        ) {
+            continue;
+        }
+
+        let path = PathBuf::from(&location.path);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            project_path.join(path)
+        };
+        let content = std::fs::read_to_string(&path).map_err(|error| {
+            format!(
+                "Cannot verify startup rule state for '{}': failed to read '{}': {}",
+                location.label,
+                path.display(),
+                error
+            )
+        })?;
+        let expected_marker = format!(
+            "<!-- mcpviews-startup-rule: plugin={} rule_id={} version={} hash={} -->",
+            plugin, rule_id, rule_version, rule_hash
+        );
+        if !content.contains(&expected_marker) {
+            return Err(format!(
+                "Refusing to save startup rule state for '{}:{}': '{}' does not contain marker '{}'. Update the native rule file before calling save_startup_rule_state.",
+                plugin,
+                rule_id,
+                path.display(),
+                expected_marker
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_locations(value: Option<&Value>) -> Result<Vec<StartupRuleLocation>, String> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -889,8 +982,8 @@ fn parse_locations(value: Option<&Value>) -> Result<Vec<StartupRuleLocation>, St
 mod tests {
     use super::*;
     use mcpviews_shared::{
-        PluginPreferences, SetupPreferenceAnswer, StartupRule, StartupRuleCondition,
-        StartupRuleSource,
+        PluginPreferences, SetupPreferenceAnswer, SetupQuestion, SetupQuestionOption, StartupRule,
+        StartupRuleCondition, StartupRuleSource,
     };
 
     fn manifest_with_rule(startup_rule: StartupRule) -> PluginManifest {
@@ -1038,9 +1131,18 @@ mod tests {
     }
 
     #[test]
-    fn test_save_startup_rule_state_records_locations_without_writing_rules() {
+    fn test_save_startup_rule_state_verifies_codex_rule_marker() {
         let dir = tempfile::tempdir().unwrap();
         let hash = startup_rule_hash("Use terse output.");
+        let agents_path = dir.path().join("AGENTS.md");
+        std::fs::write(
+            &agents_path,
+            format!(
+                "# AGENTS.md\n\n<!-- mcpviews-startup-rule: plugin=mcpviews-gronk-speak rule_id=gronk_mode version=1 hash={} -->\n\n### Gronk\n\nUse terse output.\n",
+                hash
+            ),
+        )
+        .unwrap();
         let result = save_startup_rule_state_from_args(serde_json::json!({
             "project_path": dir.path().display().to_string(),
             "plugin": "mcpviews-gronk-speak",
@@ -1062,7 +1164,27 @@ mod tests {
             .get("mcpviews-gronk-speak:gronk_mode")
             .unwrap();
         assert_eq!(state.locations[0].path, "AGENTS.md");
-        assert!(!dir.path().join("AGENTS.md").exists());
+    }
+
+    #[test]
+    fn test_save_startup_rule_state_rejects_unverified_codex_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "# AGENTS.md\n").unwrap();
+        let err = save_startup_rule_state_from_args(serde_json::json!({
+            "project_path": dir.path().display().to_string(),
+            "plugin": "mcpviews-gronk-speak",
+            "rule_id": "gronk_mode",
+            "rule_version": "1",
+            "rule_hash": startup_rule_hash("Use terse output."),
+            "locations": [{
+                "agent_type": "codex",
+                "path": "AGENTS.md",
+                "label": "MCPViews startup rule"
+            }]
+        }))
+        .unwrap_err();
+
+        assert!(err.contains("Refusing to save startup rule state"));
     }
 
     #[test]
@@ -1203,6 +1325,68 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_sourced_startup_rule_uses_manifest_rule_when_plugin_version_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PluginStore::with_dir(dir.path().join("plugins"));
+        let startup_rule = StartupRule {
+            id: "decidr_work_logging_runtime".to_string(),
+            version: "5".to_string(),
+            title: "DecidR Work Logging Runtime".to_string(),
+            description: None,
+            rule: None,
+            source: Some(StartupRuleSource {
+                source_type: "setup_question".to_string(),
+                question_id: "decidr_work_logging_policy".to_string(),
+                skip_install_values: vec![],
+            }),
+            conditions: vec![],
+        };
+        let mut manifest = manifest_with_rule(startup_rule);
+        manifest.version = "2.0.0".to_string();
+        manifest.setup_questions = vec![SetupQuestion {
+            id: "decidr_work_logging_policy".to_string(),
+            question: "How should work be logged?".to_string(),
+            description: None,
+            guidance: None,
+            options: vec![SetupQuestionOption {
+                value: "auto_log_confident".to_string(),
+                label: "Auto-log confident work".to_string(),
+                description: None,
+                persisted_rule: Some(
+                    "New rule: choose the closest matching project or initiative; do not skip inferred parents."
+                        .to_string(),
+                ),
+            }],
+            default_value: None,
+            recommended_value: None,
+            example_outputs: None,
+            persist_as_rule_name: Some("decidr_work_logging_runtime".to_string()),
+        }];
+        let mut prefs = PluginPreferences::default();
+        prefs.setup_answers.insert(
+            "decidr_work_logging_policy".to_string(),
+            SetupPreferenceAnswer {
+                value: "auto_log_confident".to_string(),
+                persist_as_rule_name: Some("decidr_work_logging_runtime".to_string()),
+                persisted_rule: Some(
+                    "Old rule: parent unclear means review before writing.".to_string(),
+                ),
+                source: "chat".to_string(),
+                plugin_version: Some("1.0.0".to_string()),
+                updated_at: None,
+            },
+        );
+        store.save_preferences("test-plugin", &prefs).unwrap();
+
+        let resolved = resolve_startup_rules(&[manifest], &store);
+
+        assert_eq!(resolved.len(), 1);
+        assert!(resolved[0].rule.contains("New rule"));
+        assert!(resolved[0].rule.contains("closest matching project"));
+        assert!(!resolved[0].rule.contains("Old rule"));
+    }
+
+    #[test]
     fn test_setup_sourced_startup_rule_conditions_gate_companion_rules() {
         let dir = tempfile::tempdir().unwrap();
         let store = PluginStore::with_dir(dir.path().join("plugins"));
@@ -1267,6 +1451,18 @@ mod tests {
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].hash, startup_rule_hash("Always do this."));
         assert!(resolved[0].should_prompt_install);
+    }
+
+    #[test]
+    fn test_startup_rule_hash_normalizes_invisible_text_drift() {
+        assert_eq!(
+            startup_rule_hash("\nLine one\r\nLine two\r\n"),
+            startup_rule_hash("Line one\nLine two")
+        );
+        assert_eq!(
+            startup_rule_hash("\rRule body\r"),
+            startup_rule_hash("Rule body")
+        );
     }
 
     #[test]

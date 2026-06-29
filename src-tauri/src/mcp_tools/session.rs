@@ -916,6 +916,25 @@ mod tests {
             "path": "AGENTS.md",
             "label": "Project AGENTS.md"
         }]);
+        let stale_agents = format!(
+            "\
+# AGENTS.md
+
+## MCPViews Startup Rules
+
+<!-- mcpviews-startup-rules-schema: 1 -->
+
+{}
+<!-- mcpviews-startup-rule: plugin=decidr rule_id=decidr_work_session_bootstrap version=2 hash=sha256:old-work-session -->
+
+### DecidR Work Session Bootstrap
+
+Old temporary work session rule.
+",
+            core_rule_blocks
+        );
+        std::fs::write(project.path().join("AGENTS.md"), stale_agents).unwrap();
+
         for core_rule in core_rules {
             startup_rules::save_startup_rule_state_from_args(serde_json::json!({
                 "project_path": project_path,
@@ -936,25 +955,6 @@ mod tests {
             "locations": locations
         }))
         .unwrap();
-
-        let stale_agents = format!(
-            "\
-# AGENTS.md
-
-## MCPViews Startup Rules
-
-<!-- mcpviews-startup-rules-schema: 1 -->
-
-{}
-<!-- mcpviews-startup-rule: plugin=decidr rule_id=decidr_work_session_bootstrap version=2 hash=sha256:old-work-session -->
-
-### DecidR Work Session Bootstrap
-
-Old temporary work session rule.
-",
-            core_rule_blocks
-        );
-        std::fs::write(project.path().join("AGENTS.md"), stale_agents).unwrap();
 
         let actions =
             startup_rule_actions_for_project_state("codex", Some(&project_path), &app_state)

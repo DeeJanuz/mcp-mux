@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.66] - 2026-06-29
+
 ### Added
 - Add a token-safe context layer for org/account-scoped plugins, including `list_contexts`, `set_context_default`, local Tauri context commands, project defaults in `mcpviews-init.json`, and compact `init_session` context default reporting.
 - Add DecidR/Ludflow organization context metadata and Apps menu context selection with project-default actions.

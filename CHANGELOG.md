@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Collapse Apps menu organization rows by default when their plugin auth context is not valid, while keeping valid org rows expanded and manually expandable rows available for reconnect paths.
+
 ## [0.2.69] - 2026-07-06
 
 ### Changed
@@ -17,7 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - Rebuilt the DecidR-branded installer bundle after DeeJanuz/decidr-plugin@0.1.58, staging the latest stable bundled plugin releases.
-
 
 ## [0.2.67] - 2026-06-29
 

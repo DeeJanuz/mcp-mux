@@ -199,6 +199,10 @@ pub(crate) fn mount_external_web_panel(
     )
     .accept_first_mouse(true)
     .initialization_script(init_script)
+    .on_download(crate::file_download::download_handler(
+        "external-web-panel",
+        app_handle.clone(),
+    ))
     .on_navigation(move |navigation_url| match navigation_url.scheme() {
         "http" | "https" => true,
         "mcpviews-external-tab" => {

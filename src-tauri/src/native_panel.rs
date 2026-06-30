@@ -307,6 +307,10 @@ pub(crate) fn open_native_app_view(
     .inner_size(1280.0, 900.0)
     .resizable(true)
     .theme(Some(tauri::Theme::Light))
+    .on_download(crate::file_download::download_handler(
+        "native-app-window",
+        app_handle.clone(),
+    ))
     .on_navigation(move |navigation_url| {
         let allowed = is_url_allowed_for_plugin(navigation_url, &navigation_allowed_origins);
         if !allowed {
@@ -384,6 +388,10 @@ pub(crate) fn mount_native_app_panel(
         tauri::WebviewUrl::External(parsed.clone()),
     )
     .accept_first_mouse(true)
+    .on_download(crate::file_download::download_handler(
+        "native-app-panel",
+        app_handle.clone(),
+    ))
     .on_navigation(move |navigation_url| {
         let allowed = is_url_allowed_for_plugin(navigation_url, &navigation_allowed_origins);
         if !allowed {

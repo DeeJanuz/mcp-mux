@@ -2525,6 +2525,12 @@ describe('tribex-ai-thread Codex-like surface', function () {
     expect(stylesCode).toContain('overflow: visible');
   });
 
+  it('keeps AI navigator modals theme-aware in light mode', function () {
+    expect(stylesCode).toMatch(/\[data-theme="light"\] body\.ai-mode-active \{[\s\S]*?--ai-modal-backdrop: rgba\(15, 23, 42, 0\.32\);[\s\S]*?--ai-modal-surface: rgba\(255, 255, 255, 0\.96\);/);
+    expect(stylesCode).toMatch(/body\.ai-mode-active \.ai-nav-modal \{[\s\S]*?background: var\(--ai-modal-surface\);[\s\S]*?color: var\(--ai-text-strong\);/);
+    expect(stylesCode).toMatch(/\[data-theme="light"\] body\.ai-mode-active \.ai-nav-modal \{[\s\S]*?color-scheme: light;/);
+  });
+
   it('keeps critical loading affordances animated when reduced motion is reported', function () {
     expect(stylesCode).toContain('@media (prefers-reduced-motion: reduce)');
     expect(stylesCode).toContain('animation: ai-reduced-loading-line-pulse 1.8s ease-in-out infinite !important;');

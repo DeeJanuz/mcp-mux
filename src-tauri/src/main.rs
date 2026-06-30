@@ -11,6 +11,7 @@ mod custom_protocols;
 mod datasets;
 mod desktop_relay;
 mod external_web_panel;
+mod file_download;
 mod first_party_ai;
 mod http_server;
 mod installer;
@@ -484,6 +485,10 @@ fn main() {
             .theme(Some(tauri::Theme::Light))
             .use_https_scheme(true)
             .on_web_resource_request(csp_request_hook(app_state.clone()))
+            .on_download(file_download::download_handler(
+                "main",
+                app.handle().clone(),
+            ))
             .build()?;
 
             // Listen for reload_renderers to refresh main window CSP
@@ -536,6 +541,10 @@ fn main() {
                             .inner_size(800.0, 600.0)
                             .use_https_scheme(true)
                             .on_web_resource_request(csp_request_hook(state.inner().clone()))
+                            .on_download(file_download::download_handler(
+                                "plugin-manager",
+                                app.clone(),
+                            ))
                             .build();
                         }
                     }

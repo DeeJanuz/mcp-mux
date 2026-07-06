@@ -94,7 +94,7 @@ struct TokenContext {
     is_token_default: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ContextPluginSummary {
     provider: ContextProviderInfo,
     token_contexts: BTreeMap<String, TokenContext>,
@@ -157,7 +157,7 @@ pub(crate) fn invalidate_context_catalog(app_state: &AppState) {
 
 pub(crate) fn collect_compact_project_context_defaults(
     project_path: Option<&str>,
-    _manifests: &[PluginManifest],
+    manifests: &[PluginManifest],
     auth_dir: &Path,
 ) -> Value {
     let Some(project_path) = project_path
@@ -177,6 +177,11 @@ pub(crate) fn collect_compact_project_context_defaults(
             });
         }
     };
+    let _ = reconcile_project_visible_shared_oauth_tokens_with_defaults(
+        &config.context_defaults,
+        manifests,
+        auth_dir,
+    );
 
     let defaults: Vec<Value> = config
         .context_defaults
@@ -358,9 +363,14 @@ async fn list_contexts_value(
         registry.manifests.clone()
     };
     let project_defaults = load_project_defaults(options.project_path.as_deref())?;
+    let providers = providers_for_manifests(&manifests);
+    let providers_by_name: BTreeMap<String, ContextProviderInfo> = providers
+        .iter()
+        .map(|provider| (provider.plugin_name.clone(), provider.clone()))
+        .collect();
     let mut plugins = Vec::new();
 
-    for provider in providers_for_manifests(&manifests) {
+    for provider in providers {
         if let Some(filter) = &options.plugin_names {
             if !filter.contains(provider.plugin_name.as_str()) {
                 continue;
@@ -376,7 +386,8 @@ async fn list_contexts_value(
                 .collect(),
             provider,
         };
-        plugins.push(plugin_summary_value(&summary, &options, app_state).await?);
+        plugins
+            .push(plugin_summary_value(&summary, &options, app_state, &providers_by_name).await?);
     }
 
     Ok(serde_json::json!({
@@ -391,15 +402,35 @@ async fn plugin_summary_value(
     summary: &ContextPluginSummary,
     options: &ContextListOptions,
     app_state: &AppState,
+    providers_by_name: &BTreeMap<String, ContextProviderInfo>,
 ) -> Result<Value, String> {
-    let selected = selected_context(summary, options.include_labels);
+    let catalog = if options.include_contexts && options.needs_catalog() {
+        Some(provider_catalog(summary, options.refresh_catalog, app_state).await?)
+    } else {
+        None
+    };
+    let mut summary = summary.clone();
+    if let Some(catalog) = catalog.as_deref() {
+        if reconcile_catalog_shared_tokens(
+            &summary,
+            providers_by_name,
+            catalog,
+            &app_state.auth_dir,
+        )? > 0
+        {
+            summary.token_contexts =
+                token_context_map(&summary.provider.plugin_name, &app_state.auth_dir);
+        }
+    }
+
+    let selected = selected_context(&summary, options.include_labels);
     let counts = status_counts(&summary.token_contexts);
     let mut value = serde_json::json!({
-        "plugin_name": summary.provider.plugin_name,
-        "plugin_label": summary.provider.plugin_label,
-        "context_type": summary.provider.context_type,
-        "routing_arg": summary.provider.routing_arg,
-        "provider_tool": summary.provider.provider_tool,
+        "plugin_name": &summary.provider.plugin_name,
+        "plugin_label": &summary.provider.plugin_label,
+        "context_type": &summary.provider.context_type,
+        "routing_arg": &summary.provider.routing_arg,
+        "provider_tool": &summary.provider.provider_tool,
         "default_context": selected,
         "status_counts": counts,
         "project_defaults": project_defaults_for_response(&summary.project_defaults, options.include_labels),
@@ -410,7 +441,7 @@ async fn plugin_summary_value(
     }
 
     if options.include_contexts {
-        let contexts = context_rows(summary, options, app_state).await?;
+        let contexts = context_rows(&summary, options, app_state, catalog.as_deref()).await?;
         value["contexts"] = Value::Array(contexts);
     }
 
@@ -421,8 +452,11 @@ async fn context_rows(
     summary: &ContextPluginSummary,
     options: &ContextListOptions,
     app_state: &AppState,
+    catalog: Option<&[ProviderContext]>,
 ) -> Result<Vec<Value>, String> {
-    let catalog = if options.needs_catalog() {
+    let catalog = if let Some(catalog) = catalog {
+        catalog.to_vec()
+    } else if options.needs_catalog() {
         provider_catalog(summary, options.refresh_catalog, app_state).await?
     } else {
         Vec::new()
@@ -477,6 +511,94 @@ async fn context_rows(
     }
     rows.truncate(options.max_contexts_per_plugin);
     Ok(rows)
+}
+
+pub(crate) fn reconcile_project_visible_shared_oauth_tokens(
+    project_path: &Path,
+    manifests: &[PluginManifest],
+    auth_dir: &Path,
+) -> Result<usize, String> {
+    let config = load_or_create_project_config(project_path)?;
+    reconcile_project_visible_shared_oauth_tokens_with_defaults(
+        &config.context_defaults,
+        manifests,
+        auth_dir,
+    )
+}
+
+fn reconcile_project_visible_shared_oauth_tokens_with_defaults(
+    defaults: &[ProjectContextDefault],
+    manifests: &[PluginManifest],
+    auth_dir: &Path,
+) -> Result<usize, String> {
+    let providers = providers_for_manifests(manifests);
+    let providers_by_name: BTreeMap<String, ContextProviderInfo> = providers
+        .into_iter()
+        .map(|provider| (provider.plugin_name.clone(), provider))
+        .collect();
+    let mut mirrored = 0;
+
+    for default in defaults {
+        let Some(provider) = providers_by_name.get(&default.plugin_name) else {
+            continue;
+        };
+        let allowed_org_ids = vec![default.context_id.clone()];
+        mirrored += reconcile_shared_tokens_for_provider(
+            provider,
+            &providers_by_name,
+            &allowed_org_ids,
+            auth_dir,
+        )?;
+    }
+
+    Ok(mirrored)
+}
+
+fn reconcile_catalog_shared_tokens(
+    summary: &ContextPluginSummary,
+    providers_by_name: &BTreeMap<String, ContextProviderInfo>,
+    catalog: &[ProviderContext],
+    auth_dir: &Path,
+) -> Result<usize, String> {
+    let allowed_org_ids: Vec<String> = catalog.iter().map(|context| context.id.clone()).collect();
+    reconcile_shared_tokens_for_provider(
+        &summary.provider,
+        providers_by_name,
+        &allowed_org_ids,
+        auth_dir,
+    )
+}
+
+fn reconcile_shared_tokens_for_provider(
+    target_provider: &ContextProviderInfo,
+    providers_by_name: &BTreeMap<String, ContextProviderInfo>,
+    allowed_org_ids: &[String],
+    auth_dir: &Path,
+) -> Result<usize, String> {
+    let Some(target_auth) = target_provider.auth.as_ref() else {
+        return Ok(0);
+    };
+    let Some(source_plugin) =
+        crate::shared_oauth_tokens::shared_oauth_peer_plugin(&target_provider.plugin_name)
+    else {
+        return Ok(0);
+    };
+    let Some(source_provider) = providers_by_name.get(source_plugin) else {
+        return Ok(0);
+    };
+    let Some(source_auth) = source_provider.auth.as_ref() else {
+        return Ok(0);
+    };
+
+    let report = crate::shared_oauth_tokens::reconcile_shared_oauth_org_tokens(
+        auth_dir,
+        &target_provider.plugin_name,
+        target_auth,
+        &source_provider.plugin_name,
+        source_auth,
+        allowed_org_ids,
+    )?;
+    Ok(report.mirrored)
 }
 
 async fn provider_catalog(

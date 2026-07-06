@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -207,6 +208,58 @@ fn storage_plugins_for_email_code(plugin_name: &str) -> Vec<String> {
     }
 }
 
+fn reconcile_shared_oauth_after_email_code(
+    plugin_names: &[String],
+    result: &Value,
+    state: &Arc<AppState>,
+) {
+    let organization_ids = authenticated_organization_ids(result);
+    if organization_ids.is_empty() {
+        return;
+    }
+
+    let auth_by_plugin: BTreeMap<String, PluginAuth> = {
+        let registry = state.plugin_registry.lock().unwrap();
+        plugin_names
+            .iter()
+            .filter_map(|plugin_name| {
+                registry
+                    .resolve_plugin_auth(plugin_name)
+                    .ok()
+                    .map(|auth| (plugin_name.clone(), auth))
+            })
+            .collect()
+    };
+
+    for target_plugin in plugin_names {
+        let Some(source_plugin) =
+            crate::shared_oauth_tokens::shared_oauth_peer_plugin(target_plugin)
+        else {
+            continue;
+        };
+        let Some(target_auth) = auth_by_plugin.get(target_plugin) else {
+            continue;
+        };
+        let Some(source_auth) = auth_by_plugin.get(source_plugin) else {
+            continue;
+        };
+
+        if let Err(error) = crate::shared_oauth_tokens::reconcile_shared_oauth_org_tokens(
+            &state.auth_dir,
+            target_plugin,
+            target_auth,
+            source_plugin,
+            source_auth,
+            &organization_ids,
+        ) {
+            eprintln!(
+                "[mcpviews] Shared OAuth token reconciliation failed for plugin '{}': {}",
+                target_plugin, error
+            );
+        }
+    }
+}
+
 fn authenticated_organization_ids(result: &Value) -> Vec<String> {
     let mut ids = Vec::new();
     if let Some(tokens) = result
@@ -327,6 +380,7 @@ pub async fn verify_email_code(
     if response_has_oauth_tokens(&result) {
         let plugins = storage_plugins_for_email_code(plugin_name);
         store_oauth_response_for_plugins(&plugins, &result)?;
+        reconcile_shared_oauth_after_email_code(&plugins, &result, state);
     }
 
     Ok(redacted_response(&result))

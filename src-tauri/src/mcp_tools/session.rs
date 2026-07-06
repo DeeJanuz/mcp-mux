@@ -155,6 +155,15 @@ pub(super) async fn call_init_session(
         if let Ok(mut active_project_path) = app_state.active_project_path.lock() {
             *active_project_path = Some(PathBuf::from(project_path));
         }
+        let manifests = {
+            let registry = app_state.plugin_registry.lock().unwrap();
+            registry.manifests.clone()
+        };
+        let _ = crate::context_layer::reconcile_project_visible_shared_oauth_tokens(
+            Path::new(project_path),
+            &manifests,
+            &app_state.auth_dir,
+        );
     }
     let plugin_contexts = collect_plugin_init_contexts(&app_state).await;
 

@@ -28,6 +28,7 @@ mod registry;
 mod renderer_scanner;
 mod review;
 mod session;
+mod shared_oauth_tokens;
 mod state;
 #[cfg(test)]
 mod test_utils;

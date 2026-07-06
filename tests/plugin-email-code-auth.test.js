@@ -89,6 +89,40 @@ describe('plugin email-code auth renderer', function () {
     expect(invoke).not.toHaveBeenCalledWith('start_plugin_auth', expect.anything());
   });
 
+  it('summarizes redacted multi-org auth success', async function () {
+    var invoke = vi.fn(function (command) {
+      if (command === 'send_plugin_email_code') return Promise.resolve({ status: true });
+      if (command === 'verify_plugin_email_code') {
+        return Promise.resolve({
+          status: true,
+          authenticated: true,
+          organization_id: 'org_456',
+          authenticated_organization_ids: ['org_123', 'org_456'],
+          authenticated_organization_count: 2,
+        });
+      }
+      return Promise.resolve(null);
+    });
+    window.__TAURI__ = { core: { invoke: invoke } };
+
+    loadRenderer();
+    window.__renderers.plugin_email_code_auth(document.getElementById('root'), {
+      plugin_name: 'ludflow',
+      plugin_label: 'Ludflow',
+      organization_id: 'org_456',
+    });
+
+    inputByPlaceholder('you@example.com').value = 'daenon@example.com';
+    textButton('Send code').click();
+    await flushPromises();
+    inputByPlaceholder('000000').value = '123456';
+    textButton('Verify').click();
+    await flushPromises();
+
+    expect(document.body.textContent).toContain('Ludflow is connected to 2 organizations');
+    expect(document.body.textContent).not.toContain('access_token');
+  });
+
   it('spaces the create organization action below organization selection', async function () {
     var verifyCount = 0;
     var invoke = vi.fn(function (command, args) {

@@ -67,6 +67,22 @@
     );
   }
 
+  function authenticatedOrgCount(result) {
+    if (!result) return 0;
+    if (typeof result.authenticated_organization_count === 'number') {
+      return result.authenticated_organization_count;
+    }
+    if (Array.isArray(result.authenticated_organization_ids)) {
+      return result.authenticated_organization_ids.length;
+    }
+    return result.organization_id ? 1 : 0;
+  }
+
+  function connectedStatusMessage(orgId, orgCount) {
+    if (orgCount > 1) return 'Connected ' + orgCount + ' organizations.';
+    return 'Connected' + (orgId ? ' to organization ' + orgId : '') + '.';
+  }
+
   function renderShell(container, state) {
     container.innerHTML = [
       '<style>',
@@ -182,7 +198,8 @@
   function handleVerifyResult(root, state, result) {
     if (isAuthenticated(result)) {
       var orgId = result.organization_id || state.targetOrgId || '';
-      setStatus(root, 'Connected' + (orgId ? ' to organization ' + orgId : '') + '.', 'success');
+      state.connectedOrgCount = authenticatedOrgCount(result);
+      setStatus(root, connectedStatusMessage(orgId, state.connectedOrgCount), 'success');
       renderComplete(root, state);
       return;
     }
@@ -250,7 +267,11 @@
 
   function renderComplete(root, state) {
     var body = root.querySelector('[data-body]');
-    body.innerHTML = '<p>' + escapeHtml(state.pluginLabel) + ' is connected in MCPViews.</p>';
+    var message = state.pluginLabel + ' is connected in MCPViews.';
+    if (state.connectedOrgCount > 1) {
+      message = state.pluginLabel + ' is connected to ' + state.connectedOrgCount + ' organizations in MCPViews.';
+    }
+    body.innerHTML = '<p>' + escapeHtml(message) + '</p>';
     body.appendChild(button('Close', 'plugin-code-auth-button primary', function () {
       var utils = window.__companionUtils || {};
       var sessionId = currentSessionId(root);
@@ -270,6 +291,7 @@
       email: '',
       code: '',
       organizations: [],
+      connectedOrgCount: 0,
     };
     renderShell(container, state);
     renderEmailForm(container, state);

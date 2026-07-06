@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use mcpviews_shared::{auth_dir, token_store::StoredToken, PluginAuth};
@@ -114,48 +115,140 @@ fn expires_at_from_response(result: &Value) -> Option<i64> {
         })
 }
 
-fn store_oauth_response_for_plugins(plugin_names: &[String], result: &Value) -> Result<(), String> {
-    let access_token = result
+fn organization_id_from_response(value: &Value) -> Option<String> {
+    value
+        .get("organization_id")
+        .or_else(|| value.get("organizationId"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+}
+
+fn stored_token_from_response(value: &Value) -> Result<StoredToken, String> {
+    let access_token = value
         .get("access_token")
+        .or_else(|| value.get("accessToken"))
         .and_then(|value| value.as_str())
         .ok_or_else(|| "Email-code response did not include an access_token.".to_string())?;
+
+    Ok(StoredToken {
+        access_token: access_token.to_string(),
+        refresh_token: value
+            .get("refresh_token")
+            .or_else(|| value.get("refreshToken"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string()),
+        expires_at: expires_at_from_response(value),
+    })
+}
+
+fn store_oauth_response_for_plugins_in_dir(
+    plugin_names: &[String],
+    result: &Value,
+    auth_dir: &Path,
+) -> Result<(), String> {
     let organization_id = result
         .get("organization_id")
+        .or_else(|| result.get("organizationId"))
         .and_then(|value| value.as_str())
         .ok_or_else(|| "Email-code response did not include an organization_id.".to_string())?;
 
-    let stored = StoredToken {
-        access_token: access_token.to_string(),
-        refresh_token: result
-            .get("refresh_token")
-            .and_then(|value| value.as_str())
-            .map(|value| value.to_string()),
-        expires_at: expires_at_from_response(result),
-    };
+    let mut stored_any = false;
+    let token_values = result
+        .get("organization_tokens")
+        .or_else(|| result.get("organizationTokens"))
+        .and_then(|value| value.as_array());
 
-    let auth_dir = auth_dir();
+    if let Some(tokens) = token_values {
+        for token_value in tokens {
+            let token_org_id = organization_id_from_response(token_value).ok_or_else(|| {
+                "Email-code organization token did not include an organization_id.".to_string()
+            })?;
+            let stored = stored_token_from_response(token_value)?;
+            for plugin_name in plugin_names {
+                mcpviews_shared::token_store::store_token_for_org(
+                    auth_dir,
+                    plugin_name,
+                    &token_org_id,
+                    &stored,
+                )?;
+            }
+            stored_any = true;
+        }
+    }
+
+    if !stored_any {
+        let stored = stored_token_from_response(result)?;
+        for plugin_name in plugin_names {
+            mcpviews_shared::token_store::store_token_for_org(
+                auth_dir,
+                plugin_name,
+                organization_id,
+                &stored,
+            )?;
+        }
+    }
+
     for plugin_name in plugin_names {
-        mcpviews_shared::token_store::store_token_for_org(
-            &auth_dir,
-            plugin_name,
-            organization_id,
-            &stored,
-        )?;
-        mcpviews_shared::token_store::set_default_org(&auth_dir, plugin_name, organization_id)?;
+        mcpviews_shared::token_store::set_default_org(auth_dir, plugin_name, organization_id)?;
     }
 
     Ok(())
 }
 
+fn store_oauth_response_for_plugins(plugin_names: &[String], result: &Value) -> Result<(), String> {
+    let auth_dir = auth_dir();
+    store_oauth_response_for_plugins_in_dir(plugin_names, result, &auth_dir)
+}
+
 fn storage_plugins_for_email_code(plugin_name: &str) -> Vec<String> {
     match plugin_name {
-        "decidr" => vec!["decidr".to_string(), "ludflow".to_string()],
+        "decidr" | "ludflow" => vec!["decidr".to_string(), "ludflow".to_string()],
         _ => vec![plugin_name.to_string()],
     }
 }
 
+fn authenticated_organization_ids(result: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    if let Some(tokens) = result
+        .get("organization_tokens")
+        .or_else(|| result.get("organizationTokens"))
+        .and_then(|value| value.as_array())
+    {
+        for token in tokens {
+            if let Some(org_id) = organization_id_from_response(token) {
+                if !ids.iter().any(|existing| existing == &org_id) {
+                    ids.push(org_id);
+                }
+            }
+        }
+    }
+
+    if ids.is_empty() {
+        if let Some(org_id) = organization_id_from_response(result) {
+            ids.push(org_id);
+        }
+    }
+
+    ids
+}
+
+fn response_has_oauth_tokens(result: &Value) -> bool {
+    result
+        .get("access_token")
+        .or_else(|| result.get("accessToken"))
+        .and_then(|value| value.as_str())
+        .is_some()
+        || result
+            .get("organization_tokens")
+            .or_else(|| result.get("organizationTokens"))
+            .and_then(|value| value.as_array())
+            .map(|tokens| !tokens.is_empty())
+            .unwrap_or(false)
+}
+
 fn redacted_response(result: &Value) -> Value {
     let mut redacted = result.clone();
+    let organization_ids = authenticated_organization_ids(result);
     if let Some(object) = redacted.as_object_mut() {
         object.remove("access_token");
         object.remove("accessToken");
@@ -165,8 +258,25 @@ fn redacted_response(result: &Value) -> Value {
         object.remove("tokenType");
         object.remove("expires_in");
         object.remove("expiresIn");
-        if result.get("access_token").is_some() || result.get("accessToken").is_some() {
+        object.remove("organization_tokens");
+        object.remove("organizationTokens");
+        if response_has_oauth_tokens(result) {
             object.insert("authenticated".to_string(), Value::Bool(true));
+        }
+        if !organization_ids.is_empty() {
+            object.insert(
+                "authenticated_organization_ids".to_string(),
+                Value::Array(
+                    organization_ids
+                        .iter()
+                        .map(|org_id| Value::String(org_id.clone()))
+                        .collect(),
+                ),
+            );
+            object.insert(
+                "authenticated_organization_count".to_string(),
+                Value::Number(organization_ids.len().into()),
+            );
         }
     }
     redacted
@@ -214,11 +324,7 @@ pub async fn verify_email_code(
     )
     .await?;
 
-    if result
-        .get("access_token")
-        .and_then(|value| value.as_str())
-        .is_some()
-    {
+    if response_has_oauth_tokens(&result) {
         let plugins = storage_plugins_for_email_code(plugin_name);
         store_oauth_response_for_plugins(&plugins, &result)?;
     }
@@ -245,6 +351,7 @@ mod tests {
 
         assert_eq!(redacted["organization_id"], "org_123");
         assert_eq!(redacted["authenticated"], true);
+        assert_eq!(redacted["authenticated_organization_count"], 1);
         assert!(redacted.get("access_token").is_none());
         assert!(redacted.get("refresh_token").is_none());
         assert!(redacted.get("token_type").is_none());
@@ -252,9 +359,95 @@ mod tests {
     }
 
     #[test]
+    fn redacts_nested_organization_token_material() {
+        let response = json!({
+            "status": true,
+            "organization_id": "org_2",
+            "organization_tokens": [
+                {
+                    "organization_id": "org_1",
+                    "access_token": "secret_access_1",
+                    "refresh_token": "secret_refresh_1",
+                    "token_type": "bearer",
+                    "expires_in": 3600
+                },
+                {
+                    "organization_id": "org_2",
+                    "access_token": "secret_access_2",
+                    "refresh_token": "secret_refresh_2",
+                    "token_type": "bearer",
+                    "expires_in": 3600
+                }
+            ]
+        });
+
+        let redacted = redacted_response(&response);
+        let serialized = redacted.to_string();
+
+        assert_eq!(redacted["authenticated"], true);
+        assert_eq!(redacted["authenticated_organization_count"], 2);
+        assert_eq!(
+            redacted["authenticated_organization_ids"],
+            json!(["org_1", "org_2"])
+        );
+        assert!(redacted.get("organization_tokens").is_none());
+        assert!(!serialized.contains("secret_access"));
+        assert!(!serialized.contains("secret_refresh"));
+    }
+
+    #[test]
+    fn stores_multi_org_tokens_for_all_storage_plugins() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = storage_plugins_for_email_code("ludflow");
+        let response = json!({
+            "status": true,
+            "organization_id": "org_2",
+            "organization_tokens": [
+                {
+                    "organization_id": "org_1",
+                    "access_token": "access_1",
+                    "refresh_token": "refresh_1",
+                    "expires_in": 3600
+                },
+                {
+                    "organization_id": "org_2",
+                    "access_token": "access_2",
+                    "refresh_token": "refresh_2",
+                    "expires_in": 3600
+                }
+            ]
+        });
+
+        store_oauth_response_for_plugins_in_dir(&plugins, &response, dir.path()).unwrap();
+
+        for plugin_name in ["decidr", "ludflow"] {
+            assert_eq!(
+                mcpviews_shared::token_store::list_orgs(dir.path(), plugin_name),
+                vec!["org_1".to_string(), "org_2".to_string()]
+            );
+            assert_eq!(
+                mcpviews_shared::token_store::load_default_org(dir.path(), plugin_name),
+                Some("org_2".to_string())
+            );
+            let token = mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(
+                dir.path(),
+                plugin_name,
+                "org_1",
+            )
+            .unwrap();
+            assert_eq!(token.access_token, "access_1");
+            assert_eq!(token.refresh_token, Some("refresh_1".to_string()));
+        }
+    }
+
+    #[test]
     fn decidr_email_code_storage_uses_backend_owned_plugin_allowlist() {
         assert_eq!(
             storage_plugins_for_email_code("decidr"),
+            vec!["decidr".to_string(), "ludflow".to_string()]
+        );
+        assert_eq!(
+            storage_plugins_for_email_code("ludflow"),
             vec!["decidr".to_string(), "ludflow".to_string()]
         );
         assert_eq!(

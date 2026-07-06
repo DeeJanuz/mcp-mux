@@ -377,17 +377,17 @@ async fn list_contexts_value(
             }
         }
 
-        let summary = ContextPluginSummary {
-            token_contexts: token_context_map(&provider.plugin_name, &app_state.auth_dir),
-            project_defaults: project_defaults
-                .iter()
-                .filter(|default| default.plugin_name == provider.plugin_name)
-                .cloned()
-                .collect(),
-            provider,
-        };
-        plugins
-            .push(plugin_summary_value(&summary, &options, app_state, &providers_by_name).await?);
+        let summary = context_plugin_summary(provider, &project_defaults, &app_state.auth_dir);
+        plugins.push(
+            plugin_summary_value(
+                &summary,
+                &options,
+                app_state,
+                &providers_by_name,
+                &project_defaults,
+            )
+            .await?,
+        );
     }
 
     Ok(serde_json::json!({
@@ -403,8 +403,9 @@ async fn plugin_summary_value(
     options: &ContextListOptions,
     app_state: &AppState,
     providers_by_name: &BTreeMap<String, ContextProviderInfo>,
+    project_defaults: &[ProjectContextDefault],
 ) -> Result<Value, String> {
-    let catalog = if options.include_contexts && options.needs_catalog() {
+    let mut catalog = if options.include_contexts && options.needs_catalog() {
         Some(provider_catalog(summary, options.refresh_catalog, app_state).await?)
     } else {
         None
@@ -420,6 +421,42 @@ async fn plugin_summary_value(
         {
             summary.token_contexts =
                 token_context_map(&summary.provider.plugin_name, &app_state.auth_dir);
+        }
+    }
+    if options.include_contexts
+        && options.needs_catalog()
+        && catalog
+            .as_ref()
+            .map(|contexts| contexts.is_empty())
+            .unwrap_or(false)
+    {
+        if let Some(peer_catalog) = peer_catalog_for_shared_oauth_backfill(
+            &summary,
+            providers_by_name,
+            project_defaults,
+            options.refresh_catalog,
+            app_state,
+        )
+        .await
+        {
+            let allowed_org_ids: Vec<String> = peer_catalog
+                .iter()
+                .map(|context| context.id.clone())
+                .collect();
+            if reconcile_shared_tokens_for_provider(
+                &summary.provider,
+                providers_by_name,
+                &allowed_org_ids,
+                &app_state.auth_dir,
+            )? > 0
+            {
+                summary.token_contexts =
+                    token_context_map(&summary.provider.plugin_name, &app_state.auth_dir);
+                catalog = match provider_catalog(&summary, true, app_state).await {
+                    Ok(refreshed) if !refreshed.is_empty() => Some(refreshed),
+                    _ => Some(peer_catalog),
+                };
+            }
         }
     }
 
@@ -446,6 +483,57 @@ async fn plugin_summary_value(
     }
 
     Ok(value)
+}
+
+fn context_plugin_summary(
+    provider: ContextProviderInfo,
+    project_defaults: &[ProjectContextDefault],
+    auth_dir: &Path,
+) -> ContextPluginSummary {
+    ContextPluginSummary {
+        token_contexts: token_context_map(&provider.plugin_name, auth_dir),
+        project_defaults: project_defaults
+            .iter()
+            .filter(|default| default.plugin_name == provider.plugin_name)
+            .cloned()
+            .collect(),
+        provider,
+    }
+}
+
+async fn peer_catalog_for_shared_oauth_backfill(
+    summary: &ContextPluginSummary,
+    providers_by_name: &BTreeMap<String, ContextProviderInfo>,
+    project_defaults: &[ProjectContextDefault],
+    refresh_catalog: bool,
+    app_state: &AppState,
+) -> Option<Vec<ProviderContext>> {
+    let target_auth = summary.provider.auth.as_ref()?;
+    let peer_plugin =
+        crate::shared_oauth_tokens::shared_oauth_peer_plugin(&summary.provider.plugin_name)?;
+    let peer_provider = providers_by_name.get(peer_plugin)?;
+    let peer_auth = peer_provider.auth.as_ref()?;
+    if !crate::shared_oauth_tokens::oauth_auths_share_issuer_client(peer_auth, target_auth) {
+        return None;
+    }
+
+    let peer_summary =
+        context_plugin_summary(peer_provider.clone(), project_defaults, &app_state.auth_dir);
+    if first_usable_context_id(&peer_summary).is_none() {
+        return None;
+    }
+
+    match provider_catalog(&peer_summary, refresh_catalog, app_state).await {
+        Ok(catalog) if !catalog.is_empty() => Some(catalog),
+        Ok(_) => None,
+        Err(error) => {
+            eprintln!(
+                "[mcpviews] Shared OAuth peer catalog unavailable for '{}' via '{}': {}",
+                summary.provider.plugin_name, peer_plugin, error
+            );
+            None
+        }
+    }
 }
 
 async fn context_rows(
@@ -1156,7 +1244,73 @@ fn text_result(value: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{routing::post, Json, Router};
     use tempfile::tempdir;
+    use tokio::net::TcpListener;
+
+    fn oauth(client_id: &str, token_url: &str) -> PluginAuth {
+        PluginAuth::OAuth {
+            client_id: Some(client_id.to_string()),
+            auth_url: "https://app.ludflow.com/oauth/authorize".to_string(),
+            token_url: token_url.to_string(),
+            scopes: vec!["mcp:tools".to_string()],
+            email_code_auth: None,
+        }
+    }
+
+    fn context_manifest(name: &str, mcp_url: &str, auth: PluginAuth) -> PluginManifest {
+        PluginManifest {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            standalone_group: None,
+            standalone_group_label: None,
+            renderers: std::collections::HashMap::new(),
+            frame_origins: vec![],
+            connect_origins: vec![],
+            mcp: Some(mcpviews_shared::PluginMcpConfig {
+                url: mcp_url.to_string(),
+                auth: Some(auth),
+                tool_prefix: name.to_string(),
+            }),
+            renderer_definitions: vec![],
+            tool_rules: std::collections::HashMap::new(),
+            no_auto_push: vec![],
+            registry_index: None,
+            download_url: None,
+            prompt_definitions: vec![],
+            plugin_rules: vec![],
+            plugin_rule_definitions: vec![],
+            startup_rules: vec![],
+            setup_questions: vec![],
+            init_context: None,
+            context_provider: Some(PluginContextProvider {
+                context_type: "organization".to_string(),
+                routing_arg: "organization_id".to_string(),
+                provider_tool: "list_organizations".to_string(),
+                label_fields: vec!["name".to_string()],
+            }),
+        }
+    }
+
+    async fn mock_catalog_handler() -> Json<Value> {
+        Json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "content": [{
+                    "type": "text",
+                    "text": serde_json::json!({
+                        "data": [{
+                            "id": "org_1",
+                            "name": "Shared Org",
+                            "slug": "shared-org",
+                            "role": "OWNER"
+                        }]
+                    }).to_string()
+                }]
+            }
+        }))
+    }
 
     #[test]
     fn context_cache_expires_entries() {
@@ -1313,5 +1467,66 @@ mod tests {
             collect_compact_project_context_defaults(Some(&project_path), &manifests, &auth_dir);
         assert_eq!(compact["defaults"][0]["status"], "valid");
         assert!(compact["defaults"][0].get("label").is_none());
+    }
+
+    #[tokio::test]
+    async fn list_contexts_backfills_missing_peer_from_source_catalog() {
+        let dir = tempdir().unwrap();
+        let auth_dir = dir.path().join("auth");
+        let store =
+            mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().join("plugins"));
+        let state = AppState::new_with_store_and_auth_dir(store, auth_dir.clone());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route("/", post(mock_catalog_handler)),
+            )
+            .await
+            .unwrap();
+        });
+        let mcp_url = format!("http://{addr}/");
+        let auth = oauth("shared-client", "https://app.ludflow.com/oauth/token");
+        {
+            let mut registry = state.plugin_registry.lock().unwrap();
+            registry
+                .add_plugin(context_manifest("decidr", &mcp_url, auth.clone()))
+                .unwrap();
+            registry
+                .add_plugin(context_manifest("ludflow", &mcp_url, auth))
+                .unwrap();
+        }
+
+        let token = mcpviews_shared::token_store::StoredToken {
+            access_token: "source_access".to_string(),
+            refresh_token: Some("source_refresh".to_string()),
+            expires_at: Some(4_102_444_800),
+        };
+        mcpviews_shared::token_store::store_token_for_org(&auth_dir, "ludflow", "org_1", &token)
+            .unwrap();
+
+        let response = list_contexts_value(
+            ContextListOptions::from_args(&serde_json::json!({
+                "plugin_names": ["decidr"],
+                "include_contexts": true,
+                "include_labels": true,
+                "refresh_catalog": true
+            }))
+            .unwrap(),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            mcpviews_shared::token_store::load_stored_token_for_org_unvalidated(
+                &auth_dir, "decidr", "org_1"
+            )
+            .is_some()
+        );
+        assert_eq!(response["plugins"][0]["contexts"][0]["context_id"], "org_1");
+        assert_eq!(response["plugins"][0]["contexts"][0]["status"], "valid");
+        assert_eq!(response["plugins"][0]["contexts"][0]["label"], "Shared Org");
     }
 }

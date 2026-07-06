@@ -201,11 +201,46 @@ fn store_oauth_response_for_plugins(plugin_names: &[String], result: &Value) -> 
     store_oauth_response_for_plugins_in_dir(plugin_names, result, &auth_dir)
 }
 
-fn storage_plugins_for_email_code(plugin_name: &str) -> Vec<String> {
-    match plugin_name {
-        "decidr" | "ludflow" => vec!["decidr".to_string(), "ludflow".to_string()],
-        _ => vec![plugin_name.to_string()],
+fn storage_plugins_for_email_code_from_auths(
+    plugin_name: &str,
+    auth_by_plugin: &BTreeMap<String, PluginAuth>,
+) -> Vec<String> {
+    let mut plugins = vec![plugin_name.to_string()];
+    let Some(plugin_auth) = auth_by_plugin.get(plugin_name) else {
+        return plugins;
+    };
+    let Some(peer_plugin) = crate::shared_oauth_tokens::shared_oauth_peer_plugin(plugin_name)
+    else {
+        return plugins;
+    };
+    let Some(peer_auth) = auth_by_plugin.get(peer_plugin) else {
+        return plugins;
+    };
+    if crate::shared_oauth_tokens::oauth_auths_share_issuer_client(plugin_auth, peer_auth) {
+        plugins.push(peer_plugin.to_string());
     }
+    plugins.sort();
+    plugins
+}
+
+fn storage_plugins_for_email_code(plugin_name: &str, state: &Arc<AppState>) -> Vec<String> {
+    let auth_by_plugin: BTreeMap<String, PluginAuth> = {
+        let registry = state.plugin_registry.lock().unwrap();
+        [
+            Some(plugin_name),
+            crate::shared_oauth_tokens::shared_oauth_peer_plugin(plugin_name),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(|name| {
+            registry
+                .resolve_plugin_auth(name)
+                .ok()
+                .map(|auth| (name.to_string(), auth))
+        })
+        .collect()
+    };
+    storage_plugins_for_email_code_from_auths(plugin_name, &auth_by_plugin)
 }
 
 fn reconcile_shared_oauth_after_email_code(
@@ -378,7 +413,7 @@ pub async fn verify_email_code(
     .await?;
 
     if response_has_oauth_tokens(&result) {
-        let plugins = storage_plugins_for_email_code(plugin_name);
+        let plugins = storage_plugins_for_email_code(plugin_name, state);
         store_oauth_response_for_plugins(&plugins, &result)?;
         reconcile_shared_oauth_after_email_code(&plugins, &result, state);
     }
@@ -389,6 +424,16 @@ pub async fn verify_email_code(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn oauth(client_id: &str, token_url: &str) -> PluginAuth {
+        PluginAuth::OAuth {
+            client_id: Some(client_id.to_string()),
+            auth_url: "https://app.ludflow.com/oauth/authorize".to_string(),
+            token_url: token_url.to_string(),
+            scopes: vec!["mcp:tools".to_string()],
+            email_code_auth: None,
+        }
+    }
 
     #[test]
     fn redacts_token_material_from_email_code_response() {
@@ -452,7 +497,17 @@ mod tests {
     #[test]
     fn stores_multi_org_tokens_for_all_storage_plugins() {
         let dir = tempfile::tempdir().unwrap();
-        let plugins = storage_plugins_for_email_code("ludflow");
+        let auth_by_plugin = BTreeMap::from([
+            (
+                "ludflow".to_string(),
+                oauth("shared-client", "https://app.ludflow.com/oauth/token"),
+            ),
+            (
+                "decidr".to_string(),
+                oauth("shared-client", "https://app.ludflow.com/oauth/token"),
+            ),
+        ]);
+        let plugins = storage_plugins_for_email_code_from_auths("ludflow", &auth_by_plugin);
         let response = json!({
             "status": true,
             "organization_id": "org_2",
@@ -495,18 +550,52 @@ mod tests {
     }
 
     #[test]
-    fn decidr_email_code_storage_uses_backend_owned_plugin_allowlist() {
+    fn decidr_email_code_storage_uses_shared_oauth_fingerprint_allowlist() {
+        let auth_by_plugin = BTreeMap::from([
+            (
+                "ludflow".to_string(),
+                oauth("shared-client", "https://app.ludflow.com/oauth/token"),
+            ),
+            (
+                "decidr".to_string(),
+                oauth("shared-client", "https://app.ludflow.com/oauth/token"),
+            ),
+            (
+                "custom-plugin".to_string(),
+                oauth("other-client", "https://custom.example/oauth/token"),
+            ),
+        ]);
+
         assert_eq!(
-            storage_plugins_for_email_code("decidr"),
+            storage_plugins_for_email_code_from_auths("decidr", &auth_by_plugin),
             vec!["decidr".to_string(), "ludflow".to_string()]
         );
         assert_eq!(
-            storage_plugins_for_email_code("ludflow"),
+            storage_plugins_for_email_code_from_auths("ludflow", &auth_by_plugin),
             vec!["decidr".to_string(), "ludflow".to_string()]
         );
         assert_eq!(
-            storage_plugins_for_email_code("custom-plugin"),
+            storage_plugins_for_email_code_from_auths("custom-plugin", &auth_by_plugin),
             vec!["custom-plugin".to_string()]
+        );
+    }
+
+    #[test]
+    fn email_code_storage_refuses_peer_when_oauth_fingerprint_differs() {
+        let auth_by_plugin = BTreeMap::from([
+            (
+                "ludflow".to_string(),
+                oauth("shared-client", "https://app.ludflow.com/oauth/token"),
+            ),
+            (
+                "decidr".to_string(),
+                oauth("different-client", "https://app.ludflow.com/oauth/token"),
+            ),
+        ]);
+
+        assert_eq!(
+            storage_plugins_for_email_code_from_auths("ludflow", &auth_by_plugin),
+            vec!["ludflow".to_string()]
         );
     }
 }

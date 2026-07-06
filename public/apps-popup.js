@@ -40,6 +40,20 @@
       onSelect: function (renderer, rendererLabel) {
         selectRenderer(renderer && renderer.name, rendererLabel);
       },
+      onAuthAction: function (context, plugin) {
+        var contextId = context && (context.context_id || context.contextId);
+        var pluginName = plugin && plugin.plugin;
+        if (!contextId || !pluginName) return;
+        invoke('start_plugin_auth', {
+          pluginName: pluginName,
+          orgId: contextId,
+          authFlow: 'email_code',
+        }).then(function () {
+          closePopup();
+        }).catch(function (error) {
+          console.error('[apps-popup] Failed to open plugin auth:', error);
+        });
+      },
     });
   }
 

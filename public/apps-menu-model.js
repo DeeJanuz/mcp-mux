@@ -101,10 +101,17 @@
     return element;
   }
 
-  function isValidContextAuth(context) {
+  function isLaunchableContext(context) {
     if (!context || typeof context !== 'object') return false;
-    var status = String(context.status || '').toLowerCase();
-    return context.usable === true && status === 'valid';
+    return context.usable === true;
+  }
+
+  function hasContextAuthAction(context, options) {
+    return !!(
+      context &&
+      typeof options.onAuthAction === 'function' &&
+      (context.contextId || context.context_id || context.auth_action || context.authAction)
+    );
   }
 
   function setContextExpanded(contextBlock, expanded) {
@@ -176,16 +183,31 @@
         return item;
       }
 
+      function renderContextAuthAction(context) {
+        var action = createClickable(options.itemTag || 'button');
+        action.className = 'apps-context-auth-action';
+        action.setAttribute('data-plugin', plugin.plugin || '');
+        if (context && context.contextId) action.setAttribute('data-context-id', context.contextId);
+        action.textContent = options.authActionLabel || 'Sign in';
+        action.addEventListener('click', function (event) {
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          if (typeof options.onAuthAction === 'function') {
+            options.onAuthAction(context && context.raw, plugin.raw);
+          }
+        });
+        return action;
+      }
+
       if (plugin.contexts.length > 0) {
         plugin.contexts.forEach(function (context) {
-          var contextAuthValid = isValidContextAuth(context);
+          var contextLaunchable = isLaunchableContext(context);
           var contextBlock = document.createElement('div');
           contextBlock.className = 'apps-context-block';
           var contextHeader = document.createElement('div');
           contextHeader.className = 'apps-context-header';
           var contextToggle = createClickable('button');
           contextToggle.className = 'apps-context-toggle';
-          contextToggle.setAttribute('aria-expanded', contextAuthValid ? 'true' : 'false');
+          contextToggle.setAttribute('aria-expanded', contextLaunchable ? 'true' : 'false');
           var contextChevron = document.createElement('span');
           contextChevron.className = 'apps-context-chevron';
           contextChevron.textContent = options.chevronText || '>';
@@ -215,11 +237,15 @@
           contextBlock.appendChild(contextHeader);
           var contextItems = document.createElement('div');
           contextItems.className = 'apps-context-items';
-          plugin.renderers.forEach(function (renderer) {
-            contextItems.appendChild(renderRendererItem(renderer, context));
-          });
+          if (contextLaunchable) {
+            plugin.renderers.forEach(function (renderer) {
+              contextItems.appendChild(renderRendererItem(renderer, context));
+            });
+          } else if (hasContextAuthAction(context, options)) {
+            contextItems.appendChild(renderContextAuthAction(context));
+          }
           contextBlock.appendChild(contextItems);
-          setContextExpanded(contextBlock, contextAuthValid);
+          setContextExpanded(contextBlock, contextLaunchable);
           contextToggle.addEventListener('click', function (event) {
             if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
             setContextExpanded(contextBlock, contextBlock.classList.contains('apps-context-collapsed'));
@@ -266,7 +292,7 @@
   window.__mcpviewsAppsMenu = {
     collapseAll: collapseAll,
     humanizePluginName: humanizePluginName,
-    isValidContextAuth: isValidContextAuth,
+    isLaunchableContext: isLaunchableContext,
     normalizePlugins: normalizePlugins,
     pluginRank: pluginRank,
     renderAppsMenu: renderAppsMenu,

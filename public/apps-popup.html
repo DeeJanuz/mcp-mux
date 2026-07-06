@@ -173,6 +173,28 @@
       display: none;
     }
 
+    .apps-context-auth-action {
+      min-height: 30px;
+      width: calc(100% - 32px);
+      margin: 4px 16px 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--popup-border);
+      border-radius: 6px;
+      background: rgba(31, 111, 235, 0.08);
+      color: var(--popup-text-primary);
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      text-align: left;
+    }
+
+    .apps-context-auth-action:hover,
+    .apps-context-auth-action:focus-visible {
+      border-color: var(--popup-accent);
+      color: var(--popup-accent);
+    }
+
     .apps-renderer-item {
       min-height: 30px;
       padding: 6px 16px 6px 32px;

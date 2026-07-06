@@ -2045,6 +2045,18 @@
               console.error('[apps] Failed to set project default context:', err);
             });
           },
+          onAuthAction: function (context, plugin) {
+            var contextId = context && (context.context_id || context.contextId);
+            var pluginName = plugin && plugin.plugin;
+            if (!contextId || !pluginName || !window.__TAURI__ || !window.__TAURI__.core) return;
+            window.__TAURI__.core.invoke('start_plugin_auth', {
+              pluginName: pluginName,
+              orgId: contextId,
+              authFlow: 'email_code',
+            }).catch(function (err) {
+              console.error('[apps] Failed to open plugin auth:', err);
+            });
+          },
         });
       })
       .catch(function(err) {

@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 var __dirnameResolved = dirname(fileURLToPath(import.meta.url));
 var appsMenuModelCode = readFileSync(join(__dirnameResolved, '../public/apps-menu-model.js'), 'utf8').replace(/\r\n/g, '\n');
+var mainSource = readFileSync(join(__dirnameResolved, '../public/main.js'), 'utf8').replace(/\r\n/g, '\n');
+var appsPopupSource = readFileSync(join(__dirnameResolved, '../public/apps-popup.js'), 'utf8').replace(/\r\n/g, '\n');
 
 function loadAppsMenuModel() {
   new Function(appsMenuModelCode).call(globalThis);
@@ -136,7 +138,48 @@ describe('apps menu model', function () {
     );
   });
 
-  it('auto-collapses contexts whose auth is not valid', function () {
+  it('keeps usable refreshable contexts expanded and launchable', function () {
+    var onSelect = vi.fn();
+    var root = document.getElementById('apps');
+
+    window.__mcpviewsAppsMenu.renderAppsMenu(root, [
+      {
+        plugin: 'decidr',
+        contexts: [
+          {
+            context_id: 'org_refreshable',
+            label: 'Refreshable Org',
+            status: 'expired_refreshable',
+            usable: true,
+            routing_arg: 'organization_id',
+          },
+        ],
+        renderers: [{ name: 'decidr_dashboard', label: 'Dashboard' }],
+      },
+    ], {
+      onSelect: onSelect,
+    });
+
+    var block = root.querySelector('.apps-context-block');
+    expect(window.__mcpviewsAppsMenu.isLaunchableContext({
+      status: 'expired_refreshable',
+      usable: true,
+    })).toBe(true);
+    expect(block.classList.contains('apps-context-collapsed')).toBe(false);
+    expect(block.querySelector('.apps-context-toggle').getAttribute('aria-expanded')).toBe('true');
+    expect(block.querySelector('.apps-renderer-item').textContent).toBe('Dashboard');
+
+    block.querySelector('.apps-renderer-item').click();
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'decidr_dashboard' }),
+      'Dashboard',
+      expect.objectContaining({ plugin: 'decidr' }),
+      expect.objectContaining({ context_id: 'org_refreshable' }),
+    );
+  });
+
+  it('auto-collapses unusable contexts and offers auth instead of renderer launch', function () {
+    var onAuthAction = vi.fn();
     var root = document.getElementById('apps');
 
     window.__mcpviewsAppsMenu.renderAppsMenu(root, [
@@ -149,6 +192,10 @@ describe('apps menu model', function () {
             status: 'missing',
             usable: false,
             routing_arg: 'organization_id',
+            auth_action: {
+              tool: 'start_plugin_auth',
+              arguments: { plugin_name: 'decidr', organization_id: 'org_missing' },
+            },
           },
           {
             context_id: 'org_valid',
@@ -160,17 +207,40 @@ describe('apps menu model', function () {
         ],
         renderers: [{ name: 'decidr_dashboard', label: 'Dashboard' }],
       },
-    ]);
+    ], {
+      onAuthAction: onAuthAction,
+    });
 
     var blocks = Array.from(root.querySelectorAll('.apps-context-block'));
     expect(blocks[0].classList.contains('apps-context-collapsed')).toBe(true);
     expect(blocks[0].querySelector('.apps-context-toggle').getAttribute('aria-expanded')).toBe('false');
+    expect(blocks[0].querySelector('.apps-renderer-item')).toBe(null);
+    expect(blocks[0].querySelector('.apps-context-auth-action').textContent).toBe('Sign in');
     expect(blocks[1].classList.contains('apps-context-collapsed')).toBe(false);
     expect(blocks[1].querySelector('.apps-context-toggle').getAttribute('aria-expanded')).toBe('true');
 
     blocks[0].querySelector('.apps-context-toggle').click();
     expect(blocks[0].classList.contains('apps-context-collapsed')).toBe(false);
     expect(blocks[0].querySelector('.apps-context-toggle').getAttribute('aria-expanded')).toBe('true');
+
+    blocks[0].querySelector('.apps-context-auth-action').click();
+    expect(onAuthAction).toHaveBeenCalledWith(
+      expect.objectContaining({ context_id: 'org_missing' }),
+      expect.objectContaining({ plugin: 'decidr' }),
+    );
+  });
+
+  it('wires Apps menu auth actions to email-code plugin auth', function () {
+    expect(mainSource).toContain('onAuthAction: function (context, plugin)');
+    expect(mainSource).toContain("window.__TAURI__.core.invoke('start_plugin_auth'");
+    expect(mainSource).toContain('pluginName: pluginName');
+    expect(mainSource).toContain('orgId: contextId');
+    expect(mainSource).toContain("authFlow: 'email_code'");
+    expect(appsPopupSource).toContain('onAuthAction: function (context, plugin)');
+    expect(appsPopupSource).toContain("invoke('start_plugin_auth'");
+    expect(appsPopupSource).toContain('pluginName: pluginName');
+    expect(appsPopupSource).toContain('orgId: contextId');
+    expect(appsPopupSource).toContain("authFlow: 'email_code'");
   });
 
   it('uses button controls for the native popup caller', function () {

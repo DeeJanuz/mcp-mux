@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.70] - 2026-07-06
+
 ### Changed
 - Store multi-organization email-code OAuth responses for every returned org under both DecidR and Ludflow plugin credential stores, while keeping token material redacted from renderer and AI-visible responses.
 - Collapse Apps menu organization rows by default when their plugin auth context is not valid, while keeping valid org rows expanded and manually expandable rows available for reconnect paths.

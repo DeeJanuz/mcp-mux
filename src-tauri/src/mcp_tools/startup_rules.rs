@@ -67,6 +67,8 @@ pub(crate) struct ProjectStartupRulesConfig {
     pub startup_rules: BTreeMap<String, StartupRuleState>,
     #[serde(default)]
     pub context_defaults: Vec<ProjectContextDefault>,
+    #[serde(default)]
+    pub project_context_hints: Vec<ProjectContextHint>,
 }
 
 impl Default for ProjectStartupRulesConfig {
@@ -75,6 +77,7 @@ impl Default for ProjectStartupRulesConfig {
             schema_version: PROJECT_CONFIG_SCHEMA_VERSION,
             startup_rules: BTreeMap::new(),
             context_defaults: Vec::new(),
+            project_context_hints: Vec::new(),
         }
     }
 }
@@ -88,6 +91,17 @@ pub(crate) struct ProjectContextDefault {
     pub scope: String,
     #[serde(default)]
     pub target_name: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ProjectContextHint {
+    pub plugin_name: String,
+    pub key: String,
+    pub value: String,
     #[serde(default)]
     pub label: Option<String>,
     #[serde(default)]

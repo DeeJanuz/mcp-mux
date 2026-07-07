@@ -1,5 +1,5 @@
 use crate::mcp_tools::startup_rules::{
-    load_or_create_project_config, save_project_config, ProjectContextDefault,
+    load_or_create_project_config, save_project_config, ProjectContextDefault, ProjectContextHint,
 };
 use crate::plugin::{oauth_token_needs_preemptive_refresh, try_refresh_oauth, OAuthRefreshInfo};
 use crate::state::AppState;
@@ -214,6 +214,69 @@ pub(crate) fn collect_compact_project_context_defaults(
     })
 }
 
+pub(crate) fn collect_compact_project_context_hints(project_path: Option<&str>) -> Value {
+    let Some(project_path) = project_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    else {
+        return Value::Null;
+    };
+
+    let config = match load_or_create_project_config(&project_path) {
+        Ok(config) => config,
+        Err(error) => {
+            return serde_json::json!({
+                "status": "error",
+                "message": error,
+            });
+        }
+    };
+
+    let hints: Vec<Value> = config
+        .project_context_hints
+        .iter()
+        .map(|hint| {
+            serde_json::json!({
+                "plugin_name": hint.plugin_name,
+                "key": hint.key,
+                "value": hint.value,
+                "label": hint.label,
+                "default_source": "project",
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "project_path": project_path.display().to_string(),
+        "hints": hints,
+    })
+}
+
+pub(crate) fn project_context_hints_for_plugin(
+    project_path: Option<&str>,
+    plugin_name: &str,
+) -> BTreeMap<String, String> {
+    let Some(project_path) = project_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    else {
+        return BTreeMap::new();
+    };
+
+    let Ok(config) = load_or_create_project_config(&project_path) else {
+        return BTreeMap::new();
+    };
+
+    config
+        .project_context_hints
+        .into_iter()
+        .filter(|hint| hint.plugin_name == plugin_name)
+        .map(|hint| (hint.key, hint.value))
+        .collect()
+}
+
 pub(crate) async fn list_contexts(arguments: Value, app_state: &AppState) -> Result<Value, String> {
     let options = ContextListOptions::from_args(&arguments)?;
     let response = list_contexts_value(options, app_state).await?;
@@ -279,6 +342,32 @@ pub(crate) async fn set_context_default(
         "status": "saved",
         "project_path": project_path,
         "default": default,
+    })))
+}
+
+pub(crate) async fn set_project_context_hint(
+    arguments: Value,
+    app_state: &AppState,
+) -> Result<Value, String> {
+    let project_path = required_string(&arguments, "project_path")?;
+    let plugin_name = required_string(&arguments, "plugin_name")?;
+    let key = normalize_hint_key(&required_string(&arguments, "key")?)?;
+    let value = required_string(&arguments, "value")?;
+    let label = optional_string(&arguments, "label");
+
+    let hint = set_project_context_hint_inner(
+        Path::new(&project_path),
+        &plugin_name,
+        &key,
+        &value,
+        label.as_deref(),
+        app_state,
+    )?;
+
+    Ok(text_result(serde_json::json!({
+        "status": "saved",
+        "project_path": project_path,
+        "hint": hint,
     })))
 }
 
@@ -352,6 +441,42 @@ fn set_context_default_inner(
     config.context_defaults.push(default.clone());
     save_project_config(project_path, &config)?;
     Ok(default)
+}
+
+fn set_project_context_hint_inner(
+    project_path: &Path,
+    plugin_name: &str,
+    key: &str,
+    value: &str,
+    label: Option<&str>,
+    app_state: &AppState,
+) -> Result<ProjectContextHint, String> {
+    let plugin_exists = {
+        let registry = app_state.plugin_registry.lock().unwrap();
+        registry
+            .manifests
+            .iter()
+            .any(|manifest| manifest.name == plugin_name)
+    };
+    if !plugin_exists {
+        return Err(format!("Plugin '{}' is not installed.", plugin_name));
+    }
+
+    let mut config = load_or_create_project_config(project_path)?;
+    config
+        .project_context_hints
+        .retain(|existing| !(existing.plugin_name == plugin_name && existing.key == key));
+
+    let hint = ProjectContextHint {
+        plugin_name: plugin_name.to_string(),
+        key: key.to_string(),
+        value: value.to_string(),
+        label: label.map(str::to_string),
+        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+    };
+    config.project_context_hints.push(hint.clone());
+    save_project_config(project_path, &config)?;
+    Ok(hint)
 }
 
 async fn list_contexts_value(
@@ -1232,6 +1357,34 @@ fn normalize_scope(scope: &str) -> Result<String, String> {
     }
 }
 
+fn normalize_hint_key(key: &str) -> Result<String, String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Err("key is required.".to_string());
+    }
+    if key
+        .chars()
+        .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.'))
+    {
+        return Err(
+            "key may contain only letters, numbers, underscore, hyphen, or dot.".to_string(),
+        );
+    }
+    let lowered = key.to_ascii_lowercase();
+    let key_parts = lowered.split(['_', '-', '.']);
+    if lowered.contains("token")
+        || lowered.contains("secret")
+        || lowered.contains("password")
+        || lowered.contains("api_key")
+        || lowered.contains("credential")
+        || lowered.contains("authorization")
+        || key_parts.clone().any(|part| part == "auth")
+    {
+        return Err("project context hints must not store auth or secret material.".to_string());
+    }
+    Ok(key.to_string())
+}
+
 fn text_result(value: Value) -> Value {
     serde_json::json!({
         "content": [{
@@ -1393,6 +1546,57 @@ mod tests {
         assert!(compact["defaults"][0].get("plugin_label").is_none());
         assert!(compact["defaults"][0].get("access_token").is_none());
         assert!(compact["defaults"][0].get("refresh_token").is_none());
+    }
+
+    #[test]
+    fn project_context_hint_round_trip_is_separate_from_auth_defaults() {
+        let dir = tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let auth_dir = dir.path().join("auth");
+        let store =
+            mcpviews_shared::plugin_store::PluginStore::with_dir(dir.path().join("plugins"));
+        let state = AppState::new_with_store_and_auth_dir(store, auth_dir);
+        state
+            .plugin_registry
+            .lock()
+            .unwrap()
+            .add_plugin(crate::test_utils::test_manifest("decidr"))
+            .unwrap();
+
+        let hint = set_project_context_hint_inner(
+            &project_dir,
+            "decidr",
+            "project_id",
+            "proj_1",
+            Some("Tribe-X"),
+            &state,
+        )
+        .unwrap();
+
+        assert_eq!(hint.key, "project_id");
+        let config = load_or_create_project_config(&project_dir).unwrap();
+        assert!(config.context_defaults.is_empty());
+        assert_eq!(config.project_context_hints.len(), 1);
+        assert_eq!(config.project_context_hints[0].value, "proj_1");
+
+        let project_path = project_dir.display().to_string();
+        let compact = collect_compact_project_context_hints(Some(&project_path));
+        assert_eq!(compact["hints"][0]["plugin_name"], "decidr");
+        assert_eq!(compact["hints"][0]["key"], "project_id");
+        assert_eq!(compact["hints"][0]["value"], "proj_1");
+        assert!(compact["hints"][0].get("access_token").is_none());
+        assert!(compact["hints"][0].get("refresh_token").is_none());
+
+        let injected = project_context_hints_for_plugin(Some(&project_path), "decidr");
+        assert_eq!(
+            injected.get("project_id").map(String::as_str),
+            Some("proj_1")
+        );
+        assert!(normalize_hint_key("api_token").is_err());
+        assert!(normalize_hint_key("authorization").is_err());
+        assert!(normalize_hint_key("oauth-credential").is_err());
+        assert!(normalize_hint_key("client.auth").is_err());
     }
 
     #[test]

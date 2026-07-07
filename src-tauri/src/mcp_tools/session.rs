@@ -165,7 +165,7 @@ pub(super) async fn call_init_session(
             &app_state.auth_dir,
         );
     }
-    let plugin_contexts = collect_plugin_init_contexts(&app_state).await;
+    let plugin_contexts = collect_plugin_init_contexts(&app_state, project_path).await;
 
     let mut response = if include_runtime_context {
         let (
@@ -224,6 +224,14 @@ pub(super) async fn call_init_session(
     };
     if !compact_context_defaults.is_null() {
         response_obj.insert("context_defaults".to_string(), compact_context_defaults);
+    }
+    let compact_project_context_hints =
+        crate::context_layer::collect_compact_project_context_hints(project_path);
+    if !compact_project_context_hints.is_null() {
+        response_obj.insert(
+            "project_context_hints".to_string(),
+            compact_project_context_hints,
+        );
     }
 
     Ok(serde_json::json!({
@@ -375,7 +383,10 @@ fn plugin_auth_header_for_context(
     }
 }
 
-async fn collect_plugin_init_contexts(app_state: &Arc<AppState>) -> Value {
+async fn collect_plugin_init_contexts(
+    app_state: &Arc<AppState>,
+    project_path: Option<&str>,
+) -> Value {
     let providers = {
         let registry = app_state.plugin_registry.lock().unwrap();
         registry
@@ -396,7 +407,7 @@ async fn collect_plugin_init_contexts(app_state: &Arc<AppState>) -> Value {
 
     let mut contexts = serde_json::Map::new();
     for provider in providers {
-        let context = collect_plugin_init_context(app_state, &provider).await;
+        let context = collect_plugin_init_context(app_state, &provider, project_path).await;
         contexts.insert(provider.plugin_name.clone(), context);
     }
     Value::Object(contexts)
@@ -405,6 +416,7 @@ async fn collect_plugin_init_contexts(app_state: &Arc<AppState>) -> Value {
 async fn collect_plugin_init_context(
     app_state: &Arc<AppState>,
     provider: &PluginInitContextProvider,
+    project_path: Option<&str>,
 ) -> Value {
     let timeout_ms = provider
         .config
@@ -412,7 +424,7 @@ async fn collect_plugin_init_context(
         .unwrap_or(DEFAULT_PLUGIN_INIT_CONTEXT_TIMEOUT_MS);
     match timeout(
         Duration::from_millis(timeout_ms),
-        collect_plugin_init_context_inner(app_state, provider),
+        collect_plugin_init_context_inner(app_state, provider, project_path),
     )
     .await
     {
@@ -430,6 +442,7 @@ async fn collect_plugin_init_context(
 async fn collect_plugin_init_context_inner(
     app_state: &Arc<AppState>,
     provider: &PluginInitContextProvider,
+    project_path: Option<&str>,
 ) -> Value {
     let mut argument_map = match provider.config.arguments.clone() {
         Value::Object(map) => map,
@@ -455,6 +468,23 @@ async fn collect_plugin_init_context_inner(
 
     if let Some(org_id) = organization_id.as_ref() {
         argument_map.insert("organization_id".to_string(), Value::String(org_id.clone()));
+    }
+    if provider.config.inject_project_context {
+        if let Some(project_path) = project_path
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            argument_map.insert(
+                "project_path".to_string(),
+                Value::String(project_path.to_string()),
+            );
+        }
+        for (key, value) in crate::context_layer::project_context_hints_for_plugin(
+            project_path,
+            &provider.plugin_name,
+        ) {
+            argument_map.insert(key, Value::String(value));
+        }
     }
     let arguments = Value::Object(argument_map);
 
@@ -1210,7 +1240,14 @@ Old temporary work session rule.
                     .and_then(Value::as_object)
                     .cloned()
                     .unwrap_or_default();
-                if name != Some("get_init_context") || arguments.contains_key("organization_id") {
+                if name != Some("get_init_context")
+                    || arguments.contains_key("organization_id")
+                    || arguments.get("project_id").and_then(Value::as_str) != Some("proj_1")
+                    || arguments
+                        .get("project_path")
+                        .and_then(Value::as_str)
+                        .is_none()
+                {
                     return axum::Json(serde_json::json!({
                         "jsonrpc": "2.0",
                         "id": id,
@@ -1277,6 +1314,7 @@ Old temporary work session rule.
             tool: "get_init_context".to_string(),
             timeout_ms: Some(1_200),
             inject_organization_id: false,
+            inject_project_context: true,
             arguments: serde_json::json!({}),
         });
         app_state
@@ -1285,8 +1323,21 @@ Old temporary work session rule.
             .unwrap()
             .add_plugin(manifest)
             .unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let hint = crate::mcp_tools::startup_rules::ProjectContextHint {
+            plugin_name: "decidr".to_string(),
+            key: "project_id".to_string(),
+            value: "proj_1".to_string(),
+            label: Some("Tribe-X".to_string()),
+            updated_at: None,
+        };
+        let mut config =
+            crate::mcp_tools::startup_rules::load_or_create_project_config(project.path()).unwrap();
+        config.project_context_hints.push(hint);
+        crate::mcp_tools::startup_rules::save_project_config(project.path(), &config).unwrap();
+        let project_path = project.path().display().to_string();
 
-        let contexts = collect_plugin_init_contexts(&app_state).await;
+        let contexts = collect_plugin_init_contexts(&app_state, Some(&project_path)).await;
         server.abort();
 
         let decidr = contexts.get("decidr").expect("decidr init context");
@@ -1299,6 +1350,64 @@ Old temporary work session rule.
         );
         assert!(decidr.get("activeWorkSessions").is_none());
         assert!(decidr["recentDecisions"][0].get("context").is_none());
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_collect_plugin_init_contexts_does_not_inject_project_context_without_opt_in() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new()
+            .route("/", axum::routing::post(mock_init_context_mcp_handler))
+            .with_state(call_count.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let (app_state, _temp_dir) = crate::test_utils::test_app_state();
+        let mut manifest = crate::test_utils::test_manifest("decidr");
+        manifest.mcp = Some(mcpviews_shared::PluginMcpConfig {
+            url: format!("http://{addr}/"),
+            auth: None,
+            tool_prefix: "decidr__".to_string(),
+        });
+        manifest.init_context = Some(mcpviews_shared::PluginInitContext {
+            tool: "get_init_context".to_string(),
+            timeout_ms: Some(1_200),
+            inject_organization_id: false,
+            inject_project_context: false,
+            arguments: serde_json::json!({}),
+        });
+        app_state
+            .plugin_registry
+            .lock()
+            .unwrap()
+            .add_plugin(manifest)
+            .unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let hint = crate::mcp_tools::startup_rules::ProjectContextHint {
+            plugin_name: "decidr".to_string(),
+            key: "project_id".to_string(),
+            value: "proj_1".to_string(),
+            label: Some("Tribe-X".to_string()),
+            updated_at: None,
+        };
+        let mut config =
+            crate::mcp_tools::startup_rules::load_or_create_project_config(project.path()).unwrap();
+        config.project_context_hints.push(hint);
+        crate::mcp_tools::startup_rules::save_project_config(project.path(), &config).unwrap();
+        let project_path = project.path().display().to_string();
+
+        let contexts = collect_plugin_init_contexts(&app_state, Some(&project_path)).await;
+        server.abort();
+
+        let decidr = contexts.get("decidr").expect("decidr init context");
+        assert_eq!(decidr["status"], "error");
+        assert!(decidr["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unexpected init-context call"));
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
 }

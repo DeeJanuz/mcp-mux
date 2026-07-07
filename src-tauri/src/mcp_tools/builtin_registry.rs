@@ -421,6 +421,39 @@ fn set_context_default_definition(_: &[RendererDef]) -> Value {
     })
 }
 
+fn set_project_context_hint_definition(_: &[RendererDef]) -> Value {
+    serde_json::json!({
+        "name": "set_project_context_hint",
+        "description": "Persist a non-auth project-scoped context hint in mcpviews-init.json, such as DecidR project_id for the local workspace. Does not store token material or alter auth context defaults.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_path": {
+                    "type": "string",
+                    "description": "Absolute project path whose mcpviews-init.json should store the hint."
+                },
+                "plugin_name": {
+                    "type": "string",
+                    "description": "Plugin name, such as decidr."
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Hint key injected into opt-in plugin init-context calls, e.g. project_id."
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Hint value, e.g. a DecidR project id. Must not be auth or secret material."
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Optional human label to store with the hint."
+                }
+            },
+            "required": ["project_path", "plugin_name", "key", "value"]
+        }
+    })
+}
+
 fn mcpviews_setup_definition(_: &[RendererDef]) -> Value {
     serde_json::json!({
         "name": "mcpviews_setup",
@@ -798,6 +831,19 @@ fn set_context_default_handler<'a>(
     })
 }
 
+fn set_project_context_hint_handler<'a>(
+    arguments: Value,
+    state: &'a Arc<TokioMutex<AsyncAppState>>,
+) -> BuiltinToolFuture<'a> {
+    Box::pin(async move {
+        let app_state = {
+            let state_guard = state.lock().await;
+            state_guard.inner.clone()
+        };
+        crate::context_layer::set_project_context_hint(arguments, &app_state).await
+    })
+}
+
 fn mcpviews_setup_handler<'a>(
     arguments: Value,
     state: &'a Arc<TokioMutex<AsyncAppState>>,
@@ -984,6 +1030,13 @@ pub(crate) fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
             name: "set_context_default",
             definition: set_context_default_definition,
             handler: set_context_default_handler,
+            hosted_visibility: HostedVisibility::HostedModelFacing,
+            core_connector_group: None,
+        },
+        BuiltinToolSpec {
+            name: "set_project_context_hint",
+            definition: set_project_context_hint_definition,
+            handler: set_project_context_hint_handler,
             hosted_visibility: HostedVisibility::HostedModelFacing,
             core_connector_group: None,
         },

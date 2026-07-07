@@ -187,6 +187,10 @@ pub struct PluginInitContext {
     /// the backend tool, matching existing plugin-tool behavior.
     #[serde(default)]
     pub inject_organization_id: bool,
+    /// Merge project-scoped non-auth hints from mcpviews-init.json into the
+    /// init-context call, such as DecidR project_id for the local workspace.
+    #[serde(default)]
+    pub inject_project_context: bool,
     /// Static arguments merged into the tool call.
     #[serde(default = "default_init_context_arguments")]
     pub arguments: Value,

@@ -62,8 +62,8 @@
     },
     {
       "name": "decidr",
-      "version": "0.1.55",
-      "description": "Decision governance \u2014 initiatives, projects, decisions, tasks, and bridges with approval workflows",
+      "version": "0.1.61",
+      "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/decidr-plugin/master/manifest.json",
@@ -75,7 +75,7 @@
       ],
       "manifest": {
         "name": "decidr",
-        "version": "0.1.55",
+        "version": "0.1.61",
         "prompt_definitions": [
           {
             "name": "initiative_planning",
@@ -150,15 +150,15 @@
           "When the user accepts a durable choice, agreed plan, meaningful discovery, agreed finding, created artifact, persistent object, or release/deploy/commit proof, follow installed DecidR governance lifecycle and work logging startup rules first even if the user did not mention DecidR. Use provided DecidR tools; fetch get_plugin_docs or governance_lifecycle only for schemas or deeper detail.",
           "When using DecidR search, list, or detail tools only for agent discovery, keep results private. Push decidr_list only when the user explicitly asks to see results or details.",
           "When the user asks for a timeline, roadmap, schedule, portfolio timing, or how initiatives shape up over time: push decidr_timeline directly. Do not call list tools first; the renderer fetches its own data.",
-          "During init_session, DecidR may provide plugin_contexts.decidr.recentDecisions as current-user decision breadcrumbs from the last 24 hours. Treat them as hints only; call get_decision for a relevant match before implementation."
+          "During init_session, DecidR may provide plugin_contexts.decidr.recentDecisions and recentAuditEvents as current-user breadcrumbs from the last 24 hours. Treat them as hints only; call get_decision or get_audit_event for a relevant match before implementation. Use log_governance_breadcrumb for internal research, preflight, verification, and correction notes instead of creating IMPLEMENTED catch-up decisions."
         ],
         "startup_rules": [
           {
             "id": "decidr_governance_lifecycle_team_runtime",
-            "version": "3",
+            "version": "4",
             "title": "DecidR Team Governance Lifecycle Runtime",
             "description": "Setup-configured native startup rule for team approval governance lifecycle behavior.",
-            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: team approvals.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before governed implementation, save PLAN with `save_decision_document_version`, move through PROPOSED -> APPROVED, then begin unless the user explicitly overrides.\n- When implementation starts, move approved work to IN_PROGRESS when allowed and link execution tasks.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN before implementation.\n- A discovery finding becomes the basis for future work -> capture it as a decision or PLAN update.\n- PR merged or installer released -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Unsure parent project or cross-org target -> use review before writing.",
+            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: team approvals.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before governed implementation, save PLAN with `save_decision_document_version`. If the accepted plan was pushed to MCPViews with the `rich_content` renderer, use the full Markdown body from that MCPViews plan push as `content`; do not summarize it. Preserve headings, checklists, Mermaid diagrams, tables, acceptance criteria, verification steps, links, and citations that were part of the plan. If no MCPViews plan artifact exists, use the full accepted chat plan as `content`. Then move through PROPOSED -> APPROVED, then begin unless the user explicitly overrides.\n- When implementation starts, move approved work to IN_PROGRESS when allowed and link execution tasks.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN before implementation.\n- A discovery finding becomes the basis for future work -> capture it as a decision or PLAN update.\n- PR merged or installer released -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Unsure parent project or cross-org target -> use review before writing.",
             "conditions": [
               {
                 "question_id": "decidr_governance_mode",
@@ -170,10 +170,10 @@
           },
           {
             "id": "decidr_governance_lifecycle_solo_runtime",
-            "version": "3",
+            "version": "4",
             "title": "DecidR Solo Governance Lifecycle Runtime",
             "description": "Setup-configured native startup rule for solo-builder governance lifecycle behavior.",
-            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: solo builder.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before implementation, save PLAN with `save_decision_document_version`. In solo mode, a clear accepted plan, selected direction, agreed finding, or explicit user request is enough to proceed unless user/org policy asks for team approval.\n- Transition only through allowed DecidR status changes.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN, then implement.\n- Meaningful discovery accepted as true -> capture it as a decision or PLAN update before it drives work.\n- Release shipped or commit pushed to live branch -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Small finished rationale with no full lifecycle needed -> create/update a catch-up decision.",
+            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: solo builder.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before implementation, save PLAN with `save_decision_document_version`. If the accepted plan was pushed to MCPViews with the `rich_content` renderer, use the full Markdown body from that MCPViews plan push as `content`; do not summarize it. Preserve headings, checklists, Mermaid diagrams, tables, acceptance criteria, verification steps, links, and citations that were part of the plan. If no MCPViews plan artifact exists, use the full accepted chat plan as `content`. In solo mode, a clear accepted plan, selected direction, agreed finding, or explicit user request is enough to proceed unless user/org policy asks for team approval.\n- Transition only through allowed DecidR status changes.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN, then implement.\n- Meaningful discovery accepted as true -> capture it as a decision or PLAN update before it drives work.\n- Release shipped or commit pushed to live branch -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Small finished rationale with no full lifecycle needed -> create/update a catch-up decision.",
             "conditions": [
               {
                 "question_id": "decidr_governance_mode",
@@ -185,7 +185,7 @@
           },
           {
             "id": "decidr_work_logging_runtime",
-            "version": "5",
+            "version": "6",
             "title": "DecidR Work Logging Runtime",
             "description": "Setup-configured native startup rule for always-on DecidR work logging policy.",
             "source": {
@@ -251,9 +251,9 @@
             ]
           }
         ],
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.55/decidr.zip",
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.61/decidr.zip",
         "registry_index": {
-          "summary": "Decision governance \u2014 initiatives, projects, decisions, tasks, and bridges with approval workflows",
+          "summary": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
           "tags": [
             "governance",
             "decisions",
@@ -304,6 +304,7 @@
                 "create_decision",
                 "create_catch_up_decision",
                 "create_audit_event",
+                "log_governance_breadcrumb",
                 "create_task",
                 "create_bridge",
                 "update_initiative",
@@ -354,7 +355,7 @@
             },
             {
               "name": "GitHub",
-              "hint": "GitHub integration \u2014 Ludflow-backed inbound sync plus DecidR PAT-backed outbound writes",
+              "hint": "GitHub integration — Ludflow-backed inbound sync plus DecidR PAT-backed outbound writes",
               "tools": [
                 "connect_github",
                 "disconnect_github",
@@ -385,7 +386,7 @@
           ]
         },
         "tool_rules": {
-          "my_action_items": "Returns prioritized action items as entity refs. Draft, approved, in-progress, and staged decisions appear when the user is owner or implementer; proposed decisions appear when awaiting the user's review. ALWAYS push results to decidr_list \u2014 the renderer fetches full data from the API. Never use decidr_dashboard for action item requests. Drill into individual items with get_decision/get_task.",
+          "my_action_items": "Returns prioritized action items as entity refs. Draft, approved, in-progress, and staged decisions appear when the user is owner or implementer; proposed decisions appear when awaiting the user's review. ALWAYS push results to decidr_list — the renderer fetches full data from the API. Never use decidr_dashboard for action item requests. Drill into individual items with get_decision/get_task.",
           "list_initiatives": "Use to discover all initiatives. Push to decidr_list. Use format=compact to save tokens. The standalone graph view is currently hidden from this plugin line.",
           "list_projects": "Use to discover projects. Push to decidr_list. Filter by status to find active work. Use initiative_id to filter by initiative.",
           "list_decisions": "Use to discover decisions. Filter status=BACKLOG to inspect future/non-actionable decisions. No auto-push: keep discovery-only calls private. Push to decidr_list only when the user explicitly asked to see/list/browse decisions. Call get_decision for full details including approval progress.",
@@ -405,6 +406,7 @@
           "create_decision": "Create a new standard decision. Requires entity_type and matching parent ID. Decisions default to DRAFT status and owner_id defaults to the creator when omitted; before passing owner_id or implementer_id, call list_members and use only active member user IDs. Pass status BACKLOG for future/non-actionable decisions that should stay out of Next Steps. After human-accepted discovery, create/update the decision and link the discovery artifact, then transition to PROPOSED for review when needed. Use STAGED only when recording already-built/configured work that is in test/review or non-production validation, not for accepted plans. Use create_catch_up_decision instead for small already-implemented work that needs post-implementation rationale capture without the full standard workflow. Use IMPLEMENTED only after live or production-equivalent release: production deployment, deployment-codebase migration, push/merge to the repo live release branch (main/master/prod/production when applicable), or an installable versioned release. When creating a missing governance record from implementation discovery, proceed directly for clear low-risk single decisions and accompanying doc links/edits after search/context checks; use MCPViews review only for significant, ambiguous, destructive, high-impact, or hard-to-undo changes.",
           "create_catch_up_decision": "Create an IMPLEMENTED catch-up decision for small work that already happened and needs governance/rationale captured after the fact. Requires title, description/rationale, entity_type, and matching parent ID. Optional implemented_at records when the work actually happened. Do not use for active approval workflow or live status transitions.",
           "create_audit_event": "Create a factual project-ledger audit event. Admins may create new free-form categories. external_reference_id plus created_by_client is idempotent.",
+          "log_governance_breadcrumb": "Create a lightweight audit breadcrumb for agent research, preflight, verification, or correction notes. Sets payload.initBreadcrumb=true so it can appear in lean init context. Use this instead of IMPLEMENTED catch-up decisions for internal work notes.",
           "create_task": "Create a new task. Returns full created entity. Before passing assignee_id, call list_members and use only an active member user ID; pending invitation IDs are not assignable. Pass status BACKLOG for future/non-actionable work that should stay out of Next Steps. Use for lightweight implementation follow-up that did not need a decision approval flow, under the relevant project or existing decision. When creating a missing task from implementation discovery, proceed directly for clear low-risk tasks after search/context checks; use MCPViews review only for significant, ambiguous, destructive, high-impact, or hard-to-undo changes.",
           "create_bridge": "Create a bridge between two projects or two decisions. Returns full created entity.",
           "update_initiative": "Update initiative fields. Returns full updated entity.",
@@ -433,7 +435,7 @@
           "save_decision_document_version": "Save a lifecycle-tagged Ludflow document version for a DecidR decision. Use PLAN after accepted discovery/planning, STAGED when implementation is built and validating, and IMPLEMENTED when the live implemented state is captured. Creates and links the first PLAN document when no linked Ludflow document exists; provide document_id when multiple Ludflow docs are linked.",
           "archive_entity": "Soft-delete (archive) an entity. Archived entities are hidden from default lists but can be restored. Use when the user wants to remove or delete an entity.",
           "restore_entity": "Restore a previously archived entity. Use when the user wants to undelete or bring back an archived entity.",
-          "connect_github": "Do NOT call this tool directly with a user-supplied PAT \u2014 that leaks the token through the chat. Instead push the decidr_github_auth renderer so the user enters their PAT in the companion's secure form. This PAT is only for outbound GitHub write actions such as create_issue/create_pr/review_pr/merge_pr.",
+          "connect_github": "Do NOT call this tool directly with a user-supplied PAT — that leaks the token through the chat. Instead push the decidr_github_auth renderer so the user enters their PAT in the companion's secure form. This PAT is only for outbound GitHub write actions such as create_issue/create_pr/review_pr/merge_pr.",
           "disconnect_github": "Disconnect GitHub account from the current org. No auto-push.",
           "list_repos": "List DecidR-linked GitHub repos. Push to decidr_list.",
           "get_repo_last_sync": "Get Ludflow-backed metadata sync state for a linked repo, including the last sync timestamp. Push to decidr_list.",
@@ -451,7 +453,7 @@
           "generate_fix_prompt": "Generate a code fix prompt from issue context. Returns text. No auto-push.",
           "generate_review_prompt": "Generate a PR review prompt. Returns text. No auto-push.",
           "manage_repo_admin": "Add or remove repo admin. No auto-push.",
-          "get_init_context": "Read-only init-session provider used by MCPViews. Returns current-user decision breadcrumbs from the last 24 hours as id, title, and description only. Treat as private discovery; call get_decision for a relevant match before implementation."
+          "get_init_context": "Read-only init-session provider used by MCPViews. Returns current-user decision and audit breadcrumbs from the last 24 hours. Audit breadcrumbs are lean metadata only; call get_decision or get_audit_event for relevant details before implementation."
         },
         "no_auto_push": [
           "get_init_context",
@@ -463,6 +465,7 @@
           "create_decision",
           "create_catch_up_decision",
           "create_audit_event",
+          "log_governance_breadcrumb",
           "create_task",
           "create_bridge",
           "update_initiative",
@@ -526,6 +529,7 @@
           "create_decision": "decidr_list",
           "create_catch_up_decision": "decidr_list",
           "create_audit_event": "decidr_list",
+          "log_governance_breadcrumb": "decidr_list",
           "create_task": "decidr_list",
           "create_bridge": "decidr_list",
           "update_initiative": "decidr_list",
@@ -570,9 +574,9 @@
         "renderer_definitions": [
           {
             "name": "decidr_list",
-            "description": "Universal entity renderer \u2014 displays lists, details, search results, and action items with slide-out panels for navigation",
+            "description": "Universal entity renderer — displays lists, details, search results, and action items with slide-out panels for navigation",
             "scope": "tool",
-            "rule": "Use for user-facing entity list, detail, and search views. Do not push for agent-only discovery calls. Always use ref-only mode \u2014 pass entity type + ID, never full payloads.",
+            "rule": "Use for user-facing entity list, detail, and search views. Do not push for agent-only discovery calls. Always use ref-only mode — pass entity type + ID, never full payloads.",
             "tools": [
               "list_initiatives",
               "list_projects",
@@ -593,6 +597,7 @@
               "create_decision",
               "create_catch_up_decision",
               "create_audit_event",
+              "log_governance_breadcrumb",
               "create_task",
               "create_bridge",
               "update_initiative",
@@ -640,13 +645,13 @@
               "generate_review_prompt",
               "manage_repo_admin"
             ],
-            "data_hint": "IMPORTANT: Prefer ref-only mode. Pass entity references \u2014 the renderer fetches full data from the API. Format: { entities: [{ type: 'initiative'|'project'|'decision'|'audit_event'|'task'|'bridge'|'issue'|'pull_request'|'repo', id: string }], meta: { organization_id: string, result_count: number, tool_name: string } }. The tool_name determines rendering mode: 'list_decisions' or 'list_audit_events' for list view, 'get_decision' or 'get_audit_event' for detail view, 'my_action_items' for action items, 'search' for search results. Entity type names are singular lowercase."
+            "data_hint": "IMPORTANT: Prefer ref-only mode. Pass entity references — the renderer fetches full data from the API. Format: { entities: [{ type: 'initiative'|'project'|'decision'|'audit_event'|'task'|'bridge'|'issue'|'pull_request'|'repo', id: string }], meta: { organization_id: string, result_count: number, tool_name: string } }. The tool_name determines rendering mode: 'list_decisions' or 'list_audit_events' for list view, 'get_decision' or 'get_audit_event' for detail view, 'my_action_items' for action items, 'search' for search results. Entity type names are singular lowercase."
           },
           {
             "name": "decidr_dashboard",
             "description": "User Dashboard with initiative grouping, health bars, project cards, and prioritized action items",
             "scope": "universal",
-            "rule": "Push directly to show the User Dashboard \u2014 do NOT call my_action_items or any other tool first. The renderer fetches all data from the API. Only pass organization_id. For fast access, push immediately when user asks for the User Dashboard, dashboard, or overview.",
+            "rule": "Push directly to show the User Dashboard — do NOT call my_action_items or any other tool first. The renderer fetches all data from the API. Only pass organization_id. For fast access, push immediately when user asks for the User Dashboard, dashboard, or overview.",
             "data_hint": "{ organization_id: string }",
             "standalone": true,
             "standalone_label": "User Dashboard"
@@ -663,13 +668,13 @@
           },
           {
             "name": "decidr_github_auth",
-            "description": "Secure GitHub authentication form \u2014 enter PAT directly in the companion without passing through the AI agent",
+            "description": "Secure GitHub authentication form — enter PAT directly in the companion without passing through the AI agent",
             "scope": "tool",
-            "rule": "Push whenever the user needs to connect a GitHub PAT for outbound GitHub writes OR when a write tool fails with 'GitHub connection not found'. Renders a secure form in the companion \u2014 the user's PAT goes straight to DecidR and never passes through the agent. Never ask the user to paste a PAT in chat; push this renderer instead.",
+            "rule": "Push whenever the user needs to connect a GitHub PAT for outbound GitHub writes OR when a write tool fails with 'GitHub connection not found'. Renders a secure form in the companion — the user's PAT goes straight to DecidR and never passes through the agent. Never ask the user to paste a PAT in chat; push this renderer instead.",
             "tools": [
               "connect_github"
             ],
-            "data_hint": "{ github_username?: string } \u2014 push with empty data for a blank form, or pre-fill the username field. The renderer POSTs the PAT directly to DecidR's /github/connections endpoint; no follow-up connect_github call is needed."
+            "data_hint": "{ github_username?: string } — push with empty data for a blank form, or pre-fill the username field. The renderer POSTs the PAT directly to DecidR's /github/connections endpoint; no follow-up connect_github call is needed."
           }
         ],
         "mcp": {
@@ -946,6 +951,7 @@
               "list_audit_events",
               "get_audit_event",
               "create_audit_event",
+              "log_governance_breadcrumb",
               "update_audit_event",
               "manage_audit_category",
               "link_decision_audit_event"
@@ -997,10 +1003,11 @@
           "tool": "get_init_context",
           "timeout_ms": 2500,
           "inject_organization_id": true,
+          "inject_project_context": true,
           "arguments": {}
         }
       },
-      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.55/decidr.zip"
+      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.61/decidr.zip"
     },
     {
       "name": "mcpviews-gronk-speak",

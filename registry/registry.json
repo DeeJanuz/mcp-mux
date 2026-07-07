@@ -62,7 +62,7 @@
     },
     {
       "name": "decidr",
-      "version": "0.1.61",
+      "version": "0.1.63",
       "description": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
       "author": "Ludflow",
       "homepage": "https://github.com/DeeJanuz/decidr-plugin",
@@ -75,7 +75,7 @@
       ],
       "manifest": {
         "name": "decidr",
-        "version": "0.1.61",
+        "version": "0.1.63",
         "prompt_definitions": [
           {
             "name": "initiative_planning",
@@ -155,10 +155,10 @@
         "startup_rules": [
           {
             "id": "decidr_governance_lifecycle_team_runtime",
-            "version": "4",
+            "version": "5",
             "title": "DecidR Team Governance Lifecycle Runtime",
             "description": "Setup-configured native startup rule for team approval governance lifecycle behavior.",
-            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: team approvals.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before governed implementation, save PLAN with `save_decision_document_version`. If the accepted plan was pushed to MCPViews with the `rich_content` renderer, use the full Markdown body from that MCPViews plan push as `content`; do not summarize it. Preserve headings, checklists, Mermaid diagrams, tables, acceptance criteria, verification steps, links, and citations that were part of the plan. If no MCPViews plan artifact exists, use the full accepted chat plan as `content`. Then move through PROPOSED -> APPROVED, then begin unless the user explicitly overrides.\n- When implementation starts, move approved work to IN_PROGRESS when allowed and link execution tasks.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN before implementation.\n- A discovery finding becomes the basis for future work -> capture it as a decision or PLAN update.\n- PR merged or installer released -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Unsure parent project or cross-org target -> use review before writing.",
+            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: team approvals.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Lightweight internal research, preflight, verification, correction, and internal-task notes -> audit breadcrumb via `log_governance_breadcrumb`.\n- Small already-completed durable rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before governed implementation, save PLAN with `save_decision_document_version`. If the accepted plan was pushed to MCPViews with the `rich_content` renderer, use the full Markdown body from that MCPViews plan push as `content`; do not summarize it. Preserve headings, checklists, Mermaid diagrams, tables, acceptance criteria, verification steps, links, and citations that were part of the plan. If no MCPViews plan artifact exists, use the full accepted chat plan as `content`. Then move through PROPOSED -> APPROVED, then begin unless the user explicitly overrides.\n- When implementation starts, move approved work to IN_PROGRESS when allowed and link execution tasks.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN before implementation.\n- A discovery finding becomes the basis for future work -> capture it as a decision or PLAN update.\n- PR merged or installer released -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Unsure parent project or cross-org target -> use review before writing.",
             "conditions": [
               {
                 "question_id": "decidr_governance_mode",
@@ -170,10 +170,10 @@
           },
           {
             "id": "decidr_governance_lifecycle_solo_runtime",
-            "version": "4",
+            "version": "5",
             "title": "DecidR Solo Governance Lifecycle Runtime",
             "description": "Setup-configured native startup rule for solo-builder governance lifecycle behavior.",
-            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: solo builder.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before implementation, save PLAN with `save_decision_document_version`. If the accepted plan was pushed to MCPViews with the `rich_content` renderer, use the full Markdown body from that MCPViews plan push as `content`; do not summarize it. Preserve headings, checklists, Mermaid diagrams, tables, acceptance criteria, verification steps, links, and citations that were part of the plan. If no MCPViews plan artifact exists, use the full accepted chat plan as `content`. In solo mode, a clear accepted plan, selected direction, agreed finding, or explicit user request is enough to proceed unless user/org policy asks for team approval.\n- Transition only through allowed DecidR status changes.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN, then implement.\n- Meaningful discovery accepted as true -> capture it as a decision or PLAN update before it drives work.\n- Release shipped or commit pushed to live branch -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Small finished rationale with no full lifecycle needed -> create/update a catch-up decision.",
+            "rule": "Run when the user or work establishes durable project memory, not only when DecidR is named. Triggers include an accepted plan, selected option, agreed finding, meaningful discovery, persistent architecture/product/process choice, created project object, follow-up task, or commit/release/deploy proof. Do this without waiting for the user to ask for governance instructions.\n\nMode: solo builder.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, lifecycle transitions, and `governance_lifecycle` when deeper schema detail is needed.\n- If names differ by agent, use the provided DecidR Browse, Create & Update, Documents tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Use active organization members only for owner/implementer fields.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, hard-to-undo, major lifecycle-transition, or row-level batch writes.\n\nDo:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, tradeoff, architecture path, or persistent behavior -> standard decision or PLAN update.\n- Lightweight internal research, preflight, verification, correction, and internal-task notes -> audit breadcrumb via `log_governance_breadcrumb`.\n- Small already-completed durable rationale -> CATCH_UP decision.\n- Execution follow-up -> task.\n- Commit/release/deploy proof -> lifecycle document or audit evidence.\n- Keep new standard decisions DRAFT until a PLAN document version exists.\n- Before implementation, save PLAN with `save_decision_document_version`. If the accepted plan was pushed to MCPViews with the `rich_content` renderer, use the full Markdown body from that MCPViews plan push as `content`; do not summarize it. Preserve headings, checklists, Mermaid diagrams, tables, acceptance criteria, verification steps, links, and citations that were part of the plan. If no MCPViews plan artifact exists, use the full accepted chat plan as `content`. In solo mode, a clear accepted plan, selected direction, agreed finding, or explicit user request is enough to proceed unless user/org policy asks for team approval.\n- Transition only through allowed DecidR status changes.\n- Built or validating work -> save STAGED version and move to STAGED.\n- Production-equivalent merge, deploy, release, or committed operational proof -> save IMPLEMENTED version and move to IMPLEMENTED.\n\nExamples:\n- User says \"let's proceed with option B\" -> search, create/update a standard decision, save PLAN, then implement.\n- Meaningful discovery accepted as true -> capture it as a decision or PLAN update before it drives work.\n- Release shipped or commit pushed to live branch -> save IMPLEMENTED proof and move matching decision to IMPLEMENTED.\n- Internal research/preflight/verification/correction note -> log an audit breadcrumb with `log_governance_breadcrumb`.\n- Small durable rationale with no full lifecycle needed -> create/update a catch-up decision.",
             "conditions": [
               {
                 "question_id": "decidr_governance_mode",
@@ -185,7 +185,7 @@
           },
           {
             "id": "decidr_work_logging_runtime",
-            "version": "6",
+            "version": "7",
             "title": "DecidR Work Logging Runtime",
             "description": "Setup-configured native startup rule for always-on DecidR work logging policy.",
             "source": {
@@ -220,38 +220,38 @@
             "id": "decidr_work_logging_policy",
             "question": "How should agents log DecidR work by default?",
             "description": "This controls the local always-on DecidR work logging startup rule for future agent sessions.",
-            "guidance": "Explain that DecidR logs durable work to decisions first: accepted plans, created artifacts, discoveries, small completed rationale, execution follow-up, verification proof, and release/deploy evidence. Init-session decision breadcrumbs are discovery hints only.",
+            "guidance": "Explain that DecidR logs durable work to decisions first while lightweight internal research, preflight, verification, correction, and internal-task notes use audit breadcrumbs. Small completed durable rationale can still use catch-up decisions. Init-session decision and audit breadcrumbs are discovery hints only.",
             "default_value": "auto_log_confident",
             "recommended_value": "auto_log_confident",
             "persist_as_rule_name": "decidr_work_logging_runtime",
             "example_outputs": {
-              "auto_log_confident": "A clear low-risk accepted plan, finding, discovery, created artifact, verification result, or plugin setup change logs directly after search. If no exact parent matches but product/company relevance is clear, agents choose the closest project or initiative and log there instead of skipping.",
-              "review_first": "Agents keep durable-work logging active, but present proposed formal writes for review before creating or updating DecidR records.",
-              "capture_only": "Agents do not write DecidR records automatically. They summarize candidate durable memory and ask before creating or updating formal records."
+              "auto_log_confident": "A clear low-risk accepted plan, finding, discovery, created artifact, verification result, or plugin setup change logs directly after search. Lightweight internal work notes use audit breadcrumbs. If no exact parent matches but product/company relevance is clear, agents choose the closest project or initiative and log there instead of skipping.",
+              "review_first": "Agents keep durable-work logging active, but present proposed formal writes for review before creating or updating DecidR records. Accepted lightweight internal notes use audit breadcrumbs.",
+              "capture_only": "Agents do not write DecidR records automatically. They summarize candidate durable memory or lightweight breadcrumb notes and ask before creating or updating formal records."
             },
             "options": [
               {
                 "value": "auto_log_confident",
                 "label": "Auto-log confident work",
                 "description": "Search first, then directly log clear low-risk work. If no exact parent matches, use the closest relevant product/company project or initiative instead of skipping.",
-                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: an agreed plan, selected option, agreed finding, meaningful discovery, created artifact or persistent object, task, verification proof, commit, release, deployment, or lifecycle proof.\n\nPolicy: auto-log confident work.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, and lifecycle transitions.\n- If tool names differ by agent, use the provided DecidR tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Prefer an exact matching decision or task when one exists. Otherwise use the same project or initiative. If no exact parent matches but the work is relevant to the general product, company, or organization involved, choose the closest matching project or initiative and log there. Do not skip DecidR logging solely because the parent is inferred.\n- Proceed directly when organization, closest parent, record type, evidence, and impact are clear and low-risk.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, major lifecycle-transition, hard-to-undo, or row-level batch writes.\n\nDecision-first mapping:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, created artifact, tradeoff, architecture direction, approval-worthy path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> catch-up decision.\n- Execution-only follow-up -> task.\n- Commit, release, deploy, verification result, or operational proof -> lifecycle document or audit evidence.\n- Temporary handoff only -> no DecidR record unless the user asks to log it.\n\nDo:\n- Log meaningful work unless the user explicitly says not to log, not to write DecidR records, or chooses a manual logging policy.\n- At checkpoints, explicitly decide what DecidR decision, task, lifecycle document, or audit evidence should receive the work log before answering or moving on.\n- When using an inferred closest parent, state the inferred parent and why it was chosen in the decision rationale/evidence so the record can be corrected later.\n- Use governance lifecycle rules for PLAN/STAGED/IMPLEMENTED and `save_decision_document_version` snapshots.\n\nExamples:\n- User says \"yes, proceed with that plan\" -> search, create/update the matching decision, save PLAN.\n- An agent creates a durable artifact, implementation plan, release note, generated document, or package -> log it to the matching decision or closest relevant project/initiative.\n- A meaningful discovery is accepted as the basis for future work -> capture it as a decision or PLAN update.\n- Release published -> save IMPLEMENTED proof on the matching decision.\n- Exact parent project unclear but product/company relevance is clear -> create or update the decision under the closest matching project or initiative and note the inferred parent.\n- Closest parent ambiguous or risky -> use review before writing."
+                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: an agreed plan, selected option, agreed finding, meaningful discovery, created artifact or persistent object, task, verification proof, commit, release, deployment, or lifecycle proof.\n\nPolicy: auto-log confident work.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, and lifecycle transitions.\n- If tool names differ by agent, use the provided DecidR tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Prefer an exact matching decision or task when one exists. Otherwise use the same project or initiative. If no exact parent matches but the work is relevant to the general product, company, or organization involved, choose the closest matching project or initiative and log there. Do not skip DecidR logging solely because the parent is inferred.\n- Proceed directly when organization, closest parent, record type, evidence, and impact are clear and low-risk.\n- Use review before ambiguous, destructive, cross-org, high-impact, customer/production-visible, major lifecycle-transition, hard-to-undo, or row-level batch writes.\n\nDecision-first mapping:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, created artifact, tradeoff, architecture direction, approval-worthy path, or persistent behavior -> standard decision or PLAN update.\n- Lightweight internal research, preflight, verification, correction, and internal-task notes -> audit breadcrumb with `log_governance_breadcrumb`.\n- Small already-completed durable rationale -> catch-up decision.\n- Execution-only follow-up -> task.\n- Commit, release, deploy, verification result, or operational proof -> lifecycle document or audit evidence.\n- Temporary handoff only -> no DecidR record unless the user asks to log it.\n\nDo:\n- Log meaningful work unless the user explicitly says not to log, not to write DecidR records, or chooses a manual logging policy.\n- At checkpoints, explicitly decide what DecidR decision, task, lifecycle document, audit evidence, or audit breadcrumb should receive the work log before answering or moving on.\n- Use `log_governance_breadcrumb` for lightweight internal notes; do not create catch-up decisions for research, preflight, verification, correction, or internal-task notes.\n- When using an inferred closest parent, state the inferred parent and why it was chosen in the decision rationale/evidence so the record can be corrected later.\n- Use governance lifecycle rules for PLAN/STAGED/IMPLEMENTED and `save_decision_document_version` snapshots.\n- For accepted plans, use the full MCPViews `rich_content` plan body as the PLAN version `content` when available; do not save only a summary. If no MCPViews plan body exists, save the full accepted chat plan.\n\nExamples:\n- User says \"yes, proceed with that plan\" -> search, create/update the matching decision, save PLAN.\n- An agent creates a durable artifact, implementation plan, release note, generated document, or package -> log it to the matching decision or closest relevant project/initiative.\n- Internal research, preflight, verification, correction, or internal-task note -> log an audit breadcrumb with `log_governance_breadcrumb`.\n- A meaningful discovery is accepted as the basis for future work -> capture it as a decision or PLAN update.\n- Release published -> save IMPLEMENTED proof on the matching decision.\n- Exact parent project unclear but product/company relevance is clear -> create or update the decision under the closest matching project or initiative and note the inferred parent.\n- Closest parent ambiguous or risky -> use review before writing."
               },
               {
                 "value": "review_first",
                 "label": "Review first",
                 "description": "Keep DecidR logging always-on, but review formal writes before creating or updating records.",
-                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: an agreed plan, selected option, agreed finding, meaningful discovery, created artifact or persistent object, task, verification proof, commit, release, deployment, or lifecycle proof.\n\nPolicy: review first.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, and lifecycle transitions.\n- If tool names differ by agent, use the provided DecidR tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Prefer an exact matching decision or task when one exists. Otherwise use the same project or initiative. If no exact parent matches but the work is relevant to the general product, company, or organization involved, propose the closest matching project or initiative for review instead of skipping.\n- Present formal DecidR writes in review before creating/updating records.\n\nDecision-first mapping:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, created artifact, tradeoff, architecture direction, approval-worthy path, or persistent behavior -> standard decision or PLAN update.\n- Small already-completed rationale -> catch-up decision.\n- Execution-only follow-up -> task.\n- Commit, release, deploy, verification result, or operational proof -> lifecycle document or audit evidence.\n- Temporary handoff only -> no DecidR record unless the user asks to log it.\n\nDo:\n- Review table rows should show target, action, reason, evidence/ref, and risk.\n- Execute accepted rows only.\n- Use governance lifecycle rules for PLAN/STAGED/IMPLEMENTED and `save_decision_document_version` snapshots."
+                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: an agreed plan, selected option, agreed finding, meaningful discovery, created artifact or persistent object, task, verification proof, commit, release, deployment, or lifecycle proof.\n\nPolicy: review first.\n\nProvided Tools:\n- Use the DecidR tools exposed in this session for search, decisions, tasks, documents, audit evidence, and lifecycle transitions.\n- If tool names differ by agent, use the provided DecidR tool groups rather than direct HTTP calls.\n\nBefore writing:\n- Confirm DecidR is available.\n- Search existing initiatives, projects, decisions, tasks, and documents.\n- Prefer an exact matching decision or task when one exists. Otherwise use the same project or initiative. If no exact parent matches but the work is relevant to the general product, company, or organization involved, propose the closest matching project or initiative for review instead of skipping.\n- Present formal DecidR writes in review before creating/updating records.\n\nDecision-first mapping:\n- Durable choice, accepted plan, agreed finding, meaningful discovery, created artifact, tradeoff, architecture direction, approval-worthy path, or persistent behavior -> standard decision or PLAN update.\n- Lightweight internal research, preflight, verification, correction, and internal-task notes -> audit breadcrumb with `log_governance_breadcrumb`.\n- Small already-completed durable rationale -> catch-up decision.\n- Execution-only follow-up -> task.\n- Commit, release, deploy, verification result, or operational proof -> lifecycle document or audit evidence.\n- Temporary handoff only -> no DecidR record unless the user asks to log it.\n\nDo:\n- Review table rows should show target, action, reason, evidence/ref, and risk.\n- Use `log_governance_breadcrumb` for accepted lightweight internal notes instead of catch-up decisions.\n- Execute accepted rows only.\n- Use governance lifecycle rules for PLAN/STAGED/IMPLEMENTED and `save_decision_document_version` snapshots.\n- For accepted plans, use the full MCPViews `rich_content` plan body as the PLAN version `content` when available; do not save only a summary. If no MCPViews plan body exists, save the full accepted chat plan."
               },
               {
                 "value": "capture_only",
                 "label": "Manual only",
                 "description": "Do not write DecidR records automatically; summarize candidate durable memory and ask before formal logging.",
-                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: an agreed plan, selected option, agreed finding, meaningful discovery, created artifact or persistent object, task, verification proof, commit, release, deployment, or lifecycle proof.\n\nPolicy: manual logging only.\n\nDo:\n- Confirm DecidR is available before proposing DecidR writes.\n- Summarize candidate durable memory in chat and ask before creating, updating, or lifecycle-transitioning DecidR decisions, tasks, documents, or audit evidence.\n- When user approves formal logging, search existing initiatives, projects, decisions, tasks, and documents first.\n- Prefer an exact matching decision or task when one exists. Otherwise use the same project or initiative. If no exact parent matches but the work is relevant to the general product, company, or organization involved, propose the closest matching project or initiative instead of skipping.\n- Use decision-first mapping and governance lifecycle rules.\n- Use `save_decision_document_version` for PLAN, STAGED, and IMPLEMENTED snapshots.\n\nExamples:\n- End of coding session -> summarize candidate decision/task/doc updates; do not write automatically.\n- User says \"log this formally\" -> search, propose/create the formal DecidR record.\n- Release proof exists but no approval to log -> explain what could be logged and wait."
+                "persisted_rule": "Run after meaningful work, at milestones/end-turns, and whenever the user accepts or confirms durable project memory: an agreed plan, selected option, agreed finding, meaningful discovery, created artifact or persistent object, task, verification proof, commit, release, deployment, or lifecycle proof.\n\nPolicy: manual logging only.\n\nDo:\n- Confirm DecidR is available before proposing DecidR writes.\n- Summarize candidate durable memory in chat and ask before creating, updating, or lifecycle-transitioning DecidR decisions, tasks, documents, or audit evidence.\n- When user approves formal logging, search existing initiatives, projects, decisions, tasks, and documents first.\n- Prefer an exact matching decision or task when one exists. Otherwise use the same project or initiative. If no exact parent matches but the work is relevant to the general product, company, or organization involved, propose the closest matching project or initiative instead of skipping.\n- Use decision-first mapping and governance lifecycle rules, including audit breadcrumbs for approved lightweight internal notes and catch-up decisions only for small completed durable rationale.\n- Use `save_decision_document_version` for PLAN, STAGED, and IMPLEMENTED snapshots.\n- For accepted plans, use the full MCPViews `rich_content` plan body as the PLAN version `content` when available; do not save only a summary. If no MCPViews plan body exists, save the full accepted chat plan.\n\nExamples:\n- End of coding session -> summarize candidate decision/task/doc updates; do not write automatically.\n- User says \"log this formally\" -> search, propose/create the formal DecidR record.\n- Release proof exists but no approval to log -> explain what could be logged and wait."
               }
             ]
           }
         ],
-        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.61/decidr.zip",
+        "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.63/decidr.zip",
         "registry_index": {
           "summary": "Decision governance — initiatives, projects, decisions, tasks, and bridges with approval workflows",
           "tags": [
@@ -335,14 +335,20 @@
             },
             {
               "name": "Documents",
-              "hint": "Link and unlink documents on projects, decisions, and tasks; search LudFlow docs; save decision lifecycle document versions; find entities by document",
+              "hint": "Link and unlink documents on projects, decisions, and tasks; search LudFlow docs; save LudFlow versions or external evidence for decision lifecycles; find entities by document",
               "tools": [
                 "link_document",
                 "list_entity_documents",
                 "unlink_document",
                 "search_ludflow_documents",
                 "find_entities_by_ludflow_document",
-                "save_decision_document_version"
+                "find_entities_by_external_document",
+                "save_decision_document_version",
+                "save_decision_document_evidence",
+                "start_evidence_file_upload",
+                "complete_evidence_file_upload",
+                "upload_evidence_file",
+                "list_decision_document_evidence"
               ]
             },
             {
@@ -409,13 +415,13 @@
           "log_governance_breadcrumb": "Create a lightweight audit breadcrumb for agent research, preflight, verification, or correction notes. Sets payload.initBreadcrumb=true so it can appear in lean init context. Use this instead of IMPLEMENTED catch-up decisions for internal work notes.",
           "create_task": "Create a new task. Returns full created entity. Before passing assignee_id, call list_members and use only an active member user ID; pending invitation IDs are not assignable. Pass status BACKLOG for future/non-actionable work that should stay out of Next Steps. Use for lightweight implementation follow-up that did not need a decision approval flow, under the relevant project or existing decision. When creating a missing task from implementation discovery, proceed directly for clear low-risk tasks after search/context checks; use MCPViews review only for significant, ambiguous, destructive, high-impact, or hard-to-undo changes.",
           "create_bridge": "Create a bridge between two projects or two decisions. Returns full created entity.",
-          "update_initiative": "Update initiative fields. Returns full updated entity.",
-          "update_project": "Update project fields and/or transition status. Before changing owner_id or project members, call list_members and use only active member user IDs; pending invitation IDs are not assignable. Returns full updated entity.",
-          "update_decision": "Update standard decision fields, responsibilities, and/or transition status. Before changing owner_id or implementer_id, call list_members and use only active member user IDs. Use action param for approve/reject/supersede/unsupersede. Use BACKLOG for future/non-actionable decisions that should stay out of Next Steps. Draft decisions require a linked Ludflow PLAN document version before transitioning to PROPOSED or STAGED. Before implementation starts after discovery/planning, verify or propose the governing decision/task; do not mark accepted plans as STAGED. Move matching decisions to STAGED only after the work is built/configured and in test/review or non-production validation and a STAGED document version has been saved. Move matching STAGED decisions to IMPLEMENTED only after live or production-equivalent release and an IMPLEMENTED document version has been saved: production deployment, deployment-codebase migration, push/merge to the repo live release branch (main/master/prod/production when applicable), or an installable versioned release. If a draft/backlog decision is actually small already-implemented catch-up work, use mark_decision_as_catch_up instead. Returns the full updated entity. Field updates are applied before status transition.",
+          "update_initiative": "Update initiative fields. Only the initiative creator can rename/update it. Returns full updated entity.",
+          "update_project": "Update project fields and/or transition status. Project creators and project owners can rename/update it. Before changing owner_id or project members, call list_members and use only active member user IDs; pending invitation IDs are not assignable. Returns full updated entity.",
+          "update_decision": "Update standard decision fields, responsibilities, and/or transition status. Decision creators, owners, implementers, and parent creators can rename/update it. Before changing owner_id or implementer_id, call list_members and use only active member user IDs. Use action param for approve/reject/supersede/unsupersede. Use BACKLOG for future/non-actionable decisions that should stay out of Next Steps. Draft decisions require a linked Ludflow PLAN document version before transitioning to PROPOSED or STAGED. Before implementation starts after discovery/planning, verify or propose the governing decision/task; do not mark accepted plans as STAGED. Move matching decisions to STAGED only after the work is built/configured and in test/review or non-production validation and a STAGED document version has been saved. Move matching STAGED decisions to IMPLEMENTED only after live or production-equivalent release and an IMPLEMENTED document version has been saved: production deployment, deployment-codebase migration, push/merge to the repo live release branch (main/master/prod/production when applicable), or an installable versioned release. If a draft/backlog decision is actually small already-implemented catch-up work, use mark_decision_as_catch_up instead. Returns the full updated entity. Field updates are applied before status transition.",
           "mark_decision_as_catch_up": "Convert an existing DRAFT or BACKLOG decision into an IMPLEMENTED catch-up decision. Use when the record captures small already-implemented work after the fact and a full standard document-gated workflow would add noise. Provide description if the existing decision lacks rationale, and optional implemented_at for the actual implementation time.",
           "update_decision_stage_time": "Correct when a decision stage/status actually occurred without changing live decision status. Provide id, status, occurred_at ISO timestamp, and optional reason. Updates the matching STATUS_CHANGED timeline event occurred_at while preserving createdAt as the write/correction audit timestamp. For v1, only the decision creator or organization admins/owners may correct timing.",
           "update_audit_event": "Edit an audit event and create visible revision history. Only admins can change occurred_at.",
-          "update_task": "Update task fields and/or transition status. Before changing assignee_id, call list_members and use only an active member user ID; pending invitation IDs are not assignable. Use BACKLOG for future/non-actionable work that should stay out of Next Steps. Set status to DONE to complete a task. Returns full updated entity.",
+          "update_task": "Update task fields and/or transition status. Task creators and assignees can rename/update it. Before changing assignee_id, call list_members and use only an active member user ID; pending invitation IDs are not assignable. Use BACKLOG for future/non-actionable work that should stay out of Next Steps. Set status to DONE to complete a task. Returns full updated entity.",
           "update_task_stage_time": "Correct when a task stage/status actually occurred without changing live task status. Provide id, status, occurred_at ISO timestamp, and optional reason. Updates the matching STATUS_CHANGED timeline event occurred_at while preserving createdAt as the write/correction audit timestamp. For v1, only the task creator or organization admins/owners may correct timing.",
           "update_bridge": "Update bridge fields and/or transition status. Returns full updated entity.",
           "create_organization": "Create a new organization. The caller becomes OWNER. Use invite_member to invite others. DecidR setup/onboarding agents must pass creation_source: \"DECIDR_ONBOARDING\" so the starter initiative, project, decision, and Ludflow document are seeded. Other callers should omit creation_source or pass GENERIC.",
@@ -427,12 +433,18 @@
           "manage_audit_category": "Admin-only audit category management. Categories can be created, disabled, or merged; they are not hard-deleted after use.",
           "link_decision_audit_event": "Link or unlink an audit event and decision. Linked audit events appear in decision slideouts and linked decisions appear in audit event slideouts.",
           "replace_decisions": "Approve a replacement decision, reject one or more originals, record replacement relationships, and copy linked audit events forward.",
-          "link_document": "Attach a document to any entity. Use type URL for external links, LUDFLOW for LudFlow documents. Search LudFlow docs first with search_ludflow_documents.",
+          "link_document": "Attach a document to any entity. Use type URL for passive links, LUDFLOW for LudFlow documents, and EXTERNAL for provider-neutral external docs such as Notion. Search LudFlow docs first with search_ludflow_documents when using LUDFLOW.",
           "list_entity_documents": "List all documents linked to an entity. Essential context before approving decisions.",
           "unlink_document": "Unlink a document/file from a project, decision, or task. Use list_entity_documents first to get the document_id.",
           "search_ludflow_documents": "Search LudFlow documents by title. Use results with link_document to attach to DecidR entities.",
           "find_entities_by_ludflow_document": "Find all DecidR entities linked to a LudFlow document. Enables bidirectional navigation.",
+          "find_entities_by_external_document": "Find DecidR entities linked to a provider-neutral external document by provider/external_id and/or URL.",
           "save_decision_document_version": "Save a lifecycle-tagged Ludflow document version for a DecidR decision. Use PLAN after accepted discovery/planning, STAGED when implementation is built and validating, and IMPLEMENTED when the live implemented state is captured. Creates and links the first PLAN document when no linked Ludflow document exists; provide document_id when multiple Ludflow docs are linked.",
+          "save_decision_document_evidence": "Save PLAN/STAGED/IMPLEMENTED lifecycle evidence for an EXTERNAL document already linked to a decision. The backend hashes the snapshot and the evidence can satisfy lifecycle gates.",
+          "start_evidence_file_upload": "Start a direct LudFlow evidence file upload. Upload bytes to the returned uploadUrl with uploadHeaders, then call complete_evidence_file_upload.",
+          "complete_evidence_file_upload": "Complete a direct evidence file upload. LudFlow encrypts/stores the final asset and DecidR links it as LUDFLOW evidence with lifecycle metadata.",
+          "upload_evidence_file": "Small-file base64 shortcut for uploading evidence into LudFlow and linking it as LUDFLOW. Use start/complete for larger files.",
+          "list_decision_document_evidence": "List provider-neutral external document evidence snapshots captured for a decision.",
           "archive_entity": "Soft-delete (archive) an entity. Archived entities are hidden from default lists but can be restored. Use when the user wants to remove or delete an entity.",
           "restore_entity": "Restore a previously archived entity. Use when the user wants to undelete or bring back an archived entity.",
           "connect_github": "Do NOT call this tool directly with a user-supplied PAT — that leaks the token through the chat. Instead push the decidr_github_auth renderer so the user enters their PAT in the companion's secure form. This PAT is only for outbound GitHub write actions such as create_issue/create_pr/review_pr/merge_pr.",
@@ -485,6 +497,11 @@
           "replace_decisions",
           "link_document",
           "save_decision_document_version",
+          "save_decision_document_evidence",
+          "start_evidence_file_upload",
+          "complete_evidence_file_upload",
+          "upload_evidence_file",
+          "list_decision_document_evidence",
           "unlink_document",
           "archive_entity",
           "restore_entity",
@@ -549,7 +566,13 @@
           "unlink_document": "decidr_list",
           "search_ludflow_documents": "decidr_list",
           "find_entities_by_ludflow_document": "decidr_list",
+          "find_entities_by_external_document": "decidr_list",
           "save_decision_document_version": "decidr_list",
+          "save_decision_document_evidence": "decidr_list",
+          "start_evidence_file_upload": "decidr_list",
+          "complete_evidence_file_upload": "decidr_list",
+          "upload_evidence_file": "decidr_list",
+          "list_decision_document_evidence": "decidr_list",
           "archive_entity": "decidr_list",
           "restore_entity": "decidr_list",
           "connect_github": "decidr_github_auth",
@@ -623,7 +646,13 @@
               "unlink_document",
               "search_ludflow_documents",
               "find_entities_by_ludflow_document",
+              "find_entities_by_external_document",
               "save_decision_document_version",
+              "save_decision_document_evidence",
+              "start_evidence_file_upload",
+              "complete_evidence_file_upload",
+              "upload_evidence_file",
+              "list_decision_document_evidence",
               "archive_entity",
               "restore_entity",
               "connect_github",
@@ -699,7 +728,7 @@
         "plugin_rule_definitions": [
           {
             "id": "decidr_auth_status",
-            "rule": "DecidR MCPViews auth uses in-app six-digit email-code authentication by default. Use init_session org_tokens to inspect org auth. If target org auth is missing or expired_unrefreshable, call start_plugin_auth with plugin_name 'decidr' and organization_id before retrying. Treat expired_refreshable as connected while MCPViews refreshes it; use auth_flow 'browser' only for advanced OAuth recovery.",
+            "rule": "DecidR MCPViews auth uses in-app six-digit email-code authentication by default. A successful DecidR or Ludflow email-code login bulk-seeds org-scoped tokens for every organization returned by the login backend and mirrors them into both plugin stores. Use init_session org_tokens to inspect org auth. If target org auth is still missing or expired_unrefreshable, call start_plugin_auth with plugin_name 'decidr' and organization_id before retrying; that single flow should refresh all returned memberships. Treat expired_refreshable as connected while MCPViews refreshes it; use auth_flow 'browser' only for advanced OAuth recovery.",
             "tags": [
               "auth",
               "organization"
@@ -787,6 +816,11 @@
               "mark_decision_as_catch_up",
               "create_catch_up_decision",
               "save_decision_document_version",
+              "save_decision_document_evidence",
+              "start_evidence_file_upload",
+              "complete_evidence_file_upload",
+              "upload_evidence_file",
+              "list_decision_document_evidence",
               "list_decisions",
               "get_decision",
               "search"
@@ -808,6 +842,10 @@
             "tools": [
               "update_decision",
               "save_decision_document_version",
+              "save_decision_document_evidence",
+              "start_evidence_file_upload",
+              "complete_evidence_file_upload",
+              "upload_evidence_file",
               "get_decision",
               "list_decisions"
             ],
@@ -860,13 +898,19 @@
           },
           {
             "id": "decision_lifecycle_documents",
-            "rule": "For standard decision lifecycle documents, use save_decision_document_version: save accepted plans as PLAN versions, staged implementation state as STAGED versions, and live implemented state as IMPLEMENTED versions. Approval remains DecidR status/progress, not Ludflow version metadata. When creating supporting LudFlow documents for DecidR work, place them in an existing relevant folder structure or, if none exists, in a folder named for the DecidR project; fetch governance_lifecycle only when deeper document-placement detail is needed.",
+            "rule": "For standard decision lifecycle documents, use save_decision_document_version for LudFlow-backed markdown docs, start_evidence_file_upload/complete_evidence_file_upload or upload_evidence_file for LudFlow-backed file evidence, or save_decision_document_evidence for EXTERNAL provider docs: save accepted plans as PLAN, staged implementation state as STAGED, and live implemented state as IMPLEMENTED. Passive URL links do not satisfy lifecycle gates. Uploaded evidence files attach as LUDFLOW document links with lifecycle metadata. Approval remains DecidR status/progress, not document metadata. When creating supporting LudFlow documents for DecidR work, place them in an existing relevant folder structure or, if none exists, in a folder named for the DecidR project; fetch governance_lifecycle only when deeper document-placement detail is needed.",
             "tools": [
               "save_decision_document_version",
+              "save_decision_document_evidence",
+              "start_evidence_file_upload",
+              "complete_evidence_file_upload",
+              "upload_evidence_file",
+              "list_decision_document_evidence",
               "link_document",
               "list_entity_documents",
               "search_ludflow_documents",
               "find_entities_by_ludflow_document",
+              "find_entities_by_external_document",
               "create_decision",
               "update_decision",
               "get_decision"
@@ -886,9 +930,13 @@
             "rule": "When updating a LudFlow document linked to an implemented DecidR decision, or a LudFlow document that is already published, preserve the existing implemented content and append new findings as a dated addendum unless the user explicitly asks for a rewrite.",
             "tools": [
               "save_decision_document_version",
+              "complete_evidence_file_upload",
+              "upload_evidence_file",
               "link_document",
               "list_entity_documents",
-              "find_entities_by_ludflow_document"
+              "find_entities_by_ludflow_document",
+              "find_entities_by_external_document",
+              "list_decision_document_evidence"
             ],
             "groups": [
               "Documents"
@@ -1005,9 +1053,19 @@
           "inject_organization_id": true,
           "inject_project_context": true,
           "arguments": {}
+        },
+        "context_provider": {
+          "context_type": "organization",
+          "routing_arg": "organization_id",
+          "provider_tool": "list_organizations",
+          "label_fields": [
+            "name",
+            "slug",
+            "role"
+          ]
         }
       },
-      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.61/decidr.zip"
+      "download_url": "https://github.com/DeeJanuz/decidr-plugin/releases/download/0.1.63/decidr.zip"
     },
     {
       "name": "mcpviews-gronk-speak",

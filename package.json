@@ -1,6 +1,6 @@
 {
   "name": "mcpviews",
-  "version": "0.2.73",
+  "version": "0.2.74",
   "private": true,
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

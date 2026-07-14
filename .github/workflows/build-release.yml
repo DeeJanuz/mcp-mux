@@ -877,6 +877,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag || github.ref_name }}
+          # Plugin-triggered builds must retain their exact signed artifacts for
+          # VMware + human Windows QA before becoming update-visible.
+          draft: ${{ github.event_name == 'repository_dispatch' }}
           prerelease: false
           fail_on_unmatched_files: false
           files: |

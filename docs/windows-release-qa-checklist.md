@@ -116,6 +116,10 @@ release lane may build and publish Windows assets. Upload and retain installer
 artifacts, release metadata, screenshots, app logs, and QA notes with the
 release record.
 
+Plugin-triggered desktop builds create a draft GitHub release. Use that draft's
+exact signed Windows artifact for VMware smoke and human QA. Publish the draft
+only after the outcome above is recorded; drafts stay invisible to the updater.
+
 ## Backlogged Automation Discovery
 
 Windows WebDriver automation with `tauri-driver` and Edge Driver remains a

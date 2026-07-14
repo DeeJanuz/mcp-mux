@@ -3,7 +3,7 @@
   "plugins": [
     {
       "name": "ludflow",
-      "version": "0.5.20",
+      "version": "0.5.21",
       "description": "Code intelligence, data governance, and knowledge management powered by Ludflow",
       "author": "Ludflow",
       "homepage": "https://ludflow.com",
@@ -16,8 +16,8 @@
       ],
       "manifest": {
         "name": "ludflow",
-        "version": "0.5.20",
-        "download_url": "https://github.com/DeeJanuz/ludflow-mcpviews/releases/download/v0.5.20/ludflow-plugin.zip",
+        "version": "0.5.21",
+        "download_url": "https://github.com/DeeJanuz/ludflow-mcpviews/releases/download/v0.5.21/ludflow-plugin.zip",
         "renderers": {
           "search_codebase": "rich_content",
           "vector_search": "rich_content",

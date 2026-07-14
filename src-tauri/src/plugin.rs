@@ -196,6 +196,31 @@ impl PluginRegistry {
         self.tool_cache.mark_pending(idx);
     }
 
+    /// Mark the plugin whose configured prefix owns a missing tool for an
+    /// immediate refresh, even when its tool cache is still inside the TTL.
+    /// Longest-prefix matching keeps nested or more-specific prefixes
+    /// deterministic if plugin configurations ever overlap.
+    pub fn mark_plugin_for_tool_refresh(&mut self, prefixed_name: &str) -> bool {
+        let plugin_idx = self
+            .manifests
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, manifest)| {
+                let prefix = manifest.mcp.as_ref()?.tool_prefix.as_str();
+                (!prefix.is_empty() && prefixed_name.starts_with(prefix))
+                    .then_some((idx, prefix.len()))
+            })
+            .max_by_key(|(_, prefix_len)| *prefix_len)
+            .map(|(idx, _)| idx);
+
+        if let Some(idx) = plugin_idx {
+            self.tool_cache.mark_pending(idx);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Refresh tool caches from plugin MCP backends
     pub async fn refresh_stale_plugins(
         state: &Arc<TokioMutex<AsyncAppState>>,
@@ -668,5 +693,41 @@ mod tests {
 
         assert!(result.supports_email_code_auth);
         assert_eq!(result.oauth_info.unwrap().org_id.as_deref(), Some("org_1"));
+    }
+
+    #[test]
+    fn test_missing_tool_forces_matching_plugin_refresh_inside_cache_ttl() {
+        let (mut registry, _dir) = test_registry();
+        let mut manifest = test_manifest("ludflow");
+        manifest.mcp = Some(PluginMcpConfig {
+            url: "https://app.ludflow.com/api/mcp".into(),
+            auth: None,
+            tool_prefix: "ludflow__".into(),
+        });
+        registry.add_plugin(manifest).unwrap();
+        registry.tool_cache.apply(
+            0,
+            "ludflow__",
+            vec![serde_json::json!({ "name": "list_organizations" })],
+        );
+
+        assert!(registry.stale_plugin_indices().is_empty());
+        assert!(registry.mark_plugin_for_tool_refresh("ludflow__create_app_embed_session"));
+        assert!(registry.tool_cache.entries[0].refresh_pending);
+    }
+
+    #[test]
+    fn test_unknown_tool_prefix_does_not_refresh_unrelated_plugins() {
+        let (mut registry, _dir) = test_registry();
+        let mut manifest = test_manifest("ludflow");
+        manifest.mcp = Some(PluginMcpConfig {
+            url: "https://app.ludflow.com/api/mcp".into(),
+            auth: None,
+            tool_prefix: "ludflow__".into(),
+        });
+        registry.add_plugin(manifest).unwrap();
+
+        assert!(!registry.mark_plugin_for_tool_refresh("unknown__tool"));
+        assert!(!registry.tool_cache.entries[0].refresh_pending);
     }
 }

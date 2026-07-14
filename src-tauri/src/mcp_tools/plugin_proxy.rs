@@ -41,20 +41,17 @@ pub(super) async fn lookup_plugin_tool(
     }
 }
 
-pub(super) async fn ensure_plugins_refreshed(
+pub(super) async fn force_refresh_plugin_for_tool(
+    name: &str,
     state: &Arc<TokioMutex<AsyncAppState>>,
     client: &reqwest::Client,
 ) {
-    let has_stale = {
+    let has_matching_plugin = {
         let state_guard = state.lock().await;
         let mut registry = state_guard.inner.plugin_registry.lock().unwrap();
-        let stale = registry.stale_plugin_indices();
-        for idx in &stale {
-            registry.mark_refresh_pending(*idx);
-        }
-        !stale.is_empty()
+        registry.mark_plugin_for_tool_refresh(name)
     };
-    if has_stale {
+    if has_matching_plugin {
         PluginRegistry::refresh_stale_plugins(state, client).await;
     }
 }

@@ -122,7 +122,7 @@ pub async fn call_tool(
     let plugin_info = match plugin_info {
         Some(info) => Some(info),
         None => {
-            plugin_proxy::ensure_plugins_refreshed(state, &client).await;
+            plugin_proxy::force_refresh_plugin_for_tool(name, state, &client).await;
             let (retry_info, _) = plugin_proxy::lookup_plugin_tool(name, &arguments, state).await;
             retry_info
         }

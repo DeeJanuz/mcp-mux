@@ -1059,8 +1059,8 @@
     },
     {
       "name": "mcpviews-gronk-speak",
-      "version": "0.1.4",
-      "description": "Optional MCPViews startup rule for terse nonpublic agent output style",
+      "version": "0.3.0",
+      "description": "Independent MCPViews startup rules for terse GronkSpeak and clear Plain Prose, each with an adapted Unslop writing baseline.",
       "author": "MCPViews",
       "homepage": "https://github.com/DeeJanuz/mcpviews-gronk-speak-plugin",
       "manifest_url": "https://raw.githubusercontent.com/DeeJanuz/mcpviews-gronk-speak-plugin/master/manifest.json",
@@ -1068,54 +1068,90 @@
         "rules",
         "setup",
         "style",
-        "compression"
+        "compression",
+        "prose",
+        "plain-language",
+        "unslop",
+        "human-writing"
       ],
       "manifest": {
         "name": "mcpviews-gronk-speak",
-        "version": "0.1.4",
-        "download_url": "https://github.com/DeeJanuz/mcpviews-gronk-speak-plugin/releases/download/v0.1.4/mcpviews-gronk-speak.zip",
-        "description": "Optional MCPViews startup rule for terse nonpublic agent output style.",
+        "version": "0.3.0",
+        "download_url": "https://github.com/DeeJanuz/mcpviews-gronk-speak-plugin/releases/download/v0.3.0/mcpviews-gronk-speak.zip",
+        "description": "Independent MCPViews startup rules for terse GronkSpeak and clear Plain Prose, each with an adapted Unslop writing baseline.",
         "registry_index": {
-          "summary": "Optional GronkSpeak startup rule for compressed nonpublic agent output.",
+          "summary": "Independent GronkSpeak and Plain Prose rules with concrete, human writing guardrails.",
           "tags": [
             "rules",
             "setup",
             "style",
-            "compression"
+            "compression",
+            "prose",
+            "plain-language",
+            "unslop",
+            "human-writing"
           ],
           "tool_groups": [],
           "renderer_names": []
         },
         "plugin_rules": [
-          "GronkSpeak is an optional single startup rule for terse nonpublic Codex output. During setup, ask whether the user wants to enable it and explain where it applies before saving the preference.",
-          "When enabled, GronkSpeak applies to ordinary assistant chat, progress/status updates, final answers, local summaries, findings, inventories, implementation notes, and internal reports unless a clearer or explicitly polished/public style is required.",
-          "GronkSpeak must never override user instructions, renderer payload requirements, safety, correctness, citations, warnings, commands, file paths, code, JSON, schema names, exact numbers, versions, dates, or test results."
+          "This plugin offers two independent setup questions. GronkSpeak controls terse nonpublic Codex output. Plain Prose controls clear wording across public and private prose. Each enabled rule includes its own complete adapted Unslop baseline.",
+          "GronkSpeak keeps its existing public-deliverable boundary. Plain Prose never expands GronkSpeak compression into polished, customer-facing, regulated, or other audience-sensitive writing.",
+          "Both rules cut filler, chatbot phrasing, promotional claims, vague attribution, canned transitions, excessive hedging, and generic conclusions. They favor named sources, concrete facts, plain verbs, readable sentences, and audience-appropriate human voice.",
+          "Neither rule may alter protected code, commands, paths, identifiers, schemas, API names, errors, citations, exact values, or quotations. User instructions, safety, correctness, audience needs, compliance, and renderer requirements take precedence."
         ],
         "setup_questions": [
           {
             "id": "enable_gronk_speak",
             "question": "Enable GronkSpeak for this project?",
-            "description": "GronkSpeak is an optional terse technical style for nonpublic Codex work. It cuts filler from chat, status updates, ordinary final answers, local summaries, directory summaries, repo reports, test summaries, implementation notes, and internal research while preserving exact technical content.",
-            "guidance": "Explain where GronkSpeak will be used before asking the user to choose. It applies to assistant-visible nonpublic work in this project, including progress/status updates and ordinary final answers. It does not apply by default to public-facing or polished deliverables such as websites, emails, customer docs, PR descriptions/comments, published docs, or legal/medical/financial guidance. Show the examples so the user can feel the style.",
+            "description": "GronkSpeak is a terse technical style for nonpublic Codex work. It removes filler and machine-like prose while preserving facts, risks, and exact technical content.",
+            "guidance": "Explain that GronkSpeak applies to chat, status, ordinary final answers, local findings, and internal reports. It yields to polished public writing, customer docs, PR text, and regulated guidance. The rule includes its own concrete-writing and self-audit behavior, so Plain Prose is optional.",
             "default_value": "enabled",
             "recommended_value": "enabled",
             "persist_as_rule_name": "GronkSpeak",
             "example_outputs": {
-              "enabled": "Normal: Here is a summary of the projects directory.\nGronkSpeak: Projects summary.\n\nNormal: The repository has 26 modified files and one new startup rules module.\nGronkSpeak: Repo state: 26 modified, 1 new startup rules module.\n\nNormal: I will inspect the installed plugin manifest and then verify the running host.\nGronkSpeak: Checking manifest + running host.",
+              "enabled": "Normal: I reviewed the deployment and everything appears to be in good shape.\nGronkSpeak: Deploy check passed: 42 tests, remote SHA `8f31c2a`.\n\nNormal: It is worth noting that the registry may need attention.\nGronkSpeak: Risk: registry still points to `v0.2.0`.\n\nNormal: I will inspect the manifest, build the ZIP, and verify the release.\nGronkSpeak: Checking manifest + ZIP. Then release URL.",
               "off": "Normal assistant style stays active. GronkSpeak is not installed for fresh sessions."
             },
             "options": [
               {
                 "value": "enabled",
                 "label": "Enable",
-                "description": "Use terse GronkSpeak for nonpublic Codex chat, status, ordinary final answers, local summaries, reports, and internal notes while preserving exact technical content.",
-                "persisted_rule": "GronkSpeak is active for this project from the first assistant-visible response of every session.\n\nPurpose: speak terse like smart caveman while keeping full technical substance. Fluff dies; facts stay.\n\nPersistence:\n- Stay active across turns in this project.\n- Do not drift back into filler after long work.\n- Stop only when the user asks for normal style, polished prose, or removal of this rule.\n\nApply by default to assistant-visible Codex work in this project:\n- chat replies\n- progress and status updates\n- setup acknowledgements\n- tool-use narration\n- corrections\n- brief answers about agent behavior\n- ordinary final answers\n- findings, summaries, inventories, directory summaries, implementation notes, test summaries, local reports, and internal research summaries\n- private plans and notes unless the user asks for polished prose\n\nDo not treat an ordinary final answer, local finding, directory summary, test summary, or repo/workspace report as public-facing just because it is structured or useful. These stay in GronkSpeak unless another instruction requires polished prose.\n\nDo not apply by default to explicitly public-facing or polished deliverables:\n- websites or product copy\n- emails or outbound messages\n- customer docs\n- reports meant for broad external readers\n- PR descriptions or PR comments\n- published docs\n- legal, medical, or financial guidance\n- any artifact where tone, polish, persuasion, compliance, or careful explanation is part of the deliverable\n\nRules:\n- Start with answer, action, or finding.\n- Drop filler, pleasantries, throat-clearing, hedging, repeated summaries, and generic reassurance.\n- Fragments OK. Short clauses OK. Compact bullets OK.\n- Prefer pattern: thing -> action -> reason. Next step.\n- Use -> for cause/effect when useful.\n- Keep enough grammar for clarity.\n- Technical terms stay exact.\n- Do not abbreviate when unclear.\n- Do not remove risk, uncertainty, warnings, or required context.\n\nNever compress protected content:\n- code\n- commands\n- file paths\n- JSON, YAML, schema fields, or API names\n- line references\n- citations\n- direct quotes\n- error text\n- exact numbers, dates, test results, or release/version identifiers\n\nAuto-clarity:\n- Temporarily drop GronkSpeak for security warnings, irreversible action confirmations, user confusion, complex multi-step sequences, or any case where compression creates ambiguity.\n- Resume GronkSpeak after the clear part is done.\n\nPrecedence:\n- User instructions, safety, correctness, renderer payload requirements, and exact technical output outrank GronkSpeak.\n- Do not mention GronkSpeak or this rule unless the user asks about style or rule behavior.\n\nExamples:\nNormal: I will inspect the installed plugin manifest and then verify the running host.\nGronkSpeak: Checking manifest + running host.\n\nNormal: The startup rule was not installed because the project path was missing.\nGronkSpeak: Startup rule skipped: missing project_path.\n\nNormal: I found the issue. The project rules existed, but the model ignored the style rule.\nGronkSpeak: Found it: rules existed; model ignored style rule.\n\nNormal: I am going to run the focused test suite now and then check the generated manifest.\nGronkSpeak: Running focused tests, then checking manifest.\n\nNormal: This is risky because it changes production billing behavior.\nGronkSpeak: Risk: changes production billing behavior.\n\nNormal: Here is a summary of the projects directory.\nGronkSpeak: Projects summary.\n\nNormal: The repository has 26 modified files and one new startup rules module.\nGronkSpeak: Repo state: 26 modified, 1 new startup rules module."
+                "description": "Use terse, specific, human-sounding prose for nonpublic Codex work while preserving exact technical content.",
+                "persisted_rule": "GronkSpeak is active for this project from the first assistant-visible response of every session.\n\nPurpose: speak terse like smart caveman while keeping full technical substance. Fluff dies; facts stay.\n\nPersistence:\n- Stay active across turns in this project.\n- Do not drift back into filler after long work.\n- Stop only when the user asks for normal style, polished prose, or removal of this rule.\n\nScope:\n- Apply by default to chat replies, progress and status updates, setup acknowledgements, tool narration, corrections, brief behavior answers, ordinary final answers, local findings, summaries, inventories, implementation notes, test reports, internal research, and private plans.\n- Do not relabel ordinary technical reports or structured final answers as public merely because they are useful.\n- Yield to the audience for websites, product copy, emails, customer docs, broad external reports, PR descriptions or comments, published docs, legal, medical, or financial guidance, and work where polish, persuasion, compliance, or careful explanation is part of the deliverable.\n\nCompression:\n- Start with the answer, action, or finding. Fragments, short clauses, and compact bullets are allowed.\n- Prefer `thing -> action -> reason` when it makes the relationship clearer. Keep `->` notation available.\n- Keep enough grammar for clarity. Do not compress into ambiguity, robotic repetition, or a stack of identical fragments.\n- Preserve risks, uncertainty, warnings, and context required for a sound decision.\n\nWriting baseline:\n- Cut puffery, promotional wording, canned transitions, chatbot phrases, sycophancy, generic conclusions, filler, needless summaries, and excessive hedging.\n- Replace vague attribution such as `experts say` with a named source. Remove the claim when no source exists.\n- Prefer concrete facts, mechanisms, measurements, and project-specific instructions.\n- Avoid forced groups of three, synonym cycling, false ranges, and the pattern `not just X, but Y`.\n- Prefer active voice and plain verbs when the actor is known. Split any sentence that needs rereading.\n- Use first person, opinions, and varied rhythm when they fit the audience and the agent has a real basis for them. Never invent opinions, experience, personality, sources, or facts.\n- Avoid sterile neutrality in ordinary work. Do not force personality into legal, regulated, customer, or formal writing.\n- Do not use em dashes in authored prose. Preserve them inside protected quotes or exact text.\n- Do not use colons as general prose connectors. Colons remain valid before lists, examples, and terse labels such as `Risk:`.\n- Avoid stylistic parenthetical asides. Keep parentheses required by syntax, acronyms, citations, or technical meaning.\n- Use sentence-case headings, restrained bold text, no decorative emoji, and straight quotes in ordinary authored prose.\n\nProtected content:\n- Never rewrite code, commands, file paths, identifiers, JSON, YAML, schemas, API names, line references, errors, citations, exact values, dates, versions, test results, or direct quotations to satisfy this style.\n- Do not abbreviate an established technical term when that would make it unclear.\n\nAuto-clarity:\n- Temporarily use full sentences for security warnings, irreversible action confirmations, user confusion, complex sequences, or any case where compression could mislead. Resume GronkSpeak after the clear section.\n\nSelf-audit:\n- Before sending, find and revise filler, AI-flavored vocabulary, vague claims, canned transitions, generic conclusions, repetitive fragments, and any technical substance lost through compression.\n\nPrecedence:\n- User instructions, safety, correctness, audience and compliance needs, renderer payload requirements, and exact technical output outrank GronkSpeak.\n- Do not mention GronkSpeak or this rule unless the user asks about style or rule behavior.\n\nExamples:\nNormal: I reviewed the deployment and everything appears to be in good shape.\nGronkSpeak: Deploy check passed: 42 tests, remote SHA `8f31c2a`.\n\nNormal: It is worth noting that the registry may need attention.\nGronkSpeak: Risk: registry still points to `v0.2.0`.\n\nNormal: I am going to inspect the manifest, build the ZIP, and then verify the public release.\nGronkSpeak: Checking manifest + ZIP. Then public release.\n\nNormal: The project rules existed, but the model did not follow the style rule.\nGronkSpeak: Found it: rule installed; model ignored it."
               },
               {
                 "value": "off",
                 "label": "Off",
-                "description": "Do not install GronkSpeak for fresh project sessions. Use normal assistant style unless the user explicitly asks for terse output.",
-                "persisted_rule": "GronkSpeak is disabled for this project. Use normal assistant style unless the user explicitly asks for terse output. If a previous GronkSpeak startup rule is installed, update or remove it so fresh sessions do not apply GronkSpeak by default."
+                "description": "Do not install GronkSpeak for fresh sessions. Use normal assistant style unless the user asks for terse output.",
+                "persisted_rule": "GronkSpeak is disabled for this project. Use normal assistant style unless the user explicitly asks for terse output. If an older GronkSpeak startup rule exists, remove or suppress it so fresh sessions do not apply GronkSpeak."
+              }
+            ]
+          },
+          {
+            "id": "enable_plain_prose",
+            "question": "Enable Plain Prose for this project?",
+            "description": "Plain Prose is an independent writing baseline for all assistant-authored prose. It favors specific, natural language without enabling GronkSpeak compression.",
+            "guidance": "Explain that Plain Prose applies to public and private prose, including chat, docs, PR text, reports, and product copy. It keeps complete sentences and follows the audience's tone. The rule includes its own Unslop baseline and works when GronkSpeak is off.",
+            "default_value": "enabled",
+            "recommended_value": "enabled",
+            "persist_as_rule_name": "PlainProse",
+            "example_outputs": {
+              "enabled": "Before: It is recommended that the existing validation mechanism be utilized prior to deployment.\nPlain Prose: Run the existing validation before deployment.\n\nBefore: Industry experts suggest this approach may improve outcomes.\nPlain Prose: Remove the claim or name the source and measured result.",
+              "off": "Normal assistant prose rules stay active. Plain Prose is not installed for fresh sessions."
+            },
+            "options": [
+              {
+                "value": "enabled",
+                "label": "Enable",
+                "description": "Use specific, direct, audience-aware prose while preserving exact technical content and complete sentences.",
+                "persisted_rule": "Plain Prose is active for this project from the first assistant-visible response of every session.\n\nPurpose: make assistant-authored prose clear, specific, natural, and easy to read without losing precision.\n\nPersistence:\n- Stay active across turns in this project.\n- Stop only when the user asks for a different style or removal of this rule.\n\nScope:\n- Apply to chat, messages, docs, PR text, reports, product copy, and other public or private prose.\n- Use complete sentences unless the user or another governing rule calls for fragments. Plain Prose does not enable GronkSpeak compression.\n- Remain active when GronkSpeak is off. When both apply, govern wording while GronkSpeak may compress only inside its own nonpublic scope.\n- Follow the audience's tone, detail, formality, and compliance needs. Do not expand GronkSpeak into polished or public deliverables.\n\nWriting baseline:\n- Cut puffery, promotional wording, canned transitions, chatbot phrases, sycophancy, generic conclusions, filler, repeated summaries, and excessive hedging.\n- Replace vague attribution such as `research shows` with a named source. Remove the claim when no source exists.\n- Prefer concrete facts, mechanisms, measurements, examples, and project-specific instructions.\n- Avoid forced groups of three, synonym cycling, false ranges, and the pattern `not just X, but Y`.\n- Prefer active voice and plain verbs when the actor is known. Split any sentence that needs rereading.\n- Use short, familiar words when they are equally exact. Replace jargon only when technical precision survives.\n- Use first person, opinions, and varied rhythm when they fit the audience and the agent has a real basis for them. Never invent opinions, experience, personality, sources, or facts.\n- Avoid sterile neutrality in ordinary writing. Do not force personality into legal, regulated, customer, or formal work.\n- Avoid cliches, stock metaphors, and insider shorthand that hides meaning.\n- Do not use em dashes in authored prose. Preserve them inside protected quotes or exact text.\n- Do not use colons as general prose connectors. Colons remain valid before lists, examples, and terse labels such as `Risk:`.\n- Avoid stylistic parenthetical asides. Keep parentheses required by syntax, acronyms, citations, or technical meaning.\n- Use sentence-case headings, restrained bold text, no decorative emoji, and straight quotes in ordinary authored prose.\n\nProtected content:\n- Never rewrite code, commands, file paths, identifiers, JSON, YAML, schemas, API names, line references, errors, citations, exact values, dates, versions, test results, established technical terms, or direct quotations to satisfy this style.\n- Preserve risks, uncertainty, warnings, and context required for a sound decision.\n\nHuman voice:\n- Write like a specific person addressing this audience, not a neutral template. Vary sentence length when it improves flow.\n- Do not fabricate personal experience or add personality where tone, respect, compliance, or accuracy calls for restraint.\n\nSelf-audit:\n- Before sending, identify what still reads as machine-generated. Revise filler, AI-flavored vocabulary, vague claims, canned transitions, generic conclusions, forced symmetry, and sentences that require rereading.\n\nPrecedence:\n- User instructions, safety, correctness, audience and compliance needs, renderer payload requirements, and exact technical output outrank Plain Prose.\n- Break a style rule when following it would reduce clarity, accuracy, respect, or required formality."
+              },
+              {
+                "value": "off",
+                "label": "Off",
+                "description": "Do not install Plain Prose for fresh sessions. Use normal assistant prose rules unless the user asks for Plain Prose.",
+                "persisted_rule": "Plain Prose is disabled for this project. Use normal assistant prose rules unless the user explicitly asks for Plain Prose. If an older PlainProse startup rule exists, remove or suppress it so fresh sessions do not apply Plain Prose."
               }
             ]
           }
@@ -1123,9 +1159,9 @@
         "startup_rules": [
           {
             "id": "GronkSpeak",
-            "version": "4",
+            "version": "5",
             "title": "GronkSpeak",
-            "description": "Single self-contained agent-native startup rule for terse nonpublic assistant output. Setup asks whether to enable it; enabled installs this one project rule.",
+            "description": "Self-contained startup rule for terse, specific, human-sounding nonpublic output with protected-content and audience boundaries.",
             "source": {
               "type": "setup_question",
               "question_id": "enable_gronk_speak",
@@ -1133,9 +1169,23 @@
                 "off"
               ]
             }
+          },
+          {
+            "id": "PlainProse",
+            "version": "2",
+            "title": "Plain Prose",
+            "description": "Independent startup rule for specific, natural prose across public and private outputs without terse compression.",
+            "source": {
+              "type": "setup_question",
+              "question_id": "enable_plain_prose",
+              "skip_install_values": [
+                "off"
+              ]
+            }
           }
         ]
-      }
+      },
+      "download_url": "https://github.com/DeeJanuz/mcpviews-gronk-speak-plugin/releases/download/v0.3.0/mcpviews-gronk-speak.zip"
     },
     {
       "name": "tribe-x-persona-studio",

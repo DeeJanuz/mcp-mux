@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Publish `mcpviews-gronk-speak` v0.3.0 in the public registry with independent GronkSpeak v5 and Plain Prose v2 startup rules.
+- Add the adapted Unslop writing baseline to both rules while preserving GronkSpeak's public-deliverable boundary, Plain Prose's complete-sentence behavior, and exact technical content.
+- Keep existing startup-rule reconciliation behavior: stale v4 and v1 rules use `auto_update`, while disabled and `do_not_update` choices remain suppressed.
+
 ## [0.2.79] - 2026-07-27
 
 ### Changed
